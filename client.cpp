@@ -4,7 +4,6 @@
 #include <cuda_runtime.h>
 #include <dlfcn.h>
 #include <functional>
-#include <iostream>
 #include <map>
 #include <netdb.h>
 #include <netinet/tcp.h>
@@ -107,18 +106,17 @@ int maybe_copy_unified_arg(conn_t *conn, void *arg, enum cudaMemcpyKind kind) {
   auto &devices = conn_it->second;
   auto device_it = devices.find(arg);
   if (device_it != devices.end()) {
-    std::cout << "Found unified arg pointer; copying..." << std::endl;
+    fprintf(stderr, "Found unified arg pointer; copying...\n");
 
     void *ptr = device_it->first;
     size_t size = device_it->second;
 
     cudaError_t res = cudaMemcpy(ptr, ptr, size, kind);
     if (res != cudaSuccess) {
-      std::cerr << "cudaMemcpy failed: " << cudaGetErrorString(res)
-                << std::endl;
+      fprintf(stderr, "cudaMemcpy failed: %s\n", cudaGetErrorString(res));
       return -1;
     } else {
-      std::cout << "Successfully copied " << size << " bytes" << std::endl;
+      fprintf(stderr, "Successfully copied %zu bytes\n", size);
     }
   }
 
@@ -159,7 +157,7 @@ void invoke_host_func(void *fn) {
   for (const auto &pair : host_funcs) {
     if (pair.first == fn) {
       func_t func = reinterpret_cast<func_t>(pair.first);
-      std::cout << "Invoking function at: " << pair.first << std::endl;
+      fprintf(stderr, "Invoking function at: %p\n", pair.first);
       func(pair.second);
       return;
     }
@@ -174,7 +172,7 @@ void *rpc_client_dispatch_thread(void *arg) {
     op = rpc_dispatch(conn, 1);
 
     if (op == 1) {
-      std::cout << "Transferring memory..." << std::endl;
+      fprintf(stderr, "Transferring memory...\n");
 
       int found = 0;
 
@@ -190,20 +188,20 @@ void *rpc_client_dispatch_thread(void *arg) {
 
         if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
             rpc_read(conn, &count, sizeof(size_t)) < 0) {
-          std::cerr << "Failed to read transfer parameters." << std::endl;
+          fprintf(stderr, "Failed to read transfer parameters.\n");
           break;
         }
 
         host_data = malloc(count);
         if (!host_data) {
-          std::cerr << "Memory allocation failed." << std::endl;
+          fprintf(stderr, "Memory allocation failed.\n");
           break;
         }
 
         // Read the actual data from the server (sent from `src` in device
         // memory)
         if (rpc_read(conn, host_data, count) < 0) {
-          std::cerr << "Failed to read device data from server." << std::endl;
+          fprintf(stderr, "Failed to read device data from server.\n");
           free(host_data);
           break;
         }
@@ -214,8 +212,7 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       void *temp_mem;
       if (rpc_read(conn, &temp_mem, sizeof(void *)) <= 0) {
-        std::cerr << "rpc_read failed for mem. Closing connection."
-                  << std::endl;
+        fprintf(stderr, "rpc_read failed for mem. Closing connection.\n");
         break;
       }
 
@@ -223,7 +220,7 @@ void *rpc_client_dispatch_thread(void *arg) {
       void *mem = temp_mem;
 
       if (mem == nullptr) {
-        std::cerr << "Invalid function pointer!" << std::endl;
+        fprintf(stderr, "Invalid function pointer!\n");
         continue;
       }
 
@@ -233,13 +230,13 @@ void *rpc_client_dispatch_thread(void *arg) {
       if (rpc_write_start_response(conn, request_id) < 0 ||
           rpc_write(conn, &res, sizeof(void *)) < 0 ||
           rpc_write_end(conn) < 0) {
-        std::cerr << "rpc_write failed. Closing connection." << std::endl;
+        fprintf(stderr, "rpc_write failed. Closing connection.\n");
         break;
       }
     }
   }
 
-  std::cerr << "Exiting dispatch thread due to an error." << std::endl;
+  fprintf(stderr, "Exiting dispatch thread due to an error.\n");
   return nullptr;
 }
 
@@ -257,7 +254,7 @@ int rpc_open() {
     return 0;
   }
 
-  std::cout << "Opening connection to server" << std::endl;
+  fprintf(stderr, "Opening connection to server\n");
 
   char *server_ips = getenv("SCUDA_SERVER");
   if (server_ips == NULL) {
@@ -287,8 +284,7 @@ int rpc_open() {
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     if (getaddrinfo(host, port, &hints, &res) != 0) {
-      std::cout << "getaddrinfo of " << host << " port " << port << " failed"
-                << std::endl;
+      fprintf(stderr, "getaddrinfo of %s port %s failed\n", host, port);
       continue;
     }
 
@@ -302,8 +298,7 @@ int rpc_open() {
     int opts = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
                           sizeof(int));
     if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-      std::cerr << "Connecting to " << host << " port " << port
-                << " failed: " << strerror(errno) << std::endl;
+      fprintf(stderr, "Connecting to %s port %s failed: %s\n", host, port, strerror(errno));
       exit(1);
     }
 
@@ -375,13 +370,12 @@ void maybe_free_unified_mem(conn_t *conn, void *ptr) {
 CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                              cuuint64_t flags,
                              CUdriverProcAddressQueryResult *symbolStatus) {
-  std::cout << "cuGetProcAddress getting symbol: " << symbol << std::endl;
+  fprintf(stderr, "cuGetProcAddress getting symbol: %s\n", symbol);
 
   auto it = get_function_pointer(symbol);
   if (it != nullptr) {
     *pfn = (void *)(&it);
-    std::cout << "cuGetProcAddress: Mapped symbol '" << symbol
-              << "' to function: " << *pfn << std::endl;
+    fprintf(stderr, "cuGetProcAddress: Mapped symbol '%s' to function: %p\n", symbol, *pfn);
     return CUDA_SUCCESS;
   }
 
@@ -391,8 +385,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
 
-  std::cout << "cuGetProcAddress: Symbol '" << symbol
-            << "' not found in cudaFunctionMap." << std::endl;
+  fprintf(stderr, "cuGetProcAddress: Symbol '%s' not found in cudaFunctionMap.\n", symbol);
 
   // fall back to dlsym
   static void *(*real_dlsym)(void *, const char *) = NULL;
@@ -403,14 +396,13 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
 
   void *libCudaHandle = dlopen("libcuda.so", RTLD_NOW | RTLD_GLOBAL);
   if (!libCudaHandle) {
-    std::cerr << "Error: Failed to open libcuda.so" << std::endl;
+    fprintf(stderr, "Error: Failed to open libcuda.so\n");
     return CUDA_ERROR_UNKNOWN;
   }
 
   *pfn = real_dlsym(libCudaHandle, symbol);
   if (!(*pfn)) {
-    std::cerr << "Error: Could not resolve symbol '" << symbol
-              << "' using dlsym." << std::endl;
+    fprintf(stderr, "Error: Could not resolve symbol '%s' using dlsym.\n", symbol);
     return CUDA_ERROR_UNKNOWN;
   }
 
@@ -418,7 +410,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
 }
 
 void *dlsym(void *handle, const char *name) __THROW {
-  std::cout << "dlsym: " << name << std::endl;
+  fprintf(stderr, "dlsym: %s\n", name);
 
   void *func = get_function_pointer(name);
 

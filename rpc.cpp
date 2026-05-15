@@ -1,7 +1,7 @@
 #include <sys/socket.h>
 
 #include "rpc.h"
-#include <iostream>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -111,9 +111,7 @@ int rpc_wait_for_response(conn_t *conn) {
 int rpc_write_start_request(conn_t *conn, const int op) {
   if (pthread_mutex_lock(&conn->write_mutex) < 0) {
 #ifdef VERBOSE
-    std::cout << "rpc_write_start failed due to rpc_open() < 0 || "
-                 "conns[index].write_mutex lock"
-              << std::endl;
+    fprintf(stderr, "rpc_write_start failed due to rpc_open() < 0 || conns[index].write_mutex lock\n");
 #endif
     return -1;
   }
@@ -132,9 +130,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
 int rpc_write_start_response(conn_t *conn, const int read_id) {
   if (pthread_mutex_lock(&conn->write_mutex) < 0) {
 #ifdef VERBOSE
-    std::cout << "rpc_write_start failed due to rpc_open() < 0 || "
-                 "conns[index].write_mutex lock"
-              << std::endl;
+    fprintf(stderr, "rpc_write_start failed due to rpc_open() < 0 || conns[index].write_mutex lock\n");
 #endif
     return -1;
   }
