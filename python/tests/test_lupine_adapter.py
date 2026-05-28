@@ -161,3 +161,151 @@ def test_duplicate_hosts_are_rejected(lupine_module):
 
     with pytest.raises(lupine.LupineError, match="unique"):
         lupine.connect(host=["host-a:14833", "host-a"])
+
+
+def test_remote_container_runtime_defaults_to_arm64(monkeypatch):
+    import lupine.remote as remote
+
+    monkeypatch.setattr(remote.shutil, "which", lambda name: "/usr/bin/container")
+    monkeypatch.setattr(remote.sys, "platform", "darwin")
+
+    cmd = remote.ContainerRuntime(server="host-a:14833").command("print(1)")
+
+    assert cmd[:8] == [
+        "/usr/bin/container",
+        "run",
+        "--rm",
+        "--interactive",
+        "--progress",
+        "none",
+        "--platform",
+        "linux/arm64",
+    ]
+    assert "--rosetta" not in cmd
+    assert "LUPINE_SERVER=host-a:14833" in cmd
+
+
+def test_remote_container_runtime_is_macos_only(monkeypatch):
+    import lupine.remote as remote
+
+    monkeypatch.setattr(remote.sys, "platform", "linux")
+
+    with pytest.raises(remote.RemoteError, match="only supported on macOS"):
+        remote.ContainerRuntime(server="host-a:14833").command("print(1)")
+
+
+def test_remote_container_runtime_requires_cli(monkeypatch):
+    import lupine.remote as remote
+
+    monkeypatch.setattr(remote.shutil, "which", lambda name: None)
+    monkeypatch.setattr(remote.sys, "platform", "darwin")
+
+    with pytest.raises(remote.RemoteError, match="brew install --cask container"):
+        remote.ContainerRuntime(server="host-a:14833").command("print(1)")
+
+
+def test_remote_container_runtime_starts_services_and_pulls_missing_image(monkeypatch):
+    import lupine.remote as remote
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[1:4] == ["system", "status", "--format"]:
+            return remote.subprocess.CompletedProcess(args, 0, '{"status":"stopped"}', "")
+        return remote.subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(remote.shutil, "which", lambda name: "/usr/bin/container")
+    monkeypatch.setattr(remote.sys, "platform", "darwin")
+    monkeypatch.setattr(remote.subprocess, "run", fake_run)
+
+    remote.ContainerRuntime(server="host-a:14833").prepare()
+
+    assert calls == [
+        ["/usr/bin/container", "system", "status", "--format", "json"],
+        ["/usr/bin/container", "system", "start"],
+        ["/usr/bin/container", "image", "inspect", remote.DEFAULT_IMAGE],
+    ]
+
+
+def test_remote_container_runtime_pulls_missing_image(monkeypatch):
+    import lupine.remote as remote
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[1:3] == ["image", "inspect"]:
+            return remote.subprocess.CompletedProcess(args, 1, "", "missing")
+        return remote.subprocess.CompletedProcess(args, 0, '{"status":"running"}', "")
+
+    monkeypatch.setattr(remote.shutil, "which", lambda name: "/usr/bin/container")
+    monkeypatch.setattr(remote.sys, "platform", "darwin")
+    monkeypatch.setattr(remote.subprocess, "run", fake_run)
+
+    remote.ContainerRuntime(server="host-a:14833").prepare()
+
+    assert calls[-1] == [
+        "/usr/bin/container",
+        "image",
+        "pull",
+        "--progress",
+        "none",
+        "--platform",
+        "linux/arm64",
+        remote.DEFAULT_IMAGE,
+    ]
+
+
+def test_remote_dispatch_mode_forwards_factory_ops(monkeypatch):
+    import torch
+    import lupine.remote as remote
+
+    remote._ensure_registered()
+    session = remote.RemoteSession(server="host-a:14833")
+    calls = []
+
+    def fake_request(payload):
+        calls.append(payload)
+        return {"type": "tensor", "handle": 1, "shape": [2, 3], "dtype": "float32"}
+
+    monkeypatch.setattr(session, "_request", fake_request)
+
+    with remote.RemoteDispatchMode(session):
+        tensor = torch.zeros((2, 3), device=session.device(), dtype=torch.float32)
+
+    assert isinstance(tensor, remote.RemoteTensor)
+    assert calls[0]["op"] == "call"
+    assert calls[0]["packet"] == "zeros"
+    assert calls[0]["kwargs"]["device"] == {"__device__": "cuda:0"}
+    assert calls[0]["kwargs"]["dtype"] == {"__dtype__": "float32"}
+
+
+def test_remote_dispatch_mode_forwards_tensor_ops(monkeypatch):
+    import torch
+    import lupine.remote as remote
+
+    remote._ensure_registered()
+    session = remote.RemoteSession(server="host-a:14833")
+    calls = []
+
+    def fake_request(payload):
+        calls.append(payload)
+        return {"type": "tensor", "handle": 2, "shape": [2], "dtype": "float32"}
+
+    monkeypatch.setattr(session, "_request", fake_request)
+    tensor = remote.RemoteTensor(
+        session=session,
+        handle=1,
+        shape=(2,),
+        dtype=torch.float32,
+        device=session.device(),
+    )
+
+    with remote.RemoteDispatchMode(session):
+        result = tensor + 3
+
+    assert isinstance(result, remote.RemoteTensor)
+    assert calls[0]["packet"] == "add"
+    assert calls[0]["overload"] == "Tensor"
+    assert calls[0]["args"]["__tuple__"][0] == {"__remote_tensor__": 1}
