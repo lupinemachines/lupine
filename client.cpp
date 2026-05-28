@@ -46,6 +46,7 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
+#include "codegen/ptx_fatbin.hpp"
 #include "rpc.h"
 
 pthread_mutex_t conn_mutex;
@@ -59,25 +60,6 @@ std::map<void *, void *> host_funcs;
 
 void add_host_node(void *fn, void *udata);
 
-struct lupine_fatbin_wrapper {
-  uint32_t magic;
-  uint32_t version;
-  const void *data;
-  const void *filename_or_fatbins;
-};
-
-struct lupine_fatbin_header {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t header_size;
-  uint64_t files_size;
-};
-
-static constexpr uint32_t LUPINE_FATBINC_MAGIC = 0x466243b1;
-static constexpr uint32_t LUPINE_FATBIN_MAGIC = 0xba55ed50;
-static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
-static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
-static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr int LUPINE_RPC_cuFuncGetParamLayout = 1000001;
 static constexpr int LUPINE_RPC_cuCtxCreate_v2 = 1000002;
 static constexpr int LUPINE_RPC_cuMemPoolSetAttribute = 1000003;
@@ -4996,20 +4978,20 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
     return false;
   }
 
-  const auto *wrapper = reinterpret_cast<const lupine_fatbin_wrapper *>(image);
+  const auto *wrapper = reinterpret_cast<const lupine::fatbin_wrapper *>(image);
   const void *fatbin = image;
-  if (wrapper->magic == LUPINE_FATBINC_MAGIC &&
+  if (wrapper->magic == lupine::kFatbinWrapperMagic &&
       (wrapper->version == 1 || wrapper->version == 2) &&
       wrapper->data != nullptr) {
     fatbin = wrapper->data;
-    *kind = wrapper->version == 2 ? LUPINE_MODULE_IMAGE_FATBINC_V2
-                                  : LUPINE_MODULE_IMAGE_FATBINC_V1;
+    *kind = wrapper->version == 2 ? lupine::kModuleImageFatbinWrapperV2
+                                  : lupine::kModuleImageFatbinWrapperV1;
   } else {
-    *kind = LUPINE_MODULE_IMAGE_FATBIN_RAW;
+    *kind = lupine::kModuleImageFatbinRaw;
   }
 
-  const auto *header = reinterpret_cast<const lupine_fatbin_header *>(fatbin);
-  if (header->magic != LUPINE_FATBIN_MAGIC || header->header_size == 0) {
+  const auto *header = reinterpret_cast<const lupine::fatbin_header *>(fatbin);
+  if (header->magic != lupine::kFatbinMagic || header->header_size == 0) {
     const auto *elf = static_cast<const unsigned char *>(image);
     if (std::memcmp(elf, ELFMAG, SELFMAG) == 0 && elf[EI_CLASS] == ELFCLASS64) {
       const auto *ehdr = reinterpret_cast<const Elf64_Ehdr *>(image);
@@ -5042,7 +5024,7 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
           }
         }
       }
-      *kind = LUPINE_MODULE_IMAGE_FATBIN_RAW;
+      *kind = lupine::kModuleImageFatbinRaw;
       bytes->assign(elf, elf + image_size);
       return true;
     }
@@ -5055,7 +5037,7 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
     }
     if (std::strncmp(ptx_start, ".version", 8) == 0 ||
         std::strncmp(ptx_start, "//", 2) == 0) {
-      *kind = LUPINE_MODULE_IMAGE_FATBIN_RAW;
+      *kind = lupine::kModuleImageFatbinRaw;
       bytes->assign(reinterpret_cast<const unsigned char *>(ptx),
                     reinterpret_cast<const unsigned char *>(ptx) +
                         std::strlen(ptx) + 1);
@@ -5161,7 +5143,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   if (!lupine_pack_module_image(code, &kind, &image_bytes)) {
     if (lupine_trace_enabled()) {
       const auto *wrapper =
-          reinterpret_cast<const lupine_fatbin_wrapper *>(code);
+          reinterpret_cast<const lupine::fatbin_wrapper *>(code);
       std::cerr << "LUPINE cuLibraryLoadData could not pack image"
                 << " magic=0x" << std::hex << wrapper->magic << " version=0x"
                 << wrapper->version << std::dec << std::endl;

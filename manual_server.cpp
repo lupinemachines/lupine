@@ -29,6 +29,7 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "codegen/ptx_fatbin.hpp"
 #include "manual_server.h"
 #include "rpc.h"
 
@@ -38,17 +39,6 @@
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
                                            CUdevice dev);
 
-struct lupine_fatbin_wrapper {
-  uint32_t magic;
-  uint32_t version;
-  const void *data;
-  const void *filename_or_fatbins;
-};
-
-static constexpr uint32_t LUPINE_FATBINC_MAGIC = 0x466243b1;
-static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
-static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
-static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
 static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
 
@@ -694,10 +684,10 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
     return -1;
   }
 
-  if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
-      kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
+  if (kind == lupine::kModuleImageFatbinWrapperV1 ||
+      kind == lupine::kModuleImageFatbinWrapperV2) {
     result = cuModuleLoadFatBinary(&module, image.data());
-  } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
+  } else if (kind == lupine::kModuleImageFatbinRaw) {
     result = cuModuleLoadData(&module, image.data());
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
@@ -733,17 +723,17 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     return -1;
   }
 
-  if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
-      kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
-    lupine_fatbin_wrapper wrapper = {
-        LUPINE_FATBINC_MAGIC,
-        kind == LUPINE_MODULE_IMAGE_FATBINC_V2 ? 2U : 1U,
+  if (kind == lupine::kModuleImageFatbinWrapperV1 ||
+      kind == lupine::kModuleImageFatbinWrapperV2) {
+    lupine::fatbin_wrapper wrapper = {
+        lupine::kFatbinWrapperMagic,
+        kind == lupine::kModuleImageFatbinWrapperV2 ? 2U : 1U,
         image.data(),
         nullptr,
     };
     result = cuLibraryLoadData(&library, &wrapper, nullptr, nullptr, 0, nullptr,
                                nullptr, 0);
-  } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
+  } else if (kind == lupine::kModuleImageFatbinRaw) {
     result = cuLibraryLoadData(&library, image.data(), nullptr, nullptr, 0,
                                nullptr, nullptr, 0);
   } else {

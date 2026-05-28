@@ -423,7 +423,7 @@ run() {
 test_ci() {
   cmake .
   cmake --build .
-  ctest --output-on-failure -R h2_test
+  ctest --output-on-failure -R 'h2_test|fatbin_layout_test'
 
   set_paths
   
