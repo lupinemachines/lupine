@@ -1,0 +1,55 @@
+ARG DEBIAN_FRONTEND=noninteractive
+ARG UBUNTU_VERSION=24.04
+ARG CUDA_VERSION=13.1.0
+
+# syntax=docker/dockerfile:1.7
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS lupine-build
+
+ARG DEBIAN_FRONTEND
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        g++ \
+        gcc \
+        libnghttp2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/lupine-src
+COPY . /opt/lupine-src
+
+RUN cmake -S /opt/lupine-src -B /opt/lupine-src/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    && cmake --build /opt/lupine-src/build --parallel --target lupine_driver lupine_nvml \
+    && mkdir -p /opt/lupine/lib \
+    && cp /opt/lupine-src/build/libcuda.so.1 /opt/lupine/lib/libcuda.so.1 \
+    && cp /opt/lupine-src/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1 \
+    && ln -sf libcuda.so.1 /opt/lupine/lib/libcuda.so \
+    && ln -sf libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so
+
+FROM ubuntu:${UBUNTU_VERSION}
+
+ARG DEBIAN_FRONTEND
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libnghttp2-14 \
+        python3 \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
+    --index-url https://download.pytorch.org/whl/cu130 \
+    torch
+
+COPY --from=lupine-build /opt/lupine/lib /opt/lupine/lib
+
+ENV LUPINE_LIBCUDA=/opt/lupine/lib/libcuda.so.1
+ENV LUPINE_LIB=/opt/lupine/lib/libcuda.so.1
+ENV LD_LIBRARY_PATH=/opt/lupine/lib:${LD_LIBRARY_PATH}

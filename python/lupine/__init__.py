@@ -250,6 +250,29 @@ def synchronize(index: int = 0) -> None:
     torch.cuda.synchronize(_cuda_device(index, require_available=False))
 
 
+def remote(
+    server: str | None = None,
+    *,
+    image: str | None = None,
+    runtime: str = "auto",
+    platform: str = "linux/arm64",
+    rosetta: bool = False,
+    env: dict[str, str] | None = None,
+) -> Any:
+    """Create a session-scoped remote PyTorch worker frontend."""
+
+    from .remote import DEFAULT_IMAGE, remote as _remote
+
+    return _remote(
+        server=server,
+        image=image or DEFAULT_IMAGE,
+        runtime=runtime,
+        platform=platform,
+        rosetta=rosetta,
+        env=env,
+    )
+
+
 __all__ = [
     "DEFAULT_PORT",
     "LupineError",
@@ -261,6 +284,7 @@ __all__ = [
     "devices",
     "is_available",
     "is_configured",
+    "remote",
     "servers",
     "synchronize",
 ]
