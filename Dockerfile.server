@@ -1,0 +1,15 @@
+ARG CUDA_VERSION=12.6.2
+ARG UBUNTU_VERSION=24.04
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
+WORKDIR /build
+COPY server.cu .
+COPY codegen codegen
+RUN nvcc -o server -lnvidia-ml -lcuda server.cu codegen/gen_server.cpp codegen/manual_server.cpp
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+ENV SCUDA_PORT=14833
+WORKDIR /app
+COPY --from=builder /build/server /app/
+EXPOSE $SCUDA_PORT
+CMD ["/app/server"]
