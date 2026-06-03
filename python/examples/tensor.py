@@ -22,11 +22,18 @@ def prompt_endpoint() -> str:
 
 with lupine.connect(host=prompt_endpoint()) as session:
     device = session.device()
-    props = torch.cuda.get_device_properties(device)
+    info = getattr(session, "info", None)
     x = torch.arange(8, device=device, dtype=torch.float32)
     y = (x * 2).cpu()
-    print("cuda available:", torch.cuda.is_available())
+    if info is None:
+        props = torch.cuda.get_device_properties(device)
+        info = {
+            "cuda_available": torch.cuda.is_available(),
+            "device_count": torch.cuda.device_count(),
+            "gpu": props.name,
+        }
+    print("cuda available:", info["cuda_available"])
     print("device:", device)
-    print("count:", torch.cuda.device_count())
-    print("gpu:", props.name)
+    print("count:", info["device_count"])
+    print("gpu:", info["gpu"])
     print("result:", y.tolist())

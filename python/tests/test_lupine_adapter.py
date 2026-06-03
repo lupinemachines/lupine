@@ -48,6 +48,7 @@ class FakeTorch(types.SimpleNamespace):
     def __init__(self):
         super().__init__()
         self.cuda = FakeCuda()
+        self.version = types.SimpleNamespace(cuda="fake-cuda")
 
     def device(self, kind, index=None):
         return FakeDevice(kind, index)
@@ -94,6 +95,50 @@ def test_connect_accepts_multiple_hosts_in_order(lupine_module):
         assert session.servers == ("host-a:15000", "host-b:16000")
         assert session.devices() == [FakeDevice("cuda", 0), FakeDevice("cuda", 1)]
         assert session.device(1) == FakeDevice("cuda", 1)
+
+
+def test_connect_uses_sidecar_when_torch_has_no_cuda_backend(lupine_module, monkeypatch):
+    lupine, fake_torch = lupine_module
+    fake_torch.version.cuda = None
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(lupine.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        lupine,
+        "sidecar",
+        lambda **kwargs: calls.append(kwargs) or sentinel,
+    )
+
+    assert lupine.connect(host="host-a") is sentinel
+    assert calls == [{"server": "host-a:14833"}]
+
+
+def test_connect_sidecar_fallback_rejects_multiple_hosts(lupine_module, monkeypatch):
+    lupine, fake_torch = lupine_module
+    fake_torch.version.cuda = None
+    monkeypatch.setattr(lupine.sys, "platform", "darwin")
+
+    with pytest.raises(lupine.LupineError, match="supports one host"):
+        lupine.connect(host=["host-a:14833", "host-b:14833"])
+
+
+def test_connect_sidecar_fallback_rejects_libcuda(lupine_module, monkeypatch, tmp_path):
+    lupine, fake_torch = lupine_module
+    fake_torch.version.cuda = None
+    monkeypatch.setattr(lupine.sys, "platform", "darwin")
+
+    with pytest.raises(lupine.LupineError, match="libcuda"):
+        lupine.connect(host="host-a", libcuda=tmp_path / "libcuda.so.1")
+
+
+def test_connect_requires_cuda_backend_off_macos(lupine_module, monkeypatch):
+    lupine, fake_torch = lupine_module
+    fake_torch.version.cuda = None
+    monkeypatch.setattr(lupine.sys, "platform", "linux")
+
+    with pytest.raises(lupine.LupineError, match="automatic LUPINE sidecar"):
+        lupine.connect(host="host-a")
 
 
 def test_connect_restores_env_when_cuda_was_not_initialized(lupine_module, monkeypatch):

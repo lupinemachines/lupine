@@ -7,6 +7,7 @@ it.
 
 import os
 import ctypes
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,13 @@ def _torch() -> Any:
 def _cuda_initialized() -> bool:
     try:
         return bool(_torch().cuda.is_initialized())
+    except LupineError:
+        return False
+
+
+def _has_native_cuda_backend() -> bool:
+    try:
+        return _torch().version.cuda is not None
     except LupineError:
         return False
 
@@ -170,7 +178,7 @@ def connect(
     port: int | None = None,
     require_available: bool = False,
     libcuda: str | os.PathLike[str] | None = None,
-) -> Session:
+) -> Any:
     """Create a LUPINE session for one or more remote GPU hosts.
 
     Use the session before any PyTorch CUDA operation:
@@ -178,10 +186,26 @@ def connect(
     ``with lupine.connect(host=["a:14833", "b:14833"]) as s:``
 
     ``s.devices()`` then returns ``[torch.device("cuda:0"), torch.device("cuda:1")]``.
+
+    On macOS with a CPU-only PyTorch build, ``connect()`` automatically returns
+    a sidecar session backed by Apple's container runtime.
     """
 
+    servers = _normalize_hosts(host, port)
+    if not _has_native_cuda_backend():
+        if sys.platform != "darwin":
+            raise LupineError(
+                "PyTorch is not compiled with CUDA and automatic LUPINE sidecar "
+                "fallback is only supported on macOS."
+            )
+        if len(servers) != 1:
+            raise LupineError("automatic LUPINE sidecar fallback supports one host")
+        if libcuda is not None:
+            raise LupineError("libcuda is only supported with native CUDA PyTorch")
+        return sidecar(server=servers[0])
+
     return Session(
-        servers=_normalize_hosts(host, port),
+        servers=servers,
         require_available=require_available,
         libcuda=libcuda,
     )
