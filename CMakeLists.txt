@@ -107,8 +107,13 @@ add_executable(h2_test
     ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
 )
 target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY})
+
+add_executable(fatbin_layout_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/fatbin_layout_test.cpp
+)
 enable_testing()
 add_test(NAME h2_test COMMAND h2_test)
+add_test(NAME fatbin_layout_test COMMAND fatbin_layout_test)
 
 set_source_files_properties(
     ${SERVER_SOURCES}
