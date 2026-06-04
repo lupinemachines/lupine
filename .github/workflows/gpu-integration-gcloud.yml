@@ -1,0 +1,319 @@
+name: GPU Integration on GCE
+
+# Expected repository variables:
+#   GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+#
+# Keep GCP_SERVICE_ACCOUNT on a custom role rather than project Owner/Editor.
+# It should be bound through a Workload Identity Provider condition restricted
+# to this repository's numeric GitHub IDs, this workflow path, and trusted refs.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      zone:
+        description: GCE zone with NVIDIA T4 quota.
+        required: true
+        default: us-central1-a
+      network:
+        description: GCE VPC network name.
+        required: true
+        default: default
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: gpu-integration-gce
+  cancel-in-progress: false
+
+jobs:
+  gpu-integration:
+    name: CUDA samples and PyTorch on GCE T4
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_ZONE: ${{ inputs.zone || 'us-central1-a' }}
+      GCP_NETWORK: ${{ inputs.network || 'default' }}
+      MACHINE_TYPE: n1-standard-4
+      CUDA_VERSION: 12.9.1
+      UBUNTU_VERSION: "24.04"
+      PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
+      VM_IMAGE_PROJECT: ml-images
+      VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
+      VM_MAX_RUN_DURATION: 10m
+      USE_SPOT: "true"
+      VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      FIREWALL_ALLOW_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-allow
+      FIREWALL_DENY_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-deny
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            /opt/hostedtoolcache \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet \
+            "${AGENT_TOOLSDIRECTORY:-}" || true
+          docker system prune -af || true
+          df -h
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Validate Google Cloud configuration
+        run: |
+          set -euo pipefail
+          test -n "$GCP_PROJECT_ID"
+          test -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
+          test -n "${{ vars.GCP_SERVICE_ACCOUNT }}"
+          test "$MACHINE_TYPE" = n1-standard-4
+          test "$VM_IMAGE_PROJECT" = ml-images
+          test "$VM_IMAGE_FAMILY" = common-cu129-ubuntu-2404-nvidia-580
+          test "$VM_MAX_RUN_DURATION" = 10m
+
+      - name: Prepare SSH key and runner allowlist
+        run: |
+          set -euo pipefail
+          ssh_dir="$RUNNER_TEMP/gce-ssh"
+          mkdir -p "$ssh_dir"
+          ssh-keygen -t ed25519 -N '' -C "gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -f "$ssh_dir/id_ed25519"
+          chmod 700 "$ssh_dir"
+          chmod 600 "$ssh_dir/id_ed25519"
+
+          runner_ip="$(curl -fsS https://api.ipify.org)"
+          test -n "$runner_ip"
+
+          {
+            echo "SSH_DIR=$ssh_dir"
+            echo "RUNNER_IP=$runner_ip"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare client-side test environment
+        run: |
+          set -euo pipefail
+          image="nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}"
+
+          docker pull "$image"
+          docker run --rm \
+            -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
+            -e CUDA_HOME=/usr/local/cuda \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            "$image" \
+            bash -lc '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                bash \
+                build-essential \
+                ca-certificates \
+                cmake \
+                git \
+                libnghttp2-dev \
+                ninja-build \
+                openssh-client \
+                python3 \
+                python3-pip \
+                python3-venv
+              rm -rf /var/lib/apt/lists/*
+
+              python3 -m venv /workspace/.venv-pytorch312
+              /workspace/.venv-pytorch312/bin/pip install --no-cache-dir --upgrade pip
+              /workspace/.venv-pytorch312/bin/pip install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch
+
+              cmake -S /workspace -B /workspace/build \
+                -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+              cmake --build /workspace/build --parallel \
+                --target lupine_driver lupine_nvml lupine_driver_server
+              ln -sf libcuda.so.1 /workspace/build/libcuda.so
+              ln -sf libnvidia-ml.so.1 /workspace/build/libnvidia-ml.so
+
+              BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=compliance \
+                /workspace/test/run_cuda_samples.sh
+            '
+
+      - name: Create locked-down firewall rules
+        run: |
+          set -euo pipefail
+          gcloud compute firewall-rules create "$FIREWALL_ALLOW_RULE" \
+            --project="$GCP_PROJECT_ID" \
+            --network="$GCP_NETWORK" \
+            --direction=INGRESS \
+            --priority=800 \
+            --action=ALLOW \
+            --rules=tcp:22,tcp:14900-16999,tcp:20100-20299 \
+            --source-ranges="$RUNNER_IP/32" \
+            --target-tags="$VM_TAG"
+
+          gcloud compute firewall-rules create "$FIREWALL_DENY_RULE" \
+            --project="$GCP_PROJECT_ID" \
+            --network="$GCP_NETWORK" \
+            --direction=INGRESS \
+            --priority=900 \
+            --action=DENY \
+            --rules=tcp:1-65535,udp:1-65535,icmp,esp,ah,sctp \
+            --source-ranges=0.0.0.0/0 \
+            --target-tags="$VM_TAG"
+
+      - name: Create T4 VM
+        run: |
+          set -euo pipefail
+          startup_script="$RUNNER_TEMP/gce-startup.sh"
+          cat > "$startup_script" <<'EOF'
+          #!/usr/bin/env bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates libnghttp2-14
+          rm -rf /var/lib/apt/lists/*
+          EOF
+
+          create_args=(
+            "$VM_NAME"
+            "--project=$GCP_PROJECT_ID"
+            "--zone=$GCP_ZONE"
+            "--machine-type=$MACHINE_TYPE"
+            "--network=$GCP_NETWORK"
+            "--tags=$VM_TAG"
+            "--image-family=$VM_IMAGE_FAMILY"
+            "--image-project=$VM_IMAGE_PROJECT"
+            "--boot-disk-size=100GB"
+            "--boot-disk-type=pd-balanced"
+            "--accelerator=type=nvidia-tesla-t4,count=1"
+            "--maintenance-policy=TERMINATE"
+            "--max-run-duration=$VM_MAX_RUN_DURATION"
+            "--instance-termination-action=DELETE"
+            "--no-service-account"
+            "--metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat "$SSH_DIR/id_ed25519.pub")"
+            "--metadata-from-file=startup-script=$startup_script"
+            "--shielded-vtpm"
+            "--shielded-integrity-monitoring"
+            "--no-shielded-secure-boot"
+          )
+
+          if [[ "$USE_SPOT" == "true" ]]; then
+            create_args+=("--provisioning-model=SPOT")
+          fi
+
+          gcloud compute instances create "${create_args[@]}"
+
+          vm_ip="$(gcloud compute instances describe "$VM_NAME" \
+            --project="$GCP_PROJECT_ID" \
+            --zone="$GCP_ZONE" \
+            --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
+          test -n "$vm_ip"
+          echo "VM_IP=$vm_ip" >> "$GITHUB_ENV"
+
+      - name: Wait for SSH and NVIDIA driver
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=accept-new
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+            -o ConnectTimeout=10
+            "gha@$VM_IP"
+          )
+
+          for _ in $(seq 1 120); do
+            if "${ssh_base[@]}" 'echo ready' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+
+          "${ssh_base[@]}" '
+            deadline=$((SECONDS + 1200))
+            until command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "NVIDIA driver did not become ready before the timeout" >&2
+                exit 1
+              fi
+              sleep 15
+            done
+          '
+
+      - name: Run CUDA samples and PyTorch compliance
+        run: |
+          set -euo pipefail
+          image="nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}"
+
+          docker run --rm \
+            --network host \
+            -e SERVER_HOST="$VM_IP" \
+            -e SERVER_USER=gha \
+            -e SERVER_SSH_TARGET="gha@$VM_IP" \
+            -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
+            -e CUDA_HOME=/usr/local/cuda \
+            -v "$PWD:/workspace" \
+            -v "$SSH_DIR:/root/.ssh:ro" \
+            -w /workspace \
+            "$image" \
+            bash -lc '
+              set -euo pipefail
+              export SSH_OPTS="-i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/known_hosts"
+              export SAMPLE_SUITE=compliance
+              export BUILD_SAMPLES=0
+              export SAMPLE_TIMEOUT=20
+              export TEST_TIMEOUT=90
+
+              /workspace/test/run_cuda_samples.sh
+              /workspace/test/run_pytorch_lupine_tests.sh
+            '
+
+      - name: Upload compliance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-integration-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test/cuda-samples/results/
+            test/pytorch/results/
+          if-no-files-found: ignore
+
+      - name: Refresh Google Cloud credentials for cleanup
+        if: always()
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Tear down GCE resources
+        if: always()
+        run: |
+          gcloud compute instances delete "$VM_NAME" \
+            --project="$GCP_PROJECT_ID" \
+            --zone="$GCP_ZONE" \
+            --quiet || true
+          gcloud compute firewall-rules delete "$FIREWALL_ALLOW_RULE" \
+            --project="$GCP_PROJECT_ID" \
+            --quiet || true
+          gcloud compute firewall-rules delete "$FIREWALL_DENY_RULE" \
+            --project="$GCP_PROJECT_ID" \
+            --quiet || true
