@@ -356,15 +356,25 @@ fi
 
 if [[ "$needs_build" == "1" ]]; then
   if [[ "$cmake_samples" == "1" ]]; then
-    if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
-      # shellcheck disable=SC2086
-      cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
-    fi
     if [[ "$selected_sample_build" == "1" ]]; then
       for sample in "${samples[@]}"; do
-        cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$JOBS" --target "$sample" || true
+        sample_srcdir="$(resolve_sample_srcdir "$sample" || true)"
+        if [[ -z "$sample_srcdir" ]]; then
+          echo "missing sample source dir: $sample" >&2
+          continue
+        fi
+        sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$sample"
+        if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
+          # shellcheck disable=SC2086
+          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+        fi
+        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" || true
       done
     else
+      if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
+        # shellcheck disable=SC2086
+        cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+      fi
       cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$JOBS"
     fi
   else
