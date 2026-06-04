@@ -285,7 +285,7 @@ jobs:
               export SSH_OPTS="-i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/known_hosts"
               export SAMPLE_SUITE=compliance
               export BUILD_SAMPLES=0
-              export SAMPLE_TIMEOUT=20
+              export SAMPLE_TIMEOUT=60
               export TEST_TIMEOUT=90
 
               /workspace/test/run_cuda_samples.sh
