@@ -138,6 +138,7 @@ jobs:
             cuda-driver-dev-12-9 \
             cuda-nvcc-12-9 \
             cuda-nvml-dev-12-9 \
+            cuda-profiler-api-12-9 \
             libcublas-dev-12-9
 
           echo "CUDA_HOME=$CUDA_HOME" >> "$GITHUB_ENV"
