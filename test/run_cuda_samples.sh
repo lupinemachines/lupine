@@ -311,6 +311,7 @@ prepare_sample_runtime_files() {
 }
 
 explicit_samples=0
+build_full_sample_tree=0
 samples=("$@")
 if [[ ${#samples[@]} -eq 0 ]]; then
   case "$SAMPLE_SUITE" in
@@ -319,6 +320,7 @@ if [[ ${#samples[@]} -eq 0 ]]; then
       ;;
     extended|all|default)
       samples=("${DEFAULT_SAMPLES[@]}")
+      build_full_sample_tree=1
       ;;
     core)
       samples=("${CORE_SAMPLES[@]}")
@@ -336,7 +338,7 @@ else
   explicit_samples=1
 fi
 selected_sample_build=0
-if [[ "$explicit_samples" == "1" && ${#samples[@]} -gt 0 ]]; then
+if [[ "$build_full_sample_tree" != "1" && ${#samples[@]} -gt 0 ]]; then
   selected_sample_build=1
 fi
 
