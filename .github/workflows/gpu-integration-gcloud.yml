@@ -207,6 +207,7 @@ jobs:
             "--max-run-duration=$VM_MAX_RUN_DURATION"
             "--instance-termination-action=DELETE"
             "--no-service-account"
+            "--no-scopes"
             "--metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat "$SSH_DIR/id_ed25519.pub")"
             "--metadata-from-file=startup-script=$startup_script"
             "--shielded-vtpm"
