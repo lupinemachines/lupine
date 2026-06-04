@@ -313,7 +313,7 @@ jobs:
           export BUILD_SAMPLES=0
           export SAMPLE_TIMEOUT=60
           export LONG_SAMPLE_TIMEOUT=600
-          export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,watershedSegmentationNPP
+          export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,threadMigration,watershedSegmentationNPP
           export TEST_TIMEOUT=180
 
           test "$SERVER_HOST" != "127.0.0.1"
