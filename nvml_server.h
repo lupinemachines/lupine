@@ -3,45 +3,15 @@
 
 #include "rpc.h"
 
+#include "codegen/gen_nvml_server.h"
+
 int handle_nvmlInit_v2(conn_t *conn);
 int handle_nvmlInitWithFlags(conn_t *conn);
 int handle_nvmlShutdown(conn_t *conn);
-int handle_nvmlSystemGetDriverVersion(conn_t *conn);
-int handle_nvmlSystemGetNVMLVersion(conn_t *conn);
-int handle_nvmlSystemGetCudaDriverVersion(conn_t *conn);
-int handle_nvmlSystemGetCudaDriverVersion_v2(conn_t *conn);
 int handle_nvmlDeviceGetCount_v2(conn_t *conn);
 int handle_nvmlDeviceGetHandleByIndex_v2(conn_t *conn);
-int handle_nvmlDeviceGetHandleByUUID(conn_t *conn);
-int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn);
 int handle_nvmlDeviceGetName(conn_t *conn);
-int handle_nvmlDeviceGetUUID(conn_t *conn);
 int handle_nvmlDeviceGetIndex(conn_t *conn);
-int handle_nvmlDeviceGetMinorNumber(conn_t *conn);
-int handle_nvmlDeviceGetPciInfo_v3(conn_t *conn);
-int handle_nvmlDeviceGetMemoryInfo(conn_t *conn);
-int handle_nvmlDeviceGetUtilizationRates(conn_t *conn);
-int handle_nvmlDeviceGetTemperature(conn_t *conn);
-int handle_nvmlDeviceGetPowerUsage(conn_t *conn);
-int handle_nvmlDeviceGetPowerManagementLimit(conn_t *conn);
-int handle_nvmlDeviceGetClockInfo(conn_t *conn);
-int handle_nvmlDeviceGetMaxClockInfo(conn_t *conn);
-int handle_nvmlDeviceGetPerformanceState(conn_t *conn);
-int handle_nvmlDeviceGetComputeMode(conn_t *conn);
-int handle_nvmlDeviceGetPersistenceMode(conn_t *conn);
-int handle_nvmlDeviceGetFanSpeed(conn_t *conn);
-int handle_nvmlDeviceGetBrand(conn_t *conn);
-int handle_nvmlDeviceGetVbiosVersion(conn_t *conn);
-int handle_nvmlDeviceGetSerial(conn_t *conn);
-int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn);
-int handle_nvmlDeviceGetDisplayMode(conn_t *conn);
-int handle_nvmlDeviceGetDisplayActive(conn_t *conn);
-int handle_nvmlDeviceGetCurrPcieLinkGeneration(conn_t *conn);
-int handle_nvmlDeviceGetCurrPcieLinkWidth(conn_t *conn);
-int handle_nvmlDeviceGetMaxPcieLinkGeneration(conn_t *conn);
-int handle_nvmlDeviceGetMaxPcieLinkWidth(conn_t *conn);
-int handle_nvmlDeviceGetPcieThroughput(conn_t *conn);
-int handle_nvmlDeviceGetPcieReplayCounter(conn_t *conn);
 int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn);
 int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn);
 int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn);
@@ -52,18 +22,5 @@ int handle_nvmlEventSetCreate(conn_t *conn);
 int handle_nvmlEventSetFree(conn_t *conn);
 int handle_nvmlEventSetWait_v2(conn_t *conn);
 int handle_nvmlDeviceRegisterEvents(conn_t *conn);
-int handle_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn);
-int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn);
-int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn);
-int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn);
-int handle_nvmlDeviceGetEccMode(conn_t *conn);
-int handle_nvmlDeviceGetTemperatureV(conn_t *conn);
-int handle_nvmlDeviceGetEnforcedPowerLimit(conn_t *conn);
-int handle_nvmlDeviceGetMemoryInfo_v2(conn_t *conn);
-int handle_nvmlDeviceGetMigMode(conn_t *conn);
-int handle_nvmlDeviceGetVirtualizationMode(conn_t *conn);
-int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn);
-int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn);
-int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn);
 
 #endif

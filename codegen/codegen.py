@@ -152,6 +152,743 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceGetNvLinkRemotePciInfo_v2",
 ]
 
+NVML_CODEGEN_FUNCTIONS = []
+
+
+def nvml_codegen_function(name, params, client_body, server_body):
+    NVML_CODEGEN_FUNCTIONS.append(
+        {
+            "name": name,
+            "params": params,
+            "client_body": client_body,
+            "server_body": server_body,
+        }
+    )
+
+
+def nvml_client_string_no_device(name, value_name):
+    return f"""conn_t *_lupine_conn = connection();
+nvmlReturn_t _lupine_result = rpc_error();
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &length, sizeof(length)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    (length != 0 && rpc_read(_lupine_conn, {value_name}, length) < 0) ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+return _lupine_result;"""
+
+
+def nvml_server_string_no_device(name):
+    return f"""unsigned int _lupine_length = 0;
+if (rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+std::vector<char> _lupine_buffer(std::max(1u, _lupine_length), '\\0');
+using _lupine_fn_t = nvmlReturn_t (*)(char *, unsigned int);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found()
+                           : _lupine_fn(_lupine_buffer.data(), _lupine_length);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    (_lupine_length != 0 &&
+     rpc_write(conn, _lupine_buffer.data(), _lupine_length) < 0) ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_int_out(name, value_name):
+    return f"""conn_t *_lupine_conn = connection();
+nvmlReturn_t _lupine_result = rpc_error();
+int _lupine_value = 0;
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_int_out(name):
+    return f"""int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+int _lupine_value = 0;
+using _lupine_fn_t = nvmlReturn_t (*)(int *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found() : _lupine_fn(&_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_from_string(name, value_name):
+    return f"""conn_t *_lupine_conn = connection();
+nvmlReturn_t _lupine_result = rpc_error();
+nvmlDevice_t _lupine_device = nullptr;
+unsigned int _lupine_length =
+    {value_name} == nullptr ? 0 : static_cast<unsigned int>(strlen({value_name}) + 1);
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &_lupine_length, sizeof(_lupine_length)) < 0 ||
+    (_lupine_length != 0 &&
+     rpc_write(_lupine_conn, {value_name}, _lupine_length) < 0) ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if (device != nullptr) {{
+  *device = _lupine_device;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_from_string(name):
+    return f"""unsigned int _lupine_length = 0;
+if (rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
+  return -1;
+}}
+std::vector<char> _lupine_value(std::max(1u, _lupine_length), '\\0');
+if (_lupine_length != 0 &&
+    rpc_read(conn, _lupine_value.data(), _lupine_length) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+nvmlDevice_t _lupine_device = nullptr;
+using _lupine_fn_t = nvmlReturn_t (*)(const char *, nvmlDevice_t *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_value.data(), &_lupine_device);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_string(name, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &length, sizeof(length)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    (length != 0 && rpc_read(_lupine_conn, {value_name}, length) < 0) ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_string(name):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+unsigned int _lupine_length = 0;
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+std::vector<char> _lupine_buffer(std::max(1u, _lupine_length), '\\0');
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, _lupine_buffer.data(), _lupine_length);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    (_lupine_length != 0 &&
+     rpc_write(conn, _lupine_buffer.data(), _lupine_length) < 0) ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_struct(name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {value_name} == nullptr ? {out_type}{{}} : *{value_name};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_struct(name, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{out_type} _lupine_value = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_value, sizeof(_lupine_value)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found()
+                           : _lupine_fn(_lupine_device, &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_value(name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_value(name, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found()
+                           : _lupine_fn(_lupine_device, &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_arg_value(name, arg_name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &{arg_name}, sizeof({arg_name})) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_arg_value(name, arg_type, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{arg_type} _lupine_arg = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_arg, sizeof(_lupine_arg)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {arg_type}, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result = _lupine_fn == nullptr
+                                   ? function_not_found()
+                                   : _lupine_fn(_lupine_device, _lupine_arg,
+                                                &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_two_args_value(name, first_name, second_name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &{first_name}, sizeof({first_name})) < 0 ||
+    rpc_write(_lupine_conn, &{second_name}, sizeof({second_name})) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_two_args_value(name, first_type, second_type, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t =
+    nvmlReturn_t (*)(nvmlDevice_t, {first_type}, {second_type}, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
+                     &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_three_args_value(
+    name, first_name, second_name, third_name, out_type, value_name
+):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &{first_name}, sizeof({first_name})) < 0 ||
+    rpc_write(_lupine_conn, &{second_name}, sizeof({second_name})) < 0 ||
+    rpc_write(_lupine_conn, &{third_name}, sizeof({third_name})) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_three_args_value(
+    name, first_type, second_type, third_type, out_type
+):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+{third_type} _lupine_third = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
+    rpc_read(conn, &_lupine_third, sizeof(_lupine_third)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {first_type}, {second_type},
+                                      {third_type}, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
+                     _lupine_third, &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_two_values(name, first_name, second_name, first_type, second_type):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({first_name} != nullptr) {{
+  *{first_name} = _lupine_first;
+}}
+if ({second_name} != nullptr) {{
+  *{second_name} = _lupine_second;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_two_values(name, first_type, second_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+using _lupine_fn_t =
+    nvmlReturn_t (*)(nvmlDevice_t, {first_type} *, {second_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, &_lupine_first, &_lupine_second);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_write(conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_string_no_device(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"char *{value_name}, unsigned int length",
+        nvml_client_string_no_device(name, value_name),
+        nvml_server_string_no_device(name),
+    )
+
+
+def nvml_int_out(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"int *{value_name}",
+        nvml_client_int_out(name, value_name),
+        nvml_server_int_out(name),
+    )
+
+
+def nvml_device_from_string(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"const char *{value_name}, nvmlDevice_t *device",
+        nvml_client_device_from_string(name, value_name),
+        nvml_server_device_from_string(name),
+    )
+
+
+def nvml_device_string(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, char *{value_name}, unsigned int length",
+        nvml_client_device_string(name, value_name),
+        nvml_server_device_string(name),
+    )
+
+
+def nvml_device_struct(name, out_type, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {out_type} *{value_name}",
+        nvml_client_device_struct(name, out_type, value_name),
+        nvml_server_device_struct(name, out_type),
+    )
+
+
+def nvml_device_value(name, out_type, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {out_type} *{value_name}",
+        nvml_client_device_value(name, out_type, value_name),
+        nvml_server_device_value(name, out_type),
+    )
+
+
+def nvml_device_arg_value(name, arg_type, arg_name, out_type, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {arg_type} {arg_name}, {out_type} *{value_name}",
+        nvml_client_device_arg_value(name, arg_name, out_type, value_name),
+        nvml_server_device_arg_value(name, arg_type, out_type),
+    )
+
+
+def nvml_device_two_args_value(
+    name, first_type, first_name, second_type, second_name, out_type, value_name
+):
+    nvml_codegen_function(
+        name,
+        (
+            f"nvmlDevice_t device, {first_type} {first_name}, "
+            f"{second_type} {second_name}, {out_type} *{value_name}"
+        ),
+        nvml_client_device_two_args_value(
+            name, first_name, second_name, out_type, value_name
+        ),
+        nvml_server_device_two_args_value(name, first_type, second_type, out_type),
+    )
+
+
+def nvml_device_three_args_value(
+    name,
+    first_type,
+    first_name,
+    second_type,
+    second_name,
+    third_type,
+    third_name,
+    out_type,
+    value_name,
+):
+    nvml_codegen_function(
+        name,
+        (
+            f"nvmlDevice_t device, {first_type} {first_name}, "
+            f"{second_type} {second_name}, {third_type} {third_name}, "
+            f"{out_type} *{value_name}"
+        ),
+        nvml_client_device_three_args_value(
+            name, first_name, second_name, third_name, out_type, value_name
+        ),
+        nvml_server_device_three_args_value(
+            name, first_type, second_type, third_type, out_type
+        ),
+    )
+
+
+def nvml_device_two_values(name, first_type, first_name, second_type, second_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {first_type} *{first_name}, {second_type} *{second_name}",
+        nvml_client_device_two_values(
+            name, first_name, second_name, first_type, second_type
+        ),
+        nvml_server_device_two_values(name, first_type, second_type),
+    )
+
+
+nvml_string_no_device("nvmlSystemGetDriverVersion", "version")
+nvml_string_no_device("nvmlSystemGetNVMLVersion", "version")
+nvml_int_out("nvmlSystemGetCudaDriverVersion", "cudaDriverVersion")
+nvml_int_out("nvmlSystemGetCudaDriverVersion_v2", "cudaDriverVersion")
+nvml_device_from_string("nvmlDeviceGetHandleByUUID", "uuid")
+nvml_device_from_string("nvmlDeviceGetHandleByPciBusId_v2", "pciBusId")
+nvml_device_string("nvmlDeviceGetUUID", "uuid")
+nvml_device_string("nvmlDeviceGetVbiosVersion", "version")
+nvml_device_string("nvmlDeviceGetSerial", "serial")
+nvml_device_string("nvmlDeviceGetBoardPartNumber", "partNumber")
+nvml_device_struct("nvmlDeviceGetPciInfo_v3", "nvmlPciInfo_t", "pci")
+nvml_device_struct("nvmlDeviceGetMemoryInfo", "nvmlMemory_t", "memory")
+nvml_device_struct(
+    "nvmlDeviceGetUtilizationRates", "nvmlUtilization_t", "utilization"
+)
+nvml_device_struct(
+    "nvmlDeviceGetTemperatureV", "lupine_nvmlTemperature_t", "temperature"
+)
+nvml_device_struct("nvmlDeviceGetMemoryInfo_v2", "nvmlMemory_v2_t", "memory")
+nvml_device_value("nvmlDeviceGetMinorNumber", "unsigned int", "minorNumber")
+nvml_device_value("nvmlDeviceGetPowerUsage", "unsigned int", "power")
+nvml_device_value("nvmlDeviceGetPowerManagementLimit", "unsigned int", "limit")
+nvml_device_value("nvmlDeviceGetEnforcedPowerLimit", "unsigned int", "limit")
+nvml_device_value("nvmlDeviceGetPerformanceState", "nvmlPstates_t", "pState")
+nvml_device_value("nvmlDeviceGetComputeMode", "nvmlComputeMode_t", "mode")
+nvml_device_value("nvmlDeviceGetPersistenceMode", "nvmlEnableState_t", "mode")
+nvml_device_value("nvmlDeviceGetFanSpeed", "unsigned int", "speed")
+nvml_device_value("nvmlDeviceGetBrand", "nvmlBrandType_t", "type")
+nvml_device_value("nvmlDeviceGetDisplayMode", "nvmlEnableState_t", "display")
+nvml_device_value("nvmlDeviceGetDisplayActive", "nvmlEnableState_t", "active")
+nvml_device_value("nvmlDeviceGetCurrPcieLinkGeneration", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetCurrPcieLinkWidth", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetMaxPcieLinkGeneration", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetMaxPcieLinkWidth", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetPcieReplayCounter", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetMaxMigDeviceCount", "unsigned int", "count")
+nvml_device_value(
+    "nvmlDeviceGetVirtualizationMode", "nvmlGpuVirtualizationMode_t", "pVirtualMode"
+)
+nvml_device_value("nvmlDeviceIsMigDeviceHandle", "unsigned int", "isMigDevice")
+nvml_device_arg_value(
+    "nvmlDeviceGetTemperature",
+    "nvmlTemperatureSensors_t",
+    "sensorType",
+    "unsigned int",
+    "temp",
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetClockInfo", "nvmlClockType_t", "type", "unsigned int", "clock"
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetMaxClockInfo", "nvmlClockType_t", "type", "unsigned int", "clock"
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetPcieThroughput",
+    "nvmlPcieUtilCounter_t",
+    "counter",
+    "unsigned int",
+    "value",
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetNvLinkRemoteDeviceType",
+    "unsigned int",
+    "link",
+    "nvmlIntNvLinkDeviceType_t",
+    "pNvLinkDeviceType",
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetNvLinkRemotePciInfo_v2",
+    "unsigned int",
+    "link",
+    "nvmlPciInfo_t",
+    "pci",
+)
+nvml_device_two_args_value(
+    "nvmlDeviceGetTotalEccErrors",
+    "nvmlMemoryErrorType_t",
+    "errorType",
+    "nvmlEccCounterType_t",
+    "counterType",
+    "unsigned long long",
+    "eccCounts",
+)
+nvml_device_two_args_value(
+    "nvmlDeviceGetDetailedEccErrors",
+    "nvmlMemoryErrorType_t",
+    "errorType",
+    "nvmlEccCounterType_t",
+    "counterType",
+    "nvmlEccErrorCounts_t",
+    "eccCounts",
+)
+nvml_device_three_args_value(
+    "nvmlDeviceGetMemoryErrorCounter",
+    "nvmlMemoryErrorType_t",
+    "errorType",
+    "nvmlEccCounterType_t",
+    "counterType",
+    "nvmlMemoryLocation_t",
+    "locationType",
+    "unsigned long long",
+    "count",
+)
+nvml_device_two_values(
+    "nvmlDeviceGetEccMode",
+    "nvmlEnableState_t",
+    "current",
+    "nvmlEnableState_t",
+    "pending",
+)
+nvml_device_two_values(
+    "nvmlDeviceGetMigMode", "unsigned int", "currentMode", "unsigned int", "pendingMode"
+)
+
 SKIP_FUNCTIONS = {
     "cuStreamUpdateCaptureDependencies_v2",
     "cuGraphGetEdges_v2",
@@ -1477,6 +2214,46 @@ def main():
                 "#define RPC_{name} {value}\n".format(
                     name=name,
                     value=i,
+                )
+            )
+
+    with open("gen_nvml_client.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function in NVML_CODEGEN_FUNCTIONS:
+            f.write(
+                'extern "C" nvmlReturn_t {name}({params}) {{\n'.format(
+                    name=function["name"],
+                    params=function["params"],
+                )
+            )
+            for line in function["client_body"].splitlines():
+                if line:
+                    f.write(f"  {line}\n")
+                else:
+                    f.write("\n")
+            f.write("}\n\n")
+
+    with open("gen_nvml_server.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function in NVML_CODEGEN_FUNCTIONS:
+            f.write(
+                "int handle_{name}(conn_t *conn) {{\n".format(
+                    name=function["name"],
+                )
+            )
+            for line in function["server_body"].splitlines():
+                if line:
+                    f.write(f"  {line}\n")
+                else:
+                    f.write("\n")
+            f.write("}\n\n")
+
+    with open("gen_nvml_server.h", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function in NVML_CODEGEN_FUNCTIONS:
+            f.write(
+                "int handle_{name}(conn_t *conn);\n".format(
+                    name=function["name"],
                 )
             )
 
