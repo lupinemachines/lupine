@@ -109,6 +109,10 @@ add_executable(h2_test
 target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY})
 enable_testing()
 add_test(NAME h2_test COMMAND h2_test)
+add_test(
+    NAME nvml_ecc_exports
+    COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"
+)
 
 set_source_files_properties(
     ${SERVER_SOURCES}

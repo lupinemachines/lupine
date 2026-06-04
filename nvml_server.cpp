@@ -282,6 +282,67 @@ int handle_device_arg_value(conn_t *conn, const char *name) {
   return 0;
 }
 
+template <typename A, typename B, typename Out>
+int handle_device_two_args_value(conn_t *conn, const char *name) {
+  nvmlDevice_t device = nullptr;
+  A first = {};
+  B second = {};
+  if (rpc_read(conn, &device, sizeof(device)) < 0 ||
+      rpc_read(conn, &first, sizeof(first)) < 0 ||
+      rpc_read(conn, &second, sizeof(second)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  Out value = {};
+  using Fn = nvmlReturn_t (*)(nvmlDevice_t, A, B, Out *);
+  Fn fn = nvml_symbol<Fn>(name);
+  nvmlReturn_t result =
+      fn == nullptr ? function_not_found() : fn(device, first, second, &value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &value, sizeof(value)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+template <typename A, typename B, typename C, typename Out>
+int handle_device_three_args_value(conn_t *conn, const char *name) {
+  nvmlDevice_t device = nullptr;
+  A first = {};
+  B second = {};
+  C third = {};
+  if (rpc_read(conn, &device, sizeof(device)) < 0 ||
+      rpc_read(conn, &first, sizeof(first)) < 0 ||
+      rpc_read(conn, &second, sizeof(second)) < 0 ||
+      rpc_read(conn, &third, sizeof(third)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  Out value = {};
+  using Fn = nvmlReturn_t (*)(nvmlDevice_t, A, B, C, Out *);
+  Fn fn = nvml_symbol<Fn>(name);
+  nvmlReturn_t result = fn == nullptr
+                            ? function_not_found()
+                            : fn(device, first, second, third, &value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &value, sizeof(value)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_processes(conn_t *conn, const char *name) {
   nvmlDevice_t device = nullptr;
   unsigned int requested_count = 0;
@@ -662,6 +723,24 @@ int handle_nvmlDeviceRegisterEvents(conn_t *conn) {
 int handle_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn) {
   return handle_device_value<unsigned int>(conn,
                                            "nvmlDeviceGetMaxMigDeviceCount");
+}
+
+int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
+  return handle_device_two_args_value<nvmlMemoryErrorType_t,
+                                      nvmlEccCounterType_t, unsigned long long>(
+      conn, "nvmlDeviceGetTotalEccErrors");
+}
+
+int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
+  return handle_device_two_args_value<
+      nvmlMemoryErrorType_t, nvmlEccCounterType_t, nvmlEccErrorCounts_t>(
+      conn, "nvmlDeviceGetDetailedEccErrors");
+}
+
+int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
+  return handle_device_three_args_value<
+      nvmlMemoryErrorType_t, nvmlEccCounterType_t, nvmlMemoryLocation_t,
+      unsigned long long>(conn, "nvmlDeviceGetMemoryErrorCounter");
 }
 
 int handle_nvmlDeviceGetEccMode(conn_t *conn) {

@@ -431,6 +431,47 @@ nvmlReturn_t call_device_arg_value(int op, nvmlDevice_t device, Arg arg,
   return result;
 }
 
+template <typename A, typename B, typename Out>
+nvmlReturn_t call_device_two_args_value(int op, nvmlDevice_t device, A first,
+                                        B second, Out *value) {
+  conn_t *c = connection_for_device(&device);
+  nvmlReturn_t result = rpc_error();
+  Out temp = {};
+  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
+      rpc_write(c, &device, sizeof(device)) < 0 ||
+      rpc_write(c, &first, sizeof(first)) < 0 ||
+      rpc_write(c, &second, sizeof(second)) < 0 ||
+      rpc_wait_for_response(c) < 0 || rpc_read(c, &temp, sizeof(temp)) < 0 ||
+      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
+    return rpc_error();
+  }
+  if (value != nullptr) {
+    *value = temp;
+  }
+  return result;
+}
+
+template <typename A, typename B, typename C, typename Out>
+nvmlReturn_t call_device_three_args_value(int op, nvmlDevice_t device, A first,
+                                          B second, C third, Out *value) {
+  conn_t *c = connection_for_device(&device);
+  nvmlReturn_t result = rpc_error();
+  Out temp = {};
+  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
+      rpc_write(c, &device, sizeof(device)) < 0 ||
+      rpc_write(c, &first, sizeof(first)) < 0 ||
+      rpc_write(c, &second, sizeof(second)) < 0 ||
+      rpc_write(c, &third, sizeof(third)) < 0 || rpc_wait_for_response(c) < 0 ||
+      rpc_read(c, &temp, sizeof(temp)) < 0 ||
+      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
+    return rpc_error();
+  }
+  if (value != nullptr) {
+    *value = temp;
+  }
+  return result;
+}
+
 nvmlReturn_t call_processes(int op, nvmlDevice_t device,
                             unsigned int *infoCount, nvmlProcessInfo_t *infos) {
   conn_t *c = connection_for_device(&device);
@@ -1016,6 +1057,29 @@ extern "C" nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses_v2(
 extern "C" nvmlReturn_t nvmlDeviceGetMaxMigDeviceCount(nvmlDevice_t device,
                                                        unsigned int *count) {
   return call_device_value(RPC_nvmlDeviceGetMaxMigDeviceCount, device, count);
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetTotalEccErrors(
+    nvmlDevice_t device, nvmlMemoryErrorType_t errorType,
+    nvmlEccCounterType_t counterType, unsigned long long *eccCounts) {
+  return call_device_two_args_value(RPC_nvmlDeviceGetTotalEccErrors, device,
+                                    errorType, counterType, eccCounts);
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetDetailedEccErrors(
+    nvmlDevice_t device, nvmlMemoryErrorType_t errorType,
+    nvmlEccCounterType_t counterType, nvmlEccErrorCounts_t *eccCounts) {
+  return call_device_two_args_value(RPC_nvmlDeviceGetDetailedEccErrors, device,
+                                    errorType, counterType, eccCounts);
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetMemoryErrorCounter(
+    nvmlDevice_t device, nvmlMemoryErrorType_t errorType,
+    nvmlEccCounterType_t counterType, nvmlMemoryLocation_t locationType,
+    unsigned long long *count) {
+  return call_device_three_args_value(RPC_nvmlDeviceGetMemoryErrorCounter,
+                                      device, errorType, counterType,
+                                      locationType, count);
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetEccMode(nvmlDevice_t device,
