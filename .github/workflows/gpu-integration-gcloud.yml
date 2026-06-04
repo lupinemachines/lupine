@@ -310,6 +310,7 @@ jobs:
           export SAMPLE_SUITE=compliance
           export BUILD_SAMPLES=0
           export SAMPLE_TIMEOUT=60
+          export LONG_SAMPLE_TIMEOUT=180
           export TEST_TIMEOUT=90
 
           test "$SERVER_HOST" != "127.0.0.1"

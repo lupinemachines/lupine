@@ -34,6 +34,7 @@ LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-20}"
+LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)}"
 
 CORE_SAMPLES=(
@@ -103,6 +104,8 @@ Environment:
   BUILD_ONLY           1 to clone/build selected samples and exit before running.
   SAMPLE_SUITE         compliance, core, libraries, or extended when no samples are given.
                        Default: compliance.
+  SAMPLE_TIMEOUT       Default per-sample execution timeout in seconds. Default: $SAMPLE_TIMEOUT.
+  LONG_SAMPLE_TIMEOUT  Timeout for known long-running compliance samples. Default: $LONG_SAMPLE_TIMEOUT.
   SERVER_SSH_TARGET    GPU host SSH target. Default: kevin@inferable-node-008.
   SERVER_PORT_BASE     First per-sample server port. Default: 14900.
   LUPINE_LIB            Client shim. Default: $repo_root/build/libcuda.so.1.
@@ -431,6 +434,17 @@ stop_remote_server() {
   " >/dev/null 2>&1 || true
 }
 
+sample_timeout() {
+  case "$1" in
+    HSOpticalFlow|jacobiCudaGraphs|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+      printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
+      ;;
+    *)
+      printf '%s\n' "$SAMPLE_TIMEOUT"
+      ;;
+  esac
+}
+
 tsv="$RESULTS_DIR/results.tsv"
 summary="$RESULTS_DIR/summary.txt"
 : > "$tsv"
@@ -460,6 +474,7 @@ for i in "${!samples[@]}"; do
     continue
   fi
   sample_cwd="$(sample_workdir "$sample" "$sample_exe")"
+  timeout_seconds="$(sample_timeout "$sample")"
   prepare_sample_runtime_files "$sample" "$sample_cwd"
   sample_argv=()
   while IFS= read -r -d '' arg; do
@@ -474,7 +489,7 @@ for i in "${!samples[@]}"; do
   set +e
   (
     cd "$sample_cwd"
-    timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
+    timeout --kill-after=5s "$timeout_seconds" env \
       LD_LIBRARY_PATH="$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
