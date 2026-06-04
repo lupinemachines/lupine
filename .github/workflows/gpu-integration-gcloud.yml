@@ -45,7 +45,7 @@ jobs:
       PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
       VM_IMAGE_PROJECT: ml-images
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
-      VM_MAX_RUN_DURATION: 10m
+      VM_MAX_RUN_DURATION: 30m
       CUDA_HOME: /usr/local/cuda-12.9
       USE_SPOT: "true"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -89,7 +89,7 @@ jobs:
           test "$MACHINE_TYPE" = n1-standard-4
           test "$VM_IMAGE_PROJECT" = ml-images
           test "$VM_IMAGE_FAMILY" = common-cu129-ubuntu-2404-nvidia-580
-          test "$VM_MAX_RUN_DURATION" = 10m
+          test "$VM_MAX_RUN_DURATION" = 30m
 
       - name: Prepare SSH key and runner allowlist
         run: |
@@ -138,8 +138,16 @@ jobs:
             cuda-driver-dev-12-9 \
             cuda-nvcc-12-9 \
             cuda-nvml-dev-12-9 \
+            cuda-nvrtc-dev-12-9 \
             cuda-profiler-api-12-9 \
-            libcublas-dev-12-9
+            libcublas-dev-12-9 \
+            libcufft-dev-12-9 \
+            libcurand-dev-12-9 \
+            libcusolver-dev-12-9 \
+            libcusparse-dev-12-9 \
+            libnpp-dev-12-9 \
+            libnvjpeg-dev-12-9 \
+            libnvjitlink-dev-12-9
 
           echo "CUDA_HOME=$CUDA_HOME" >> "$GITHUB_ENV"
           echo "CUDA_LIB_DIR=$CUDA_HOME/lib64" >> "$GITHUB_ENV"
