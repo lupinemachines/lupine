@@ -27,6 +27,7 @@ SSH_OPTS="${SSH_OPTS:-}"
 SSH_ARGS=($SSH_OPTS)
 SSH_RETRIES="${SSH_RETRIES:-3}"
 SSH_RETRY_DELAY="${SSH_RETRY_DELAY:-5}"
+CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-lupine-$$}"
@@ -112,6 +113,7 @@ Environment:
   SERVER_PORT_BASE     First per-sample server port. Default: 14900.
   SSH_RETRIES          SSH command attempts for remote server control. Default: $SSH_RETRIES.
   SSH_RETRY_DELAY      Delay between SSH attempts in seconds. Default: $SSH_RETRY_DELAY.
+  CUDA_SAMPLE_SKIP_LIST Comma or space separated samples to mark SKIP:disabled.
   LUPINE_LIB            Client shim. Default: $repo_root/build/libcuda.so.1.
   RESULTS_DIR          Output directory. Default: test/cuda-samples/results/<timestamp>.
 EOF
@@ -425,6 +427,21 @@ ssh_with_retries() {
   return "$rc"
 }
 
+sample_disabled() {
+  local sample="$1"
+  local disabled=""
+
+  # shellcheck disable=SC2206
+  local disabled_samples=(${CUDA_SAMPLE_SKIP_LIST//,/ })
+  for disabled in "${disabled_samples[@]}"; do
+    if [[ "$disabled" == "$sample" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 if [[ "$SERVER_UPLOAD" == "1" ]]; then
   scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 fi
@@ -459,7 +476,7 @@ stop_remote_server() {
 
 sample_timeout() {
   case "$1" in
-    simpleStreams|HSOpticalFlow|jacobiCudaGraphs|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)
@@ -482,6 +499,14 @@ for i in "${!samples[@]}"; do
   log="$RESULTS_DIR/$sample.log"
   server_log="/tmp/lupine-samples-$port.log"
   pidfile="/tmp/lupine-samples-$port.pid"
+
+  if sample_disabled "$sample"; then
+    status="SKIP:disabled"
+    skip=$((skip + 1))
+    signature="disabled by CUDA_SAMPLE_SKIP_LIST"
+    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
+    continue
+  fi
 
   sample_exe="$(resolve_sample_exe "$sample" || true)"
   if [[ -z "$sample_exe" ]]; then

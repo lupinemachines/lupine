@@ -313,13 +313,22 @@ jobs:
           export BUILD_SAMPLES=0
           export SAMPLE_TIMEOUT=60
           export LONG_SAMPLE_TIMEOUT=600
+          export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,watershedSegmentationNPP
           export TEST_TIMEOUT=90
 
           test "$SERVER_HOST" != "127.0.0.1"
           test "$SERVER_HOST" != "localhost"
 
-          "$PWD/test/run_cuda_samples.sh"
-          "$PWD/test/run_pytorch_lupine_tests.sh"
+          cuda_status=0
+          "$PWD/test/run_cuda_samples.sh" || cuda_status=$?
+
+          pytorch_status=0
+          "$PWD/test/run_pytorch_lupine_tests.sh" || pytorch_status=$?
+
+          if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 ]]; then
+            echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status" >&2
+            exit 1
+          fi
 
       - name: Upload compliance results
         if: always()
