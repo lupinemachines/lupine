@@ -84,13 +84,6 @@ LIBRARY_SAMPLES=(
   watershedSegmentationNPP
 )
 
-SMOKE_SAMPLES=(
-  c++11_cuda
-  vectorAdd
-  batchCUBLAS
-  simplePrintf
-)
-
 DEFAULT_SAMPLES=(
   "${CORE_SAMPLES[@]}"
   "${LIBRARY_SAMPLES[@]}"
@@ -108,7 +101,7 @@ Environment:
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
   BUILD_ONLY           1 to clone/build selected samples and exit before running.
-  SAMPLE_SUITE         smoke, compliance, core, libraries, or extended when no samples are given.
+  SAMPLE_SUITE         compliance, core, libraries, or extended when no samples are given.
                        Default: compliance.
   SERVER_SSH_TARGET    GPU host SSH target. Default: kevin@inferable-node-008.
   SERVER_PORT_BASE     First per-sample server port. Default: 14900.
@@ -315,9 +308,6 @@ build_full_sample_tree=0
 samples=("$@")
 if [[ ${#samples[@]} -eq 0 ]]; then
   case "$SAMPLE_SUITE" in
-    smoke)
-      samples=("${SMOKE_SAMPLES[@]}")
-      ;;
     compliance)
       samples=("${DEFAULT_SAMPLES[@]}")
       ;;
@@ -333,7 +323,7 @@ if [[ ${#samples[@]} -eq 0 ]]; then
       ;;
     *)
       echo "unknown SAMPLE_SUITE: $SAMPLE_SUITE" >&2
-      echo "expected one of: smoke, compliance, core, libraries, extended" >&2
+      echo "expected one of: compliance, core, libraries, extended" >&2
       exit 1
       ;;
   esac
