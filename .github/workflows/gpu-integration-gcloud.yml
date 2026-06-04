@@ -158,25 +158,38 @@ jobs:
       - name: Create locked-down firewall rules
         run: |
           set -euo pipefail
-          gcloud compute firewall-rules create "$FIREWALL_ALLOW_RULE" \
-            --project="$GCP_PROJECT_ID" \
-            --network="$GCP_NETWORK" \
-            --direction=INGRESS \
-            --priority=800 \
-            --action=ALLOW \
-            --rules=tcp:22,tcp:14900-16999,tcp:20100-20299 \
-            --source-ranges="$RUNNER_IP/32" \
-            --target-tags="$VM_TAG"
 
-          gcloud compute firewall-rules create "$FIREWALL_DENY_RULE" \
-            --project="$GCP_PROJECT_ID" \
-            --network="$GCP_NETWORK" \
-            --direction=INGRESS \
-            --priority=900 \
-            --action=DENY \
-            --rules=tcp:1-65535,udp:1-65535,icmp,esp,ah,sctp \
-            --source-ranges=0.0.0.0/0 \
-            --target-tags="$VM_TAG"
+          create_firewall_rule() {
+            local name="$1"
+            local action="$2"
+            local priority="$3"
+            local rules="$4"
+            local source_ranges="$5"
+
+            gcloud compute firewall-rules create "$name" \
+              --project="$GCP_PROJECT_ID" \
+              --network="$GCP_NETWORK" \
+              --direction=INGRESS \
+              --priority="$priority" \
+              --action="$action" \
+              --rules="$rules" \
+              --source-ranges="$source_ranges" \
+              --target-tags="$VM_TAG"
+          }
+
+          create_firewall_rule \
+            "$FIREWALL_ALLOW_RULE" \
+            ALLOW \
+            800 \
+            tcp:22,tcp:14900-16999,tcp:20100-20299 \
+            "$RUNNER_IP/32"
+
+          create_firewall_rule \
+            "$FIREWALL_DENY_RULE" \
+            DENY \
+            900 \
+            tcp:1-65535,udp:1-65535,icmp,esp,ah,sctp \
+            0.0.0.0/0
 
       - name: Create T4 VM
         run: |
@@ -219,11 +232,7 @@ jobs:
             create_args+=("--provisioning-model=SPOT")
           fi
 
-          gcloud compute instances create "${create_args[@]}"
-
-          vm_ip="$(gcloud compute instances describe "$VM_NAME" \
-            --project="$GCP_PROJECT_ID" \
-            --zone="$GCP_ZONE" \
+          vm_ip="$(gcloud compute instances create "${create_args[@]}" \
             --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
           test -n "$vm_ip"
           echo "VM_IP=$vm_ip" >> "$GITHUB_ENV"
@@ -313,13 +322,33 @@ jobs:
       - name: Tear down GCE resources
         if: always()
         run: |
+          set -euo pipefail
+
           gcloud compute instances delete "$VM_NAME" \
             --project="$GCP_PROJECT_ID" \
             --zone="$GCP_ZONE" \
             --quiet || true
-          gcloud compute firewall-rules delete "$FIREWALL_ALLOW_RULE" \
+
+          for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
+            gcloud compute firewall-rules delete "$rule" \
+              --project="$GCP_PROJECT_ID" \
+              --quiet || true
+          done
+
+          leftovers=0
+          if gcloud compute instances describe "$VM_NAME" \
             --project="$GCP_PROJECT_ID" \
-            --quiet || true
-          gcloud compute firewall-rules delete "$FIREWALL_DENY_RULE" \
-            --project="$GCP_PROJECT_ID" \
-            --quiet || true
+            --zone="$GCP_ZONE" >/dev/null 2>&1; then
+            echo "leftover VM still exists: $VM_NAME" >&2
+            leftovers=1
+          fi
+
+          for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
+            if gcloud compute firewall-rules describe "$rule" \
+              --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+              echo "leftover firewall rule still exists: $rule" >&2
+              leftovers=1
+            fi
+          done
+
+          exit "$leftovers"
