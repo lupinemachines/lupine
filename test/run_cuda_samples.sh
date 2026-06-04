@@ -459,7 +459,7 @@ stop_remote_server() {
 
 sample_timeout() {
   case "$1" in
-    HSOpticalFlow|jacobiCudaGraphs|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|HSOpticalFlow|jacobiCudaGraphs|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)
@@ -535,6 +535,9 @@ for i in "${!samples[@]}"; do
   fi
 
   signature="$(tr '\n' ' ' < "$log" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+  if [[ -z "$signature" && "$rc" == "124" ]]; then
+    signature="timed out after ${timeout_seconds}s"
+  fi
   printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
 done
 
