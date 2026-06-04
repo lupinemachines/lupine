@@ -24,12 +24,11 @@ LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to
 ```sh
 % uname -mors 
 Darwin 25.5.0 arm64
-% docker run --rm -it --network=host \
-    ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04-slim \
-    bash -c 'apt-get update -qq && apt-get install -qq -y curl ca-certificates && curl -LsSf https://astral.sh/uv/install.sh | sh && ~/.local/bin/uv run https://raw.githubusercontent.com/lupinemachines/lupine/main/python/examples/tensor.py'
-...
+% uv run https://raw.githubusercontent.com/lupinemachines/lupine/main/python/examples/tensor.py
+LUPINE server host: 100.106.167.98  <-- the ip of a machine with the LUPINE server running
+LUPINE server port [14833]: 
 cuda available: True
-device: cuda:0
+device: lupine:0
 count: 1
 gpu: NVIDIA GeForce RTX 4090
 result: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
