@@ -277,6 +277,11 @@ jobs:
             "$image" \
             bash -lc '
               set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates git openssh-client
+              rm -rf /var/lib/apt/lists/*
+
               export SSH_OPTS="-i /root/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/known_hosts"
               export SAMPLE_SUITE=compliance
               export BUILD_SAMPLES=0
