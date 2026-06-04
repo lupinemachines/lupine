@@ -14,6 +14,7 @@ CUDA_SAMPLES_BUILD_DIR="${CUDA_SAMPLES_BUILD_DIR:-$CUDA_SAMPLES_DIR/build}"
 CUDA_SAMPLES_BIN="${CUDA_SAMPLES_BIN:-}"
 CUDA_SAMPLES_CMAKE_ARGS="${CUDA_SAMPLES_CMAKE_ARGS:-}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
+BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
 SAMPLE_SUITE="${SAMPLE_SUITE:-compliance}"
 
@@ -83,6 +84,13 @@ LIBRARY_SAMPLES=(
   watershedSegmentationNPP
 )
 
+COMPLIANCE_SAMPLES=(
+  c++11_cuda
+  vectorAdd
+  batchCUBLAS
+  simplePrintf
+)
+
 DEFAULT_SAMPLES=(
   "${CORE_SAMPLES[@]}"
   "${LIBRARY_SAMPLES[@]}"
@@ -99,7 +107,8 @@ Environment:
   CUDA_SAMPLES_CMAKE_ARGS Extra args passed to CMake configure for CUDA 13 samples.
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
-  SAMPLE_SUITE         compliance, core, or libraries when no samples are given.
+  BUILD_ONLY           1 to clone/build selected samples and exit before running.
+  SAMPLE_SUITE         compliance, core, libraries, or extended when no samples are given.
                        Default: compliance.
   SERVER_SSH_TARGET    GPU host SSH target. Default: kevin@inferable-node-008.
   SERVER_PORT_BASE     First per-sample server port. Default: 14900.
@@ -115,11 +124,6 @@ fi
 
 if [[ ! -x "$LUPINE_LIB" ]]; then
   echo "missing shim: $LUPINE_LIB" >&2
-  exit 1
-fi
-
-if [[ ! -x "$SERVER_LOCAL_BIN" ]]; then
-  echo "missing server binary: $SERVER_LOCAL_BIN" >&2
   exit 1
 fi
 
@@ -310,7 +314,10 @@ explicit_samples=0
 samples=("$@")
 if [[ ${#samples[@]} -eq 0 ]]; then
   case "$SAMPLE_SUITE" in
-    compliance|all|default)
+    compliance)
+      samples=("${COMPLIANCE_SAMPLES[@]}")
+      ;;
+    extended|all|default)
       samples=("${DEFAULT_SAMPLES[@]}")
       ;;
     core)
@@ -321,7 +328,7 @@ if [[ ${#samples[@]} -eq 0 ]]; then
       ;;
     *)
       echo "unknown SAMPLE_SUITE: $SAMPLE_SUITE" >&2
-      echo "expected one of: compliance, core, libraries" >&2
+      echo "expected one of: compliance, core, libraries, extended" >&2
       exit 1
       ;;
   esac
@@ -376,6 +383,15 @@ if [[ "$needs_build" == "1" ]]; then
       make -C "$CUDA_SAMPLES_DIR" -j"$JOBS"
     fi
   fi
+fi
+
+if [[ "$BUILD_ONLY" == "1" ]]; then
+  exit 0
+fi
+
+if [[ ! -x "$SERVER_LOCAL_BIN" ]]; then
+  echo "missing server binary: $SERVER_LOCAL_BIN" >&2
+  exit 1
 fi
 
 if [[ "$SERVER_UPLOAD" == "1" ]]; then
