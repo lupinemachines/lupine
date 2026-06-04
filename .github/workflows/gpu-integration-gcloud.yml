@@ -139,6 +139,7 @@ jobs:
             cuda-nvcc-12-9 \
             cuda-nvml-dev-12-9 \
             cuda-nvrtc-dev-12-9 \
+            cuda-nvtx-12-9 \
             cuda-profiler-api-12-9 \
             libcublas-dev-12-9 \
             libcufft-dev-12-9 \
