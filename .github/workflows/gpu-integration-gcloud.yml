@@ -47,7 +47,7 @@ jobs:
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
       VM_MAX_RUN_DURATION: 60m
       CUDA_HOME: /usr/local/cuda-12.9
-      USE_SPOT: "true"
+      USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
       VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
       FIREWALL_ALLOW_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-allow
