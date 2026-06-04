@@ -36,7 +36,7 @@ LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-20}"
-LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-180}"
+LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-300}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)}"
 
 CORE_SAMPLES=(

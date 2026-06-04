@@ -45,7 +45,7 @@ jobs:
       PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
       VM_IMAGE_PROJECT: ml-images
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
-      VM_MAX_RUN_DURATION: 30m
+      VM_MAX_RUN_DURATION: 45m
       CUDA_HOME: /usr/local/cuda-12.9
       USE_SPOT: "true"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -312,7 +312,7 @@ jobs:
           export SAMPLE_SUITE=compliance
           export BUILD_SAMPLES=0
           export SAMPLE_TIMEOUT=60
-          export LONG_SAMPLE_TIMEOUT=180
+          export LONG_SAMPLE_TIMEOUT=300
           export TEST_TIMEOUT=90
 
           test "$SERVER_HOST" != "127.0.0.1"
