@@ -106,6 +106,9 @@ for i in "${!TESTS[@]}"; do
   fi
 
   signature="$(tr '\n' ' ' < "$log" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+  if [[ -z "$signature" && "$rc" == "124" ]]; then
+    signature="timed out after ${TEST_TIMEOUT}s"
+  fi
   printf '%s\t%s\t%s\n' "$test_name" "$status" "$signature" | tee -a "$tsv"
 done
 
@@ -115,3 +118,7 @@ done
   echo "TOTAL $((pass + fail))"
   echo "RESULTS $RESULTS_DIR/results.tsv"
 } | tee "$RESULTS_DIR/summary.txt"
+
+if [[ "$fail" -ne 0 ]]; then
+  exit 1
+fi

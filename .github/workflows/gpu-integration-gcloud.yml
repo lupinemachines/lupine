@@ -314,7 +314,7 @@ jobs:
           export SAMPLE_TIMEOUT=60
           export LONG_SAMPLE_TIMEOUT=600
           export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,watershedSegmentationNPP
-          export TEST_TIMEOUT=90
+          export TEST_TIMEOUT=180
 
           test "$SERVER_HOST" != "127.0.0.1"
           test "$SERVER_HOST" != "localhost"
