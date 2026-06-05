@@ -45,7 +45,8 @@ jobs:
       PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
       VM_IMAGE_PROJECT: ml-images
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
-      VM_MAX_RUN_DURATION: 60m
+      VM_MAX_RUN_DURATION: 90m
+      COMPLIANCE_TIMEOUT: 80m
       CUDA_HOME: /usr/local/cuda-12.9
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -89,7 +90,8 @@ jobs:
           test "$MACHINE_TYPE" = n1-standard-4
           test "$VM_IMAGE_PROJECT" = ml-images
           test "$VM_IMAGE_FAMILY" = common-cu129-ubuntu-2404-nvidia-580
-          test "$VM_MAX_RUN_DURATION" = 60m
+          test "$VM_MAX_RUN_DURATION" = 90m
+          test "$COMPLIANCE_TIMEOUT" = 80m
 
       - name: Prepare SSH key and runner allowlist
         run: |
@@ -319,16 +321,34 @@ jobs:
           test "$SERVER_HOST" != "127.0.0.1"
           test "$SERVER_HOST" != "localhost"
 
+          export REPO_ROOT="$PWD"
+          compliance_script="$RUNNER_TEMP/run-gpu-compliance.sh"
+          cat > "$compliance_script" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
           cuda_status=0
-          "$PWD/test/run_cuda_samples.sh" || cuda_status=$?
+          "$REPO_ROOT/test/run_cuda_samples.sh" || cuda_status=$?
 
           pytorch_status=0
-          "$PWD/test/run_pytorch_lupine_tests.sh" || pytorch_status=$?
+          "$REPO_ROOT/test/run_pytorch_lupine_tests.sh" || pytorch_status=$?
 
           if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 ]]; then
             echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status" >&2
             exit 1
           fi
+          EOF
+          chmod +x "$compliance_script"
+
+          set +e
+          timeout --kill-after=60s "$COMPLIANCE_TIMEOUT" "$compliance_script"
+          compliance_status=$?
+          set -e
+
+          if [[ "$compliance_status" -eq 124 ]]; then
+            echo "GPU compliance timed out after $COMPLIANCE_TIMEOUT" >&2
+          fi
+          exit "$compliance_status"
 
       - name: Upload compliance results
         if: always()
