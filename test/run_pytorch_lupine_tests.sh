@@ -71,6 +71,26 @@ cleanup_remote_bin() {
 }
 trap cleanup_remote_bin EXIT
 
+stop_remote_server() {
+  local pidfile="$1"
+  local server_log="$2"
+
+  ssh_with_timeout "
+    if [ -f '$pidfile' ]; then
+      pid=\$(cat '$pidfile' 2>/dev/null || true)
+      if [ -n \"\$pid\" ]; then
+        kill \"\$pid\" >/dev/null 2>&1 || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          kill -0 \"\$pid\" >/dev/null 2>&1 || break
+          sleep 0.1
+        done
+        kill -9 \"\$pid\" >/dev/null 2>&1 || true
+      fi
+    fi
+    rm -f '$pidfile' '$server_log'
+  " >/dev/null 2>&1 || true
+}
+
 tsv="$RESULTS_DIR/results.tsv"
 : > "$tsv"
 pass=0
@@ -82,10 +102,10 @@ for i in "${!TESTS[@]}"; do
   log="$RESULTS_DIR/$test_name.log"
   server_log="/tmp/lupine-pytorch-$port.log"
   pidfile="/tmp/lupine-pytorch-$port.pid"
+  test_start_seconds="$SECONDS"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] PyTorch test $((i + 1))/${#TESTS[@]}: $test_name" >&2
 
-  ssh_with_timeout \
-    "if [ -f '$pidfile' ]; then kill \$(cat '$pidfile') >/dev/null 2>&1 || true; fi; pkill -f -- '$SERVER_REMOTE_BIN' >/dev/null 2>&1 || true; rm -f '$server_log' '$pidfile'" \
-    >/dev/null 2>&1 || true
+  stop_remote_server "$pidfile" "$server_log"
 
   ssh_with_timeout \
     "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
@@ -100,9 +120,7 @@ for i in "${!TESTS[@]}"; do
   rc=$?
   set -e
 
-  ssh_with_timeout \
-    "if [ -f '$pidfile' ]; then kill \$(cat '$pidfile') >/dev/null 2>&1 || true; fi; pkill -f -- '$SERVER_REMOTE_BIN' >/dev/null 2>&1 || true; rm -f '$pidfile'" \
-    >/dev/null 2>&1 || true
+  stop_remote_server "$pidfile" "$server_log"
 
   if [[ "$rc" == "0" ]]; then
     status="PASS"
@@ -117,6 +135,7 @@ for i in "${!TESTS[@]}"; do
     signature="timed out after ${TEST_TIMEOUT}s"
   fi
   printf '%s\t%s\t%s\n' "$test_name" "$status" "$signature" | tee -a "$tsv"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] PyTorch test $test_name -> $status in $((SECONDS - test_start_seconds))s" >&2
 done
 
 {
