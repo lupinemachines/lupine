@@ -27,6 +27,7 @@ SSH_OPTS="${SSH_OPTS:-}"
 SSH_ARGS=($SSH_OPTS)
 SSH_RETRIES="${SSH_RETRIES:-3}"
 SSH_RETRY_DELAY="${SSH_RETRY_DELAY:-5}"
+SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-45}"
 CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
@@ -113,6 +114,7 @@ Environment:
   SERVER_PORT_BASE     First per-sample server port. Default: 14900.
   SSH_RETRIES          SSH command attempts for remote server control. Default: $SSH_RETRIES.
   SSH_RETRY_DELAY      Delay between SSH attempts in seconds. Default: $SSH_RETRY_DELAY.
+  SSH_COMMAND_TIMEOUT  Timeout for each SSH/SCP control command. Default: $SSH_COMMAND_TIMEOUT.
   CUDA_SAMPLE_SKIP_LIST Comma or space separated samples to mark SKIP:disabled.
   LUPINE_LIB            Client shim. Default: $repo_root/build/libcuda.so.1.
   RESULTS_DIR          Output directory. Default: test/cuda-samples/results/<timestamp>.
@@ -413,7 +415,8 @@ ssh_with_retries() {
   local rc=0
 
   while ((attempt <= SSH_RETRIES)); do
-    if ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"; then
+    if timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+      ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"; then
       return 0
     fi
     rc=$?
@@ -443,7 +446,8 @@ sample_disabled() {
 }
 
 if [[ "$SERVER_UPLOAD" == "1" ]]; then
-  scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
+  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+    scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 fi
 
 cleanup_remote_bin() {
@@ -476,7 +480,7 @@ stop_remote_server() {
 
 sample_timeout() {
   case "$1" in
-    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)
@@ -499,6 +503,8 @@ for i in "${!samples[@]}"; do
   log="$RESULTS_DIR/$sample.log"
   server_log="/tmp/lupine-samples-$port.log"
   pidfile="/tmp/lupine-samples-$port.pid"
+  sample_start_seconds="$SECONDS"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $((i + 1))/${#samples[@]}: $sample" >&2
 
   if sample_disabled "$sample"; then
     status="SKIP:disabled"
@@ -564,6 +570,7 @@ for i in "${!samples[@]}"; do
     signature="timed out after ${timeout_seconds}s"
   fi
   printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $sample -> $status in $((SECONDS - sample_start_seconds))s" >&2
 done
 
 {

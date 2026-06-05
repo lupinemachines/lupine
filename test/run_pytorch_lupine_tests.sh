@@ -10,6 +10,7 @@ SERVER_PORT_BASE="${SERVER_PORT_BASE:-20100}"
 SSH_OPTS="${SSH_OPTS:-}"
 # shellcheck disable=SC2206
 SSH_ARGS=($SSH_OPTS)
+SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-45}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-pytorch-${USER:-lupine}-$$}"
@@ -53,13 +54,19 @@ fi
 
 mkdir -p "$RESULTS_DIR"
 
+ssh_with_timeout() {
+  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
+}
+
 if [[ "$SERVER_UPLOAD" == "1" ]]; then
-  scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
+  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+    scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 fi
 
 cleanup_remote_bin() {
   if [[ "$SERVER_UPLOAD" == "1" && "$SERVER_REMOTE_CLEANUP" == "1" ]]; then
-    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
+    ssh_with_timeout "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup_remote_bin EXIT
@@ -76,11 +83,11 @@ for i in "${!TESTS[@]}"; do
   server_log="/tmp/lupine-pytorch-$port.log"
   pidfile="/tmp/lupine-pytorch-$port.pid"
 
-  ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
+  ssh_with_timeout \
     "if [ -f '$pidfile' ]; then kill \$(cat '$pidfile') >/dev/null 2>&1 || true; fi; pkill -f -- '$SERVER_REMOTE_BIN' >/dev/null 2>&1 || true; rm -f '$server_log' '$pidfile'" \
     >/dev/null 2>&1 || true
 
-  ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
+  ssh_with_timeout \
     "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
 
   set +e
@@ -93,7 +100,7 @@ for i in "${!TESTS[@]}"; do
   rc=$?
   set -e
 
-  ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
+  ssh_with_timeout \
     "if [ -f '$pidfile' ]; then kill \$(cat '$pidfile') >/dev/null 2>&1 || true; fi; pkill -f -- '$SERVER_REMOTE_BIN' >/dev/null 2>&1 || true; rm -f '$pidfile'" \
     >/dev/null 2>&1 || true
 

@@ -303,7 +303,7 @@ jobs:
 
           export PATH="$CUDA_HOME/bin:$PATH"
           export CUDA_LIB_DIR="$CUDA_HOME/lib64"
-          export SSH_OPTS="-i $SSH_DIR/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_DIR/known_hosts -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=$SSH_DIR/control-%C"
+          export SSH_OPTS="-i $SSH_DIR/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_DIR/known_hosts -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
           export SSH_RETRIES=4
           export SSH_RETRY_DELAY=5
           export SERVER_HOST="$VM_IP"
