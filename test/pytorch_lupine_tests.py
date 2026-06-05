@@ -199,17 +199,11 @@ def test_microgpt_train():
     torch.manual_seed(42)
     device = torch.device("cuda")
     vocab_size = 64
-    block_size = 32
-    batch_size = 8
-    steps = 12
+    block_size = 64
+    batch_size = 32
+    steps = 24
 
-    model = MicroGPT(
-        vocab_size=vocab_size,
-        block_size=block_size,
-        n_layer=1,
-        n_head=2,
-        n_embd=64,
-    ).to(device)
+    model = MicroGPT(vocab_size=vocab_size, block_size=block_size).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=3e-3, fused=True)
     base = torch.arange(block_size + 1, device=device).unsqueeze(0)
     offsets = torch.arange(batch_size, device=device).unsqueeze(1) * 7
@@ -234,7 +228,7 @@ def test_microgpt_train():
     torch.cuda.synchronize()
     print(f"microgpt first_loss={first_loss:.4f} last_loss={last_loss:.4f}")
     assert last_loss is not None and math.isfinite(last_loss)
-    assert last_loss < first_loss, (first_loss, last_loss)
+    assert last_loss < first_loss * 0.75, (first_loss, last_loss)
 
 
 TESTS = {
