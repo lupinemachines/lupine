@@ -4,7 +4,17 @@
 #include <cuda.h>
 
 #ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #endif
 
 #if CUDA_VERSION < 12000
@@ -107,8 +117,14 @@ static inline CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
                                             size_t *paramSize) {
   using cuKernelGetParamInfo_t =
       CUresult CUDAAPI (*)(CUkernel, size_t, size_t *, size_t *);
+#ifdef _WIN32
+  static HMODULE lib = LoadLibraryA("nvcuda.dll");
+  static auto fn = reinterpret_cast<cuKernelGetParamInfo_t>(
+      lib != nullptr ? GetProcAddress(lib, "cuKernelGetParamInfo") : nullptr);
+#else
   static auto fn = reinterpret_cast<cuKernelGetParamInfo_t>(
       dlsym(RTLD_DEFAULT, "cuKernelGetParamInfo"));
+#endif
   return fn != nullptr ? fn(kernel, paramIndex, paramOffset, paramSize)
                        : CUDA_ERROR_NOT_SUPPORTED;
 }
@@ -118,8 +134,14 @@ static inline CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
                                           size_t *paramSize) {
   using cuFuncGetParamInfo_t =
       CUresult CUDAAPI (*)(CUfunction, size_t, size_t *, size_t *);
+#ifdef _WIN32
+  static HMODULE lib = LoadLibraryA("nvcuda.dll");
+  static auto fn = reinterpret_cast<cuFuncGetParamInfo_t>(
+      lib != nullptr ? GetProcAddress(lib, "cuFuncGetParamInfo") : nullptr);
+#else
   static auto fn = reinterpret_cast<cuFuncGetParamInfo_t>(
       dlsym(RTLD_DEFAULT, "cuFuncGetParamInfo"));
+#endif
   return fn != nullptr ? fn(func, paramIndex, paramOffset, paramSize)
                        : CUDA_ERROR_NOT_SUPPORTED;
 }
