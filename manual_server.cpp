@@ -12,6 +12,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <vector>
 
 #include <list>
@@ -397,10 +401,18 @@ static uint64_t lupine_export_slot_hash(const void *fn) {
   if (fn == nullptr) {
     return 0;
   }
+#ifdef _WIN32
+  MEMORY_BASIC_INFORMATION info = {};
+  if (VirtualQuery(fn, &info, sizeof(info)) == 0 ||
+      info.AllocationBase == nullptr) {
+    return 0;
+  }
+#else
   Dl_info info = {};
   if (dladdr(fn, &info) == 0 || info.dli_fname == nullptr) {
     return 0;
   }
+#endif
   return lupine_fnv1a64(fn, 32);
 }
 
@@ -659,8 +671,8 @@ static void *lupine_alloc_capture_scratch(
 }
 
 int rpc_write(const void *conn, const void *data, const size_t size) {
-  ((conn_t *)conn)->write_iov[((conn_t *)conn)->write_iov_count++] =
-      (struct iovec){(void *)data, size};
+  ((conn_t *)conn)->write_iov[((conn_t *)conn)->write_iov_count++] = {
+      (void *)data, size};
   return 0;
 }
 
