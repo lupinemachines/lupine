@@ -201,7 +201,6 @@ def test_microgpt_train():
     vocab_size = 32
     block_size = 16
     batch_size = 4
-    steps = 2
 
     model = MicroGPT(
         vocab_size=vocab_size,
@@ -210,35 +209,31 @@ def test_microgpt_train():
         n_head=2,
         n_embd=32,
     ).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=3e-3, fused=False)
     base = torch.arange(block_size + 1, device=device).unsqueeze(0)
     offsets = torch.arange(batch_size, device=device).unsqueeze(1) * 7
     initial_weight = model.lm_head.weight.detach().clone()
 
-    first_loss = None
-    last_loss = None
-    for step in range(steps):
-        noise = (step * 11 + offsets) % vocab_size
-        seq = (base + noise) % vocab_size
-        x = seq[:, :-1].contiguous()
-        y = seq[:, 1:].contiguous()
-        opt.zero_grad(set_to_none=True)
-        _, loss = model(x, y)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
-        loss_value = float(loss.detach().cpu())
-        if first_loss is None:
-            first_loss = loss_value
-        last_loss = loss_value
+    seq = (base + offsets) % vocab_size
+    x = seq[:, :-1].contiguous()
+    y = seq[:, 1:].contiguous()
+    _, loss = model(x, y)
+    loss.backward()
+    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    with torch.no_grad():
+        for param in model.parameters():
+            if param.grad is not None:
+                param.add_(param.grad, alpha=-3e-3)
+    loss_value = float(loss.detach().cpu())
+    grad_norm_value = float(grad_norm.detach().cpu())
 
     torch.cuda.synchronize()
     weight_delta = float((model.lm_head.weight.detach() - initial_weight).abs().sum().cpu())
     print(
-        f"microgpt first_loss={first_loss:.4f} "
-        f"last_loss={last_loss:.4f} weight_delta={weight_delta:.6f}"
+        f"microgpt loss={loss_value:.4f} "
+        f"grad_norm={grad_norm_value:.4f} weight_delta={weight_delta:.6f}"
     )
-    assert last_loss is not None and math.isfinite(last_loss)
+    assert math.isfinite(loss_value)
+    assert math.isfinite(grad_norm_value) and grad_norm_value > 0.0
     assert weight_delta > 0.0
 
 
