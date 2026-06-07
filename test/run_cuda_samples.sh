@@ -261,6 +261,9 @@ sample_args() {
   local sample="$1"
 
   case "$sample" in
+    FDTD3d)
+      printf '%s\0' --qatest
+      ;;
     nbody)
       printf '%s\0' -benchmark -numbodies=4096 -i=1
       ;;
