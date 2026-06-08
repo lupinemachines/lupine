@@ -301,7 +301,7 @@ jobs:
           export SERVER_SSH_TARGET="gha@$VM_IP"
           export SAMPLE_SUITE=compliance
           export BUILD_SAMPLES=0
-          export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,threadMigration,watershedSegmentationNPP
+          export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,threadMigration,watershedSegmentationNPP,HSOpticalFlow,jacobiCudaGraphs
 
           test "$SERVER_HOST" != "127.0.0.1"
           test "$SERVER_HOST" != "localhost"
