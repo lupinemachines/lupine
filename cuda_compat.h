@@ -116,7 +116,7 @@ static inline CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
                                             size_t *paramOffset,
                                             size_t *paramSize) {
   using cuKernelGetParamInfo_t =
-      CUresult CUDAAPI (*)(CUkernel, size_t, size_t *, size_t *);
+      CUresult(CUDAAPI *)(CUkernel, size_t, size_t *, size_t *);
 #ifdef _WIN32
   static HMODULE lib = LoadLibraryA("nvcuda.dll");
   static auto fn = reinterpret_cast<cuKernelGetParamInfo_t>(
@@ -133,7 +133,7 @@ static inline CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
                                           size_t *paramOffset,
                                           size_t *paramSize) {
   using cuFuncGetParamInfo_t =
-      CUresult CUDAAPI (*)(CUfunction, size_t, size_t *, size_t *);
+      CUresult(CUDAAPI *)(CUfunction, size_t, size_t *, size_t *);
 #ifdef _WIN32
   static HMODULE lib = LoadLibraryA("nvcuda.dll");
   static auto fn = reinterpret_cast<cuFuncGetParamInfo_t>(
