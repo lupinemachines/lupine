@@ -1,4 +1,4 @@
-#include <arpa/inet.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -7,23 +7,25 @@
 #include <future>
 #include <iostream>
 #include <memory>
-#include <pthread.h>
 #include <stdio.h>
 #include <string>
-#include <sys/socket.h>
-#include <sys/uio.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
 
-#include <dlfcn.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <vector>
 
 #include <list>
 #include <map>
-#include <algorithm>
 
 #include "cuda_compat.h"
 
@@ -77,11 +79,11 @@ static bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
   fflush(stdout);
   std::cout.flush();
 
-  capture->saved_stdout = dup(STDOUT_FILENO);
+  capture->saved_stdout = lupine_fd_dup(LUPINE_STDOUT_FD);
   capture->capture_file = tmpfile();
   if (capture->saved_stdout < 0 || capture->capture_file == nullptr) {
     if (capture->saved_stdout >= 0) {
-      close(capture->saved_stdout);
+      lupine_fd_close(capture->saved_stdout);
       capture->saved_stdout = -1;
     }
     if (capture->capture_file != nullptr) {
@@ -92,10 +94,11 @@ static bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
     return false;
   }
 
-  if (dup2(fileno(capture->capture_file), STDOUT_FILENO) < 0) {
+  if (lupine_fd_dup2(lupine_fd_fileno(capture->capture_file),
+                     LUPINE_STDOUT_FD) < 0) {
     fclose(capture->capture_file);
     capture->capture_file = nullptr;
-    close(capture->saved_stdout);
+    lupine_fd_close(capture->saved_stdout);
     capture->saved_stdout = -1;
     pthread_mutex_unlock(&lupine_stdout_capture_mutex);
     return false;
@@ -112,15 +115,15 @@ static void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
 
   fflush(stdout);
   std::cout.flush();
-  dup2(capture->saved_stdout, STDOUT_FILENO);
-  close(capture->saved_stdout);
+  lupine_fd_dup2(capture->saved_stdout, LUPINE_STDOUT_FD);
+  lupine_fd_close(capture->saved_stdout);
   capture->saved_stdout = -1;
   if (capture->capture_file != nullptr) {
-    int capture_fd = fileno(capture->capture_file);
-    if (capture_fd >= 0 && lseek(capture_fd, 0, SEEK_SET) >= 0) {
+    int capture_fd = lupine_fd_fileno(capture->capture_file);
+    if (capture_fd >= 0 && lupine_fd_seek(capture_fd, 0, SEEK_SET) >= 0) {
       char buffer[4096];
       for (;;) {
-        ssize_t bytes = read(capture_fd, buffer, sizeof(buffer));
+        ssize_t bytes = lupine_fd_read(capture_fd, buffer, sizeof(buffer));
         if (bytes > 0) {
           capture->output.append(buffer, static_cast<size_t>(bytes));
           continue;
@@ -333,7 +336,8 @@ static void lupine_retire_graph_resources(
   if (!resources) {
     return;
   }
-  static auto *retired = new std::vector<std::shared_ptr<lupine_graph_resources>>;
+  static auto *retired =
+      new std::vector<std::shared_ptr<lupine_graph_resources>>;
   retired->push_back(resources);
 }
 
@@ -403,10 +407,18 @@ static uint64_t lupine_export_slot_hash(const void *fn) {
   if (fn == nullptr) {
     return 0;
   }
+#ifdef _WIN32
+  MEMORY_BASIC_INFORMATION info = {};
+  if (VirtualQuery(fn, &info, sizeof(info)) == 0 ||
+      info.AllocationBase == nullptr) {
+    return 0;
+  }
+#else
   Dl_info info = {};
   if (dladdr(fn, &info) == 0 || info.dli_fname == nullptr) {
     return 0;
   }
+#endif
   return lupine_fnv1a64(fn, 32);
 }
 
@@ -608,8 +620,7 @@ static uint32_t lupine_count_pending_dtoh_copies(conn_t *conn, CUstream stream,
 }
 
 static int lupine_write_pending_dtoh_copies(uint32_t *copy_count, conn_t *conn,
-                                            CUstream stream,
-                                            bool all_streams) {
+                                            CUstream stream, bool all_streams) {
   auto &pending = lupine_pending_dtoh_copies()[conn];
   if (copy_count != nullptr) {
     *copy_count = lupine_count_pending_dtoh_copies(conn, stream, all_streams);
@@ -633,21 +644,21 @@ static int lupine_write_pending_dtoh_copies(uint32_t *copy_count, conn_t *conn,
 static void lupine_cleanup_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                                bool all_streams) {
   auto &pending = lupine_pending_dtoh_copies()[conn];
-  auto keep = std::remove_if(
-      pending.begin(), pending.end(), [&](lupine_pending_dtoh_copy &copy) {
-        if (!all_streams && copy.stream != stream) {
-          return false;
-        }
-        if (copy.server_src != nullptr) {
-          if (copy.pinned) {
-            cuMemFreeHost(copy.server_src);
-          } else {
-            free(copy.server_src);
-          }
-          copy.server_src = nullptr;
-        }
-        return true;
-      });
+  auto keep = std::remove_if(pending.begin(), pending.end(),
+                             [&](lupine_pending_dtoh_copy &copy) {
+                               if (!all_streams && copy.stream != stream) {
+                                 return false;
+                               }
+                               if (copy.server_src != nullptr) {
+                                 if (copy.pinned) {
+                                   cuMemFreeHost(copy.server_src);
+                                 } else {
+                                   free(copy.server_src);
+                                 }
+                                 copy.server_src = nullptr;
+                               }
+                               return true;
+                             });
   pending.erase(keep, pending.end());
 }
 
@@ -666,8 +677,8 @@ static void *lupine_alloc_capture_scratch(
 }
 
 int rpc_write(const void *conn, const void *data, const size_t size) {
-  ((conn_t *)conn)->write_iov[((conn_t *)conn)->write_iov_count++] =
-      (struct iovec){(void *)data, size};
+  ((conn_t *)conn)->write_iov[((conn_t *)conn)->write_iov_count++] = {
+      (void *)data, size};
   return 0;
 }
 
@@ -1181,8 +1192,7 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
   if ((path_len != 0 && rpc_read(conn, path.data(), path_len) < 0) ||
       rpc_read(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
       rpc_read(conn, &file_size, sizeof(file_size)) < 0 ||
-      file_size > (1ull << 32) ||
-      (file_size != 0 && has_file_data == 0)) {
+      file_size > (1ull << 32) || (file_size != 0 && has_file_data == 0)) {
     return -1;
   }
   std::vector<char> file_data;
@@ -2917,11 +2927,8 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       offset += chunk;
     }
     if (host != nullptr && result == CUDA_SUCCESS) {
-      result = cuLaunchHostFunc(stream,
-                                [](void *userData) {
-                                  cuMemFreeHost(userData);
-                                },
-                                host);
+      result = cuLaunchHostFunc(
+          stream, [](void *userData) { cuMemFreeHost(userData); }, host);
       if (result != CUDA_SUCCESS) {
         cuStreamSynchronize(stream);
         cuMemFreeHost(host);
