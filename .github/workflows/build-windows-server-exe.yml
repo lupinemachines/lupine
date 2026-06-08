@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.29
+        uses: Jimver/cuda-toolkit@v0.2.34
         with:
           cuda: ${{ matrix.cuda }}
           method: local
