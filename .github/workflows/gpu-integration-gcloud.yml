@@ -9,16 +9,6 @@ name: GPU Integration on GCE
 
 on:
   pull_request:
-  workflow_dispatch:
-    inputs:
-      zone:
-        description: GCE zone with NVIDIA T4 quota.
-        required: true
-        default: us-central1-a
-      network:
-        description: GCE VPC network name.
-        required: true
-        default: default
 
 permissions:
   contents: read
@@ -31,14 +21,14 @@ concurrency:
 jobs:
   gpu-integration:
     name: CUDA samples and PyTorch on GCE T4
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      GCP_ZONE: ${{ inputs.zone || 'us-central1-a' }}
-      GCP_NETWORK: ${{ inputs.network || 'default' }}
+      GCP_ZONE: us-central1-a
+      GCP_NETWORK: default
       MACHINE_TYPE: n1-standard-4
       CUDA_VERSION: 12.9.1
       UBUNTU_VERSION: "24.04"
