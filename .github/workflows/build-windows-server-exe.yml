@@ -9,12 +9,24 @@ on:
 
 jobs:
   build:
-    name: Windows server executable
+    name: Windows server executable CUDA ${{ matrix.cuda }}
     runs-on: windows-2022
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda:
+          - 13.1.0
+          - 13.0.2
+          - 12.9.1
+          - 12.8.1
+          - 12.6.2
+          - 12.5.1
+          - 12.4.1
+          - 11.8.0
+          - 11.7.1
 
     env:
-      CUDA_VERSION: 13.0.2
       VCPKG_TARGET_TRIPLET: x64-windows-static
 
     steps:
@@ -24,7 +36,7 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.29
         with:
-          cuda: ${{ env.CUDA_VERSION }}
+          cuda: ${{ matrix.cuda }}
           method: local
 
       - name: Set up vcpkg
@@ -62,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = 'artifacts/lupine-server-windows-x86_64'
+          $out = 'artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           Copy-Item 'build/windows-server/Release/lupine_driver_server.exe' "$out/lupine_driver_server.exe"
           Get-FileHash "$out/lupine_driver_server.exe" -Algorithm SHA256 |
@@ -72,6 +84,6 @@ jobs:
       - name: Upload server executable
         uses: actions/upload-artifact@v4
         with:
-          name: lupine-server-windows-x86_64
-          path: artifacts/lupine-server-windows-x86_64/
+          name: lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64
+          path: artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64/
           if-no-files-found: error

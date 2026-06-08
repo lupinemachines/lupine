@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(LupineProject LANGUAGES CXX CUDA)
+project(LupineProject LANGUAGES CXX)
+
+if (NOT WIN32)
+    enable_language(CUDA)
+endif()
 
 set(MIN_CUDA_VERSION 11.0)
 
@@ -21,9 +25,11 @@ message(STATUS "Found CUDA Toolkit version: ${CUDAToolkit_VERSION}")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CUDA_STANDARD 14)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_EXTENSIONS OFF)
+if (NOT WIN32)
+    set(CMAKE_CUDA_STANDARD 14)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_CUDA_EXTENSIONS OFF)
+endif()
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -125,11 +131,11 @@ else()
     )
 endif()
 
-target_compile_options(${SERVER_OUTPUT} PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>: --compiler-options=-fPIC,-g,-Wno-deprecated-declarations>
-)
-
 if (NOT WIN32)
+    target_compile_options(${SERVER_OUTPUT} PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>: --compiler-options=-fPIC,-g,-Wno-deprecated-declarations>
+    )
+
     target_compile_options(${CLIENT_OUTPUT} PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
     )
