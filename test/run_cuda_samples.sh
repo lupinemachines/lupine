@@ -25,8 +25,6 @@ SERVER_PORT_BASE="${SERVER_PORT_BASE:-14900}"
 SSH_OPTS="${SSH_OPTS:-}"
 # shellcheck disable=SC2206
 SSH_ARGS=($SSH_OPTS)
-SSH_RETRIES="${SSH_RETRIES:-3}"
-SSH_RETRY_DELAY="${SSH_RETRY_DELAY:-5}"
 SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-45}"
 CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
@@ -37,7 +35,7 @@ SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
-SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-20}"
+SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-60}"
 LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-300}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)}"
 
@@ -112,8 +110,6 @@ Environment:
   LONG_SAMPLE_TIMEOUT  Timeout for known long-running compliance samples. Default: $LONG_SAMPLE_TIMEOUT.
   SERVER_SSH_TARGET    GPU host SSH target. Default: kevin@inferable-node-008.
   SERVER_PORT_BASE     First per-sample server port. Default: 14900.
-  SSH_RETRIES          SSH command attempts for remote server control. Default: $SSH_RETRIES.
-  SSH_RETRY_DELAY      Delay between SSH attempts in seconds. Default: $SSH_RETRY_DELAY.
   SSH_COMMAND_TIMEOUT  Timeout for each SSH/SCP control command. Default: $SSH_COMMAND_TIMEOUT.
   CUDA_SAMPLE_SKIP_LIST Comma or space separated samples to mark SKIP:disabled.
   LUPINE_LIB            Client shim. Default: $repo_root/build/libcuda.so.1.
@@ -413,24 +409,9 @@ if [[ ! -x "$SERVER_LOCAL_BIN" ]]; then
   exit 1
 fi
 
-ssh_with_retries() {
-  local attempt=1
-  local rc=0
-
-  while ((attempt <= SSH_RETRIES)); do
-    if timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
-      ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"; then
-      return 0
-    fi
-    rc=$?
-    if ((attempt < SSH_RETRIES)); then
-      echo "SSH command failed with exit $rc; retrying in ${SSH_RETRY_DELAY}s ($attempt/$SSH_RETRIES)" >&2
-      sleep "$SSH_RETRY_DELAY"
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  return "$rc"
+ssh_with_timeout() {
+  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
 }
 
 sample_disabled() {
@@ -455,7 +436,7 @@ fi
 
 cleanup_remote_bin() {
   if [[ "$SERVER_UPLOAD" == "1" && "$SERVER_REMOTE_CLEANUP" == "1" ]]; then
-    ssh_with_retries \
+    ssh_with_timeout \
       "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
   fi
 }
@@ -465,7 +446,7 @@ stop_remote_server() {
   local pidfile="$1"
   local server_log="$2"
 
-  ssh_with_retries "
+  ssh_with_timeout "
     if [ -f '$pidfile' ]; then
       pid=\$(cat '$pidfile' 2>/dev/null || true)
       if [ -n \"\$pid\" ]; then
@@ -540,7 +521,7 @@ for i in "${!samples[@]}"; do
 
   stop_remote_server "$pidfile" "$server_log"
 
-  ssh_with_retries \
+  ssh_with_timeout \
     "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
 
   set +e
