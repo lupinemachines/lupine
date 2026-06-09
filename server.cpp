@@ -1,15 +1,14 @@
-#include <arpa/inet.h>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <pthread.h>
 #include <stdio.h>
-#include <sys/socket.h>
 #include <thread>
-#include <unistd.h>
 
+#ifndef _WIN32
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#endif
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
@@ -50,7 +49,7 @@ static void lupine_log_manual_handler_error(const char *name) {
   std::cerr << "Error handling manual " << name << " request." << std::endl;
 }
 
-void client_handler(int connfd) {
+void client_handler(lupine_socket_t connfd) {
   conn_t conn = {connfd, 1};
   conn.request_id = 1;
   conn.local_request_parity = conn.request_id & 1;
@@ -570,14 +569,19 @@ void client_handler(int connfd) {
       pthread_mutex_destroy(&conn.write_mutex) < 0)
     std::cerr << "Error destroying mutex." << std::endl;
 
-  close(connfd);
+  lupine_socket_close(connfd);
 }
 
 int main() {
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
-  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sockfd == -1) {
+  if (lupine_socket_init() < 0) {
+    printf("Socket initialization failed.\n");
+    exit(EXIT_FAILURE);
+  }
+
+  lupine_socket_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd == LUPINE_INVALID_SOCKET) {
     printf("Socket creation failed.\n");
     exit(EXIT_FAILURE);
   }
@@ -596,8 +600,7 @@ int main() {
   servaddr.sin_addr.s_addr = INADDR_ANY;
   servaddr.sin_port = htons(port);
 
-  const int enable = 1;
-  if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+  if (lupine_socket_set_reuseaddr(sockfd) < 0) {
     printf("Socket bind failed.\n");
     exit(EXIT_FAILURE);
   }
@@ -617,9 +620,9 @@ int main() {
   // Server loop
   while (1) {
     socklen_t len = sizeof(cli);
-    int connfd = accept(sockfd, (struct sockaddr *)&cli, &len);
+    lupine_socket_t connfd = accept(sockfd, (struct sockaddr *)&cli, &len);
 
-    if (connfd < 0) {
+    if (connfd == LUPINE_INVALID_SOCKET) {
       std::cerr << "Server accept failed." << std::endl;
       continue;
     }
@@ -630,6 +633,6 @@ int main() {
     client_thread.detach();
   }
 
-  close(sockfd);
+  lupine_socket_close(sockfd);
   return 0;
 }
