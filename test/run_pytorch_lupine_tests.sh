@@ -15,6 +15,7 @@ SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-pytorch-${USER:-lupine}-$$}"
 SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
+PYTORCH_SKIP_LIST="${PYTORCH_SKIP_LIST:-}"
 
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 PYTHON_BIN="${PYTHON_BIN:-$repo_root/.venv-pytorch312/bin/python}"
@@ -91,10 +92,26 @@ stop_remote_server() {
   " >/dev/null 2>&1 || true
 }
 
+test_disabled() {
+  local test_name="$1"
+  local disabled=""
+
+  # shellcheck disable=SC2206
+  local disabled_tests=(${PYTORCH_SKIP_LIST//,/ })
+  for disabled in "${disabled_tests[@]}"; do
+    if [[ "$disabled" == "$test_name" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 tsv="$RESULTS_DIR/results.tsv"
 : > "$tsv"
 pass=0
 fail=0
+skip=0
 
 for i in "${!TESTS[@]}"; do
   test_name="${TESTS[$i]}"
@@ -104,6 +121,14 @@ for i in "${!TESTS[@]}"; do
   pidfile="/tmp/lupine-pytorch-$port.pid"
   test_start_seconds="$SECONDS"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] PyTorch test $((i + 1))/${#TESTS[@]}: $test_name" >&2
+
+  if test_disabled "$test_name"; then
+    status="SKIP:disabled"
+    skip=$((skip + 1))
+    signature="disabled by PYTORCH_SKIP_LIST"
+    printf '%s\t%s\t%s\n' "$test_name" "$status" "$signature" | tee -a "$tsv"
+    continue
+  fi
 
   stop_remote_server "$pidfile" "$server_log"
 
@@ -141,7 +166,8 @@ done
 {
   echo "PASS $pass"
   echo "FAIL $fail"
-  echo "TOTAL $((pass + fail))"
+  echo "SKIP $skip"
+  echo "TOTAL $((pass + fail + skip))"
   echo "RESULTS $RESULTS_DIR/results.tsv"
 } | tee "$RESULTS_DIR/summary.txt"
 
