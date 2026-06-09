@@ -8,7 +8,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <string>
-#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -23,7 +22,7 @@ struct h2_buffer {
 };
 
 struct h2_transport {
-  int netfd = -1;
+  lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   bool server = false;
   bool response_sent = false;
   int32_t stream_id = 1;
@@ -68,9 +67,10 @@ int h2_write_all(h2_transport *transport, const struct iovec *iov,
   struct iovec *cursor = local.data();
   int count = iov_count;
   while (count > 0) {
-    ssize_t n = writev(transport->netfd, cursor, count);
+    ssize_t n = lupine_socket_send(transport->netfd, cursor[0].iov_base,
+                                   cursor[0].iov_len);
     if (n < 0) {
-      if (errno == EINTR) {
+      if (lupine_socket_error_is_intr()) {
         continue;
       }
       return -1;
@@ -293,8 +293,8 @@ int h2_read_from_net(h2_transport *transport) {
   unsigned char buffer[64 * 1024];
   ssize_t n = 0;
   do {
-    n = read(transport->netfd, buffer, sizeof(buffer));
-  } while (n < 0 && errno == EINTR);
+    n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
+  } while (n < 0 && lupine_socket_error_is_intr());
   if (n <= 0) {
     return -1;
   }

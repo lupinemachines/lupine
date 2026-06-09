@@ -1,11 +1,10 @@
 #ifndef RPC_H
 #define RPC_H
 
-#include <pthread.h>
-#include <sys/uio.h>
+#include "lupine_platform.h"
 
 typedef struct {
-  int connfd;
+  lupine_socket_t connfd;
 
   int request_id;
   int read_id;

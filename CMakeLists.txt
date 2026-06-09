@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(LupineProject LANGUAGES CXX CUDA)
+project(LupineProject LANGUAGES CXX)
+
+if (NOT WIN32)
+    enable_language(CUDA)
+endif()
 
 set(MIN_CUDA_VERSION 11.0)
 
@@ -21,12 +25,11 @@ message(STATUS "Found CUDA Toolkit version: ${CUDAToolkit_VERSION}")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CUDA_STANDARD 14)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_EXTENSIONS OFF)
-
-set(CMAKE_C_COMPILER "/usr/bin/gcc")
-set(CMAKE_CXX_COMPILER "/usr/bin/g++")
+if (NOT WIN32)
+    set(CMAKE_CUDA_STANDARD 14)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_CUDA_EXTENSIONS OFF)
+endif()
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -63,74 +66,85 @@ set(CLIENT_HEADERS
 
 set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/lupine_platform.h
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
 )
 
 set(CLIENT_OUTPUT lupine_driver)
 set(NVML_CLIENT_OUTPUT lupine_nvml)
 set(SERVER_OUTPUT lupine_driver_server)
 
-add_library(${CLIENT_OUTPUT} SHARED ${CLIENT_SOURCES} ${CLIENT_HEADERS})
-target_include_directories(${CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY})
-target_link_options(${CLIENT_OUTPUT} PRIVATE
-    "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/client.exports"
-)
-set_target_properties(${CLIENT_OUTPUT} PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    OUTPUT_NAME cuda
-    VERSION 1
-    SOVERSION 1
-)
+if (NOT WIN32)
+    add_library(${CLIENT_OUTPUT} SHARED ${CLIENT_SOURCES} ${CLIENT_HEADERS})
+    target_include_directories(${CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY})
+    target_link_options(${CLIENT_OUTPUT} PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/client.exports"
+    )
+    set_target_properties(${CLIENT_OUTPUT} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME cuda
+        VERSION 1
+        SOVERSION 1
+    )
 
-add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
-target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY})
-target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
-    "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
-)
-set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    OUTPUT_NAME nvidia-ml
-    VERSION 1
-    SOVERSION 1
-)
+    add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
+    target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY})
+    target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
+    )
+    set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME nvidia-ml
+        VERSION 1
+        SOVERSION 1
+    )
+endif()
 
 add_executable(${SERVER_OUTPUT} ${SERVER_SOURCES} ${SERVER_HEADERS})
 target_include_directories(${SERVER_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_link_libraries(${SERVER_OUTPUT} PRIVATE ${CUDAToolkit_LIBRARIES} cuda dl ${NGHTTP2_LIBRARY})
+target_link_libraries(${SERVER_OUTPUT} PRIVATE CUDA::cuda_driver ${NGHTTP2_LIBRARY})
 
-add_executable(h2_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
-)
-target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY})
-enable_testing()
-add_test(NAME h2_test COMMAND h2_test)
-add_test(
-    NAME nvml_ecc_exports
-    COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"
-)
+if (WIN32)
+    target_link_libraries(${SERVER_OUTPUT} PRIVATE ws2_32)
+else()
+    target_link_libraries(${SERVER_OUTPUT} PRIVATE dl)
 
-set_source_files_properties(
-    ${SERVER_SOURCES}
-    PROPERTIES LANGUAGE CUDA
-)
+    add_executable(h2_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
+    )
+    target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY})
+    enable_testing()
+    add_test(NAME h2_test COMMAND h2_test)
+    add_test(
+        NAME nvml_ecc_exports
+        COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"
+    )
 
-target_compile_options(${SERVER_OUTPUT} PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>: --compiler-options=-fPIC,-g,-Wno-deprecated-declarations>
-)
+    set_source_files_properties(
+        ${SERVER_SOURCES}
+        PROPERTIES LANGUAGE CUDA
+    )
+endif()
 
-target_compile_options(${CLIENT_OUTPUT} PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
-)
+if (NOT WIN32)
+    target_compile_options(${SERVER_OUTPUT} PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>: --compiler-options=-fPIC,-g,-Wno-deprecated-declarations>
+    )
 
-target_compile_options(${NVML_CLIENT_OUTPUT} PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
-)
+    target_compile_options(${CLIENT_OUTPUT} PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
+    )
 
-message(STATUS "Building client output: ${CLIENT_OUTPUT}")
-message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
+    target_compile_options(${NVML_CLIENT_OUTPUT} PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
+    )
+
+    message(STATUS "Building client output: ${CLIENT_OUTPUT}")
+    message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
+endif()
 message(STATUS "Building server output: ${SERVER_OUTPUT}")

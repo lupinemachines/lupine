@@ -190,7 +190,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
-  conn->write_iov[conn->write_iov_count++] = (struct iovec){(void *)data, size};
+  conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
   return 0;
 }
 

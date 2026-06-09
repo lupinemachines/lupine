@@ -1,15 +1,19 @@
 #include "nvml_server.h"
 
 #include <cuda.h>
-#include <dlfcn.h>
 #include <nvml.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
 #include <vector>
 
 #include "codegen/gen_api.h"
-#include "rpc.h"
 
 // CUDA <= 12.6 ships NVML API 12, which does not define the versioned
 // temperature struct. The host driver exports the symbol on newer drivers; this
@@ -30,8 +34,13 @@ namespace {
 nvmlReturn_t function_not_found() { return NVML_ERROR_FUNCTION_NOT_FOUND; }
 
 void *nvml_library() {
+#ifdef _WIN32
+  static HMODULE lib = LoadLibraryA("nvml.dll");
+  return lib;
+#else
   static void *lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
   return lib;
+#endif
 }
 
 template <typename Fn> Fn nvml_symbol(const char *name) {
@@ -39,7 +48,11 @@ template <typename Fn> Fn nvml_symbol(const char *name) {
   if (lib == nullptr) {
     return nullptr;
   }
+#ifdef _WIN32
+  return reinterpret_cast<Fn>(GetProcAddress(static_cast<HMODULE>(lib), name));
+#else
   return reinterpret_cast<Fn>(dlsym(lib, name));
+#endif
 }
 
 template <typename Fn> nvmlReturn_t call0(const char *name) {
