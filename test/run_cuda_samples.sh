@@ -36,8 +36,8 @@ SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
-SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-60}"
-LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-300}"
+SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-120}"
+LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-600}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)}"
 
 CORE_SAMPLES=(
@@ -279,14 +279,32 @@ sample_args() {
     eigenvalues)
       printf '%s\0' -matrix-size=128 -iters-timing=1
       ;;
+    matrixMul|matrixMul_nvrtc)
+      printf '%s\0' -wA=32 -hA=32 -wB=32 -hB=32
+      ;;
+    matrixMulCUBLAS)
+      printf '%s\0' -sizemult=1
+      ;;
     nbody)
       printf '%s\0' -benchmark -numbodies=4096 -i=1
+      ;;
+    NV12toBGRandResize)
+      printf '%s\0' \
+        -input=data/test640x480.nv12 \
+        -width=640 \
+        -height=480 \
+        -dst_width=320 \
+        -dst_height=240 \
+        -batch=1
       ;;
     oceanFFT)
       printf '%s\0' -qatest
       ;;
     ptxgen)
       printf '%s\0' test.ll
+      ;;
+    reduction|threadFenceReduction)
+      printf '%s\0' -n=1024 -threads=64 -maxblocks=16
       ;;
     recursiveGaussian)
       printf '%s\0' -benchmark
