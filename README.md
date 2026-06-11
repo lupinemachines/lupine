@@ -5,7 +5,8 @@ to CPU-only machines.
 
 ## Hosted Demo
 
-Connect to a hosted demo server with a T4 attached for free.
+Connect to a hosted demo server with a T4 attached for free. This might take a while if there's no GPU
+currently provisioned, but subsequent requests should be faster.
 
 ```
 $ docker run --rm \

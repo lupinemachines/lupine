@@ -757,27 +757,6 @@ extern "C" nvmlReturn_t nvmlDeviceGetNvLinkRemotePciInfo_v2(nvmlDevice_t device,
   return _lupine_result;
 }
 
-extern "C" nvmlReturn_t nvmlDeviceGetTotalEccErrors(nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, unsigned long long *eccCounts) {
-  if (eccCounts != nullptr) {
-    *eccCounts = 0;
-  }
-  return NVML_SUCCESS;
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetDetailedEccErrors(nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, nvmlEccErrorCounts_t *eccCounts) {
-  if (eccCounts != nullptr) {
-    *eccCounts = nvmlEccErrorCounts_t{};
-  }
-  return NVML_SUCCESS;
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetMemoryErrorCounter(nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, nvmlMemoryLocation_t locationType, unsigned long long *count) {
-  if (count != nullptr) {
-    *count = 0;
-  }
-  return NVML_SUCCESS;
-}
-
 extern "C" nvmlReturn_t nvmlDeviceGetEccMode(nvmlDevice_t device, nvmlEnableState_t *current, nvmlEnableState_t *pending) {
   conn_t *_lupine_conn = connection_for_device(&device);
   nvmlReturn_t _lupine_result = rpc_error();

@@ -551,6 +551,40 @@ extern "C" nvmlReturn_t nvmlDeviceRegisterEvents(nvmlDevice_t device,
   return call_device_register_events(device, eventTypes, set);
 }
 
+extern "C" nvmlReturn_t
+nvmlDeviceGetTotalEccErrors(nvmlDevice_t device,
+                            nvmlMemoryErrorType_t errorType,
+                            nvmlEccCounterType_t counterType,
+                            unsigned long long *eccCounts) {
+  if (eccCounts != nullptr) {
+    *eccCounts = 0;
+  }
+  return NVML_SUCCESS;
+}
+
+extern "C" nvmlReturn_t
+nvmlDeviceGetDetailedEccErrors(nvmlDevice_t device,
+                               nvmlMemoryErrorType_t errorType,
+                               nvmlEccCounterType_t counterType,
+                               nvmlEccErrorCounts_t *eccCounts) {
+  if (eccCounts != nullptr) {
+    *eccCounts = nvmlEccErrorCounts_t{};
+  }
+  return NVML_SUCCESS;
+}
+
+extern "C" nvmlReturn_t
+nvmlDeviceGetMemoryErrorCounter(nvmlDevice_t device,
+                                nvmlMemoryErrorType_t errorType,
+                                nvmlEccCounterType_t counterType,
+                                nvmlMemoryLocation_t locationType,
+                                unsigned long long *count) {
+  if (count != nullptr) {
+    *count = 0;
+  }
+  return NVML_SUCCESS;
+}
+
 extern "C" nvmlReturn_t nvmlDeviceGetCount_v2(unsigned int *deviceCount) {
   nvmlReturn_t result = ensure_devices();
   if (result != NVML_SUCCESS) {
