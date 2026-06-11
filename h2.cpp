@@ -25,6 +25,7 @@ struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   bool server = false;
   bool response_sent = false;
+  bool compress_lz4 = false;
   int32_t stream_id = 1;
   int response_status = 0;
   nghttp2_session *session = nullptr;
@@ -205,6 +206,14 @@ nghttp2_nv h2_nv(const char *name, const char *value) {
           NGHTTP2_NV_FLAG_NO_COPY_NAME | NGHTTP2_NV_FLAG_NO_COPY_VALUE};
 }
 
+constexpr char kLupineCompressHeader[] = "x-lupine-compress";
+constexpr char kLupineCompressLz4[] = "lz4";
+
+bool lupine_compress_lz4_requested() {
+  const char *value = getenv("LUPINE_COMPRESS");
+  return value != nullptr && strcmp(value, kLupineCompressLz4) == 0;
+}
+
 bool lupine_h2_debug_enabled() {
   const char *debug = getenv("LUPINE_DEBUG");
   if (debug != nullptr && debug[0] != '\0' && strcmp(debug, "0") != 0) {
@@ -258,8 +267,20 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
                           const uint8_t *value, size_t valuelen, uint8_t,
                           void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  if (transport->server || frame->hd.type != NGHTTP2_HEADERS ||
-      frame->headers.cat != NGHTTP2_HCAT_RESPONSE) {
+  if (frame->hd.type != NGHTTP2_HEADERS) {
+    return 0;
+  }
+  if (transport->server) {
+    if (frame->headers.cat == NGHTTP2_HCAT_REQUEST &&
+        namelen == strlen(kLupineCompressHeader) &&
+        memcmp(name, kLupineCompressHeader, namelen) == 0 &&
+        valuelen == strlen(kLupineCompressLz4) &&
+        memcmp(value, kLupineCompressLz4, valuelen) == 0) {
+      transport->compress_lz4 = true;
+    }
+    return 0;
+  }
+  if (frame->headers.cat != NGHTTP2_HCAT_RESPONSE) {
     return 0;
   }
   if (namelen != 7 || memcmp(name, ":status", 7) != 0) {
@@ -367,10 +388,16 @@ int h2_init_direct(conn_t *conn, bool server) {
         h2_nv(":scheme", "http"),
         h2_nv(":path", "/"),
         h2_nv(":authority", "lupine"),
+        h2_nv(kLupineCompressHeader, kLupineCompressLz4),
     };
+    size_t header_count = 4;
+    if (lupine_compress_lz4_requested()) {
+      transport->compress_lz4 = true;
+      header_count = 5;
+    }
     int32_t stream_id =
         nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1,
-                               nullptr, headers, 4, nullptr);
+                               nullptr, headers, header_count, nullptr);
     if (stream_id < 0) {
       nghttp2_session_del(transport->session);
       delete transport;
@@ -446,6 +473,11 @@ int rpc_http2_writev(conn_t *conn, struct iovec *iov, int iov_count) {
   }
   pthread_mutex_unlock(&transport->session_mutex);
   return 0;
+}
+
+int rpc_http2_compress_lz4(conn_t *conn) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  return transport != nullptr && transport->compress_lz4 ? 1 : 0;
 }
 
 int rpc_http2_client_init(conn_t *conn) { return h2_init_direct(conn, false); }

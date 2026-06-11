@@ -2611,7 +2611,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
- * @param srcHost SEND_ONLY LENGTH:ByteCount
+ * @param srcHost SEND_ONLY LENGTH:ByteCount COMPRESSIBLE
  */
 CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                          size_t ByteCount);
@@ -2619,7 +2619,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
  * @routingkey DEVICEPTR srcDevice
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
- * @param dstHost RECV_ONLY LENGTH:ByteCount
+ * @param dstHost RECV_ONLY LENGTH:ByteCount COMPRESSIBLE
  */
 CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
@@ -2719,7 +2719,7 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
- * @param srcHost SEND_ONLY LENGTH:ByteCount
+ * @param srcHost SEND_ONLY LENGTH:ByteCount COMPRESSIBLE
  * @param hStream SEND_ONLY
  */
 CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,

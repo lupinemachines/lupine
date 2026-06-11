@@ -4742,7 +4742,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
       continue;
     }
     lupine_prepare_host_range_write(dst, bytes);
-    if (rpc_read(conn, dst, bytes) < 0) {
+    if (rpc_read_payload(conn, dst, bytes) < 0) {
       return -1;
     }
     lupine_mark_host_range_clean(dst, bytes);

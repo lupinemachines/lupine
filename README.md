@@ -277,6 +277,11 @@ You can also use the local shell script to run your commands.
 ./local.sh run
 ```
 
+To trade CPU for network bandwidth, set `LUPINE_COMPRESS=lz4` on the client to
+LZ4-compress large (>= 64KB) host<->device memory transfer payloads in both
+directions. The server mirrors the client's setting per connection; without
+the variable the wire format is unchanged.
+
 ## Questions
 
 1. **What does LUPINE stand for?** Nothing, it just looks cool in all caps.

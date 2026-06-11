@@ -201,6 +201,7 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
 // returns the request id which can be used to wait for a response.
 int rpc_write_end(conn_t *conn) {
   if (conn->closed) {
+    rpc_release_payload_scratch(conn);
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
@@ -214,6 +215,7 @@ int rpc_write_end(conn_t *conn) {
   memcpy(iov, conn->write_iov, sizeof(struct iovec) * iov_count);
 
   int result = rpc_http2_writev(conn, iov, iov_count);
+  rpc_release_payload_scratch(conn);
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
 }

@@ -2244,7 +2244,9 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   srcHost = (void *)malloc(srcHost_size);
   if (srcHost_size != 0 && srcHost == nullptr)
     goto ERROR_0;
-  if ((srcHost_size != 0 && rpc_read(conn, srcHost, srcHost_size) < 0) || false)
+  if ((srcHost_size != 0 &&
+       rpc_read_payload(conn, srcHost, srcHost_size) < 0) ||
+      false)
     goto ERROR_1;
 
   request_id = rpc_read_end(conn);
@@ -2286,7 +2288,7 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
       (ByteCount == 0 ? nullptr : dstHost), srcDevice, ByteCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (ByteCount != 0 && rpc_write(conn, dstHost, ByteCount) < 0) ||
+      (ByteCount != 0 && rpc_write_payload(conn, dstHost, ByteCount) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_1;
@@ -2496,7 +2498,8 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   srcHost = (void *)malloc(srcHost_size);
   if (srcHost_size != 0 && srcHost == nullptr)
     goto ERROR_0;
-  if ((srcHost_size != 0 && rpc_read(conn, srcHost, srcHost_size) < 0) ||
+  if ((srcHost_size != 0 &&
+       rpc_read_payload(conn, srcHost, srcHost_size) < 0) ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
     goto ERROR_1;
 

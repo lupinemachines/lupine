@@ -1023,6 +1023,9 @@ class ArrayOperation:
     ptr: Pointer
     # if int, it's a constant length, if Parameter, it's a variable length.
     length: Union[int, Parameter]
+    # compressible payloads use the rpc_*_payload helpers which optionally
+    # apply LZ4 framing for large transfers (see compress.cpp).
+    compressible: bool = False
 
     @property
     def is_void_bytes(self) -> bool:
@@ -1100,7 +1103,8 @@ class ArrayOperation:
                 )
             )
             f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        ({size} != 0 && {write_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
+                    write_fn="rpc_write_payload" if self.compressible else "rpc_write",
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
@@ -1270,7 +1274,8 @@ class ArrayOperation:
             f.write("        goto ERROR_{index};\n".format(index=index))
             f.write("    if(\n")
             f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
+                    read_fn="rpc_read_payload" if self.compressible else "rpc_read",
                     param_name=self.parameter.name,
                     size=f"{self.parameter.name}_size",
                 )
@@ -1320,7 +1325,8 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        ({size} != 0 && {write_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
+                    write_fn="rpc_write_payload" if self.compressible else "rpc_write",
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
@@ -1338,7 +1344,8 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
+                    read_fn="rpc_read_payload" if self.compressible else "rpc_read",
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
@@ -1781,7 +1788,8 @@ def parse_annotation(
                             parameter=param,
                             ptr=param.type,
                             length=length_param,
-                            iter=False
+                            iter=False,
+                            compressible="COMPRESSIBLE" in args,
                         )
                     )
                 elif size_arg:

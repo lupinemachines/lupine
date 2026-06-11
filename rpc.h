@@ -20,6 +20,7 @@ typedef struct {
   int local_request_parity;
   int closed;
   void *http2;
+  void *payload_scratch;
 } conn_t;
 
 extern int rpc_dispatch(conn_t *conn, int parity);
@@ -39,5 +40,15 @@ extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, struct iovec *iov, int iov_count);
 extern int rpc_http2_client_init(conn_t *conn);
 extern int rpc_http2_server_init(conn_t *conn);
+extern int rpc_http2_compress_lz4(conn_t *conn);
+
+// Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
+extern int lupine_payload_framed(conn_t *conn, size_t total_size);
+extern int rpc_write_payload(conn_t *conn, const void *data, size_t size);
+extern int rpc_read_payload(conn_t *conn, void *data, size_t size);
+extern int rpc_read_payload_part(conn_t *conn, int framed, void *data,
+                                 size_t size);
+extern int rpc_drain_payload(conn_t *conn, int framed, size_t size);
+extern void rpc_release_payload_scratch(conn_t *conn);
 
 #endif

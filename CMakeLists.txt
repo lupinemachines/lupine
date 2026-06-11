@@ -11,6 +11,8 @@ set(MIN_CUDA_VERSION 11.0)
 find_package(CUDAToolkit REQUIRED)
 find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
 find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
+find_path(LZ4_INCLUDE_DIR lz4.h REQUIRED)
+find_library(LZ4_LIBRARY lz4 REQUIRED)
 
 if (NOT CUDAToolkit_VERSION)
     message(FATAL_ERROR "CUDA Toolkit is required but not found.")
@@ -36,11 +38,13 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen
     ${CUDAToolkit_INCLUDE_DIRS}
     ${NGHTTP2_INCLUDE_DIR}
+    ${LZ4_INCLUDE_DIR}
 )
 
 set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
 )
@@ -51,12 +55,14 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.cpp
 )
 
 set(NVML_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp
 )
 
@@ -79,7 +85,7 @@ set(SERVER_OUTPUT lupine_driver_server)
 if (NOT WIN32)
     add_library(${CLIENT_OUTPUT} SHARED ${CLIENT_SOURCES} ${CLIENT_HEADERS})
     target_include_directories(${CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY})
+    target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} ${LZ4_LIBRARY})
     target_link_options(${CLIENT_OUTPUT} PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/client.exports"
     )
@@ -92,7 +98,7 @@ if (NOT WIN32)
 
     add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
     target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY})
+    target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} ${LZ4_LIBRARY})
     target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
     )
@@ -106,7 +112,7 @@ endif()
 
 add_executable(${SERVER_OUTPUT} ${SERVER_SOURCES} ${SERVER_HEADERS})
 target_include_directories(${SERVER_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_link_libraries(${SERVER_OUTPUT} PRIVATE CUDA::cuda_driver ${NGHTTP2_LIBRARY})
+target_link_libraries(${SERVER_OUTPUT} PRIVATE CUDA::cuda_driver ${NGHTTP2_LIBRARY} ${LZ4_LIBRARY})
 
 if (WIN32)
     target_link_libraries(${SERVER_OUTPUT} PRIVATE ws2_32)

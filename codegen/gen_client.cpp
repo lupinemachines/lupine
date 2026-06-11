@@ -1988,7 +1988,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
       (ByteCount != 0 && srcHost == nullptr) ||
-      (ByteCount != 0 && rpc_write(conn, srcHost, ByteCount) < 0) ||
+      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -2016,7 +2016,7 @@ CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (lupine_prepare_host_range_write(dstHost, ByteCount), false) ||
-      (ByteCount != 0 && rpc_read(conn, dstHost, ByteCount) < 0) ||
+      (ByteCount != 0 && rpc_read_payload(conn, dstHost, ByteCount) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2224,7 +2224,7 @@ CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       (ByteCount != 0 && srcHost == nullptr) ||
-      (ByteCount != 0 && rpc_write(conn, srcHost, ByteCount) < 0) ||
+      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
