@@ -19,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     cmake \
-    liblz4-dev \
     libnghttp2-dev \
     ninja-build \
     python3 \
@@ -97,7 +96,6 @@ LABEL org.opencontainers.image.version="${CUDA_VERSION}-ubuntu${UBUNTU_VERSION}"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
-    liblz4-1 \
     libnghttp2-14 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -131,7 +129,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     libgcc-s1 \
-    liblz4-1 \
     libnghttp2-14 \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
@@ -164,7 +161,6 @@ LABEL org.opencontainers.image.version="${CUDA_VERSION}-ubuntu${UBUNTU_VERSION}"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
-    liblz4-1 \
     libnghttp2-14 \
     && rm -rf /var/lib/apt/lists/*
 
