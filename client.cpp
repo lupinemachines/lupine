@@ -2575,7 +2575,7 @@ static const void *lupine_remote_private_export_table(const CUuuid *uuid) {
   }
   size_t hash_bytes = static_cast<size_t>(slot_count) * sizeof(uint64_t);
   if (hash_bytes != 0 && rpc_read(conn, hashes, hash_bytes) < 0) {
-    rpc_read_end(conn);
+    // a failed rpc_read releases the read state itself.
     return nullptr;
   }
   if (rpc_read_end(conn) < 0) {
@@ -7728,29 +7728,10 @@ int rpc_open() {
       port = colon + 1;
     }
 
-    addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, port, &hints, &res) != 0) {
-      std::cout << "getaddrinfo of " << host << " port " << port << " failed"
+    int sockfd = rpc_client_connect(host, port);
+    if (sockfd == LUPINE_INVALID_SOCKET) {
+      std::cerr << "Connecting to " << host << " port " << port << " failed"
                 << std::endl;
-      continue;
-    }
-
-    int flag = 1;
-    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sockfd == -1) {
-      printf("socket creation failed...\n");
-      continue;
-    }
-
-    int opts = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
-                          sizeof(int));
-    if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-      std::cerr << "Connecting to " << host << " port " << port
-                << " failed: " << strerror(errno) << std::endl;
-      close(sockfd);
       continue;
     }
 
