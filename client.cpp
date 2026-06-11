@@ -7,8 +7,8 @@
 #include <cudaProfiler.h>
 #include <dlfcn.h>
 #include <elf.h>
-#include <features.h>
 #include <fcntl.h>
+#include <features.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -280,8 +280,8 @@ static void *lupine_real_dlsym(void *handle, const char *name) {
     initialized = true;
     const char *version = lupine_dlsym_glibc_version();
     if (version != nullptr) {
-      real_dlsym =
-          reinterpret_cast<lupine_dlsym_fn>(dlvsym(RTLD_NEXT, "dlsym", version));
+      real_dlsym = reinterpret_cast<lupine_dlsym_fn>(
+          dlvsym(RTLD_NEXT, "dlsym", version));
     }
   }
   return real_dlsym != nullptr ? real_dlsym(handle, name) : nullptr;
@@ -1572,6 +1572,62 @@ static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
   }
   *module = loaded;
   return CUDA_SUCCESS;
+}
+
+extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
+  if (module == nullptr || fname == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUmodule *, const char *);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuModuleLoad");
+    if (real == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    CUresult result = real(module, fname);
+    if (result == CUDA_SUCCESS && module != nullptr) {
+      lupine_note_module_owner_route(*module, route);
+    }
+    return result;
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  void *mapping = MAP_FAILED;
+  size_t mapped_size = 0;
+  int fd = open(fname, O_RDONLY);
+  if (fd < 0) {
+    return CUDA_ERROR_FILE_NOT_FOUND;
+  }
+  struct stat st = {};
+  if (fstat(fd, &st) < 0 || st.st_size <= 0) {
+    close(fd);
+    return CUDA_ERROR_FILE_NOT_FOUND;
+  }
+  mapped_size = static_cast<size_t>(st.st_size);
+  mapping = mmap(nullptr, mapped_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  close(fd);
+  if (mapping == MAP_FAILED) {
+    return CUDA_ERROR_FILE_NOT_FOUND;
+  }
+
+  bool failed =
+      conn == nullptr || rpc_write_start_request(conn, RPC_cuModuleLoad) < 0 ||
+      rpc_write(conn, &mapped_size, sizeof(mapped_size)) < 0 ||
+      rpc_write(conn, mapping, mapped_size) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0;
+  munmap(mapping, mapped_size);
+  if (failed) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (result == CUDA_SUCCESS && module != nullptr) {
+    lupine_note_module_owner_route(*module, route);
+  }
+  return result;
 }
 
 static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
@@ -4837,6 +4893,10 @@ static CUresult lupine_rpc_event_driver_call(int op, CUevent event) {
   return return_value;
 }
 
+extern "C" CUresult cuEventQuery(CUevent hEvent) {
+  return lupine_rpc_event_driver_call(RPC_cuEventQuery, hEvent);
+}
+
 extern "C" CUresult cuCtxSynchronize() {
   CUresult result = lupine_rpc_noarg_driver_call(RPC_cuCtxSynchronize);
   if (result != CUDA_SUCCESS) {
@@ -4886,6 +4946,42 @@ extern "C" CUresult cuEventSynchronize(CUevent hEvent) {
     return result;
   }
   return lupine_sync_mapped_device_to_host();
+}
+
+extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
+                                      unsigned int Flags) {
+  lupine_route route = hStream == nullptr ? lupine_route_for_default()
+                                          : lupine_route_for_stream(hStream);
+  lupine_route event_route = lupine_route_for_event(hEvent);
+  if (hEvent != nullptr && !lupine_routes_share_server(route, event_route)) {
+    return cuEventSynchronize(hEvent);
+  }
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUstream, CUevent, unsigned int);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuStreamWaitEvent");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(hStream, hEvent, Flags);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuStreamWaitEvent) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
+      rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
+#ifdef cuStreamWaitEvent_ptsz
+#undef cuStreamWaitEvent_ptsz
+#endif
+extern "C" CUresult cuStreamWaitEvent_ptsz(CUstream hStream, CUevent hEvent,
+                                           unsigned int Flags) {
+  return cuStreamWaitEvent(hStream, hEvent, Flags);
 }
 
 extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
@@ -5588,6 +5684,42 @@ lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_safe(
   }
   return cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
       numBlocks, func, blockSize, dynamicSMemSize, flags);
+}
+
+extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
+                                         const void *srcHost, size_t ByteCount,
+                                         CUstream hStream) {
+  lupine_route route = lupine_route_for_deviceptr(dstDevice);
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUdeviceptr, const void *, size_t, CUstream);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemcpyHtoDAsync_v2");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(dstDevice, srcHost, ByteCount, hStream);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+      rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
+      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      (ByteCount != 0 && srcHost == nullptr) ||
+      (ByteCount != 0 && rpc_write(conn, srcHost, ByteCount) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+#ifdef cuMemcpyHtoDAsync
+#undef cuMemcpyHtoDAsync
+#endif
+extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
+                                      const void *srcHost, size_t ByteCount,
+                                      CUstream hStream) {
+  return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
 }
 
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
@@ -7899,6 +8031,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuPointerGetAttribute", (void *)cuPointerGetAttribute},
       {"cuPointerGetAttributes", (void *)lupine_cuPointerGetAttributes_safe},
       {"cuGetExportTable", (void *)cuGetExportTable},
+      {"cuModuleLoad", (void *)cuModuleLoad},
       {"cuModuleLoadData", (void *)cuModuleLoadData},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
@@ -7906,10 +8039,14 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
       {"cuMemcpyAsync", (void *)cuMemcpyAsync},
       {"cuMemcpyAsync_ptsz", (void *)cuMemcpyAsync},
+      {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
+      {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
       {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
       {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
       {"cuStreamWaitValue64", (void *)cuStreamWaitValue64_v2},
+      {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},
+      {"cuStreamWaitEvent_ptsz", (void *)cuStreamWaitEvent_ptsz},
       {"cuStreamWriteValue32", (void *)cuStreamWriteValue32_v2},
       {"cuStreamWriteValue64", (void *)cuStreamWriteValue64_v2},
       {"cuStreamBatchMemOp", (void *)cuStreamBatchMemOp_v2},
@@ -7919,6 +8056,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
+      {"cuEventQuery", (void *)cuEventQuery},
       {"cuEventSynchronize", (void *)cuEventSynchronize},
       {"cuGetErrorName", (void *)cuGetErrorName},
       {"cuGetErrorString", (void *)cuGetErrorString},
@@ -8154,6 +8292,7 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuPointerGetAttribute", (void *)cuPointerGetAttribute},
       {"cuPointerGetAttributes", (void *)lupine_cuPointerGetAttributes_safe},
       {"cuGetExportTable", (void *)cuGetExportTable},
+      {"cuModuleLoad", (void *)cuModuleLoad},
       {"cuModuleLoadData", (void *)cuModuleLoadData},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
@@ -8161,10 +8300,14 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
       {"cuMemcpyAsync", (void *)cuMemcpyAsync},
       {"cuMemcpyAsync_ptsz", (void *)cuMemcpyAsync},
+      {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
+      {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
       {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
       {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
       {"cuStreamWaitValue64", (void *)cuStreamWaitValue64_v2},
+      {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},
+      {"cuStreamWaitEvent_ptsz", (void *)cuStreamWaitEvent_ptsz},
       {"cuStreamWriteValue32", (void *)cuStreamWriteValue32_v2},
       {"cuStreamWriteValue64", (void *)cuStreamWriteValue64_v2},
       {"cuStreamBatchMemOp", (void *)cuStreamBatchMemOp_v2},
@@ -8174,6 +8317,7 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
+      {"cuEventQuery", (void *)cuEventQuery},
       {"cuEventSynchronize", (void *)cuEventSynchronize},
       {"cuGetErrorName", (void *)cuGetErrorName},
       {"cuGetErrorString", (void *)cuGetErrorString},
