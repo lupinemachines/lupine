@@ -604,6 +604,36 @@ int rpc_write(const void *conn, const void *data, const size_t size) {
   return 0;
 }
 
+int handle_manual_cuModuleLoad(conn_t *conn) {
+  CUmodule module = nullptr;
+  size_t image_size = 0;
+  int request_id;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+
+  if (rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
+    return -1;
+  }
+
+  std::vector<unsigned char> image(image_size + 1, 0);
+  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
+    return -1;
+  }
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  result = cuModuleLoadData(&module, image.data());
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &module, sizeof(module)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuModuleLoadData(conn_t *conn) {
   uint32_t kind = 0;
   size_t image_size = 0;
