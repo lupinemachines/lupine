@@ -1638,16 +1638,33 @@ class OwnerAnnotation:
 
 
 @dataclass
+class CrossServerCopyAnnotation:
+    dst: Parameter
+    src: Parameter
+    bytes: Parameter
+    stream: Optional[Parameter] = None
+    async_: bool = False
+
+
+@dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
     disabled: bool = False
     routing_kind: Optional[str] = None
     routing_parameter: Optional[Parameter] = None
     record_owners: list[OwnerAnnotation] = None
+    cross_server_copy: Optional[CrossServerCopyAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
+
+
+def annotation_param(params: list[Parameter], name: str) -> Parameter:
+    try:
+        return next(p for p in params if p.name == name)
+    except StopIteration:
+        raise NotImplementedError(f"Parameter {name} not found")
 
 
 def infer_routing_key(
@@ -1706,34 +1723,40 @@ def parse_annotation(
                 continue
             metadata.routing_kind = parts[1].upper()
             if len(parts) >= 3:
-                try:
-                    metadata.routing_parameter = next(
-                        p for p in params if p.name == parts[2]
-                    )
-                except StopIteration:
-                    raise NotImplementedError(
-                        f"Routing parameter {parts[2]} not found"
-                    )
+                metadata.routing_parameter = annotation_param(params, parts[2])
             continue
         if line.startswith("@recordowner"):
             parts = line.split()
             if len(parts) < 3:
                 continue
-            try:
-                param = next(p for p in params if p.name == parts[2])
-            except StopIteration:
-                raise NotImplementedError(f"Owner parameter {parts[2]} not found")
+            param = annotation_param(params, parts[2])
             metadata.record_owners.append(OwnerAnnotation(parts[1].upper(), param))
+            continue
+        if line.startswith("@crossservercopy"):
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            stream_arg = next(
+                (arg for arg in parts[4:] if arg.startswith("STREAM:")), None
+            )
+            metadata.cross_server_copy = CrossServerCopyAnnotation(
+                dst=annotation_param(params, parts[1]),
+                src=annotation_param(params, parts[2]),
+                bytes=annotation_param(params, parts[3]),
+                stream=(
+                    annotation_param(params, stream_arg.split(":", 1)[1])
+                    if stream_arg is not None
+                    else None
+                ),
+                async_="ASYNC" in parts[4:],
+            )
             continue
         if line.startswith("@param"):
             parts = line.split()
 
             if len(parts) < 3:
                 continue
-            try:
-                param = next(p for p in params if p.name == parts[1])
-            except StopIteration:
-                raise NotImplementedError(f"Parameter {parts[1]} not found")
+            param = annotation_param(params, parts[1])
             args = parts[3:]
             send = parts[2] == "SEND_ONLY" or parts[2] == "SEND_RECV"
             recv = parts[2] == "RECV_ONLY" or parts[2] == "SEND_RECV"
@@ -2326,7 +2349,13 @@ def main():
             'extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
-            'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n\n'
+            'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
+            'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
+            'extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,\n'
+            '                                                   CUdeviceptr srcDevice,\n'
+            '                                                   size_t ByteCount,\n'
+            '                                                   CUstream hStream,\n'
+            '                                                   bool async);\n\n'
             'extern "C" CUresult lupine_cuArrayCreate_v2_safe(CUarray *pHandle, const CUDA_ARRAY_DESCRIPTOR *pAllocateArray);\n'
             'extern "C" CUresult lupine_cuArray3DCreate_v2_safe(CUarray *pHandle, const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray);\n'
             'extern "C" CUresult lupine_cuLinkCreate_v2_safe(unsigned int numOptions, CUjit_option *options, void **optionValues, CUlinkState *stateOut);\n'
@@ -2465,6 +2494,26 @@ def main():
                     route_expr=client_routing_route_expr(metadata)
                 )
             )
+            if metadata.cross_server_copy is not None:
+                copy = metadata.cross_server_copy
+                stream_arg = copy.stream.name if copy.stream is not None else "nullptr"
+                async_arg = "true" if copy.async_ else "false"
+                f.write(
+                    "    if (!lupine_deviceptrs_share_route({dst}, {src})) {{\n".format(
+                        dst=copy.dst.name,
+                        src=copy.src.name,
+                    )
+                )
+                f.write(
+                    "        return lupine_cuMemcpyDtoD_via_client({dst}, {src}, {bytes}, {stream}, {async_});\n".format(
+                        dst=copy.dst.name,
+                        src=copy.src.name,
+                        bytes=copy.bytes.name,
+                        stream=stream_arg,
+                        async_=async_arg,
+                    )
+                )
+                f.write("    }\n")
             f.write("    if (lupine_route_is_local(route)) {\n")
             f.write(
                 "        using real_fn_t = {return_type} (*)({params});\n".format(
@@ -2653,7 +2702,7 @@ def main():
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
         )
-        for function, annotation, operations, disabled, _ in functions_with_annotations:
+        for function, annotation, operations, disabled, metadata in functions_with_annotations:
             if disabled:
                 continue
 
