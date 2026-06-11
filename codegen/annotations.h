@@ -3579,7 +3579,29 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config);
  */
 CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc);
 
-// TODO: Spec from here
+// TODO: Annotations below this point started as auto-generated best guesses
+// (annotationgen.py defaults: scalars SEND_ONLY, pointers SEND_RECV) and have
+// only been partially hand-reviewed. The graph node creation, dependency edge,
+// occupancy, texref/surfref, tex/surf object, peer access, and graphics interop
+// entries have been reviewed. Known remaining gaps that need manual handlers or
+// new annotation grammar rather than plain @param fixes:
+// - cuGraphGetRootNodes / cuGraphGetEdges / cuGraphNodeGetDependencies /
+//   cuGraphNodeGetDependentNodes: optional out-array with in/out count, needs
+//   manual handling like cuGraphGetNodes.
+// - cuGraphAddExternalSemaphoresSignalNode / ...WaitNode /
+//   cuGraphAddBatchMemOpNode and their Get/Set params variants, plus
+//   cuGraphHostNodeGetParams / SetParams: the node params structs embed
+//   pointer arrays, so shallow copies are wrong.
+// - cuOccupancyMaxPotentialClusterSize / cuOccupancyMaxActiveClusters:
+//   CUlaunchConfig embeds an attribute array.
+// - cuLaunchCooperativeKernelMultiDevice: embeds kernelParams pointers.
+// - cuTensorMapEncodeTiled / cuTensorMapEncodeIm2col: globalStrides has
+//   tensorRank-1 elements and elementStrides is optional.
+// - cuUserObjectCreate: host callback + opaque host pointer.
+// - cuTexRefSetBorderColor / cuTexRefGetBorderColor: fixed 4-float arrays;
+//   SIZE: on non-char pointers generates mismatched client/server byte counts.
+// The cudaError_t / cublasStatus_t / cudnnStatus_t declarations further below
+// are not consumed by codegen.py yet.
 
 /**
  * @disabled
@@ -3813,8 +3835,8 @@ CUresult cuGraphHostNodeSetParams(CUgraphNode hNode,
 /**
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param childGraph SEND_ONLY
  */
 CUresult cuGraphAddChildGraphNode(CUgraphNode *phGraphNode, CUgraph hGraph,
@@ -3828,8 +3850,8 @@ CUresult cuGraphChildGraphNodeGetGraph(CUgraphNode hNode, CUgraph *phGraph);
 /**
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
  */
 CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                              const CUgraphNode *dependencies,
@@ -3837,8 +3859,8 @@ CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 /**
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param event SEND_ONLY
  */
 CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
@@ -3857,8 +3879,8 @@ CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event);
 /**
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param event SEND_ONLY
  */
 CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
@@ -4057,17 +4079,17 @@ CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
                                       size_t *numDependentNodes);
 /**
  * @param hGraph SEND_ONLY
- * @param from SEND_RECV
- * @param to SEND_RECV
  * @param numDependencies SEND_ONLY
+ * @param from SEND_ONLY LENGTH:numDependencies
+ * @param to SEND_ONLY LENGTH:numDependencies
  */
 CUresult cuGraphAddDependencies(CUgraph hGraph, const CUgraphNode *from,
                                 const CUgraphNode *to, size_t numDependencies);
 /**
  * @param hGraph SEND_ONLY
- * @param from SEND_RECV
- * @param to SEND_RECV
  * @param numDependencies SEND_ONLY
+ * @param from SEND_ONLY LENGTH:numDependencies
+ * @param to SEND_ONLY LENGTH:numDependencies
  */
 CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
                                    const CUgraphNode *to,
@@ -4231,7 +4253,7 @@ CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
                                        const CUkernelNodeAttrValue *value);
 /**
  * @param hGraph SEND_ONLY
- * @param path SEND_RECV
+ * @param path SEND_ONLY NULL_TERMINATED
  * @param flags SEND_ONLY
  */
 CUresult cuGraphDebugDotPrint(CUgraph hGraph, const char *path,
@@ -4671,7 +4693,7 @@ CUresult cuGraphicsResourceSetMapFlags_v2(CUgraphicsResource resource,
                                           unsigned int flags);
 /**
  * @param count SEND_ONLY
- * @param resources SEND_RECV
+ * @param resources SEND_ONLY LENGTH:count
  * @param hStream SEND_ONLY
  */
 CUresult cuGraphicsMapResources(unsigned int count,
@@ -4679,7 +4701,7 @@ CUresult cuGraphicsMapResources(unsigned int count,
                                 CUstream hStream);
 /**
  * @param count SEND_ONLY
- * @param resources SEND_RECV
+ * @param resources SEND_ONLY LENGTH:count
  * @param hStream SEND_ONLY
  */
 CUresult cuGraphicsUnmapResources(unsigned int count,

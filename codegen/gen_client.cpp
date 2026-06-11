@@ -5232,8 +5232,12 @@ CUresult cuGraphAddChildGraphNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write_start_request(conn, RPC_cuGraphAddChildGraphNode) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       dependencies == nullptr) ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, dependencies,
+                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
       rpc_write(conn, &childGraph, sizeof(CUgraph)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -5289,8 +5293,12 @@ CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write_start_request(conn, RPC_cuGraphAddEmptyNode) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       dependencies == nullptr) ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, dependencies,
+                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5320,8 +5328,12 @@ CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write_start_request(conn, RPC_cuGraphAddEventRecordNode) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       dependencies == nullptr) ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, dependencies,
+                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -5401,8 +5413,12 @@ CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write_start_request(conn, RPC_cuGraphAddEventWaitNode) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       dependencies == nullptr) ||
+      (numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, dependencies,
+                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -6630,10 +6646,12 @@ CUresult cuGraphDebugDotPrint(CUgraph hGraph, const char *path,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  std::size_t path_len = std::strlen(path) + 1;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphDebugDotPrint) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &path, sizeof(const char *)) < 0 ||
+      rpc_write(conn, &path_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, path, path_len) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8004,10 +8022,11 @@ CUresult cuGraphicsMapResources(unsigned int count,
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphicsMapResources) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, resources, sizeof(CUgraphicsResource)) < 0 ||
+      (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr) ||
+      (count * sizeof(CUgraphicsResource) != 0 &&
+       rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0) ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, resources, sizeof(CUgraphicsResource)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -8034,10 +8053,11 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphicsUnmapResources) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, resources, sizeof(CUgraphicsResource)) < 0 ||
+      (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr) ||
+      (count * sizeof(CUgraphicsResource) != 0 &&
+       rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0) ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, resources, sizeof(CUgraphicsResource)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
