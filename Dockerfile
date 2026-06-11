@@ -34,9 +34,8 @@ COPY . /opt/lupine
 RUN python3 -m venv /opt/lupine/.venv-codegen \
     && /opt/lupine/.venv-codegen/bin/pip install --no-cache-dir -r /opt/lupine/codegen/requirements.txt
 
-# Generated sources are checked in because the current generator does not yet
-# preserve every hand-maintained driver shim path. Set RUN_CODEGEN=1 only when
-# updating generated sources intentionally for a CUDA header version.
+# Generated sources are checked in; set RUN_CODEGEN=1 when intentionally
+# updating them for a CUDA header version.
 RUN if [ "$RUN_CODEGEN" = "1" ]; then \
       cd /opt/lupine/codegen && /opt/lupine/.venv-codegen/bin/python ./codegen.py; \
     fi

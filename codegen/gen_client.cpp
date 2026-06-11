@@ -8,11 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <string>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
@@ -23,7 +19,6 @@
 extern int rpc_size();
 extern conn_t *rpc_client_get_connection(unsigned int index);
 extern void rpc_close(conn_t *conn);
-extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 
 struct lupine_route {
   int kind;
@@ -98,15 +93,11 @@ extern "C" void lupine_record_module_function(CUfunction function,
 
 extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
-extern "C" bool lupine_routes_share_server(lupine_route first,
-                                           lupine_route second);
 extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
                                               CUdeviceptr second);
-extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,
-                                                   CUdeviceptr srcDevice,
-                                                   size_t ByteCount,
-                                                   CUstream hStream,
-                                                   bool async);
+extern "C" CUresult
+lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
+                               size_t ByteCount, CUstream hStream, bool async);
 
 extern "C" CUresult
 lupine_cuArrayCreate_v2_safe(CUarray *pHandle,
@@ -1025,58 +1016,6 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuModuleLoad(CUmodule *module, const char *fname) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUmodule *, const char *);
-    auto real =
-        reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol("cuModuleLoad"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(module, fname);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  void *file_mapping = MAP_FAILED;
-  size_t mapped_file_size = 0;
-  int file_fd = open(fname, O_RDONLY);
-  if (file_fd < 0) {
-    return CUDA_ERROR_FILE_NOT_FOUND;
-  }
-  struct stat st = {};
-  if (fstat(file_fd, &st) < 0 || st.st_size <= 0) {
-    close(file_fd);
-    return CUDA_ERROR_FILE_NOT_FOUND;
-  }
-  mapped_file_size = static_cast<size_t>(st.st_size);
-  file_mapping =
-      mmap(nullptr, mapped_file_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
-  close(file_fd);
-  if (file_mapping == MAP_FAILED) {
-    return CUDA_ERROR_FILE_NOT_FOUND;
-  }
-  std::size_t fname_len = std::strlen(fname) + 1;
-  bool failed =
-      conn == nullptr || rpc_write_start_request(conn, RPC_cuModuleLoad) < 0 ||
-      rpc_write(conn, &fname_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, fname, fname_len) < 0 ||
-      rpc_write(conn, &mapped_file_size, sizeof(mapped_file_size)) < 0 ||
-      rpc_write(conn, file_mapping, mapped_file_size) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0;
-  munmap(file_mapping, mapped_file_size);
-  if (failed) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS && module != nullptr) {
-    lupine_note_module_owner(*module, conn);
-  }
   return return_value;
 }
 
@@ -2197,34 +2136,6 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
       rpc_write(conn, &srcContext, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
-                              size_t ByteCount, CUstream hStream) {
-  lupine_route route = lupine_route_for_deviceptr(dstDevice);
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUdeviceptr, const void *, size_t, CUstream);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuMemcpyHtoDAsync_v2"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(dstDevice, srcHost, ByteCount, hStream);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      (ByteCount != 0 && srcHost == nullptr) ||
-      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -3745,37 +3656,6 @@ CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx) {
   return return_value;
 }
 
-CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
-                           unsigned int Flags) {
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  lupine_route event_route = lupine_route_for_event(hEvent);
-  if (hEvent != nullptr && !lupine_routes_share_server(route, event_route)) {
-    return cuEventSynchronize(hEvent);
-  }
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUstream, CUevent, unsigned int);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuStreamWaitEvent"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hStream, hEvent, Flags);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuStreamWaitEvent) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
@@ -4114,29 +3994,6 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuEventQuery(CUevent hEvent) {
-  lupine_route route = lupine_route_for_event(hEvent);
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUevent);
-    auto real =
-        reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol("cuEventQuery"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hEvent);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventQuery) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -8165,15 +8022,6 @@ extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
   return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
 }
 
-#ifdef cuMemcpyHtoDAsync
-#undef cuMemcpyHtoDAsync
-#endif
-extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
-                                      const void *srcHost, size_t ByteCount,
-                                      CUstream hStream) {
-  return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
-}
-
 #ifdef cuMemcpyDtoH
 #undef cuMemcpyDtoH
 #endif
@@ -8368,14 +8216,6 @@ extern "C" CUresult cuStreamGetFlags_ptsz(CUstream hStream,
 #endif
 extern "C" CUresult cuStreamGetCtx_ptsz(CUstream hStream, CUcontext *pctx) {
   return cuStreamGetCtx(hStream, pctx);
-}
-
-#ifdef cuStreamWaitEvent_ptsz
-#undef cuStreamWaitEvent_ptsz
-#endif
-extern "C" CUresult cuStreamWaitEvent_ptsz(CUstream hStream, CUevent hEvent,
-                                           unsigned int Flags) {
-  return cuStreamWaitEvent(hStream, hEvent, Flags);
 }
 
 #ifdef cuStreamEndCapture_ptsz
@@ -8608,7 +8448,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuCtxDetach", (void *)cuCtxDetach},
     {"cuCtxGetSharedMemConfig", (void *)cuCtxGetSharedMemConfig},
     {"cuCtxSetSharedMemConfig", (void *)cuCtxSetSharedMemConfig},
-    {"cuModuleLoad", (void *)cuModuleLoad},
     {"cuModuleUnload", (void *)cuModuleUnload},
     {"cuModuleGetLoadingMode", (void *)cuModuleGetLoadingMode},
     {"cuModuleGetFunction", (void *)cuModuleGetFunction},
@@ -8654,7 +8493,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemcpyAtoH_v2", (void *)cuMemcpyAtoH_v2},
     {"cuMemcpyAtoA_v2", (void *)cuMemcpyAtoA_v2},
     {"cuMemcpyPeerAsync", (void *)cuMemcpyPeerAsync},
-    {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
     {"cuMemcpyDtoDAsync_v2", (void *)cuMemcpyDtoDAsync_v2},
     {"cuMemsetD8_v2", (void *)cuMemsetD8_v2},
     {"cuMemsetD16_v2", (void *)cuMemsetD16_v2},
@@ -8714,7 +8552,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetFlags", (void *)cuStreamGetFlags},
     {"cuStreamGetId", (void *)cuStreamGetId},
     {"cuStreamGetCtx", (void *)cuStreamGetCtx},
-    {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},
     {"cuStreamBeginCapture_v2", (void *)cuStreamBeginCapture_v2},
     {"cuThreadExchangeStreamCaptureMode",
      (void *)cuThreadExchangeStreamCaptureMode},
@@ -8729,7 +8566,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuEventCreate", (void *)cuEventCreate},
     {"cuEventRecord", (void *)cuEventRecord},
     {"cuEventRecordWithFlags", (void *)cuEventRecordWithFlags},
-    {"cuEventQuery", (void *)cuEventQuery},
     {"cuEventDestroy_v2", (void *)cuEventDestroy_v2},
     {"cuEventElapsedTime_v2", (void *)cuEventElapsedTime_v2},
     {"cuImportExternalMemory", (void *)cuImportExternalMemory},
@@ -8921,7 +8757,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
     {"cuMemFree", (void *)cuMemFree_v2},
     {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
-    {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
     {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
     {"cuMemcpyDtoD", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoDAsync", (void *)cuMemcpyDtoDAsync_v2},
@@ -8944,7 +8779,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetId_ptsz", (void *)cuStreamGetId},
     {"cuStreamGetFlags_ptsz", (void *)cuStreamGetFlags},
     {"cuStreamGetCtx_ptsz", (void *)cuStreamGetCtx},
-    {"cuStreamWaitEvent_ptsz", (void *)cuStreamWaitEvent},
     {"cuStreamEndCapture_ptsz", (void *)cuStreamEndCapture},
     {"cuStreamIsCapturing_ptsz", (void *)cuStreamIsCapturing},
     {"cuStreamAttachMemAsync_ptsz", (void *)cuStreamAttachMemAsync},
