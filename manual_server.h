@@ -12,6 +12,7 @@ CUresult lupine_get_kernel_param_layout(CUfunction f,
 
 int handle_manual_cuGetExportTableMetadata(conn_t *conn);
 int handle_manual_cuPrivateGetModuleNode(conn_t *conn);
+int handle_manual_cuModuleLoad(conn_t *conn);
 int handle_manual_cuModuleLoadData(conn_t *conn);
 int handle_manual_cuLibraryLoadData(conn_t *conn);
 int handle_manual_cuCtxCreate_v2(conn_t *conn);

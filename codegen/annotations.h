@@ -2247,6 +2247,7 @@ CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
  */
 CUresult cuCtxDetach(CUcontext ctx);
 /**
+ * @disabled - manual client sends mapped file bytes to server
  * @param module RECV_ONLY
  * @param fname SEND_ONLY NULL_TERMINATED
  */
@@ -2592,12 +2593,14 @@ CUresult cuMemHostRegister_v2(void *p, size_t bytesize, unsigned int Flags);
 CUresult cuMemHostUnregister(void *p);
 /**
  * @routingkey DEVICEPTR dst
+ * @crossservercopy dst src ByteCount
  * @param dst SEND_ONLY
  * @param src SEND_ONLY
  * @param ByteCount SEND_ONLY
  */
 CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src, size_t ByteCount);
 /**
+ * @crossservercopy dstDevice srcDevice ByteCount
  * @param dstDevice SEND_ONLY
  * @param dstContext SEND_ONLY
  * @param srcDevice SEND_ONLY
@@ -2625,6 +2628,7 @@ CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
 /**
  * @routingkey DEVICEPTR dstDevice
+ * @crossservercopy dstDevice srcDevice ByteCount
  * @param dstDevice SEND_ONLY
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
@@ -2705,6 +2709,7 @@ CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy);
 CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src, size_t ByteCount,
                        CUstream hStream);
 /**
+ * @crossservercopy dstDevice srcDevice ByteCount STREAM:hStream ASYNC
  * @param dstDevice SEND_ONLY
  * @param dstContext SEND_ONLY
  * @param srcDevice SEND_ONLY
@@ -2716,6 +2721,7 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
                            CUdeviceptr srcDevice, CUcontext srcContext,
                            size_t ByteCount, CUstream hStream);
 /**
+ * @disabled - manual client matches manual server stream-before-payload framing
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
@@ -2735,6 +2741,7 @@ CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
 /**
  * @routingkey DEVICEPTR dstDevice
+ * @crossservercopy dstDevice srcDevice ByteCount STREAM:hStream ASYNC
  * @param dstDevice SEND_ONLY
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
@@ -3292,6 +3299,7 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId);
  */
 CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
 /**
+ * @disabled - manual client handles cross-server event waits
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param hEvent SEND_ONLY
@@ -3424,6 +3432,7 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags);
 /**
+ * @disabled - manual client/server handle deferred DtoH copies
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
