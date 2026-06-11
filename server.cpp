@@ -143,6 +143,13 @@ void client_handler(lupine_socket_t connfd) {
       }
       continue;
     }
+    if (op == RPC_cuModuleLoad) {
+      if (handle_manual_cuModuleLoad(&conn) < 0) {
+        lupine_log_manual_handler_error("cuModuleLoad");
+        break;
+      }
+      continue;
+    }
     if (op == RPC_cuModuleLoadData) {
       if (handle_manual_cuModuleLoadData(&conn) < 0) {
         std::cerr << "Error handling manual cuModuleLoadData request."
