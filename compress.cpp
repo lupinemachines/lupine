@@ -18,6 +18,13 @@
 // framing is self-describing. Because LUPINE_COMPRESS_BLOCK_BYTES divides the
 // server's 64MB staging chunk, chunked readers stay aligned with the block
 // schedule chosen by the writer.
+//
+// Framed payloads are never materialized in full. The write side only marks
+// the payload iovec (rpc_write_framed) and the HTTP/2 transport compresses
+// one block at a time into a reusable scratch buffer as nghttp2 pulls data
+// (see h2.cpp), so memory stays bounded by a single block and early blocks
+// reach the wire while later blocks are still being compressed. The read
+// side mirrors this with a single compressed-block scratch buffer.
 
 #include "rpc.h"
 
@@ -30,15 +37,10 @@
 namespace {
 
 constexpr size_t kLupineCompressMinBytes = 64 * 1024;
-constexpr size_t kLupineCompressBlockBytes = 4 * 1024 * 1024;
+constexpr size_t kLupineCompressBlockBytes = LUPINE_COMPRESS_BLOCK_BYTES;
 
 static_assert(kLupineCompressBlockBytes <= LZ4_MAX_INPUT_SIZE,
               "compression block must fit a single LZ4 block");
-
-struct lupine_payload_scratch {
-  void *buffer;
-  lupine_payload_scratch *next;
-};
 
 } // namespace
 
@@ -48,8 +50,8 @@ int lupine_payload_framed(conn_t *conn, size_t total_size) {
 
 // rpc_write_payload writes a bulk data payload, compressing it when the
 // connection negotiated compression and the payload is large enough. The
-// framed bytes are kept alive on the connection until rpc_write_end() has
-// flushed the request or response.
+// payload is compressed lazily by the transport as it streams to the socket;
+// like rpc_write, the caller's buffer must stay valid until rpc_write_end().
 int rpc_write_payload(conn_t *conn, const void *data, size_t size) {
   if (size == 0) {
     return 0;
@@ -57,49 +59,7 @@ int rpc_write_payload(conn_t *conn, const void *data, size_t size) {
   if (!lupine_payload_framed(conn, size)) {
     return rpc_write(conn, data, size);
   }
-
-  size_t block_count =
-      (size + kLupineCompressBlockBytes - 1) / kLupineCompressBlockBytes;
-  size_t capacity = size + block_count * sizeof(uint32_t);
-  int bound = LZ4_compressBound(
-      static_cast<int>(std::min(size, kLupineCompressBlockBytes)));
-
-  auto *node = static_cast<lupine_payload_scratch *>(
-      malloc(sizeof(lupine_payload_scratch)));
-  auto *out = static_cast<unsigned char *>(malloc(capacity));
-  auto *tmp = static_cast<char *>(malloc(static_cast<size_t>(bound)));
-  if (node == nullptr || out == nullptr || tmp == nullptr) {
-    free(node);
-    free(out);
-    free(tmp);
-    return -1;
-  }
-
-  const char *src = static_cast<const char *>(data);
-  size_t out_len = 0;
-  for (size_t offset = 0; offset < size; offset += kLupineCompressBlockBytes) {
-    size_t raw = std::min(kLupineCompressBlockBytes, size - offset);
-    int compressed =
-        LZ4_compress_default(src + offset, tmp, static_cast<int>(raw), bound);
-    uint32_t token = 0;
-    if (compressed > 0 && static_cast<size_t>(compressed) < raw) {
-      token = static_cast<uint32_t>(compressed);
-      memcpy(out + out_len, &token, sizeof(token));
-      memcpy(out + out_len + sizeof(token), tmp,
-             static_cast<size_t>(compressed));
-      out_len += sizeof(token) + static_cast<size_t>(compressed);
-    } else {
-      memcpy(out + out_len, &token, sizeof(token));
-      memcpy(out + out_len + sizeof(token), src + offset, raw);
-      out_len += sizeof(token) + raw;
-    }
-  }
-  free(tmp);
-
-  node->buffer = out;
-  node->next = static_cast<lupine_payload_scratch *>(conn->payload_scratch);
-  conn->payload_scratch = node;
-  return rpc_write(conn, out, out_len);
+  return rpc_write_framed(conn, data, size);
 }
 
 // rpc_read_payload_part reads `size` uncompressed payload bytes. `framed`
@@ -190,18 +150,4 @@ int rpc_drain_payload(conn_t *conn, int framed, size_t size) {
     remaining -= raw;
   }
   return 0;
-}
-
-// rpc_release_payload_scratch frees any compressed payload buffers held for
-// the in-flight request or response. Called by rpc_write_end() once the
-// message has been handed to the transport.
-void rpc_release_payload_scratch(conn_t *conn) {
-  auto *node = static_cast<lupine_payload_scratch *>(conn->payload_scratch);
-  while (node != nullptr) {
-    lupine_payload_scratch *next = node->next;
-    free(node->buffer);
-    free(node);
-    node = next;
-  }
-  conn->payload_scratch = nullptr;
 }

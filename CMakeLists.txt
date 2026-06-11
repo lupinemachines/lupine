@@ -121,9 +121,11 @@ else()
 
     add_executable(h2_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
     )
-    target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY})
+    target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} ${LZ4_LIBRARY} pthread)
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
     add_test(

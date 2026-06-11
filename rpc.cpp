@@ -190,6 +190,17 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
+  conn->write_iov_framed[conn->write_iov_count] = 0;
+  conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
+  return 0;
+}
+
+// rpc_write_framed queues a payload that the transport LZ4-frames lazily,
+// one block at a time, as the bytes are streamed to the socket. The caller's
+// buffer must stay valid until rpc_write_end() returns, exactly like
+// rpc_write(). See compress.cpp for the framing format.
+int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
+  conn->write_iov_framed[conn->write_iov_count] = 1;
   conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
   return 0;
 }
@@ -201,21 +212,23 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
 // returns the request id which can be used to wait for a response.
 int rpc_write_end(conn_t *conn) {
   if (conn->closed) {
-    rpc_release_payload_scratch(conn);
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
   conn->write_iov[0] = {&conn->write_id, sizeof(int)};
+  conn->write_iov_framed[0] = 0;
   if (conn->write_op != -1) {
     conn->write_iov[1] = {&conn->write_op, sizeof(unsigned int)};
+    conn->write_iov_framed[1] = 0;
   }
   int write_id = conn->write_id;
   int iov_count = conn->write_iov_count;
   struct iovec iov[128];
+  unsigned char framed[128];
   memcpy(iov, conn->write_iov, sizeof(struct iovec) * iov_count);
+  memcpy(framed, conn->write_iov_framed, iov_count);
 
-  int result = rpc_http2_writev(conn, iov, iov_count);
-  rpc_release_payload_scratch(conn);
+  int result = rpc_http2_writev(conn, iov, framed, iov_count);
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
 }

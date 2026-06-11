@@ -4,6 +4,7 @@
 #include <deque>
 #include <errno.h>
 #include <iostream>
+#include <lz4.h>
 #include <nghttp2/nghttp2.h>
 #include <stdint.h>
 #include <string.h>
@@ -30,12 +31,23 @@ struct h2_transport {
   int response_status = 0;
   nghttp2_session *session = nullptr;
   std::deque<h2_buffer> local_out;
+  // Reusable scratch holding the one LZ4-framed payload block currently in
+  // flight (see h2_materialize_block). Writes are serialized per connection,
+  // so a single buffer suffices and memory stays bounded by one block.
+  std::vector<unsigned char> compress_scratch;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 };
 
+// h2_write_cursor either points at caller bytes that are sent verbatim
+// (base/len) or, for LZ4-framed payloads, at uncompressed source bytes
+// (src/src_len) that are compressed into the transport scratch one block at
+// a time as nghttp2 pulls data. For a framed cursor, base/len cover only the
+// currently materialized block.
 struct h2_write_cursor {
   const unsigned char *base = nullptr;
   size_t len = 0;
+  const char *src = nullptr;
+  size_t src_len = 0;
 };
 
 struct h2_write_source {
@@ -46,7 +58,7 @@ struct h2_write_source {
   size_t remaining() const {
     size_t total = 0;
     for (size_t i = index; i < cursors.size(); ++i) {
-      total += cursors[i].len;
+      total += cursors[i].len + cursors[i].src_len;
     }
     return total;
   }
@@ -101,19 +113,74 @@ ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
                                                : NGHTTP2_ERR_CALLBACK_FAILURE;
 }
 
+// h2_materialize_block compresses the next payload block of a framed cursor
+// into the transport's reusable scratch buffer as [uint32 token][bytes]
+// (token == 0 means the block is stored raw; see compress.cpp for the wire
+// format). Compressing lazily, one block per call, keeps memory bounded and
+// lets early blocks reach the wire while later blocks are still being
+// compressed. Only the cursor at write_source->index is ever materialized,
+// and only after its previous block has been fully sent, so a single scratch
+// buffer per connection is safe.
+void h2_materialize_block(h2_transport *transport, h2_write_cursor &cursor) {
+  size_t raw = std::min<size_t>(LUPINE_COMPRESS_BLOCK_BYTES, cursor.src_len);
+  size_t bound =
+      static_cast<size_t>(LZ4_compressBound(LUPINE_COMPRESS_BLOCK_BYTES));
+  if (transport->compress_scratch.size() < sizeof(uint32_t) + bound) {
+    transport->compress_scratch.resize(sizeof(uint32_t) + bound);
+  }
+  unsigned char *out = transport->compress_scratch.data();
+  int compressed = LZ4_compress_default(
+      cursor.src, reinterpret_cast<char *>(out + sizeof(uint32_t)),
+      static_cast<int>(raw), static_cast<int>(bound));
+  uint32_t token = 0;
+  size_t block_len = raw;
+  if (compressed > 0 && static_cast<size_t>(compressed) < raw) {
+    token = static_cast<uint32_t>(compressed);
+    block_len = static_cast<size_t>(compressed);
+  } else {
+    memcpy(out + sizeof(uint32_t), cursor.src, raw);
+  }
+  memcpy(out, &token, sizeof(token));
+  cursor.base = out;
+  cursor.len = sizeof(uint32_t) + block_len;
+  cursor.src += raw;
+  cursor.src_len -= raw;
+}
+
 ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t, uint8_t *,
                                      size_t length, uint32_t *data_flags,
-                                     nghttp2_data_source *source, void *) {
+                                     nghttp2_data_source *source,
+                                     void *user_data) {
+  auto *transport = static_cast<h2_transport *>(user_data);
   auto *write_source = static_cast<h2_write_source *>(source->ptr);
-  size_t remaining = write_source->remaining();
-  if (remaining == 0) {
+  auto &cursors = write_source->cursors;
+  while (write_source->index < cursors.size() &&
+         cursors[write_source->index].len == 0 &&
+         cursors[write_source->index].src_len == 0) {
+    ++write_source->index;
+  }
+  if (write_source->index == cursors.size()) {
     *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
     write_source->pending_len = 0;
     return 0;
   }
-  size_t chunk = std::min(remaining, length);
+  if (cursors[write_source->index].len == 0) {
+    h2_materialize_block(transport, cursors[write_source->index]);
+  }
+  // Offer only materialized bytes; a framed cursor with unconsumed source
+  // stops the scan because its next block does not exist yet.
+  size_t available = 0;
+  bool lazy_pending = false;
+  for (size_t i = write_source->index; i < cursors.size(); ++i) {
+    available += cursors[i].len;
+    if (cursors[i].src_len > 0) {
+      lazy_pending = true;
+      break;
+    }
+  }
+  size_t chunk = std::min(available, length);
   *data_flags |= NGHTTP2_DATA_FLAG_NO_COPY;
-  if (chunk == remaining) {
+  if (chunk == available && !lazy_pending) {
     *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
   }
   write_source->pending_len = chunk;
@@ -184,6 +251,11 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
     cursor.len -= chunk;
     remaining -= chunk;
     if (cursor.len == 0) {
+      if (cursor.src_len != 0) {
+        // Framed cursor: the sent block is done but more source remains; the
+        // next block is materialized by the next read callback.
+        break;
+      }
       ++write_source->index;
     }
   }
@@ -446,7 +518,8 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
   return static_cast<int>(size);
 }
 
-int rpc_http2_writev(conn_t *conn, struct iovec *iov, int iov_count) {
+int rpc_http2_writev(conn_t *conn, struct iovec *iov,
+                     const unsigned char *framed, int iov_count) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   h2_write_source source;
   source.cursors.reserve(iov_count);
@@ -454,8 +527,15 @@ int rpc_http2_writev(conn_t *conn, struct iovec *iov, int iov_count) {
     if (iov[i].iov_len == 0) {
       continue;
     }
-    source.cursors.push_back(
-        {static_cast<const unsigned char *>(iov[i].iov_base), iov[i].iov_len});
+    h2_write_cursor cursor;
+    if (framed != nullptr && framed[i]) {
+      cursor.src = static_cast<const char *>(iov[i].iov_base);
+      cursor.src_len = iov[i].iov_len;
+    } else {
+      cursor.base = static_cast<const unsigned char *>(iov[i].iov_base);
+      cursor.len = iov[i].iov_len;
+    }
+    source.cursors.push_back(cursor);
   }
   if (source.cursors.empty()) {
     return 0;
