@@ -2442,43 +2442,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
-  CUdeviceptr dstDevice;
-  size_t ByteCount;
-  void *srcHost;
-  size_t srcHost_size;
-  CUstream hStream;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  srcHost_size = ByteCount;
-  srcHost = (void *)malloc(srcHost_size);
-  if (srcHost_size != 0 && srcHost == nullptr)
-    goto ERROR_0;
-  if ((srcHost_size != 0 && rpc_read(conn, srcHost, srcHost_size) < 0) ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
-    goto ERROR_1;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_1;
-  lupine_intercept_result = cuMemcpyHtoDAsync_v2(
-      dstDevice, (ByteCount == 0 ? nullptr : srcHost), ByteCount, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_1;
-
-  return 0;
-ERROR_1:
-  free((void *)srcHost);
-ERROR_0:
-  return -1;
-}
-
 int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   CUdeviceptr dstDevice;
   CUdeviceptr srcDevice;
@@ -8472,7 +8435,7 @@ static RequestHandler opHandlers[] = {
     nullptr,
     nullptr,
     handle_cuMemcpyPeerAsync,
-    handle_cuMemcpyHtoDAsync_v2,
+    nullptr,
     nullptr,
     handle_cuMemcpyDtoDAsync_v2,
     nullptr,

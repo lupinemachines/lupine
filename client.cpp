@@ -5685,6 +5685,42 @@ lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_safe(
       numBlocks, func, blockSize, dynamicSMemSize, flags);
 }
 
+extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
+                                         const void *srcHost, size_t ByteCount,
+                                         CUstream hStream) {
+  lupine_route route = lupine_route_for_deviceptr(dstDevice);
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUdeviceptr, const void *, size_t, CUstream);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemcpyHtoDAsync_v2");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(dstDevice, srcHost, ByteCount, hStream);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+      rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
+      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      (ByteCount != 0 && srcHost == nullptr) ||
+      (ByteCount != 0 && rpc_write(conn, srcHost, ByteCount) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+#ifdef cuMemcpyHtoDAsync
+#undef cuMemcpyHtoDAsync
+#endif
+extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
+                                      const void *srcHost, size_t ByteCount,
+                                      CUstream hStream) {
+  return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
+}
+
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
@@ -8009,6 +8045,8 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
       {"cuMemcpyAsync", (void *)cuMemcpyAsync},
       {"cuMemcpyAsync_ptsz", (void *)cuMemcpyAsync},
+      {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
+      {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
       {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
       {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
@@ -8268,6 +8306,8 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
       {"cuMemcpyAsync", (void *)cuMemcpyAsync},
       {"cuMemcpyAsync_ptsz", (void *)cuMemcpyAsync},
+      {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
+      {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
       {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
       {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},

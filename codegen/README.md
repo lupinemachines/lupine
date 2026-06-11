@@ -37,7 +37,8 @@ Keep function-specific code in manual files when the behavior cannot be
 described by annotations without embedding C++ for that exact API. Typical
 manual cases include callback forwarding, CUDA graph capture bookkeeping,
 stdout capture, local host allocation, local file loading, cross-server event
-waits, and server-side deferred-copy queue management.
+waits, manual client/server wire framing, and server-side deferred-copy queue
+management.
 
 With the annotations in place, `codegen.py` reads in the annotations and generates the RPC server and client.
 

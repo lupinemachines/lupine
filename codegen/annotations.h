@@ -2721,6 +2721,7 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
                            CUdeviceptr srcDevice, CUcontext srcContext,
                            size_t ByteCount, CUstream hStream);
 /**
+ * @disabled - manual client matches manual server stream-before-payload framing
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY

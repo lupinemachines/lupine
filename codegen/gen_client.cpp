@@ -2143,34 +2143,6 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
   return return_value;
 }
 
-CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
-                              size_t ByteCount, CUstream hStream) {
-  lupine_route route = lupine_route_for_deviceptr(dstDevice);
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUdeviceptr, const void *, size_t, CUstream);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuMemcpyHtoDAsync_v2"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(dstDevice, srcHost, ByteCount, hStream);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
-      (ByteCount != 0 && srcHost == nullptr) ||
-      (ByteCount != 0 && rpc_write(conn, srcHost, ByteCount) < 0) ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream) {
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
@@ -8050,15 +8022,6 @@ extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
   return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
 }
 
-#ifdef cuMemcpyHtoDAsync
-#undef cuMemcpyHtoDAsync
-#endif
-extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
-                                      const void *srcHost, size_t ByteCount,
-                                      CUstream hStream) {
-  return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
-}
-
 #ifdef cuMemcpyDtoH
 #undef cuMemcpyDtoH
 #endif
@@ -8530,7 +8493,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemcpyAtoH_v2", (void *)cuMemcpyAtoH_v2},
     {"cuMemcpyAtoA_v2", (void *)cuMemcpyAtoA_v2},
     {"cuMemcpyPeerAsync", (void *)cuMemcpyPeerAsync},
-    {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
     {"cuMemcpyDtoDAsync_v2", (void *)cuMemcpyDtoDAsync_v2},
     {"cuMemsetD8_v2", (void *)cuMemsetD8_v2},
     {"cuMemsetD16_v2", (void *)cuMemsetD16_v2},
@@ -8795,7 +8757,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
     {"cuMemFree", (void *)cuMemFree_v2},
     {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
-    {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
     {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
     {"cuMemcpyDtoD", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoDAsync", (void *)cuMemcpyDtoDAsync_v2},
