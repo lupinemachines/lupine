@@ -37,7 +37,24 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.34
         with:
           cuda: ${{ matrix.cuda }}
-          method: local
+          method: network
+          sub-packages: '["cudart", "nvml_dev"]'
+
+      - name: Verify CUDA Toolkit components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @(
+            'include\cuda.h',
+            'include\cuda_runtime.h',
+            'include\nvml.h',
+            'lib\x64\cuda.lib'
+          ) | ForEach-Object {
+            $path = Join-Path $env:CUDA_PATH $_
+            if (-not (Test-Path $path)) {
+              throw "Missing CUDA Toolkit component: $path"
+            }
+          }
 
       - name: Set up vcpkg
         shell: pwsh
