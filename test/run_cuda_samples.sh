@@ -273,6 +273,12 @@ sample_args() {
     FDTD3d)
       printf '%s\0' --qatest
       ;;
+    batchCUBLAS)
+      printf '%s\0' -m32 -n32 -k32 -N1
+      ;;
+    eigenvalues)
+      printf '%s\0' -matrix-size=128 -iters-timing=1
+      ;;
     nbody)
       printf '%s\0' -benchmark -numbodies=4096 -i=1
       ;;
@@ -287,6 +293,9 @@ sample_args() {
       ;;
     simpleTexture3D)
       printf '%s\0' -file=data/ref_texture3D.bin
+      ;;
+    transpose)
+      printf '%s\0' -dimX=512 -dimY=512
       ;;
   esac
 }
@@ -477,7 +486,7 @@ stop_remote_server() {
 
 sample_timeout() {
   case "$1" in
-    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)
