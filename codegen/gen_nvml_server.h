@@ -40,5 +40,8 @@ int handle_nvmlDeviceGetMaxClockInfo(conn_t *conn);
 int handle_nvmlDeviceGetPcieThroughput(conn_t *conn);
 int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn);
 int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn);
+int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn);
+int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn);
+int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn);
 int handle_nvmlDeviceGetEccMode(conn_t *conn);
 int handle_nvmlDeviceGetMigMode(conn_t *conn);

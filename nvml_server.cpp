@@ -172,56 +172,6 @@ template <typename T> int handle_device_value(conn_t *conn, const char *name) {
   return 0;
 }
 
-template <typename T> int handle_device_two_args_zero(conn_t *conn) {
-  nvmlDevice_t device = nullptr;
-  nvmlMemoryErrorType_t error_type = {};
-  nvmlEccCounterType_t counter_type = {};
-  if (rpc_read(conn, &device, sizeof(device)) < 0 ||
-      rpc_read(conn, &error_type, sizeof(error_type)) < 0 ||
-      rpc_read(conn, &counter_type, sizeof(counter_type)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  T value = {};
-  nvmlReturn_t result = NVML_SUCCESS;
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &value, sizeof(value)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-template <typename T> int handle_device_three_args_zero(conn_t *conn) {
-  nvmlDevice_t device = nullptr;
-  nvmlMemoryErrorType_t error_type = {};
-  nvmlEccCounterType_t counter_type = {};
-  nvmlMemoryLocation_t location_type = {};
-  if (rpc_read(conn, &device, sizeof(device)) < 0 ||
-      rpc_read(conn, &error_type, sizeof(error_type)) < 0 ||
-      rpc_read(conn, &counter_type, sizeof(counter_type)) < 0 ||
-      rpc_read(conn, &location_type, sizeof(location_type)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  T value = {};
-  nvmlReturn_t result = NVML_SUCCESS;
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &value, sizeof(value)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_processes(conn_t *conn, const char *name) {
   nvmlDevice_t device = nullptr;
   unsigned int requested_count = 0;
@@ -388,18 +338,6 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
 
 int handle_nvmlDeviceGetIndex(conn_t *conn) {
   return handle_device_value<unsigned int>(conn, "nvmlDeviceGetIndex");
-}
-
-int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
-  return handle_device_two_args_zero<unsigned long long>(conn);
-}
-
-int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
-  return handle_device_two_args_zero<nvmlEccErrorCounts_t>(conn);
-}
-
-int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
-  return handle_device_three_args_zero<unsigned long long>(conn);
 }
 
 int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn) {
