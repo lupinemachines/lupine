@@ -1034,45 +1034,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuModuleLoad(conn_t *conn) {
-  CUmodule module = nullptr;
-  char *fname;
-  std::size_t fname_len;
-  size_t image_size = 0;
-  std::vector<unsigned char> image;
-  int request_id;
-  CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &fname_len, sizeof(std::size_t)) < 0)
-    goto ERROR_0;
-  fname = (char *)malloc(fname_len);
-  if (fname == nullptr)
-    goto ERROR_0;
-  if (rpc_read(conn, (void *)fname, fname_len) < 0 || false)
-    goto ERROR_1;
-  if (rpc_read(conn, &image_size, sizeof(size_t)) < 0)
-    goto ERROR_1;
-  image.assign(image_size + 1, 0);
-  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0)
-    goto ERROR_1;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_1;
-  lupine_intercept_result = cuModuleLoadData(&module, image.data());
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &module, sizeof(CUmodule)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_1;
-
-  return 0;
-ERROR_1:
-  free((void *)fname);
-ERROR_0:
-  return -1;
-}
-
 int handle_cuModuleUnload(conn_t *conn) {
   CUmodule hmod;
   int request_id;
@@ -4062,32 +4023,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuStreamWaitEvent(conn_t *conn) {
-  CUstream hStream;
-  CUevent hEvent;
-  unsigned int Flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuStreamWaitEvent(hStream, hEvent, Flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuStreamBeginCapture_v2(conn_t *conn) {
   CUstream hStream;
   CUstreamCaptureMode mode;
@@ -4405,28 +4340,6 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result = cuEventRecordWithFlags(hEvent, hStream, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuEventQuery(conn_t *conn) {
-  CUevent hEvent;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuEventQuery(hEvent);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -8498,7 +8411,7 @@ static RequestHandler opHandlers[] = {
     handle_cuCtxDetach,
     handle_cuCtxGetSharedMemConfig,
     handle_cuCtxSetSharedMemConfig,
-    handle_cuModuleLoad,
+    nullptr,
     nullptr,
     nullptr,
     nullptr,
@@ -8621,7 +8534,7 @@ static RequestHandler opHandlers[] = {
     handle_cuStreamGetFlags,
     handle_cuStreamGetId,
     handle_cuStreamGetCtx,
-    handle_cuStreamWaitEvent,
+    nullptr,
     handle_cuStreamBeginCapture_v2,
     handle_cuThreadExchangeStreamCaptureMode,
     handle_cuStreamEndCapture,
@@ -8636,7 +8549,7 @@ static RequestHandler opHandlers[] = {
     handle_cuEventCreate,
     handle_cuEventRecord,
     handle_cuEventRecordWithFlags,
-    handle_cuEventQuery,
+    nullptr,
     nullptr,
     handle_cuEventDestroy_v2,
     handle_cuEventElapsedTime_v2,

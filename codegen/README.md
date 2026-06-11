@@ -25,6 +25,20 @@ Generated wrappers can record ownership for handles returned by an API with
 `FUNCTION`, `STREAM`, `EVENT`, and `DEVICEPTR`. Ownership is recorded only after
 the CUDA call returns `CUDA_SUCCESS`.
 
+Some APIs need small, reusable behaviors beyond plain parameter send/receive
+layout. These should be expressed as annotations when the behavior is generic
+enough for more than one API or can be described without API-specific C++.
+Currently, `@crossservercopy <dst> <src> <bytes> [STREAM:<param>] [ASYNC]` adds
+a generated client fallback for device-to-device copies whose source and
+destination pointers are owned by different server connections. The fallback
+routes through the client-side cross-server copy helper.
+
+Keep function-specific code in manual files when the behavior cannot be
+described by annotations without embedding C++ for that exact API. Typical
+manual cases include callback forwarding, CUDA graph capture bookkeeping,
+stdout capture, local host allocation, local file loading, cross-server event
+waits, and server-side deferred-copy queue management.
+
 With the annotations in place, `codegen.py` reads in the annotations and generates the RPC server and client.
 
 The motivation for this approach is grounded in codegen being very good at ensuring that the RPC server and client
