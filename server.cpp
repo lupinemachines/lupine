@@ -66,6 +66,7 @@ lupine_manual_handlers() {
        {handle_manual_cuGetExportTableMetadata, "cuGetExportTable metadata"}},
       {LUPINE_RPC_cuPrivateGetModuleNode,
        {handle_manual_cuPrivateGetModuleNode, "private module node"}},
+      {RPC_cuModuleLoad, {handle_manual_cuModuleLoad, "cuModuleLoad"}},
       {RPC_cuModuleLoadData,
        {handle_manual_cuModuleLoadData, "cuModuleLoadData"}},
       {RPC_cuLibraryLoadData,

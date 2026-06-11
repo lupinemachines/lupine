@@ -37,7 +37,8 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.34
         with:
           cuda: ${{ matrix.cuda }}
-          method: local
+          method: network
+          sub-packages: '["cudart", "nvml_dev"]'
 
       - name: Set up vcpkg
         shell: pwsh
