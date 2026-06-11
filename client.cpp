@@ -7728,48 +7728,14 @@ int rpc_open() {
       port = colon + 1;
     }
 
-    addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, port, &hints, &res) != 0) {
-      std::cout << "getaddrinfo of " << host << " port " << port << " failed"
-                << std::endl;
+    int rc = rpc_client_open_connection(host, port, &conns[nconns],
+                                        rpc_client_dispatch_thread, true);
+    if (rc == -1) {
       continue;
     }
-
-    int flag = 1;
-    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sockfd == -1) {
-      printf("socket creation failed...\n");
-      continue;
-    }
-
-    int opts = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
-                          sizeof(int));
-    if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-      std::cerr << "Connecting to " << host << " port " << port
-                << " failed: " << strerror(errno) << std::endl;
-      close(sockfd);
-      continue;
-    }
-
-    conns[nconns] = {};
-    conns[nconns].connfd = sockfd;
-    conns[nconns].request_id = 0;
-    conns[nconns].closed = 0;
-    conns[nconns].local_request_parity = conns[nconns].request_id & 1;
-    if (pthread_mutex_init(&conns[nconns].read_mutex, NULL) < 0 ||
-        pthread_mutex_init(&conns[nconns].write_mutex, NULL) < 0 ||
-        pthread_mutex_init(&conns[nconns].call_mutex, NULL) < 0 ||
-        pthread_cond_init(&conns[nconns].read_cond, NULL) < 0 ||
-        rpc_http2_client_init(&conns[nconns]) < 0) {
-      close(sockfd);
+    if (rc == -2) {
       return -1;
     }
-
-    pthread_create(&conns[nconns].read_thread, NULL, rpc_client_dispatch_thread,
-                   (void *)&conns[nconns]);
 
     nconns++;
   }

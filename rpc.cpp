@@ -3,6 +3,11 @@
 #include <iostream>
 #include <string.h>
 
+#ifndef _WIN32
+#include <netdb.h>
+#include <netinet/tcp.h>
+#endif
+
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
 
@@ -217,3 +222,69 @@ int rpc_write_end(conn_t *conn) {
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
 }
+
+#ifndef _WIN32
+// rpc_client_open_connection connects to host:port over TCP, initializes the
+// HTTP/2 client session on conn and spawns dispatch_thread to read responses.
+// If verbose is set, failures are logged. Returns:
+//   0 on success
+//  -1 if the TCP connection could not be established
+//  -2 if connection-state initialization failed (the socket is closed)
+//  -3 if dispatch_thread could not be spawned (the socket is left open)
+int rpc_client_open_connection(const char *host, const char *port, conn_t *conn,
+                               void *(*dispatch_thread)(void *), bool verbose) {
+  addrinfo hints = {};
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  addrinfo *res = nullptr;
+  if (getaddrinfo(host, port, &hints, &res) != 0) {
+    if (verbose) {
+      std::cout << "getaddrinfo of " << host << " port " << port << " failed"
+                << std::endl;
+    }
+    return -1;
+  }
+
+  int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+  if (sockfd == -1) {
+    if (verbose) {
+      printf("socket creation failed...\n");
+    }
+    freeaddrinfo(res);
+    return -1;
+  }
+
+  int flag = 1;
+  setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+  if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
+    if (verbose) {
+      std::cerr << "Connecting to " << host << " port " << port
+                << " failed: " << strerror(errno) << std::endl;
+    }
+    close(sockfd);
+    freeaddrinfo(res);
+    return -1;
+  }
+  freeaddrinfo(res);
+
+  *conn = {};
+  conn->connfd = sockfd;
+  conn->request_id = 0;
+  conn->local_request_parity = conn->request_id & 1;
+  if (pthread_mutex_init(&conn->read_mutex, nullptr) < 0 ||
+      pthread_mutex_init(&conn->write_mutex, nullptr) < 0 ||
+      pthread_mutex_init(&conn->call_mutex, nullptr) < 0 ||
+      pthread_cond_init(&conn->read_cond, nullptr) < 0 ||
+      rpc_http2_client_init(conn) < 0) {
+    close(sockfd);
+    return -2;
+  }
+
+  if (pthread_create(&conn->read_thread, nullptr, dispatch_thread,
+                     static_cast<void *>(conn)) < 0) {
+    return -3;
+  }
+
+  return 0;
+}
+#endif

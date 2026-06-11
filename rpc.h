@@ -40,4 +40,18 @@ extern int rpc_http2_writev(conn_t *conn, struct iovec *iov, int iov_count);
 extern int rpc_http2_client_init(conn_t *conn);
 extern int rpc_http2_server_init(conn_t *conn);
 
+#ifndef _WIN32
+// Connects to host:port over TCP, initializes the HTTP/2 client session on
+// conn and spawns dispatch_thread to read responses. If verbose is set,
+// failures are logged. Returns:
+//   0 on success
+//  -1 if the TCP connection could not be established
+//  -2 if connection-state initialization failed (the socket is closed)
+//  -3 if dispatch_thread could not be spawned (the socket is left open)
+extern int rpc_client_open_connection(const char *host, const char *port,
+                                      conn_t *conn,
+                                      void *(*dispatch_thread)(void *),
+                                      bool verbose);
+#endif
+
 #endif
