@@ -764,6 +764,72 @@ def nvml_device_three_args_value(
     )
 
 
+def nvml_server_device_two_args_stub(first_type, second_type, out_type, value_init):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {value_init};
+nvmlReturn_t _lupine_result = NVML_SUCCESS;
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_server_device_three_args_stub(
+    first_type, second_type, third_type, out_type, value_init
+):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+{third_type} _lupine_third = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
+    rpc_read(conn, &_lupine_third, sizeof(_lupine_third)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {value_init};
+nvmlReturn_t _lupine_result = NVML_SUCCESS;
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_ecc_counter_stub(name, params, value_name, value_init, server_body):
+    nvml_codegen_function(
+        name,
+        params,
+        f"""if ({value_name} != nullptr) {{
+  *{value_name} = {value_init};
+}}
+return NVML_SUCCESS;""",
+        server_body,
+    )
+
+
 def nvml_device_two_values(name, first_type, first_name, second_type, second_name):
     nvml_codegen_function(
         name,
@@ -849,34 +915,39 @@ nvml_device_arg_value(
     "nvmlPciInfo_t",
     "pci",
 )
-nvml_device_two_args_value(
+nvml_ecc_counter_stub(
     "nvmlDeviceGetTotalEccErrors",
-    "nvmlMemoryErrorType_t",
-    "errorType",
-    "nvmlEccCounterType_t",
-    "counterType",
-    "unsigned long long",
+    "nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, unsigned long long *eccCounts",
     "eccCounts",
+    "0",
+    nvml_server_device_two_args_stub(
+        "nvmlMemoryErrorType_t", "nvmlEccCounterType_t", "unsigned long long", "0"
+    ),
 )
-nvml_device_two_args_value(
+nvml_ecc_counter_stub(
     "nvmlDeviceGetDetailedEccErrors",
-    "nvmlMemoryErrorType_t",
-    "errorType",
-    "nvmlEccCounterType_t",
-    "counterType",
-    "nvmlEccErrorCounts_t",
+    "nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, nvmlEccErrorCounts_t *eccCounts",
     "eccCounts",
+    "nvmlEccErrorCounts_t{}",
+    nvml_server_device_two_args_stub(
+        "nvmlMemoryErrorType_t",
+        "nvmlEccCounterType_t",
+        "nvmlEccErrorCounts_t",
+        "nvmlEccErrorCounts_t{}",
+    ),
 )
-nvml_device_three_args_value(
+nvml_ecc_counter_stub(
     "nvmlDeviceGetMemoryErrorCounter",
-    "nvmlMemoryErrorType_t",
-    "errorType",
-    "nvmlEccCounterType_t",
-    "counterType",
-    "nvmlMemoryLocation_t",
-    "locationType",
-    "unsigned long long",
+    "nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, nvmlMemoryLocation_t locationType, unsigned long long *count",
     "count",
+    "0",
+    nvml_server_device_three_args_stub(
+        "nvmlMemoryErrorType_t",
+        "nvmlEccCounterType_t",
+        "nvmlMemoryLocation_t",
+        "unsigned long long",
+        "0",
+    ),
 )
 nvml_device_two_values(
     "nvmlDeviceGetEccMode",

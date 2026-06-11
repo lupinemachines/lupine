@@ -1097,16 +1097,8 @@ int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
     return -1;
   }
 
-  unsigned long long _lupine_value = {};
-  using _lupine_fn_t =
-      nvmlReturn_t (*)(nvmlDevice_t, nvmlMemoryErrorType_t, nvmlEccCounterType_t, unsigned long long *);
-  _lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("nvmlDeviceGetTotalEccErrors");
-  nvmlReturn_t _lupine_result =
-      _lupine_fn == nullptr
-          ? function_not_found()
-          : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
-                       &_lupine_value);
-
+  unsigned long long _lupine_value = 0;
+  nvmlReturn_t _lupine_result = NVML_SUCCESS;
   if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
       rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
       rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
@@ -1130,16 +1122,8 @@ int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
     return -1;
   }
 
-  nvmlEccErrorCounts_t _lupine_value = {};
-  using _lupine_fn_t =
-      nvmlReturn_t (*)(nvmlDevice_t, nvmlMemoryErrorType_t, nvmlEccCounterType_t, nvmlEccErrorCounts_t *);
-  _lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("nvmlDeviceGetDetailedEccErrors");
-  nvmlReturn_t _lupine_result =
-      _lupine_fn == nullptr
-          ? function_not_found()
-          : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
-                       &_lupine_value);
-
+  nvmlEccErrorCounts_t _lupine_value = nvmlEccErrorCounts_t{};
+  nvmlReturn_t _lupine_result = NVML_SUCCESS;
   if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
       rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
       rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
@@ -1165,16 +1149,8 @@ int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
     return -1;
   }
 
-  unsigned long long _lupine_value = {};
-  using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemoryErrorType_t, nvmlEccCounterType_t,
-                                        nvmlMemoryLocation_t, unsigned long long *);
-  _lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("nvmlDeviceGetMemoryErrorCounter");
-  nvmlReturn_t _lupine_result =
-      _lupine_fn == nullptr
-          ? function_not_found()
-          : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
-                       _lupine_third, &_lupine_value);
-
+  unsigned long long _lupine_value = 0;
+  nvmlReturn_t _lupine_result = NVML_SUCCESS;
   if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
       rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
       rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||

@@ -758,67 +758,24 @@ extern "C" nvmlReturn_t nvmlDeviceGetNvLinkRemotePciInfo_v2(nvmlDevice_t device,
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetTotalEccErrors(nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, unsigned long long *eccCounts) {
-  conn_t *_lupine_conn = connection_for_device(&device);
-  nvmlReturn_t _lupine_result = rpc_error();
-  unsigned long long _lupine_value = {};
-  if (_lupine_conn == nullptr ||
-      rpc_write_start_request(_lupine_conn, RPC_nvmlDeviceGetTotalEccErrors) < 0 ||
-      rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-      rpc_write(_lupine_conn, &errorType, sizeof(errorType)) < 0 ||
-      rpc_write(_lupine_conn, &counterType, sizeof(counterType)) < 0 ||
-      rpc_wait_for_response(_lupine_conn) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-      rpc_read_end(_lupine_conn) < 0) {
-    return rpc_error();
-  }
   if (eccCounts != nullptr) {
-    *eccCounts = _lupine_value;
+    *eccCounts = 0;
   }
-  return _lupine_result;
+  return NVML_SUCCESS;
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetDetailedEccErrors(nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, nvmlEccErrorCounts_t *eccCounts) {
-  conn_t *_lupine_conn = connection_for_device(&device);
-  nvmlReturn_t _lupine_result = rpc_error();
-  nvmlEccErrorCounts_t _lupine_value = {};
-  if (_lupine_conn == nullptr ||
-      rpc_write_start_request(_lupine_conn, RPC_nvmlDeviceGetDetailedEccErrors) < 0 ||
-      rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-      rpc_write(_lupine_conn, &errorType, sizeof(errorType)) < 0 ||
-      rpc_write(_lupine_conn, &counterType, sizeof(counterType)) < 0 ||
-      rpc_wait_for_response(_lupine_conn) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-      rpc_read_end(_lupine_conn) < 0) {
-    return rpc_error();
-  }
   if (eccCounts != nullptr) {
-    *eccCounts = _lupine_value;
+    *eccCounts = nvmlEccErrorCounts_t{};
   }
-  return _lupine_result;
+  return NVML_SUCCESS;
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetMemoryErrorCounter(nvmlDevice_t device, nvmlMemoryErrorType_t errorType, nvmlEccCounterType_t counterType, nvmlMemoryLocation_t locationType, unsigned long long *count) {
-  conn_t *_lupine_conn = connection_for_device(&device);
-  nvmlReturn_t _lupine_result = rpc_error();
-  unsigned long long _lupine_value = {};
-  if (_lupine_conn == nullptr ||
-      rpc_write_start_request(_lupine_conn, RPC_nvmlDeviceGetMemoryErrorCounter) < 0 ||
-      rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-      rpc_write(_lupine_conn, &errorType, sizeof(errorType)) < 0 ||
-      rpc_write(_lupine_conn, &counterType, sizeof(counterType)) < 0 ||
-      rpc_write(_lupine_conn, &locationType, sizeof(locationType)) < 0 ||
-      rpc_wait_for_response(_lupine_conn) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-      rpc_read_end(_lupine_conn) < 0) {
-    return rpc_error();
-  }
   if (count != nullptr) {
-    *count = _lupine_value;
+    *count = 0;
   }
-  return _lupine_result;
+  return NVML_SUCCESS;
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetEccMode(nvmlDevice_t device, nvmlEnableState_t *current, nvmlEnableState_t *pending) {
