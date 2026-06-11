@@ -8,6 +8,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#include <signal.h>
+#include <unistd.h>
 #endif
 
 #include "codegen/gen_api.h"
@@ -617,6 +619,11 @@ int main() {
 
   printf("Server listening on port %d...\n", port);
 
+#ifndef _WIN32
+  // reap exited connection processes automatically
+  signal(SIGCHLD, SIG_IGN);
+#endif
+
   // Server loop
   while (1) {
     socklen_t len = sizeof(cli);
@@ -627,10 +634,34 @@ int main() {
       continue;
     }
 
+#ifndef _WIN32
+    // fork a process per connection so each client gets its own CUDA driver
+    // state (primary context, allocations, modules). this matches local
+    // semantics: a client resetting or corrupting its context cannot affect
+    // other clients, and everything is released when the client disconnects.
+    // the parent must never initialize CUDA; forked children cannot use a
+    // parent's initialized driver.
+    fflush(stdout);
+    fflush(stderr);
+    pid_t pid = fork();
+    if (pid < 0) {
+      std::cerr << "Server fork failed." << std::endl;
+      lupine_socket_close(connfd);
+      continue;
+    }
+    if (pid == 0) {
+      lupine_socket_close(sockfd);
+      client_handler(connfd);
+      exit(0);
+    }
+    lupine_socket_close(connfd);
+#else
+    // Windows has no fork; connections share the server process.
     std::thread client_thread(client_handler, connfd);
 
     // detach the thread so it runs independently
     client_thread.detach();
+#endif
   }
 
   lupine_socket_close(sockfd);
