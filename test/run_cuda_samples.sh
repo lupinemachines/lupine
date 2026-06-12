@@ -13,6 +13,7 @@ CUDA_SAMPLES_DIR="${CUDA_SAMPLES_DIR:-$DEFAULT_CUDA_SAMPLES_DIR}"
 CUDA_SAMPLES_BUILD_DIR="${CUDA_SAMPLES_BUILD_DIR:-$CUDA_SAMPLES_DIR/build}"
 CUDA_SAMPLES_BIN="${CUDA_SAMPLES_BIN:-}"
 CUDA_SAMPLES_CMAKE_ARGS="${CUDA_SAMPLES_CMAKE_ARGS:-}"
+CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -101,6 +102,9 @@ Environment:
   CUDA_SAMPLES_BUILD_DIR CMake build path. Default: <CUDA_SAMPLES_DIR>/build.
   CUDA_SAMPLES_BIN     Legacy executable path override. CMake builds are resolved per sample.
   CUDA_SAMPLES_CMAKE_ARGS Extra args passed to CMake configure for CUDA 13 samples.
+  CUDA_SAMPLES_ARCH    Compile device code only for this compute capability
+                       (e.g. 75). Samples whose hardcoded arch list excludes it
+                       keep their upstream list.
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
   BUILD_ONLY           1 to clone/build selected samples and exit before running.
@@ -195,6 +199,15 @@ fi
 if [[ -n "$CUDA_SAMPLES_REF" ]]; then
   git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
   git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
+fi
+
+# The samples hardcode set(CMAKE_CUDA_ARCHITECTURES ...) per CMakeLists, so a
+# -D flag cannot narrow them. Rewrite lists that include the requested arch to
+# just that arch; samples restricted to other archs are left as upstream built
+# them.
+if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
+  find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
+    "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
 fi
 
 cmake_samples=0

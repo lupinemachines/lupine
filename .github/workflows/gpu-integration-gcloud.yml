@@ -163,7 +163,9 @@ jobs:
           ln -sf libcuda.so.1 "$PWD/build/libcuda.so"
           ln -sf libnvidia-ml.so.1 "$PWD/build/libnvidia-ml.so"
 
-          BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended \
+          # CUDA_SAMPLES_ARCH=75: only compile device code for the T4 (sm_75)
+          # instead of the 15 architectures the samples build by default.
+          BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended CUDA_SAMPLES_ARCH=75 \
             CUDA_HOME="$CUDA_HOME" CUDA_LIB_DIR="$CUDA_LIB_DIR" \
             "$PWD/test/run_cuda_samples.sh"
 

@@ -32,6 +32,7 @@
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "lupine_attr_sizes.h"
+#include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
@@ -42,14 +43,6 @@
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
                                            CUdevice dev);
 
-struct lupine_fatbin_wrapper {
-  uint32_t magic;
-  uint32_t version;
-  const void *data;
-  const void *filename_or_fatbins;
-};
-
-static constexpr uint32_t LUPINE_FATBINC_MAGIC = 0x466243b1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
@@ -557,7 +550,8 @@ static int lupine_write_pending_dtoh_copies(uint32_t *copy_count, conn_t *conn,
     }
     if (rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
         rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-        (copy.bytes != 0 && rpc_write(conn, copy.server_src, copy.bytes) < 0)) {
+        (copy.bytes != 0 &&
+         rpc_write_payload(conn, copy.server_src, copy.bytes) < 0)) {
       return -1;
     }
   }
@@ -616,7 +610,7 @@ int handle_manual_cuModuleLoad(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size + 1, 0);
-  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
+  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
 
@@ -648,7 +642,7 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
+  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
 
@@ -687,7 +681,7 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
+  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
 
@@ -2766,12 +2760,13 @@ int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
     return -1;
   }
 
+  int framed = lupine_payload_framed(conn, byteCount);
   size_t chunk_bytes = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount);
   if (chunk_bytes != 0) {
     result = cuMemAllocHost(&host, chunk_bytes);
   }
   if (result != CUDA_SUCCESS) {
-    if (rpc_drain(conn, byteCount) < 0) {
+    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
       return -1;
     }
   }
@@ -2779,7 +2774,7 @@ int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
   size_t offset = 0;
   while (result == CUDA_SUCCESS && offset < byteCount) {
     size_t chunk = std::min(chunk_bytes, byteCount - offset);
-    if (rpc_read(conn, host, chunk) < 0) {
+    if (rpc_read_payload_part(conn, framed, host, chunk) < 0) {
       if (host != nullptr) {
         cuMemFreeHost(host);
       }
@@ -2787,7 +2782,8 @@ int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
     }
     result = cuMemcpyHtoD_v2(dstDevice + offset, host, chunk);
     offset += chunk;
-    if (result != CUDA_SUCCESS && rpc_drain(conn, byteCount - offset) < 0) {
+    if (result != CUDA_SUCCESS &&
+        rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
       cuMemFreeHost(host);
       return -1;
     }
@@ -2822,6 +2818,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     return -1;
   }
 
+  int framed = lupine_payload_framed(conn, byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (stream != nullptr) {
     cuStreamIsCapturing(stream, &capture_status);
@@ -2835,11 +2832,12 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     capture_host = lupine_alloc_capture_scratch(resources, byteCount);
     if (capture_host == nullptr && byteCount != 0) {
       result = CUDA_ERROR_OUT_OF_MEMORY;
-      if (rpc_drain(conn, byteCount) < 0) {
+      if (rpc_drain_payload(conn, framed, byteCount) < 0) {
         return -1;
       }
     } else {
-      if (byteCount != 0 && rpc_read(conn, capture_host, byteCount) < 0) {
+      if (byteCount != 0 &&
+          rpc_read_payload_part(conn, framed, capture_host, byteCount) < 0) {
         return -1;
       }
     }
@@ -2850,7 +2848,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       result = cuMemAllocHost(&host, byteCount);
     }
     if (result != CUDA_SUCCESS) {
-      if (rpc_drain(conn, byteCount) < 0) {
+      if (rpc_drain_payload(conn, framed, byteCount) < 0) {
         return -1;
       }
     }
@@ -2858,7 +2856,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     while (result == CUDA_SUCCESS && offset < byteCount) {
       size_t chunk = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount - offset);
       auto *chunk_host = static_cast<unsigned char *>(host) + offset;
-      if (rpc_read(conn, chunk_host, chunk) < 0) {
+      if (rpc_read_payload_part(conn, framed, chunk_host, chunk) < 0) {
         cuStreamSynchronize(stream);
         cuMemFreeHost(host);
         return -1;
@@ -2871,7 +2869,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
         cuMemFreeHost(host);
         result = copy_result;
         offset += chunk;
-        if (rpc_drain(conn, byteCount - offset) < 0) {
+        if (rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
           return -1;
         }
         host = nullptr;
