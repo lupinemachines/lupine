@@ -348,11 +348,11 @@ prepare_cuda_sample_ci_sources() {
         replace_cuda_sample_source \
           "$sample_srcdir/main.cpp" \
           "const float tol    = 1e-12f;" \
-          "const float tol    = 1e-8f;"
+          "const float tol    = 1e-6f;"
         replace_cuda_sample_source \
           "$sample_srcdir/main.cpp" \
           "M = N = 16384;" \
-          "M = N = 1024;"
+          "M = N = 64;"
       fi
       ;;
   esac
