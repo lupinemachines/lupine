@@ -1,7 +1,11 @@
 #include "rpc.h"
+#include "codegen/gen_api.h"
 #include <algorithm>
 #include <iostream>
+#include <stdio.h>
 #include <string.h>
+
+static int rpc_handshake_mismatch = 0;
 
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
@@ -132,6 +136,46 @@ int rpc_wait_for_response(conn_t *conn) {
   }
   return 0;
 }
+
+// rpc_handshake exchanges protocol versions with the server. the client sends
+// LUPINE_PROTOCOL_VERSION as the first request on a new connection and the
+// server replies with its own version; the versions must match exactly so
+// that mismatched builds fail loudly instead of silently corrupting the
+// opcode stream. servers that predate the handshake do not recognize the
+// reserved opcode and close the connection, which is reported here as a
+// likely version mismatch.
+int rpc_handshake(conn_t *conn) {
+  unsigned int client_version = LUPINE_PROTOCOL_VERSION;
+  unsigned int server_version = 0;
+  if (rpc_write_start_request(conn, RPC_lupine_handshake) < 0 ||
+      rpc_write(conn, &client_version, sizeof(client_version)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &server_version, sizeof(server_version)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    rpc_handshake_mismatch = 1;
+    fprintf(stderr,
+            "LUPINE protocol handshake failed: the server closed the "
+            "connection without replying, so it likely predates protocol "
+            "versioning. Client protocol version is 0x%08x; update the "
+            "server to a matching build.\n",
+            client_version);
+    return -1;
+  }
+  if (server_version != client_version) {
+    rpc_handshake_mismatch = 1;
+    fprintf(stderr,
+            "LUPINE protocol version mismatch: client 0x%08x, server 0x%08x. "
+            "Update the client and server to matching builds.\n",
+            client_version, server_version);
+    return -1;
+  }
+  return 0;
+}
+
+// rpc_handshake_failed reports whether any connection attempt failed the
+// protocol handshake, so initialization paths can surface a version-mismatch
+// error instead of a generic failure.
+int rpc_handshake_failed(void) { return rpc_handshake_mismatch; }
 
 // rpc_write_start_request starts a new request builder on the given connection
 // index with a specific op code.

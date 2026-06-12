@@ -52,6 +52,35 @@ static void lupine_log_manual_handler_error(const char *name) {
   std::cerr << "Error handling manual " << name << " request." << std::endl;
 }
 
+// The protocol handshake must be the first request on every connection. The
+// client sends its LUPINE_PROTOCOL_VERSION and the server always replies with
+// its own version so the client can report both sides of a mismatch; on
+// mismatch the server also logs and closes the connection. Old clients that
+// predate the handshake never send it, so the first-op check in
+// client_handler rejects them loudly instead of letting a mismatched opcode
+// stream run.
+static int handle_lupine_handshake(conn_t *conn, bool *version_match) {
+  unsigned int client_version = 0;
+  if (rpc_read(conn, &client_version, sizeof(client_version)) < 0)
+    return -1;
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    return -1;
+  unsigned int server_version = LUPINE_PROTOCOL_VERSION;
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &server_version, sizeof(server_version)) < 0 ||
+      rpc_write_end(conn) < 0)
+    return -1;
+  *version_match = client_version == server_version;
+  if (!*version_match) {
+    fprintf(stderr,
+            "LUPINE protocol version mismatch: client 0x%08x, server 0x%08x. "
+            "Closing client.\n",
+            client_version, server_version);
+  }
+  return 0;
+}
+
 struct lupine_manual_handler {
   RequestHandler handler;
   const char *name;
@@ -207,6 +236,7 @@ void client_handler(lupine_socket_t connfd) {
 
   printf("Client connected.\n");
 
+  bool handshake_done = false;
   while (1) {
     int op = rpc_dispatch(&conn, 0);
     if (op < 0) {
@@ -215,6 +245,27 @@ void client_handler(lupine_socket_t connfd) {
     }
     if (lupine_server_trace_enabled()) {
       std::cerr << "LUPINE server handling op " << op << std::endl;
+    }
+
+    if (op == RPC_lupine_handshake) {
+      bool version_match = false;
+      if (handle_lupine_handshake(&conn, &version_match) < 0) {
+        std::cerr << "Error handling protocol handshake request." << std::endl;
+        break;
+      }
+      if (!version_match) {
+        break;
+      }
+      handshake_done = true;
+      continue;
+    }
+    if (!handshake_done) {
+      fprintf(stderr,
+              "Client sent op %d before the protocol handshake; the client "
+              "build predates protocol versioning or is incompatible (server "
+              "protocol version 0x%08x). Closing client.\n",
+              op, (unsigned int)LUPINE_PROTOCOL_VERSION);
+      break;
     }
 
     const auto &manual_handlers = lupine_manual_handlers();

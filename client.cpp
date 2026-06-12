@@ -796,6 +796,10 @@ extern "C" CUresult lupine_cuInit_multi(unsigned int flags) {
         initialized_any = true;
       }
     }
+  } else if (rpc_handshake_failed() && first_error == CUDA_SUCCESS) {
+    // every configured server failed the protocol handshake; surface a
+    // version mismatch instead of a generic failure.
+    first_error = CUDA_ERROR_SYSTEM_DRIVER_MISMATCH;
   }
   return initialized_any ? CUDA_SUCCESS : first_error;
 }
@@ -7807,6 +7811,14 @@ int rpc_open() {
 
     pthread_create(&conns[nconns].read_thread, NULL, rpc_client_dispatch_thread,
                    (void *)&conns[nconns]);
+
+    if (rpc_handshake(&conns[nconns]) < 0) {
+      std::cerr << "Protocol handshake with " << host << " port " << port
+                << " failed; skipping server." << std::endl;
+      conns[nconns].closed = 1;
+      close(sockfd);
+      continue;
+    }
 
     nconns++;
   }

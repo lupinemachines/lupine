@@ -145,6 +145,15 @@ int open_connection() {
           freeaddrinfo(res);
           continue;
         }
+        if (rpc_handshake(c) < 0) {
+          fprintf(stderr,
+                  "Protocol handshake with %s failed; skipping server.\n",
+                  server_label.c_str());
+          c->closed = 1;
+          close(sockfd);
+          freeaddrinfo(res);
+          continue;
+        }
         conn_labels.push_back(server_label);
         ++nconns;
         freeaddrinfo(res);
@@ -417,7 +426,8 @@ nvmlReturn_t call_device_register_events(nvmlDevice_t device,
 
 extern "C" nvmlReturn_t nvmlInit_v2(void) {
   if (open_connection() < 0) {
-    return rpc_error();
+    return rpc_handshake_failed() ? NVML_ERROR_LIB_RM_VERSION_MISMATCH
+                                  : rpc_error();
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (int i = 0; i < nconns; ++i) {
@@ -435,7 +445,8 @@ extern "C" nvmlReturn_t nvmlInit(void) { return nvmlInit_v2(); }
 
 extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
   if (open_connection() < 0) {
-    return rpc_error();
+    return rpc_handshake_failed() ? NVML_ERROR_LIB_RM_VERSION_MISMATCH
+                                  : rpc_error();
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (int i = 0; i < nconns; ++i) {
