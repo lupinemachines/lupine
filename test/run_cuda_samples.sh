@@ -233,7 +233,7 @@ resolve_sample_exe() {
   fi
 
   if [[ "$cmake_samples" == "1" ]]; then
-    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$sample" -perm -111 2>/dev/null | head -n1 || true)"
+    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$sample" -perm /111 2>/dev/null | head -n1 || true)"
     if [[ -n "$exe" ]]; then
       printf '%s\n' "$exe"
       return 0
