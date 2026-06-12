@@ -47,6 +47,7 @@
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
 #include "lupine_attr_sizes.h"
+#include "lupine_fatbin.h"
 #include "rpc.h"
 
 pthread_mutex_t conn_mutex;
@@ -60,22 +61,6 @@ std::map<void *, void *> host_funcs;
 
 void add_host_node(void *fn, void *udata);
 
-struct lupine_fatbin_wrapper {
-  uint32_t magic;
-  uint32_t version;
-  const void *data;
-  const void *filename_or_fatbins;
-};
-
-struct lupine_fatbin_header {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t header_size;
-  uint64_t files_size;
-};
-
-static constexpr uint32_t LUPINE_FATBINC_MAGIC = 0x466243b1;
-static constexpr uint32_t LUPINE_FATBIN_MAGIC = 0xba55ed50;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;

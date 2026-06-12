@@ -1,3 +1,4 @@
+#include "lupine_fatbin.h"
 #include "rpc.h"
 
 #include <algorithm>
@@ -187,48 +188,20 @@ void test_framed_payload_round_trip() {
   require(received_suffix == suffix, "framed suffix mismatch");
 }
 
-// Mirrors the CUDA fatbin layout observed from nvcc 13.1 output (see
-// compress.cpp). Member field values in the fixtures below copy real dumps:
-// kind 1 = PTX / 2 = ELF, version 0x0101, base flags 0x11, compression flag
-// 0x2000 (lz4) or 0x8000 (zstd) plus nonzero compressed/uncompressed sizes.
-struct test_fatbin_header {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t header_size;
-  uint64_t files_size;
-};
-
-struct test_fatbin_member_header {
-  uint16_t kind;
-  uint16_t version;
-  uint32_t header_size;
-  uint64_t size;
-  uint32_t compressed_size;
-  uint32_t unknown;
-  uint16_t minor;
-  uint16_t major;
-  uint32_t arch;
-  uint32_t name_offset;
-  uint32_t name_size;
-  uint64_t flags;
-  uint64_t reserved;
-  uint64_t uncompressed_size;
-};
-
-static_assert(sizeof(test_fatbin_member_header) == 64,
-              "test fixture must match the observed member header layout");
-
+// Fixture member field values below copy real nvcc 13.1 dumps: kind 1 = PTX /
+// 2 = ELF, version 0x0101, base flags 0x11, compression flag
+// LUPINE_FATBIN_MEMBER_LZ4/ZSTD plus nonzero compressed/uncompressed sizes.
 struct test_fatbin_member {
   bool compressed;
   size_t payload_size;
-  uint64_t compress_flag; // 0x2000 = lz4, 0x8000 = zstd
+  uint64_t compress_flag; // LUPINE_FATBIN_MEMBER_LZ4 or _ZSTD
 };
 
 std::vector<unsigned char>
 make_fatbin(const std::vector<test_fatbin_member> &members) {
   std::vector<unsigned char> files;
   for (const test_fatbin_member &member : members) {
-    test_fatbin_member_header header = {};
+    lupine_fatbin_member_header header = {};
     header.kind = 2;
     header.version = 0x0101;
     header.header_size = sizeof(header);
@@ -248,8 +221,8 @@ make_fatbin(const std::vector<test_fatbin_member> &members) {
                  static_cast<unsigned char>(member.compressed ? 0xc3 : 0x2e));
   }
 
-  test_fatbin_header header = {};
-  header.magic = 0xba55ed50;
+  lupine_fatbin_header header = {};
+  header.magic = LUPINE_FATBIN_MAGIC;
   header.version = 1;
   header.header_size = sizeof(header);
   header.files_size = files.size();
@@ -321,10 +294,10 @@ void test_precompressed_detection() {
   require(lupine_payload_precompressed(zstd.data(), zstd.size() - 1) == 0,
           "fatbin with truncated files area misdetected");
   std::vector<unsigned char> overrun = zstd;
-  test_fatbin_member_header bad = {};
-  memcpy(&bad, overrun.data() + sizeof(test_fatbin_header), sizeof(bad));
+  lupine_fatbin_member_header bad = {};
+  memcpy(&bad, overrun.data() + sizeof(lupine_fatbin_header), sizeof(bad));
   bad.size = overrun.size(); // member payload overruns the files area
-  memcpy(overrun.data() + sizeof(test_fatbin_header), &bad, sizeof(bad));
+  memcpy(overrun.data() + sizeof(lupine_fatbin_header), &bad, sizeof(bad));
   require(lupine_payload_precompressed(overrun.data(), overrun.size()) == 0,
           "member overrunning the files area misdetected");
 }

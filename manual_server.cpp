@@ -32,6 +32,7 @@
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "lupine_attr_sizes.h"
+#include "lupine_fatbin.h"
 #include "manual_server.h"
 #include "rpc.h"
 
@@ -41,14 +42,6 @@
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
                                            CUdevice dev);
 
-struct lupine_fatbin_wrapper {
-  uint32_t magic;
-  uint32_t version;
-  const void *data;
-  const void *filename_or_fatbins;
-};
-
-static constexpr uint32_t LUPINE_FATBINC_MAGIC = 0x466243b1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
