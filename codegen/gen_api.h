@@ -6,7 +6,7 @@
 // an RPC_lupine_handshake request when it connects and the server
 // replies with its own version; both sides refuse mismatched
 // connections.
-#define LUPINE_PROTOCOL_VERSION 0x3fb2f296u
+#define LUPINE_PROTOCOL_VERSION 0x563abaffu
 
 // Reserved opcode for the connection handshake. It must never collide
 // with the generated opcodes below or the manual opcodes (1000001+)
