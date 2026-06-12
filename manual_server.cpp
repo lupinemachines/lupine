@@ -3046,15 +3046,15 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &copy_count, sizeof(copy_count)) < 0 ||
       (resources != nullptr &&
-       std::any_of(resources->dtoh_copies.begin(), resources->dtoh_copies.end(),
-                   [&](const lupine_graph_host_copy &copy) {
-                     return rpc_write(conn, &copy.client_dst,
-                                      sizeof(copy.client_dst)) < 0 ||
-                            rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) <
-                                0 ||
-                            (copy.bytes != 0 &&
-                             rpc_write(conn, copy.server_src, copy.bytes) < 0);
-                   })) ||
+       std::any_of(
+           resources->dtoh_copies.begin(), resources->dtoh_copies.end(),
+           [&](const lupine_graph_host_copy &copy) {
+             return rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) <
+                        0 ||
+                    rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
+                    (copy.bytes != 0 &&
+                     rpc_write_payload(conn, copy.server_src, copy.bytes) < 0);
+           })) ||
       lupine_write_pending_dtoh_copies(nullptr, conn, nullptr, true) < 0 ||
       lupine_write_captured_stdout(conn, capture, &stdout_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
