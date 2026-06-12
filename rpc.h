@@ -23,6 +23,9 @@ typedef struct {
   struct iovec write_iov[128];
   // write_iov_framed[i] marks write_iov[i] as a payload the transport
   // LZ4-frames lazily as it streams to the socket (see compress.cpp).
+  // 0 = plain bytes, 1 = framed with per-block LZ4 attempts, 2 = framed but
+  // every block is stored raw (the source is already compressed, so the LZ4
+  // attempt would only waste CPU; the wire format is unchanged).
   unsigned char write_iov_framed[128];
   int write_iov_count;
   int local_request_parity;
@@ -41,7 +44,8 @@ extern int rpc_wait_for_response(conn_t *conn);
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
-extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
+extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size,
+                            const int no_compress);
 extern int rpc_write_end(conn_t *conn);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
@@ -53,6 +57,7 @@ extern int rpc_http2_compress_lz4(conn_t *conn);
 
 // Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
 extern int lupine_payload_framed(conn_t *conn, size_t total_size);
+extern int lupine_payload_precompressed(const void *data, size_t size);
 extern int rpc_write_payload(conn_t *conn, const void *data, size_t size);
 extern int rpc_read_payload(conn_t *conn, void *data, size_t size);
 extern int rpc_read_payload_part(conn_t *conn, int framed, void *data,

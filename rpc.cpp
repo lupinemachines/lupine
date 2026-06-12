@@ -198,9 +198,13 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
 // rpc_write_framed queues a payload that the transport LZ4-frames lazily,
 // one block at a time, as the bytes are streamed to the socket. The caller's
 // buffer must stay valid until rpc_write_end() returns, exactly like
-// rpc_write(). See compress.cpp for the framing format.
-int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  conn->write_iov_framed[conn->write_iov_count] = 1;
+// rpc_write(). See compress.cpp for the framing format. When no_compress is
+// set, every block is emitted with the raw fallback token (the payload is
+// already compressed, so the LZ4 attempt would only waste CPU); the wire
+// format is identical either way and the receiver cannot tell the difference.
+int rpc_write_framed(conn_t *conn, const void *data, const size_t size,
+                     const int no_compress) {
+  conn->write_iov_framed[conn->write_iov_count] = no_compress ? 2 : 1;
   conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
   return 0;
 }
