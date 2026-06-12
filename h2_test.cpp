@@ -1,6 +1,7 @@
 #include "rpc.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -51,7 +52,8 @@ void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
   for (const std::string &chunk : chunks) {
     iov.push_back({const_cast<char *>(chunk.data()), chunk.size()});
   }
-  require(rpc_http2_writev(conn, iov.data(), static_cast<int>(iov.size())) == 0,
+  require(rpc_http2_writev(conn, iov.data(), nullptr,
+                           static_cast<int>(iov.size())) == 0,
           "h2 write failed");
 }
 
@@ -134,6 +136,57 @@ void test_large_payload() {
   require(received == payload, "large payload mismatch");
 }
 
+// Round-trips a multi-block LZ4-framed payload: the transport compresses it
+// lazily block by block (h2.cpp) and rpc_read_payload_part decodes it with
+// chunked, block-aligned reads (compress.cpp). The payload mixes
+// compressible and random data so both compressed and raw block tokens are
+// exercised, and plain iovecs surround the framed one as in a real message.
+void test_framed_payload_round_trip() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  std::string prefix = "head";
+  std::string suffix = "tail";
+  std::vector<char> payload(2 * LUPINE_COMPRESS_BLOCK_BYTES + 123457);
+  unsigned int seed = 42;
+  for (size_t i = 0; i < payload.size() / 2; ++i) {
+    payload[i] = static_cast<char>(i % 7);
+  }
+  for (size_t i = payload.size() / 2; i < payload.size(); ++i) {
+    seed = seed * 1664525u + 1013904223u;
+    payload[i] = static_cast<char>(seed >> 24);
+  }
+
+  std::string received_prefix;
+  std::string received_suffix;
+  std::vector<char> received(payload.size());
+  std::thread reader([&] {
+    received_prefix = read_string(&pair.server, prefix.size());
+    size_t first = LUPINE_COMPRESS_BLOCK_BYTES;
+    require(rpc_read_payload_part(&pair.server, 1, received.data(), first) ==
+                static_cast<int>(first),
+            "framed read part 1 failed");
+    require(rpc_read_payload_part(&pair.server, 1, received.data() + first,
+                                  received.size() - first) ==
+                static_cast<int>(received.size() - first),
+            "framed read part 2 failed");
+    received_suffix = read_string(&pair.server, suffix.size());
+  });
+
+  struct iovec iov[3] = {
+      {const_cast<char *>(prefix.data()), prefix.size()},
+      {payload.data(), payload.size()},
+      {const_cast<char *>(suffix.data()), suffix.size()},
+  };
+  unsigned char framed[3] = {0, 1, 0};
+  require(rpc_http2_writev(&pair.client, iov, framed, 3) == 0,
+          "framed write failed");
+  reader.join();
+  require(received_prefix == prefix, "framed prefix mismatch");
+  require(received == payload, "framed payload mismatch");
+  require(received_suffix == suffix, "framed suffix mismatch");
+}
+
 } // namespace
 
 int main() {
@@ -141,6 +194,7 @@ int main() {
   test_server_to_client_after_request_headers();
   test_fragmented_iovec();
   test_large_payload();
+  test_framed_payload_round_trip();
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }

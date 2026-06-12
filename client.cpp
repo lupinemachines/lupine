@@ -47,6 +47,7 @@
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
 #include "lupine_attr_sizes.h"
+#include "lupine_fatbin.h"
 #include "rpc.h"
 
 pthread_mutex_t conn_mutex;
@@ -60,22 +61,6 @@ std::map<void *, void *> host_funcs;
 
 void add_host_node(void *fn, void *udata);
 
-struct lupine_fatbin_wrapper {
-  uint32_t magic;
-  uint32_t version;
-  const void *data;
-  const void *filename_or_fatbins;
-};
-
-struct lupine_fatbin_header {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t header_size;
-  uint64_t files_size;
-};
-
-static constexpr uint32_t LUPINE_FATBINC_MAGIC = 0x466243b1;
-static constexpr uint32_t LUPINE_FATBIN_MAGIC = 0xba55ed50;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
@@ -1472,7 +1457,7 @@ static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
         rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-        rpc_write(conn, record.image.data(), image_size) < 0 ||
+        rpc_write_payload(conn, record.image.data(), image_size) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -1541,7 +1526,7 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   bool failed =
       conn == nullptr || rpc_write_start_request(conn, RPC_cuModuleLoad) < 0 ||
       rpc_write(conn, &mapped_size, sizeof(mapped_size)) < 0 ||
-      rpc_write(conn, mapping, mapped_size) < 0 ||
+      rpc_write_payload(conn, mapping, mapped_size) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0;
@@ -1601,7 +1586,7 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
         rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-        rpc_write(conn, record.image.data(), image_size) < 0 ||
+        rpc_write_payload(conn, record.image.data(), image_size) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -4722,7 +4707,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
       continue;
     }
     lupine_prepare_host_range_write(dst, bytes);
-    if (rpc_read(conn, dst, bytes) < 0) {
+    if (rpc_read_payload(conn, dst, bytes) < 0) {
       return -1;
     }
     lupine_mark_host_range_clean(dst, bytes);
@@ -5125,7 +5110,7 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
       rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5196,7 +5181,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5629,7 +5614,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       (ByteCount != 0 && srcHost == nullptr) ||
-      (ByteCount != 0 && rpc_write(conn, srcHost, ByteCount) < 0) ||
+      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
