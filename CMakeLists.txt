@@ -44,6 +44,11 @@ include_directories(
 # CUDA source handling below.
 add_library(lupine_lz4 STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lz4.c)
 set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Unoptimized LZ4 compresses slower than the wire, turning compression into a
+# slowdown, so keep it optimized even when no CMAKE_BUILD_TYPE is set.
+if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
+  target_compile_options(lupine_lz4 PRIVATE -O2)
+endif()
 
 set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
