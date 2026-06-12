@@ -6,7 +6,6 @@ ARG CUDA_RUNTIME_IMAGE_FLAVOR=runtime
 FROM nvidia/cuda:${CUDA_VERSION}-${CUDA_IMAGE_FLAVOR}-ubuntu${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG RUN_CODEGEN=0
 ARG CMAKE_BUILD_TYPE=Release
 
 ENV CUDA_HOME=/usr/local/cuda
@@ -21,23 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     libnghttp2-dev \
     ninja-build \
-    python3 \
-    python3-pip \
-    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/lupine
 
 COPY . /opt/lupine
-
-RUN python3 -m venv /opt/lupine/.venv-codegen \
-    && /opt/lupine/.venv-codegen/bin/pip install --no-cache-dir -r /opt/lupine/codegen/requirements.txt
-
-# Generated sources are checked in; set RUN_CODEGEN=1 when intentionally
-# updating them for a CUDA header version.
-RUN if [ "$RUN_CODEGEN" = "1" ]; then \
-      cd /opt/lupine/codegen && /opt/lupine/.venv-codegen/bin/python ./codegen.py; \
-    fi
 
 RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -G Ninja \
