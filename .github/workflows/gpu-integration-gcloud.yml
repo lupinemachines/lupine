@@ -14,10 +14,6 @@ permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: gpu-integration-gce
-  cancel-in-progress: false
-
 jobs:
   gpu-integration:
     name: CUDA samples and PyTorch on GCE T4
