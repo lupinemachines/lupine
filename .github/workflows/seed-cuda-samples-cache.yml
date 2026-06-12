@@ -1,0 +1,134 @@
+name: Seed CUDA Samples Cache
+
+# Builds the extended CUDA samples suite and saves it to the actions cache
+# under the main branch scope, so pull_request runs of
+# gpu-integration-gcloud.yml can restore it instead of rebuilding (~19 min).
+# Caches saved by pull_request runs are scoped to the PR merge ref and are
+# invisible to other PRs, which is why this runs on main.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/gpu-integration-gcloud.yml
+      - .github/workflows/seed-cuda-samples-cache.yml
+      - test/run_cuda_samples.sh
+  schedule:
+    # Weekly refresh so the cache is not evicted after 7 days without access.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-cuda-samples-cache
+  cancel-in-progress: true
+
+jobs:
+  seed:
+    name: Build and cache CUDA samples
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      # Keep in sync with gpu-integration-gcloud.yml.
+      CUDA_VERSION: 12.9.1
+      CUDA_HOME: /usr/local/cuda-12.9
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            /opt/hostedtoolcache \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet \
+            "${AGENT_TOOLSDIRECTORY:-}" || true
+          df -h
+
+      - name: Resolve CUDA samples cache key
+        id: samples-key
+        run: |
+          set -euo pipefail
+          # Mirrors detect_cuda_samples_ref in test/run_cuda_samples.sh for 12.x toolkits.
+          samples_ref="v$(cut -d. -f1,2 <<<"$CUDA_VERSION")"
+          samples_commit="$(git ls-remote https://github.com/NVIDIA/cuda-samples.git \
+            "refs/tags/$samples_ref" "refs/tags/$samples_ref^{}" | tail -n1 | cut -f1)"
+          test -n "$samples_commit"
+          echo "key=cuda-samples-extended-$CUDA_VERSION-$samples_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing cache
+        id: samples-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: test/cuda-samples/cuda-samples
+          key: ${{ steps.samples-key.outputs.key }}
+          lookup-only: true
+
+      - name: Build CUDA samples
+        if: steps.samples-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bash \
+            build-essential \
+            ca-certificates \
+            cmake \
+            curl \
+            git \
+            libnghttp2-dev \
+            ninja-build
+
+          cuda_keyring="$RUNNER_TEMP/cuda-keyring.deb"
+          curl -fsSLo "$cuda_keyring" \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i "$cuda_keyring"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cuda-cudart-dev-12-9 \
+            cuda-driver-dev-12-9 \
+            cuda-nvcc-12-9 \
+            cuda-nvml-dev-12-9 \
+            cuda-nvrtc-dev-12-9 \
+            cuda-nvtx-12-9 \
+            cuda-profiler-api-12-9 \
+            libcublas-dev-12-9 \
+            libcufft-dev-12-9 \
+            libcurand-dev-12-9 \
+            libcusolver-dev-12-9 \
+            libcusparse-dev-12-9 \
+            libnpp-dev-12-9 \
+            libnvjpeg-dev-12-9 \
+            libnvjitlink-dev-12-9
+
+          export PATH="$CUDA_HOME/bin:$PATH"
+          export CUDA_LIB_DIR="$CUDA_HOME/lib64"
+
+          cmake -S "$PWD" -B "$PWD/build" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCUDAToolkit_ROOT="$CUDA_HOME" \
+            -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
+          cmake --build "$PWD/build" --parallel --target lupine_driver
+
+          BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended \
+            CUDA_HOME="$CUDA_HOME" CUDA_LIB_DIR="$CUDA_LIB_DIR" \
+            "$PWD/test/run_cuda_samples.sh"
+          find "$PWD/test/cuda-samples/cuda-samples/build" -name '*.o' -delete
+
+      - name: Save CUDA samples build cache
+        if: steps.samples-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: test/cuda-samples/cuda-samples
+          key: ${{ steps.samples-key.outputs.key }}
