@@ -100,24 +100,6 @@ jobs:
             echo "RUNNER_IP=$runner_ip"
           } >> "$GITHUB_ENV"
 
-      - name: Resolve CUDA samples cache key
-        id: samples-key
-        run: |
-          set -euo pipefail
-          # Mirrors detect_cuda_samples_ref in test/run_cuda_samples.sh for 12.x toolkits.
-          samples_ref="v$(cut -d. -f1,2 <<<"$CUDA_VERSION")"
-          samples_commit="$(git ls-remote https://github.com/NVIDIA/cuda-samples.git \
-            "refs/tags/$samples_ref" "refs/tags/$samples_ref^{}" | tail -n1 | cut -f1)"
-          test -n "$samples_commit"
-          echo "key=cuda-samples-extended-$CUDA_VERSION-$samples_commit" >> "$GITHUB_OUTPUT"
-
-      - name: Restore CUDA samples build cache
-        id: samples-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: test/cuda-samples/cuda-samples
-          key: ${{ steps.samples-key.outputs.key }}
-
       - name: Prepare GitHub runner client environment
         run: |
           set -euo pipefail
@@ -181,19 +163,11 @@ jobs:
           ln -sf libcuda.so.1 "$PWD/build/libcuda.so"
           ln -sf libnvidia-ml.so.1 "$PWD/build/libnvidia-ml.so"
 
-          if [[ "${{ steps.samples-cache.outputs.cache-hit }}" != "true" ]]; then
-            BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended \
-              CUDA_HOME="$CUDA_HOME" CUDA_LIB_DIR="$CUDA_LIB_DIR" \
-              "$PWD/test/run_cuda_samples.sh"
-            find "$PWD/test/cuda-samples/cuda-samples/build" -name '*.o' -delete
-          fi
-
-      - name: Save CUDA samples build cache
-        if: steps.samples-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: test/cuda-samples/cuda-samples
-          key: ${{ steps.samples-key.outputs.key }}
+          # CUDA_SAMPLES_ARCH=75: only compile device code for the T4 (sm_75)
+          # instead of the 15 architectures the samples build by default.
+          BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended CUDA_SAMPLES_ARCH=75 \
+            CUDA_HOME="$CUDA_HOME" CUDA_LIB_DIR="$CUDA_LIB_DIR" \
+            "$PWD/test/run_cuda_samples.sh"
 
       - name: Create locked-down firewall rules
         run: |
