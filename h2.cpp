@@ -288,11 +288,6 @@ nghttp2_nv h2_nv(const char *name, const char *value) {
 constexpr char kLupineCompressHeader[] = "x-lupine-compress";
 constexpr char kLupineCompressLz4[] = "lz4";
 
-bool lupine_compress_lz4_requested() {
-  const char *value = getenv("LUPINE_COMPRESS");
-  return value != nullptr && strcmp(value, kLupineCompressLz4) == 0;
-}
-
 bool lupine_h2_debug_enabled() {
   const char *debug = getenv("LUPINE_DEBUG");
   if (debug != nullptr && debug[0] != '\0' && strcmp(debug, "0") != 0) {
@@ -469,11 +464,8 @@ int h2_init_direct(conn_t *conn, bool server) {
         h2_nv(":authority", "lupine"),
         h2_nv(kLupineCompressHeader, kLupineCompressLz4),
     };
-    size_t header_count = 4;
-    if (lupine_compress_lz4_requested()) {
-      transport->compress_lz4 = true;
-      header_count = 5;
-    }
+    transport->compress_lz4 = true;
+    size_t header_count = 5;
     int32_t stream_id =
         nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1,
                                nullptr, headers, header_count, nullptr);
