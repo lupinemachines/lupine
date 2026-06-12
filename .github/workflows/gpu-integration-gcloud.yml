@@ -19,7 +19,7 @@ jobs:
     name: CUDA samples and PyTorch on GCE L4
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -31,8 +31,11 @@ jobs:
       PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
       VM_IMAGE_PROJECT: ml-images
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
-      VM_MAX_RUN_DURATION: 90m
-      COMPLIANCE_TIMEOUT: 80m
+      VM_MAX_RUN_DURATION: 260m
+      COMPLIANCE_TIMEOUT: 240m
+      CUDA_SAMPLE_TIMEOUT: 120
+      CUDA_LONG_SAMPLE_TIMEOUT: 600
+      PYTORCH_TEST_TIMEOUT: 180
       CUDA_HOME: /usr/local/cuda-12.9
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -76,8 +79,11 @@ jobs:
           test "$MACHINE_TYPE" = g2-standard-4
           test "$VM_IMAGE_PROJECT" = ml-images
           test "$VM_IMAGE_FAMILY" = common-cu129-ubuntu-2404-nvidia-580
-          test "$VM_MAX_RUN_DURATION" = 90m
-          test "$COMPLIANCE_TIMEOUT" = 80m
+          test "$VM_MAX_RUN_DURATION" = 260m
+          test "$COMPLIANCE_TIMEOUT" = 240m
+          test "$CUDA_SAMPLE_TIMEOUT" = 120
+          test "$CUDA_LONG_SAMPLE_TIMEOUT" = 600
+          test "$PYTORCH_TEST_TIMEOUT" = 180
 
       - name: Prepare SSH key and runner allowlist
         run: |
@@ -108,8 +114,14 @@ jobs:
             ca-certificates \
             cmake \
             curl \
+            freeglut3-dev \
             git \
+            libgl-dev \
+            libglu1-mesa-dev \
             libnghttp2-dev \
+            libx11-dev \
+            libxi-dev \
+            libxmu-dev \
             ninja-build \
             openssh-client \
             python3 \
@@ -298,7 +310,9 @@ jobs:
           export SERVER_SSH_TARGET="gha@$VM_IP"
           export SAMPLE_SUITE=compliance
           export BUILD_SAMPLES=0
-          export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,threadMigration,watershedSegmentationNPP,HSOpticalFlow,jacobiCudaGraphs,matrixMul_nvrtc,reduction,scan,transpose,BlackScholes,alignedTypes,LargeKernelParameter,threadFenceReduction,eigenvalues,lineOfSight,batchCUBLAS,cuSolverSp_LinearSolver,cuSolverSp_LowlevelCholesky,conjugateGradient,conjugateGradientUM,nvJPEG_encoder,matrixMul,simpleStreams,simpleMultiCopy,sortingNetworks,BlackScholes_nvrtc,streamOrderedAllocation,convolutionFFT2D,radixSortThrust,matrixMulCUBLAS,cuSolverDn_LinearSolver,conjugateGradientCudaGraphs,NV12toBGRandResize
+          export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
+          export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
+          export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
           export PYTORCH_SKIP_LIST=compile_elementwise,microgpt_train
 
           test "$SERVER_HOST" != "127.0.0.1"
