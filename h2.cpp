@@ -51,7 +51,6 @@ struct h2_write_cursor {
   // For a framed cursor whose source is already compressed (e.g. a fatbin
   // with compressed members), skip the per-block LZ4 attempt and emit every
   // block with the raw fallback token. Same wire format, no wasted CPU.
-  bool no_compress = false;
 };
 
 struct h2_write_source {
@@ -133,12 +132,9 @@ void h2_materialize_block(h2_transport *transport, h2_write_cursor &cursor) {
     transport->compress_scratch.resize(sizeof(uint32_t) + bound);
   }
   unsigned char *out = transport->compress_scratch.data();
-  int compressed =
-      cursor.no_compress
-          ? 0
-          : LZ4_compress_default(
-                cursor.src, reinterpret_cast<char *>(out + sizeof(uint32_t)),
-                static_cast<int>(raw), static_cast<int>(bound));
+  int compressed = LZ4_compress_default(
+      cursor.src, reinterpret_cast<char *>(out + sizeof(uint32_t)),
+      static_cast<int>(raw), static_cast<int>(bound));
   uint32_t token = 0;
   size_t block_len = raw;
   if (compressed > 0 && static_cast<size_t>(compressed) < raw) {
@@ -530,7 +526,6 @@ int rpc_http2_writev(conn_t *conn, struct iovec *iov,
     if (framed != nullptr && framed[i]) {
       cursor.src = static_cast<const char *>(iov[i].iov_base);
       cursor.src_len = iov[i].iov_len;
-      cursor.no_compress = framed[i] == 2;
     } else {
       cursor.base = static_cast<const unsigned char *>(iov[i].iov_base);
       cursor.len = iov[i].iov_len;

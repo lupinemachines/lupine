@@ -44,8 +44,7 @@ extern int rpc_wait_for_response(conn_t *conn);
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
-extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size,
-                            const int no_compress);
+extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
@@ -57,7 +56,6 @@ extern int rpc_http2_compress_lz4(conn_t *conn);
 
 // Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
 extern int lupine_payload_framed(conn_t *conn, size_t total_size);
-extern int lupine_payload_precompressed(const void *data, size_t size);
 extern int rpc_write_payload(conn_t *conn, const void *data, size_t size);
 extern int rpc_read_payload(conn_t *conn, void *data, size_t size);
 extern int rpc_read_payload_part(conn_t *conn, int framed, void *data,
