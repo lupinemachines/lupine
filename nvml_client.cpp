@@ -52,7 +52,16 @@ std::vector<lupine_nvml_remote_device> devices;
 std::vector<std::string> conn_labels;
 bool devices_ready = false;
 
-nvmlReturn_t rpc_error() { return NVML_ERROR_UNKNOWN; }
+nvmlReturn_t rpc_error() {
+  // a connection that went away mid-session means the remote GPU is gone,
+  // which callers can distinguish from a generic failure.
+  for (int i = 0; i < nconns; ++i) {
+    if (conns[i].closed) {
+      return NVML_ERROR_GPU_IS_LOST;
+    }
+  }
+  return NVML_ERROR_UNKNOWN;
+}
 
 void *rpc_client_dispatch_thread(void *p) {
   conn_t *connection = static_cast<conn_t *>(p);
@@ -105,54 +114,37 @@ int open_connection() {
       port = colon + 1;
     }
 
-    addrinfo hints = {};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    addrinfo *res = nullptr;
-    if (getaddrinfo(host, port, &hints, &res) != 0) {
+    int sockfd = rpc_client_connect(host, port);
+    if (sockfd == LUPINE_INVALID_SOCKET) {
       continue;
     }
-
-    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sockfd >= 0) {
-      int flag = 1;
-      setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-      if (connect(sockfd, res->ai_addr, res->ai_addrlen) == 0) {
-        if (nconns >= static_cast<int>(sizeof(conns) / sizeof(conns[0]))) {
-          close(sockfd);
-          freeaddrinfo(res);
-          break;
-        }
-        std::string server_label(host);
-        if (strcmp(port, DEFAULT_PORT) != 0) {
-          server_label += ":";
-          server_label += port;
-        }
-
-        conn_t *c = &conns[nconns];
-        *c = {};
-        c->connfd = sockfd;
-        c->request_id = 0;
-        c->local_request_parity = c->request_id & 1;
-        if (pthread_mutex_init(&c->read_mutex, nullptr) < 0 ||
-            pthread_mutex_init(&c->write_mutex, nullptr) < 0 ||
-            pthread_mutex_init(&c->call_mutex, nullptr) < 0 ||
-            pthread_cond_init(&c->read_cond, nullptr) < 0 ||
-            rpc_http2_client_init(c) < 0 ||
-            pthread_create(&c->read_thread, nullptr, rpc_client_dispatch_thread,
-                           c) < 0) {
-          close(sockfd);
-          freeaddrinfo(res);
-          continue;
-        }
-        conn_labels.push_back(server_label);
-        ++nconns;
-        freeaddrinfo(res);
-        continue;
-      }
+    if (nconns >= static_cast<int>(sizeof(conns) / sizeof(conns[0]))) {
       close(sockfd);
+      break;
     }
-    freeaddrinfo(res);
+    std::string server_label(host);
+    if (strcmp(port, DEFAULT_PORT) != 0) {
+      server_label += ":";
+      server_label += port;
+    }
+
+    conn_t *c = &conns[nconns];
+    *c = {};
+    c->connfd = sockfd;
+    c->request_id = 0;
+    c->local_request_parity = c->request_id & 1;
+    if (pthread_mutex_init(&c->read_mutex, nullptr) < 0 ||
+        pthread_mutex_init(&c->write_mutex, nullptr) < 0 ||
+        pthread_mutex_init(&c->call_mutex, nullptr) < 0 ||
+        pthread_cond_init(&c->read_cond, nullptr) < 0 ||
+        rpc_http2_client_init(c) < 0 ||
+        pthread_create(&c->read_thread, nullptr, rpc_client_dispatch_thread,
+                       c) < 0) {
+      close(sockfd);
+      continue;
+    }
+    conn_labels.push_back(server_label);
+    ++nconns;
   }
   free(servers);
 

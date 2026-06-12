@@ -1,7 +1,13 @@
 #include "rpc.h"
 #include <algorithm>
 #include <iostream>
+#include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
+#include <netdb.h>
+#include <netinet/tcp.h>
+#endif
 
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
@@ -17,12 +23,20 @@ void *_rpc_read_id_dispatch(void *p) {
 
     // the read id is zero so it's our turn to read the next int which is the
     // request id of the next request.
-    int bytes = rpc_read(conn, &conn->read_id, sizeof(int));
-    if (bytes <= 0 || conn->read_id == 0) {
+    int next_id = 0;
+    int bytes = rpc_read(conn, &next_id, sizeof(int));
+    if (bytes < 0) {
+      // rpc_read marked the connection closed, woke all waiters and released
+      // the read mutex.
+      conn->rpc_thread = 0;
+      return NULL;
+    }
+    if (bytes == 0 || next_id == 0) {
       conn->closed = 1;
       pthread_cond_broadcast(&conn->read_cond);
       break;
     }
+    conn->read_id = next_id;
     if (pthread_cond_broadcast(&conn->read_cond) < 0)
       break;
   }
@@ -60,7 +74,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
   }
 
   if (rpc_read(conn, &op, sizeof(int)) < 0) {
-    pthread_mutex_unlock(&conn->read_mutex);
+    // rpc_read marked the connection closed and released the read mutex.
     return -1;
   }
 
@@ -91,7 +105,27 @@ int rpc_read_start(conn_t *conn, int write_id) {
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {
-  return rpc_http2_read(conn, data, size);
+  if (conn->closed)
+    return -1;
+  int result = rpc_http2_read(conn, data, size);
+  if (result < 0) {
+    // the transport failed at the socket level so no more data will ever
+    // arrive. mark the connection dead, wake every thread waiting on it, and
+    // release the read state so callers that skip rpc_read_end after a failed
+    // read do not leave the connection locked. all callers hold read_mutex
+    // for the duration of rpc_read, and conn->closed only transitions to 1
+    // under read_mutex, so this cleanup runs at most once.
+    int read_id = conn->read_id;
+    bool completes_local_request =
+        read_id >= 2 && (read_id % 2) == conn->local_request_parity;
+    conn->read_id = 0;
+    conn->closed = 1;
+    pthread_cond_broadcast(&conn->read_cond);
+    pthread_mutex_unlock(&conn->read_mutex);
+    if (completes_local_request)
+      pthread_mutex_unlock(&conn->call_mutex);
+  }
+  return result;
 }
 
 int rpc_drain(conn_t *conn, size_t size) {
@@ -231,4 +265,70 @@ int rpc_write_end(conn_t *conn) {
   int result = rpc_http2_writev(conn, iov, framed, iov_count);
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
+}
+
+static int _rpc_env_int(const char *name, int fallback) {
+  const char *value = getenv(name);
+  if (value == NULL || value[0] == '\0')
+    return fallback;
+  char *end = NULL;
+  long parsed = strtol(value, &end, 10);
+  if (end == value || *end != '\0' || parsed < 0)
+    return fallback;
+  return (int)parsed;
+}
+
+static void _rpc_sleep_ms(int ms) {
+#ifdef _WIN32
+  Sleep(ms);
+#else
+  while (ms > 0) {
+    int chunk = std::min(ms, 1000);
+    usleep((useconds_t)chunk * 1000);
+    ms -= chunk;
+  }
+#endif
+}
+
+// rpc_client_connect resolves host:port and connects to it, retrying failed
+// attempts with exponential backoff. a server may not be reachable yet, for
+// example while a GPU is still being provisioned, so the number of retries
+// and the initial backoff are configurable with LUPINE_CONNECT_RETRIES and
+// LUPINE_CONNECT_BACKOFF_MS.
+lupine_socket_t rpc_client_connect(const char *host, const char *port) {
+  int retries = _rpc_env_int("LUPINE_CONNECT_RETRIES", 5);
+  int backoff_ms = _rpc_env_int("LUPINE_CONNECT_BACKOFF_MS", 1000);
+
+  for (int attempt = 0;; ++attempt) {
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, port, &hints, &res) == 0) {
+      lupine_socket_t sockfd =
+          socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+      if (sockfd != LUPINE_INVALID_SOCKET) {
+        int flag = 1;
+        setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (const char *)&flag,
+                   sizeof(flag));
+        if (connect(sockfd, res->ai_addr, (socklen_t)res->ai_addrlen) == 0) {
+          freeaddrinfo(res);
+          return sockfd;
+        }
+        lupine_socket_close(sockfd);
+      }
+      freeaddrinfo(res);
+    }
+    if (attempt >= retries)
+      return LUPINE_INVALID_SOCKET;
+
+    int delay_ms = backoff_ms;
+    for (int i = 0; i < attempt && delay_ms < 30000; ++i)
+      delay_ms *= 2;
+    delay_ms = std::min(delay_ms, 30000);
+    std::cerr << "Connecting to " << host << " port " << port
+              << " failed, retrying in " << delay_ms << "ms ("
+              << (retries - attempt) << " retries left)" << std::endl;
+    _rpc_sleep_ms(delay_ms);
+  }
 }

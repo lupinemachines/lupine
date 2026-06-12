@@ -1854,8 +1854,11 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
       rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
       rpc_wait_for_response(conn) >= 0) {
     lupine_cleanup_pending_dtoh_copies(conn, stream, false);
-    rpc_read(conn, &response, sizeof(response));
-    rpc_read_end(conn);
+    // a failed rpc_read marks the connection closed and releases the read
+    // state itself, in which case rpc_read_end must not run again.
+    if (rpc_read(conn, &response, sizeof(response)) >= 0) {
+      rpc_read_end(conn);
+    }
   }
   delete callback;
 }
