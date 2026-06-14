@@ -162,6 +162,34 @@ static bool lupine_stub_missing_enabled() {
   return enabled;
 }
 
+// LUPINE_ASYNC_LAUNCH enables fire-and-forget kernel-launch pipelining, which
+// hides per-launch round-trip latency on high-latency links. Unset or "0"
+// disables it (default, fully synchronous). "1" picks a sensible window; any
+// other positive integer sets the in-flight window explicitly.
+static int lupine_async_launch_window() {
+  static int window = [] {
+    const char *value = getenv("LUPINE_ASYNC_LAUNCH");
+    if (value == nullptr || strcmp(value, "0") == 0)
+      return 0;
+    int w = atoi(value);
+    if (w <= 1)
+      w = 1024; // "1" (or junk) -> default window
+    if (w > 4000)
+      w = 4000; // keep within conn_t::async_ids capacity
+    return w;
+  }();
+  return window;
+}
+
+// Surface an error from a previously pipelined kernel launch (if any) so a
+// synchronizing call reports it, matching CUDA's deferred async-error model.
+static CUresult lupine_surface_deferred_launch(conn_t *conn) {
+  if (conn == nullptr)
+    return CUDA_SUCCESS;
+  int deferred = rpc_async_take_deferred(conn);
+  return deferred == 0 ? CUDA_SUCCESS : static_cast<CUresult>(deferred);
+}
+
 static bool lupine_symbol_looks_like_driver_api(const char *symbol) {
   return symbol != nullptr && symbol[0] == 'c' && symbol[1] == 'u' &&
          symbol[2] >= 'A' && symbol[2] <= 'Z';
@@ -4809,6 +4837,11 @@ extern "C" CUresult cuCtxSynchronize() {
   if (result != CUDA_SUCCESS) {
     return result;
   }
+  CUresult deferred = lupine_surface_deferred_launch(
+      lupine_route_remote_conn(lupine_route_for_current_context()));
+  if (deferred != CUDA_SUCCESS) {
+    return deferred;
+  }
   return lupine_sync_mapped_device_to_host();
 }
 
@@ -4836,6 +4869,10 @@ extern "C" CUresult cuStreamSynchronize(CUstream hStream) {
   if (result != CUDA_SUCCESS) {
     return result;
   }
+  CUresult deferred = lupine_surface_deferred_launch(conn);
+  if (deferred != CUDA_SUCCESS) {
+    return deferred;
+  }
   return lupine_sync_mapped_device_to_host();
 }
 
@@ -4851,6 +4888,11 @@ extern "C" CUresult cuEventSynchronize(CUevent hEvent) {
       lupine_rpc_event_driver_call(RPC_cuEventSynchronize, hEvent);
   if (result != CUDA_SUCCESS) {
     return result;
+  }
+  CUresult deferred = lupine_surface_deferred_launch(
+      lupine_route_remote_conn(lupine_route_for_event(hEvent)));
+  if (deferred != CUDA_SUCCESS) {
+    return deferred;
   }
   return lupine_sync_mapped_device_to_host();
 }
@@ -5417,9 +5459,15 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
+  if (conn == nullptr) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+
+  // Build the launch request. The packed parameter bytes are queued by
+  // reference, so they must outlive the send; rpc_write_end (inside both
+  // rpc_async_post and rpc_wait_for_response) flushes everything to the socket
+  // before returning, so `packed` is safe to destroy on return either way.
+  if (rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -5431,8 +5479,22 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
-      rpc_write(conn, packed.data(), packed.size()) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, packed.data(), packed.size()) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+
+  if (rpc_async_enabled(conn)) {
+    // Fire-and-forget: return immediately without paying a round trip. Any
+    // launch error is latched and surfaced at the next synchronizing call,
+    // which is within CUDA's asynchronous error-reporting contract.
+    if (rpc_async_post(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return CUDA_SUCCESS;
+  }
+
+  CUresult return_value;
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -7796,6 +7858,8 @@ int rpc_open() {
     conns[nconns].request_id = 0;
     conns[nconns].closed = 0;
     conns[nconns].local_request_parity = conns[nconns].request_id & 1;
+    conns[nconns].async_op = RPC_cuLaunchKernel;
+    conns[nconns].async_window = lupine_async_launch_window();
     if (pthread_mutex_init(&conns[nconns].read_mutex, NULL) < 0 ||
         pthread_mutex_init(&conns[nconns].write_mutex, NULL) < 0 ||
         pthread_mutex_init(&conns[nconns].call_mutex, NULL) < 0 ||

@@ -133,6 +133,72 @@ int rpc_wait_for_response(conn_t *conn) {
   return 0;
 }
 
+int rpc_async_enabled(conn_t *conn) { return conn->async_window > 0; }
+
+// rpc_async_collect_one waits for the reply to a fire-and-forget request, reads
+// its 4-byte CUresult, and releases the read slot WITHOUT touching call_mutex
+// (the sender already released it). Returns the CUresult, or -1 on error.
+static int rpc_async_collect_one(conn_t *conn, int write_id) {
+  if (rpc_read_start(conn, write_id) < 0)
+    return -1;
+  int rv = 0;
+  int ok = rpc_read(conn, &rv, sizeof(rv));
+  conn->read_id = 0;
+  pthread_cond_broadcast(&conn->read_cond);
+  pthread_mutex_unlock(&conn->read_mutex);
+  return ok < 0 ? -1 : rv;
+}
+
+// rpc_async_drain_locked collects every outstanding fire-and-forget reply in
+// FIFO order, latching the first error. The caller must hold call_mutex.
+static int rpc_async_drain_locked(conn_t *conn) {
+  const int cap = (int)(sizeof(conn->async_ids) / sizeof(conn->async_ids[0]));
+  while (conn->async_count > 0) {
+    int id = conn->async_ids[conn->async_head];
+    int rv = rpc_async_collect_one(conn, id);
+    conn->async_head = (conn->async_head + 1) % cap;
+    conn->async_count--;
+    if (rv < 0) {
+      conn->closed = 1;
+      return -1;
+    }
+    if (rv != 0 && conn->async_deferred == 0)
+      conn->async_deferred = rv;
+  }
+  return 0;
+}
+
+// rpc_async_post sends the current request as fire-and-forget. Mirrors
+// rpc_wait_for_response: it owns the call_mutex on entry and releases it before
+// returning. The reply is collected by a later rpc_async_drain_locked.
+int rpc_async_post(conn_t *conn) {
+  int write_id = rpc_write_end(conn);
+  if (write_id < 0) {
+    pthread_mutex_unlock(&conn->call_mutex);
+    return -1;
+  }
+  const int cap = (int)(sizeof(conn->async_ids) / sizeof(conn->async_ids[0]));
+  int idx = (conn->async_head + conn->async_count) % cap;
+  conn->async_ids[idx] = write_id;
+  conn->async_count++;
+  int rc = 0;
+  if (conn->async_count >= conn->async_window || conn->async_count >= cap - 1)
+    rc = rpc_async_drain_locked(conn);
+  pthread_mutex_unlock(&conn->call_mutex);
+  return rc;
+}
+
+int rpc_async_take_deferred(conn_t *conn) {
+  if (conn->async_window <= 0)
+    return 0;
+  if (pthread_mutex_lock(&conn->call_mutex) < 0)
+    return 0;
+  int e = conn->async_deferred;
+  conn->async_deferred = 0;
+  pthread_mutex_unlock(&conn->call_mutex);
+  return e;
+}
+
 // rpc_write_start_request starts a new request builder on the given connection
 // index with a specific op code.
 //
@@ -148,6 +214,13 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (conn->closed) {
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
+  }
+  // Before issuing any request other than another fire-and-forget launch,
+  // collect the replies to outstanding launches so this request's response is
+  // next in FIFO order on the wire. Consecutive launches are intentionally NOT
+  // drained here so they can pipeline (rpc_async_post bounds the backlog).
+  if (conn->async_window > 0 && conn->async_count > 0 && op != conn->async_op) {
+    rpc_async_drain_locked(conn);
   }
   if (pthread_mutex_lock(&conn->write_mutex) < 0) {
 #ifdef VERBOSE

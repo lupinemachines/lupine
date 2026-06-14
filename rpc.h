@@ -31,6 +31,20 @@ typedef struct {
   int local_request_parity;
   int closed;
   void *http2;
+
+  // --- async launch pipelining (client-side, opt-in) ---
+  // When async_window > 0, requests whose op == async_op are sent
+  // "fire-and-forget": the caller returns immediately without waiting for the
+  // reply, and the (4-byte CUresult) responses are collected later in FIFO
+  // order. This hides per-launch round-trip latency. All fields below are
+  // manipulated only while holding call_mutex. The feature is a no-op on the
+  // server (async_window stays 0).
+  int async_op;          // op code treated as fire-and-forget (e.g. cuLaunchKernel)
+  int async_window;      // max in-flight before a forced drain; 0 disables
+  int async_ids[4096];   // ring buffer of outstanding request ids
+  int async_head;        // index of the oldest outstanding id
+  int async_count;       // number outstanding
+  int async_deferred;    // first latched non-success CUresult (0 == success)
 } conn_t;
 
 extern int rpc_dispatch(conn_t *conn, int parity);
@@ -40,6 +54,19 @@ extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
 
 extern int rpc_wait_for_response(conn_t *conn);
+
+// --- async launch pipelining helpers (see conn_t fields above) ---
+// rpc_async_enabled reports whether fire-and-forget posting is active.
+extern int rpc_async_enabled(conn_t *conn);
+// rpc_async_post finalizes the current request as fire-and-forget: it flushes
+// the bytes to the socket, records the request id, releases call_mutex, and
+// drains the window if it is full. The reply is collected later. Must be paired
+// with rpc_write_start_request (exactly like rpc_wait_for_response).
+extern int rpc_async_post(conn_t *conn);
+// rpc_async_take_deferred returns and clears the first latched fire-and-forget
+// error (or 0 if none). Call it from synchronizing wrappers to surface a launch
+// error that completed asynchronously.
+extern int rpc_async_take_deferred(conn_t *conn);
 
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
