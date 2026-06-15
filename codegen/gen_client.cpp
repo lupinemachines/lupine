@@ -290,17 +290,18 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  std::size_t luid_len;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuDeviceGetLuid) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &luid_len, sizeof(std::size_t)) < 0 ||
-      rpc_read(conn, luid, luid_len) < 0 ||
+      (lupine_prepare_host_range_write(luid, 8 * sizeof(char)), false) ||
+      (8 != 0 && rpc_read(conn, luid, 8) < 0) ||
       rpc_read(conn, deviceNodeMask, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_mark_host_range_clean(luid, 8 * sizeof(char));
   return return_value;
 }
 
