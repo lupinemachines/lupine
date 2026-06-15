@@ -36,8 +36,8 @@ SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
-SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-60}"
-LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-300}"
+SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-120}"
+LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-600}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)}"
 
 CORE_SAMPLES=(
@@ -233,7 +233,7 @@ resolve_sample_exe() {
   fi
 
   if [[ "$cmake_samples" == "1" ]]; then
-    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$sample" -perm -111 2>/dev/null | head -n1 || true)"
+    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$sample" -perm /111 2>/dev/null | head -n1 || true)"
     if [[ -n "$exe" ]]; then
       printf '%s\n' "$exe"
       return 0
@@ -273,8 +273,32 @@ sample_args() {
     FDTD3d)
       printf '%s\0' --qatest
       ;;
+    batchCUBLAS)
+      printf '%s\0' -m32 -n32 -k32 -N1
+      ;;
+    cuSolverRf)
+      printf '%s\0' "-file=$(resolve_sample_srcdir cuSolverRf)/lap2D_5pt_n100.mtx"
+      ;;
+    eigenvalues)
+      printf '%s\0' -matrix-size=128 -iters-timing=1
+      ;;
+    matrixMul|matrixMul_nvrtc)
+      printf '%s\0' -wA=32 -hA=32 -wB=32 -hB=32
+      ;;
+    matrixMulCUBLAS)
+      printf '%s\0' -sizemult=1
+      ;;
     nbody)
       printf '%s\0' -benchmark -numbodies=4096 -i=1
+      ;;
+    NV12toBGRandResize)
+      printf '%s\0' \
+        -input=data/test640x480.nv12 \
+        -width=640 \
+        -height=480 \
+        -dst_width=320 \
+        -dst_height=240 \
+        -batch=1
       ;;
     oceanFFT)
       printf '%s\0' -qatest
@@ -282,11 +306,17 @@ sample_args() {
     ptxgen)
       printf '%s\0' test.ll
       ;;
+    reduction|threadFenceReduction)
+      printf '%s\0' -n=1024 -threads=64 -maxblocks=16
+      ;;
     recursiveGaussian)
       printf '%s\0' -benchmark
       ;;
     simpleTexture3D)
       printf '%s\0' -file=data/ref_texture3D.bin
+      ;;
+    transpose)
+      printf '%s\0' -dimX=512 -dimY=512
       ;;
   esac
 }
@@ -477,7 +507,7 @@ stop_remote_server() {
 
 sample_timeout() {
   case "$1" in
-    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)

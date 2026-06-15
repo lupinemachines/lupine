@@ -307,6 +307,11 @@ int main() {
     }
 
 #ifndef _WIN32
+    int flag = 1;
+    setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+#endif
+
+#ifndef _WIN32
     // fork a process per connection so each client gets its own CUDA driver
     // state (primary context, allocations, modules). this matches local
     // semantics: a client resetting or corrupting its context cannot affect
