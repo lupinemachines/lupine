@@ -1,11 +1,12 @@
+#include "lupine_log.h"
 #include "rpc.h"
 
 #include <algorithm>
 #include <deque>
 #include <errno.h>
-#include <iostream>
 #include <lz4.h>
 #include <nghttp2/nghttp2.h>
+#include <sstream>
 #include <stdint.h>
 #include <string.h>
 #include <string>
@@ -315,12 +316,13 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
       debug.assign(reinterpret_cast<const char *>(frame->goaway.opaque_data),
                    frame->goaway.opaque_data_len);
     }
-    std::cerr << "LUPINE remote server sent HTTP/2 GOAWAY"
-              << " error_code=" << frame->goaway.error_code;
+    std::ostringstream message;
+    message << "LUPINE remote server sent HTTP/2 GOAWAY"
+            << " error_code=" << frame->goaway.error_code;
     if (!debug.empty()) {
-      std::cerr << " debug=\"" << debug << "\"";
+      message << " debug=\"" << debug << "\"";
     }
-    std::cerr << std::endl;
+    LUPINE_LOG_DEBUG(message.str());
   }
   if (transport->server && frame->hd.type == NGHTTP2_HEADERS &&
       frame->headers.cat == NGHTTP2_HCAT_REQUEST) {

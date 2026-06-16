@@ -15,6 +15,7 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
 
@@ -49,7 +50,7 @@ static bool lupine_server_trace_enabled() {
 }
 
 static void lupine_log_manual_handler_error(const char *name) {
-  std::cerr << "Error handling manual " << name << " request." << std::endl;
+  LUPINE_LOG_ERROR("Error handling manual " << name << " request.");
 }
 
 struct lupine_manual_handler {
@@ -201,7 +202,7 @@ void client_handler(lupine_socket_t connfd) {
       pthread_mutex_init(&conn.call_mutex, NULL) < 0 ||
       pthread_cond_init(&conn.read_cond, NULL) < 0 ||
       rpc_http2_server_init(&conn) < 0) {
-    std::cerr << "Error initializing mutex." << std::endl;
+    LUPINE_LOG_ERROR("Error initializing mutex.");
     return;
   }
 
@@ -210,11 +211,11 @@ void client_handler(lupine_socket_t connfd) {
   while (1) {
     int op = rpc_dispatch(&conn, 0);
     if (op < 0) {
-      std::cerr << "RPC dispatch failed; closing client." << std::endl;
+      LUPINE_LOG_ERROR("RPC dispatch failed; closing client.");
       break;
     }
     if (lupine_server_trace_enabled()) {
-      std::cerr << "LUPINE server handling op " << op << std::endl;
+      LUPINE_LOG_DEBUG("LUPINE server handling op " << op);
     }
 
     const auto &manual_handlers = lupine_manual_handlers();
@@ -229,19 +230,18 @@ void client_handler(lupine_socket_t connfd) {
 
     auto opHandler = get_handler(op);
     if (opHandler == nullptr) {
-      std::cerr << "No RPC handler for op " << op << "; closing client."
-                << std::endl;
+      LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
       break;
     }
     if (opHandler(&conn) < 0) {
-      std::cerr << "Error handling request." << std::endl;
+      LUPINE_LOG_ERROR("Error handling request.");
       break;
     }
   }
 
   if (pthread_mutex_destroy(&conn.read_mutex) < 0 ||
       pthread_mutex_destroy(&conn.write_mutex) < 0)
-    std::cerr << "Error destroying mutex." << std::endl;
+    LUPINE_LOG_ERROR("Error destroying mutex.");
 
   lupine_socket_close(connfd);
 }
@@ -302,7 +302,7 @@ int main() {
     lupine_socket_t connfd = accept(sockfd, (struct sockaddr *)&cli, &len);
 
     if (connfd == LUPINE_INVALID_SOCKET) {
-      std::cerr << "Server accept failed." << std::endl;
+      LUPINE_LOG_ERROR("Server accept failed.");
       continue;
     }
 
@@ -322,7 +322,7 @@ int main() {
     fflush(stderr);
     pid_t pid = fork();
     if (pid < 0) {
-      std::cerr << "Server fork failed." << std::endl;
+      LUPINE_LOG_ERROR("Server fork failed.");
       lupine_socket_close(connfd);
       continue;
     }
