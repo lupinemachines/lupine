@@ -1207,10 +1207,9 @@ class ArrayOperation:
         else:
             c = self.ptr.ptr_to.const
             self.ptr.ptr_to.const = False
-            s = (
-                f"    {self.ptr.format()} {self.parameter.name};\n"
-                f"    size_t {self.parameter.name}_size;\n"
-            )
+            s = f"    {self.ptr.format()} {self.parameter.name};\n"
+            if self.send:
+                s += f"    size_t {self.parameter.name}_size;\n"
             self.ptr.ptr_to.const = c
         return s
 
@@ -1843,6 +1842,10 @@ def parse_annotation(
                         )
                     )
                 elif null_terminated:
+                    if recv:
+                        raise NotImplementedError(
+                            "NULL_TERMINATED parameters cannot be received; use LENGTH or SIZE for output buffers"
+                        )
                     # if it's null terminated, it's a null terminated operation
                     operations.append(
                         NullTerminatedOperation(

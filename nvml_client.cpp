@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "codegen/gen_api.h"
+#include "lupine_log.h"
 #include "rpc.h"
 
 // CUDA <= 12.6 ships NVML API 12, which does not define the versioned
@@ -79,7 +80,7 @@ int open_connection() {
 
   char *servers_env = getenv("LUPINE_SERVER");
   if (servers_env == nullptr) {
-    fprintf(stderr, "LUPINE_SERVER environment variable not set\n");
+    LUPINE_LOG_ERROR("LUPINE_SERVER environment variable not set");
     pthread_mutex_unlock(&conn_mutex);
     return -1;
   }
