@@ -355,8 +355,11 @@ jobs:
           pytorch_status=0
           "$REPO_ROOT/test/run_pytorch_lupine_tests.sh" || pytorch_status=$?
 
-          if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 ]]; then
-            echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status" >&2
+          custom_status=0
+          "$REPO_ROOT/test/run_custom_tests.sh" || custom_status=$?
+
+          if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$custom_status" -ne 0 ]]; then
+            echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; custom tests exited $custom_status" >&2
             exit 1
           fi
           EOF
