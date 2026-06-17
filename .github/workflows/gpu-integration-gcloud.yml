@@ -16,23 +16,27 @@ permissions:
 
 jobs:
   gpu-integration:
-    name: CUDA samples and PyTorch on GCE T4
+    name: CUDA samples and PyTorch on GCE L4
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_ZONE: us-central1-a
+      GCP_FALLBACK_ZONES: us-central1-c us-central1-b
       GCP_NETWORK: default
-      MACHINE_TYPE: n1-standard-4
+      MACHINE_TYPE: g2-standard-4
       CUDA_VERSION: 12.9.1
       UBUNTU_VERSION: "24.04"
       PYTORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
       VM_IMAGE_PROJECT: ml-images
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
-      VM_MAX_RUN_DURATION: 90m
-      COMPLIANCE_TIMEOUT: 80m
+      VM_MAX_RUN_DURATION: 260m
+      COMPLIANCE_TIMEOUT: 240m
+      CUDA_SAMPLE_TIMEOUT: 120
+      CUDA_LONG_SAMPLE_TIMEOUT: 600
+      PYTORCH_TEST_TIMEOUT: 180
       CUDA_HOME: /usr/local/cuda-12.9
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -73,11 +77,15 @@ jobs:
           test -n "$GCP_PROJECT_ID"
           test -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
           test -n "${{ vars.GCP_SERVICE_ACCOUNT }}"
-          test "$MACHINE_TYPE" = n1-standard-4
+          test "$GCP_FALLBACK_ZONES" = "us-central1-c us-central1-b"
+          test "$MACHINE_TYPE" = g2-standard-4
           test "$VM_IMAGE_PROJECT" = ml-images
           test "$VM_IMAGE_FAMILY" = common-cu129-ubuntu-2404-nvidia-580
-          test "$VM_MAX_RUN_DURATION" = 90m
-          test "$COMPLIANCE_TIMEOUT" = 80m
+          test "$VM_MAX_RUN_DURATION" = 260m
+          test "$COMPLIANCE_TIMEOUT" = 240m
+          test "$CUDA_SAMPLE_TIMEOUT" = 120
+          test "$CUDA_LONG_SAMPLE_TIMEOUT" = 600
+          test "$PYTORCH_TEST_TIMEOUT" = 180
 
       - name: Prepare SSH key and runner allowlist
         run: |
@@ -108,8 +116,14 @@ jobs:
             ca-certificates \
             cmake \
             curl \
+            freeglut3-dev \
             git \
+            libgl-dev \
+            libglu1-mesa-dev \
             libnghttp2-dev \
+            libx11-dev \
+            libxi-dev \
+            libxmu-dev \
             ninja-build \
             openssh-client \
             python3 \
@@ -159,9 +173,9 @@ jobs:
           ln -sf libcuda.so.1 "$PWD/build/libcuda.so"
           ln -sf libnvidia-ml.so.1 "$PWD/build/libnvidia-ml.so"
 
-          # CUDA_SAMPLES_ARCH=75: only compile device code for the T4 (sm_75)
+          # CUDA_SAMPLES_ARCH=89: only compile device code for the L4 (sm_89)
           # instead of the 15 architectures the samples build by default.
-          BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended CUDA_SAMPLES_ARCH=75 \
+          BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended CUDA_SAMPLES_ARCH=89 \
             CUDA_HOME="$CUDA_HOME" CUDA_LIB_DIR="$CUDA_LIB_DIR" \
             "$PWD/test/run_cuda_samples.sh"
 
@@ -201,7 +215,7 @@ jobs:
             tcp:1-65535,udp:1-65535,icmp,esp,ah,sctp \
             0.0.0.0/0
 
-      - name: Create T4 server VM
+      - name: Create L4 server VM
         run: |
           set -euo pipefail
           startup_script="$RUNNER_TEMP/gce-startup.sh"
@@ -214,38 +228,60 @@ jobs:
           rm -rf /var/lib/apt/lists/*
           EOF
 
-          create_args=(
-            "$VM_NAME"
-            "--project=$GCP_PROJECT_ID"
-            "--zone=$GCP_ZONE"
-            "--machine-type=$MACHINE_TYPE"
-            "--network=$GCP_NETWORK"
-            "--tags=$VM_TAG"
-            "--image-family=$VM_IMAGE_FAMILY"
-            "--image-project=$VM_IMAGE_PROJECT"
-            "--boot-disk-size=100GB"
-            "--boot-disk-type=pd-balanced"
-            "--accelerator=type=nvidia-tesla-t4,count=1"
-            "--maintenance-policy=TERMINATE"
-            "--max-run-duration=$VM_MAX_RUN_DURATION"
-            "--instance-termination-action=DELETE"
-            "--no-service-account"
-            "--no-scopes"
-            "--metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat "$SSH_DIR/id_ed25519.pub")"
-            "--metadata-from-file=startup-script=$startup_script"
-            "--shielded-vtpm"
-            "--shielded-integrity-monitoring"
-            "--no-shielded-secure-boot"
-          )
+          # shellcheck disable=SC2206
+          fallback_zones=($GCP_FALLBACK_ZONES)
+          candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
 
-          if [[ "$USE_SPOT" == "true" ]]; then
-            create_args+=("--provisioning-model=SPOT")
-          fi
+          vm_ip=""
+          selected_zone=""
+          for zone in "${candidate_zones[@]}"; do
+            echo "Creating $MACHINE_TYPE in $zone"
+            create_args=(
+              "$VM_NAME"
+              "--project=$GCP_PROJECT_ID"
+              "--zone=$zone"
+              "--machine-type=$MACHINE_TYPE"
+              "--network=$GCP_NETWORK"
+              "--tags=$VM_TAG"
+              "--image-family=$VM_IMAGE_FAMILY"
+              "--image-project=$VM_IMAGE_PROJECT"
+              "--boot-disk-size=100GB"
+              "--boot-disk-type=pd-balanced"
+              "--maintenance-policy=TERMINATE"
+              "--max-run-duration=$VM_MAX_RUN_DURATION"
+              "--instance-termination-action=DELETE"
+              "--no-service-account"
+              "--no-scopes"
+              "--metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat "$SSH_DIR/id_ed25519.pub")"
+              "--metadata-from-file=startup-script=$startup_script"
+              "--shielded-vtpm"
+              "--shielded-integrity-monitoring"
+              "--no-shielded-secure-boot"
+            )
 
-          vm_ip="$(gcloud compute instances create "${create_args[@]}" \
-            --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
+            if [[ "$USE_SPOT" == "true" ]]; then
+              create_args+=("--provisioning-model=SPOT")
+            fi
+
+            if vm_ip="$(gcloud compute instances create "${create_args[@]}" \
+              --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"; then
+              selected_zone="$zone"
+              break
+            fi
+
+            echo "Could not create $MACHINE_TYPE in $zone; trying next candidate zone" >&2
+            gcloud compute instances delete "$VM_NAME" \
+              --project="$GCP_PROJECT_ID" \
+              --zone="$zone" \
+              --quiet >/dev/null 2>&1 || true
+          done
+
           test -n "$vm_ip"
-          echo "VM_IP=$vm_ip" >> "$GITHUB_ENV"
+          test -n "$selected_zone"
+          {
+            echo "VM_IP=$vm_ip"
+            echo "GCP_ZONE=$selected_zone"
+          } >> "$GITHUB_ENV"
 
       - name: Wait for SSH and NVIDIA driver
         run: |
@@ -278,7 +314,7 @@ jobs:
             done
           '
 
-      - name: Run GitHub runner client against T4 server
+      - name: Run GitHub runner client against L4 server
         run: |
           set -euo pipefail
 
@@ -299,7 +335,9 @@ jobs:
           export SERVER_SSH_TARGET="gha@$VM_IP"
           export SAMPLE_SUITE=compliance
           export BUILD_SAMPLES=0
-          export CUDA_SAMPLE_SKIP_LIST=cuSolverRf,conjugateGradientPrecond,threadMigration,watershedSegmentationNPP,HSOpticalFlow,jacobiCudaGraphs,matrixMul_nvrtc,reduction,scan,transpose,BlackScholes,alignedTypes,LargeKernelParameter,threadFenceReduction,eigenvalues,lineOfSight,batchCUBLAS,cuSolverSp_LinearSolver,cuSolverSp_LowlevelCholesky,conjugateGradient,conjugateGradientUM,nvJPEG_encoder,matrixMul,simpleStreams,simpleMultiCopy,sortingNetworks,BlackScholes_nvrtc,streamOrderedAllocation,convolutionFFT2D,radixSortThrust,matrixMulCUBLAS,cuSolverDn_LinearSolver,conjugateGradientCudaGraphs,NV12toBGRandResize
+          export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
+          export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
+          export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
           export PYTORCH_SKIP_LIST=compile_elementwise,microgpt_train
 
           test "$SERVER_HOST" != "127.0.0.1"
@@ -357,10 +395,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          gcloud compute instances delete "$VM_NAME" \
-            --project="$GCP_PROJECT_ID" \
-            --zone="$GCP_ZONE" \
-            --quiet || true
+          # shellcheck disable=SC2206
+          fallback_zones=($GCP_FALLBACK_ZONES)
+          candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
+
+          for zone in "${candidate_zones[@]}"; do
+            gcloud compute instances delete "$VM_NAME" \
+              --project="$GCP_PROJECT_ID" \
+              --zone="$zone" \
+              --quiet || true
+          done
 
           for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
             gcloud compute firewall-rules delete "$rule" \
@@ -369,12 +413,14 @@ jobs:
           done
 
           leftovers=0
-          if gcloud compute instances describe "$VM_NAME" \
-            --project="$GCP_PROJECT_ID" \
-            --zone="$GCP_ZONE" >/dev/null 2>&1; then
-            echo "leftover VM still exists: $VM_NAME" >&2
-            leftovers=1
-          fi
+          for zone in "${candidate_zones[@]}"; do
+            if gcloud compute instances describe "$VM_NAME" \
+              --project="$GCP_PROJECT_ID" \
+              --zone="$zone" >/dev/null 2>&1; then
+              echo "leftover VM still exists in $zone: $VM_NAME" >&2
+              leftovers=1
+            fi
+          done
 
           for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
             if gcloud compute firewall-rules describe "$rule" \

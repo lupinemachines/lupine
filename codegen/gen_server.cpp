@@ -115,7 +115,6 @@ ERROR_0:
 int handle_cuDeviceGetName(conn_t *conn) {
   int len;
   char *name;
-  size_t name_size;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
@@ -147,7 +146,6 @@ ERROR_0:
 
 int handle_cuDeviceGetUuid_v2(conn_t *conn) {
   CUuuid *uuid;
-  size_t uuid_size;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
@@ -177,28 +175,31 @@ ERROR_0:
 
 int handle_cuDeviceGetLuid(conn_t *conn) {
   char *luid;
-  std::size_t luid_len;
   unsigned int deviceNodeMask;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
+  if (false)
     goto ERROR_0;
+  luid = (char *)malloc(8 * sizeof(char));
+  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuDeviceGetLuid(luid, &deviceNodeMask, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &luid_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, luid, luid_len) < 0 ||
+      (8 != 0 && rpc_write(conn, luid, 8) < 0) ||
       rpc_write(conn, &deviceNodeMask, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)luid);
 ERROR_0:
   return -1;
 }
@@ -1980,7 +1981,6 @@ ERROR_0:
 int handle_cuDeviceGetPCIBusId(conn_t *conn) {
   int len;
   char *pciBusId;
-  size_t pciBusId_size;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
@@ -2232,7 +2232,6 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr srcDevice;
   size_t ByteCount;
   void *dstHost;
-  size_t dstHost_size;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -2350,7 +2349,6 @@ int handle_cuMemcpyAtoH_v2(conn_t *conn) {
   size_t srcOffset;
   size_t ByteCount;
   void *dstHost;
-  size_t dstHost_size;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &srcArray, sizeof(CUarray)) < 0 ||

@@ -1,3 +1,4 @@
+#include "lupine_log.h"
 #include "rpc.h"
 
 #include <algorithm>
@@ -29,7 +30,7 @@ struct h2_pair {
 
 void require(bool condition, const char *message) {
   if (!condition) {
-    std::cerr << message << std::endl;
+    LUPINE_LOG_ERROR(message);
     std::exit(1);
   }
 }

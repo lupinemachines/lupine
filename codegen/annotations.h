@@ -2040,7 +2040,7 @@ CUresult cuDeviceGetUuid(CUuuid *uuid, CUdevice dev);
  */
 CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev);
 /**
- * @param luid RECV_ONLY NULL_TERMINATED
+ * @param luid RECV_ONLY SIZE:8
  * @param deviceNodeMask RECV_ONLY
  * @param dev SEND_ONLY
  */

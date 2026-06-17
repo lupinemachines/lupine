@@ -34,6 +34,7 @@
 #include "codegen/gen_server.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
+#include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
 
@@ -373,9 +374,9 @@ int handle_manual_cuGetExportTableMetadata(conn_t *conn) {
   }
 
   if (lupine_server_trace_enabled()) {
-    std::cerr << "LUPINE server cuGetExportTable metadata result=" << result
-              << " bytes=" << byte_size << " slots=" << slot_count
-              << " trusted=" << trusted << std::endl;
+    LUPINE_LOG_DEBUG("LUPINE server cuGetExportTable metadata result="
+                     << result << " bytes=" << byte_size
+                     << " slots=" << slot_count << " trusted=" << trusted);
   }
 
   size_t hash_bytes = static_cast<size_t>(slot_count) * sizeof(uint64_t);
@@ -460,11 +461,11 @@ int handle_manual_cuPrivateGetModuleNode(conn_t *conn) {
         result = count == 0 ? CUDA_ERROR_NOT_FOUND : CUDA_ERROR_UNKNOWN;
       }
       if (lupine_server_trace_enabled()) {
-        std::cerr << "LUPINE server private module node module=" << module
-                  << " context=" << context << " count=" << count
-                  << " node=" << node
-                  << " owner=" << reinterpret_cast<void *>(owner)
-                  << " result=" << static_cast<int>(result) << std::endl;
+        LUPINE_LOG_DEBUG("LUPINE server private module node module="
+                         << module << " context=" << context
+                         << " count=" << count << " node=" << node
+                         << " owner=" << reinterpret_cast<void *>(owner)
+                         << " result=" << static_cast<int>(result));
       }
     }
   }
@@ -1521,9 +1522,9 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
     }
   }
   if (lupine_server_trace_enabled()) {
-    std::cerr << "LUPINE cuModuleGetGlobal name=" << name.data()
-              << " result=" << static_cast<int>(result) << " bytes=" << bytes
-              << std::endl;
+    LUPINE_LOG_DEBUG("LUPINE cuModuleGetGlobal name="
+                     << name.data() << " result=" << static_cast<int>(result)
+                     << " bytes=" << bytes);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2137,10 +2138,10 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }
   if (lupine_server_trace_enabled()) {
-    std::cerr << "LUPINE cuGraphAddNode type=" << nodeParams.type
-              << " param_count=" << param_count
-              << " packed_size=" << packed_size << " graph=" << hGraph
-              << " node=" << graphNode << " result=" << result << std::endl;
+    LUPINE_LOG_DEBUG("LUPINE cuGraphAddNode type="
+                     << nodeParams.type << " param_count=" << param_count
+                     << " packed_size=" << packed_size << " graph=" << hGraph
+                     << " node=" << graphNode << " result=" << result);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
