@@ -1353,6 +1353,145 @@ class ArrayOperation:
 
 
 @dataclass
+class InOutCountOperation:
+    """
+    A ``size_t *`` count that is simultaneously an input capacity and an output
+    count for one or more :class:`OptionalArrayOperation` out-arrays -- the
+    cuGraphGetNodes pattern. The client sends the requested capacity (0 when the
+    anchor array is null, which is a count-only query); the server runs the API
+    once with that capacity and returns the actual count.
+    """
+
+    send: bool
+    recv: bool
+    parameter: Parameter
+    # array param whose presence decides query-vs-fill on the client side.
+    anchor: str
+
+    @property
+    def server_declaration(self) -> str:
+        return (
+            f"    size_t {self.parameter.name} = 0;\n"
+            f"    size_t {self.parameter.name}_requested = 0;\n"
+        )
+
+    def client_declaration(self) -> str:
+        return (
+            f"    size_t {self.parameter.name}_requested =\n"
+            f"        ({self.anchor} != nullptr) ? *{self.parameter.name} : 0;\n"
+        )
+
+    def client_rpc_write(self, f):
+        f.write(
+            f"        rpc_write(conn, &{self.parameter.name}_requested, sizeof(size_t)) < 0 ||\n"
+        )
+
+    def client_rpc_read(self, f):
+        f.write(
+            f"        rpc_read(conn, {self.parameter.name}, sizeof(size_t)) < 0 ||\n"
+        )
+
+    def server_rpc_read(self, f):
+        f.write(
+            f"        rpc_read(conn, &{self.parameter.name}_requested, sizeof(size_t)) < 0 ||\n"
+        )
+        # Seed the count with the requested capacity so a non-null buffer is
+        # filled (a null buffer makes the API ignore it and report the total).
+        f.write(
+            f"        (({self.parameter.name} = {self.parameter.name}_requested), false) ||\n"
+        )
+
+    @property
+    def server_reference(self) -> str:
+        return f"&{self.parameter.name}"
+
+    def server_rpc_write(self, f):
+        f.write(
+            f"        rpc_write(conn, &{self.parameter.name}, sizeof(size_t)) < 0 ||\n"
+        )
+
+
+@dataclass
+class OptionalArrayOperation:
+    """
+    An optional out-array sized by an in/out :class:`InOutCountOperation`. The
+    array may be null (the caller is querying the count, or does not want this
+    particular array). Several optional arrays can share one count, e.g.
+    cuGraphGetEdges' from/to/edgeData.
+    """
+
+    parameter: Parameter
+    ptr: Pointer
+    count: Parameter
+
+    def element_type(self) -> str:
+        c = self.ptr.ptr_to.const
+        self.ptr.ptr_to.const = False
+        result = self.ptr.ptr_to.format()
+        self.ptr.ptr_to.const = c
+        return result
+
+    @property
+    def server_declaration(self) -> str:
+        return (
+            f"    {self.element_type()} *{self.parameter.name} = nullptr;\n"
+            f"    uint8_t {self.parameter.name}_present = 0;\n"
+        )
+
+    def client_declaration(self) -> str:
+        return (
+            f"    uint8_t {self.parameter.name}_present = "
+            f"{self.parameter.name} != nullptr ? 1 : 0;\n"
+        )
+
+    def client_rpc_write(self, f):
+        f.write(
+            f"        rpc_write(conn, &{self.parameter.name}_present, sizeof(uint8_t)) < 0 ||\n"
+        )
+
+    def server_rpc_read(self, f, index) -> Optional[str]:
+        elem = self.element_type()
+        name = self.parameter.name
+        count = self.count.name
+        f.write(
+            f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+        )
+        f.write("        false)\n")
+        f.write(f"        goto ERROR_{index};\n")
+        f.write(f"    if ({name}_present && {count}_requested != 0) {{\n")
+        f.write(
+            f"        {name} = ({elem} *)malloc({count}_requested * sizeof({elem}));\n"
+        )
+        f.write(f"        if ({name} == nullptr)\n")
+        f.write(f"            goto ERROR_{index};\n")
+        f.write("    }\n")
+        f.write("    if (\n")
+        return name
+
+    @property
+    def server_reference(self) -> str:
+        return self.parameter.name
+
+    def server_rpc_write(self, f):
+        elem = self.element_type()
+        name = self.parameter.name
+        count = self.count.name
+        f.write(
+            f"        ({name}_present && {count} != 0 && "
+            f"rpc_write(conn, {name}, {count} * sizeof({elem})) < 0) ||\n"
+        )
+
+    def client_rpc_read(self, f):
+        elem = self.element_type()
+        name = self.parameter.name
+        count = self.count.name
+        f.write(
+            f"        ({name} != nullptr && *{count} != 0 && "
+            f"rpc_read(conn, {name}, *{count} * sizeof({elem})) < 0) ||\n"
+        )
+
+
+@dataclass
 class NullTerminatedOperation:
     """
     Null terminated operations are operations that are passed as a null terminated string.
@@ -1804,17 +1943,29 @@ def parse_annotation(
                     length_param = next(
                         p for p in params if p.name == length_arg.split(":")[1]
                     )
-                    operations.append(
-                        ArrayOperation(
-                            send=send,
-                            recv=recv,
-                            parameter=param,
-                            ptr=param.type,
-                            length=length_param,
-                            iter=False,
-                            compressible="COMPRESSIBLE" in args,
+                    if "OPTIONAL" in args:
+                        # optional out-array sized by an in/out count param (the
+                        # cuGraphGetNodes query pattern); linked to its count in
+                        # the post-pass below.
+                        operations.append(
+                            OptionalArrayOperation(
+                                parameter=param,
+                                ptr=param.type,
+                                count=length_param,
+                            )
                         )
-                    )
+                    else:
+                        operations.append(
+                            ArrayOperation(
+                                send=send,
+                                recv=recv,
+                                parameter=param,
+                                ptr=param.type,
+                                length=length_param,
+                                iter=False,
+                                compressible="COMPRESSIBLE" in args,
+                            )
+                        )
                 elif size_arg:
                     # if it has a size, it's an array operation with constant length
                     operations.append(
@@ -1995,6 +2146,27 @@ def parse_annotation(
             )
         else:
             raise NotImplementedError("Unknown type")
+    # Promote the count param of any optional out-array to an
+    # InOutCountOperation. Several arrays may share one count (cuGraphGetEdges);
+    # the first one is the anchor whose presence the client uses to decide
+    # between a count-only query and a fill.
+    optional_ops = [op for op in operations if isinstance(op, OptionalArrayOperation)]
+    if optional_ops:
+        anchors: dict[str, str] = {}
+        for op in optional_ops:
+            anchors.setdefault(op.count.name, op.parameter.name)
+        for count_name, anchor in anchors.items():
+            for i, op in enumerate(operations):
+                if op.parameter.name == count_name and isinstance(
+                    op, DereferenceOperation
+                ):
+                    operations[i] = InOutCountOperation(
+                        send=True,
+                        recv=True,
+                        parameter=op.parameter,
+                        anchor=anchor,
+                    )
+                    break
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
     return metadata
@@ -2559,6 +2731,10 @@ def main():
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
                     f.write(operation.client_declaration())
+                if isinstance(operation, InOutCountOperation) or isinstance(
+                    operation, OptionalArrayOperation
+                ):
+                    f.write(operation.client_declaration())
 
             # compute the strlen's for null-terminated operations.
             for operation in operations:
@@ -2741,8 +2917,10 @@ def main():
 
             f.write("    if (\n")
             for operation in operations:
-                if isinstance(operation, NullTerminatedOperation) or isinstance(
-                    operation, ArrayOperation
+                if (
+                    isinstance(operation, NullTerminatedOperation)
+                    or isinstance(operation, ArrayOperation)
+                    or isinstance(operation, OptionalArrayOperation)
                 ):
                     if error := operation.server_rpc_read(f, len(defers)):
                         defers.append(error)
