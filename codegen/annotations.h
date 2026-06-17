@@ -3588,49 +3588,6 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config);
  */
 CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc);
 
-// TODO: Annotations below this point started as auto-generated best guesses
-// (annotationgen.py defaults: scalars SEND_ONLY, pointers SEND_RECV) and have
-// only been partially hand-reviewed. The graph node creation, dependency edge,
-// occupancy, texref/surfref, tex/surf object, peer access, and graphics interop
-// entries have been reviewed.
-//
-// Two grammar extensions cover most of the CUDA graph APIs that a shallow
-// @param copy gets wrong:
-// - Optional out-arrays sized by an in/out count (the cuGraphGetNodes pattern):
-//   the count param is SEND_RECV and the array is
-//   "RECV_ONLY LENGTH:<count> OPTIONAL". codegen generates the query-or-fill
-//   handler. Used by cuGraphGetNodes and cuGraphGetRootNodes.
-// - Structs that embed pointer arrays sized by a sibling count member: mark the
-//   struct-pointer param's arrays with "@deeparray <param> <member> <count>"
-//   lines (see DeepStructOperation). Used by the external-semaphore signal/wait
-//   and batch-mem-op node params (Add / Get / Set / Exec variants).
-//
-// The remaining graph APIs still need manual handlers in manual_server.cpp /
-// client.cpp:
-// - cuGraphGetEdges / cuGraphNodeGetDependencies /
-//   cuGraphNodeGetDependentNodes: same optional out-array shape, but cuda.h
-//   remaps them to *_v2 (adding an optional CUgraphEdgeData out-array) only on
-//   CUDA 12.3+. Driving that through the grammar would break the older-CUDA
-//   build matrix, so they stay manual with #if CUDA_VERSION guards, manual
-//   LUPINE_RPC_* ids, and export both the legacy and _v2 symbols.
-// - cuGraphHostNodeGetParams / SetParams / cuGraphExecHostNodeSetParams: the
-//   host fn pointer is meaningless across the RPC boundary, so the manual
-//   handlers route it through the same callback trampoline as
-//   cuGraphAddHostNode.
-//
-// Known remaining gaps (non-graph) that still need manual handlers or new
-// annotation grammar rather than plain @param fixes:
-// - cuOccupancyMaxPotentialClusterSize / cuOccupancyMaxActiveClusters:
-//   CUlaunchConfig embeds an attribute array.
-// - cuLaunchCooperativeKernelMultiDevice: embeds kernelParams pointers.
-// - cuTensorMapEncodeTiled / cuTensorMapEncodeIm2col: globalStrides has
-//   tensorRank-1 elements and elementStrides is optional.
-// - cuUserObjectCreate: host callback + opaque host pointer.
-// - cuTexRefSetBorderColor / cuTexRefGetBorderColor: fixed 4-float arrays;
-//   SIZE: on non-char pointers generates mismatched client/server byte counts.
-// The cudaError_t / cublasStatus_t / cudnnStatus_t declarations further below
-// are not consumed by codegen.py yet.
-
 /**
  * @disabled
  * @param f SEND_ONLY

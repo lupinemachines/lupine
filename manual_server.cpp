@@ -2155,20 +2155,6 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
   return 0;
 }
 
-// ---------------------------------------------------------------------------
-// CUDA graph queries and node-params APIs that the @param annotation grammar
-// cannot describe. cuGraphGetNodes and cuGraphGetRootNodes are now generated
-// from the OPTIONAL out-array grammar; the handlers below cover the remaining
-// cases: the *_v2-remapped node-dependency queries, the node-params APIs whose
-// structs embed pointer arrays, and the host-node APIs that route the host
-// callback through the cuGraphAddHostNode trampoline.
-// ---------------------------------------------------------------------------
-
-// Shared implementation for cuGraphNodeGetDependencies /
-// cuGraphNodeGetDependentNodes. Both take a node, an optional out node array
-// sized by an in/out count, and (on CUDA 12.3+) an optional parallel
-// CUgraphEdgeData array. want_edge mirrors whether the caller passed a
-// non-null edgeData buffer.
 static int lupine_handle_node_dependency_query(conn_t *conn, bool dependent) {
   CUgraphNode hNode = nullptr;
   size_t requested = 0;
