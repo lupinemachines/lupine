@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.34
@@ -83,7 +83,7 @@ jobs:
             Set-Content "$out/SHA256SUMS"
 
       - name: Upload server executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64
           path: artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64/
