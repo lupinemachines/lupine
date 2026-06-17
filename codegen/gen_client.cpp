@@ -101,12 +101,6 @@ extern "C" CUresult
 lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                                size_t ByteCount, CUstream hStream, bool async);
 
-extern "C" CUresult
-lupine_cuArrayCreate_v2_safe(CUarray *pHandle,
-                             const CUDA_ARRAY_DESCRIPTOR *pAllocateArray);
-extern "C" CUresult
-lupine_cuArray3DCreate_v2_safe(CUarray *pHandle,
-                               const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray);
 extern "C" CUresult lupine_cuLinkCreate_v2_safe(unsigned int numOptions,
                                                 CUjit_option *options,
                                                 void **optionValues,
@@ -2518,7 +2512,29 @@ CUresult cuMemsetD2D32Async(CUdeviceptr dstDevice, size_t dstPitch,
 
 CUresult cuArrayCreate_v2(CUarray *pHandle,
                           const CUDA_ARRAY_DESCRIPTOR *pAllocateArray) {
-  return lupine_cuArrayCreate_v2_safe(pHandle, pAllocateArray);
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUarray *, const CUDA_ARRAY_DESCRIPTOR *);
+    auto real = reinterpret_cast<real_fn_t>(
+        lupine_real_cuda_symbol("cuArrayCreate_v2"));
+    if (real == nullptr)
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    CUresult return_value = real(pHandle, pAllocateArray);
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuArrayCreate_v2) < 0 ||
+      rpc_write(conn, pHandle, sizeof(CUarray)) < 0 ||
+      rpc_write(conn, pAllocateArray, sizeof(const CUDA_ARRAY_DESCRIPTOR)) <
+          0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pHandle, sizeof(CUarray)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
 }
 
 CUresult cuArrayGetDescriptor_v2(CUDA_ARRAY_DESCRIPTOR *pArrayDescriptor,
@@ -2721,7 +2737,29 @@ CUresult cuArrayDestroy(CUarray hArray) {
 
 CUresult cuArray3DCreate_v2(CUarray *pHandle,
                             const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray) {
-  return lupine_cuArray3DCreate_v2_safe(pHandle, pAllocateArray);
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUarray *, const CUDA_ARRAY3D_DESCRIPTOR *);
+    auto real = reinterpret_cast<real_fn_t>(
+        lupine_real_cuda_symbol("cuArray3DCreate_v2"));
+    if (real == nullptr)
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    CUresult return_value = real(pHandle, pAllocateArray);
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuArray3DCreate_v2) < 0 ||
+      rpc_write(conn, pHandle, sizeof(CUarray)) < 0 ||
+      rpc_write(conn, pAllocateArray, sizeof(const CUDA_ARRAY3D_DESCRIPTOR)) <
+          0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pHandle, sizeof(CUarray)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
 }
 
 CUresult cuArray3DGetDescriptor_v2(CUDA_ARRAY3D_DESCRIPTOR *pArrayDescriptor,

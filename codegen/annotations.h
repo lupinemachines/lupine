@@ -2903,7 +2903,7 @@ CUresult cuMemsetD2D32Async(CUdeviceptr dstDevice, size_t dstPitch,
                             CUstream hStream);
 /**
  * @param pHandle SEND_RECV
- * @param pAllocateArray SEND_RECV
+ * @param pAllocateArray SEND_ONLY DEREF
  */
 CUresult cuArrayCreate_v2(CUarray *pHandle,
                           const CUDA_ARRAY_DESCRIPTOR *pAllocateArray);
@@ -2955,7 +2955,7 @@ CUresult cuArrayGetPlane(CUarray *pPlaneArray, CUarray hArray,
 CUresult cuArrayDestroy(CUarray hArray);
 /**
  * @param pHandle SEND_RECV
- * @param pAllocateArray SEND_RECV
+ * @param pAllocateArray SEND_ONLY DEREF
  */
 CUresult cuArray3DCreate_v2(CUarray *pHandle,
                             const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray);

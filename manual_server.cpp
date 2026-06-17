@@ -904,50 +904,6 @@ int handle_manual_cuPointerGetAttributes(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuArrayCreate_v2(conn_t *conn) {
-  CUDA_ARRAY_DESCRIPTOR desc = {};
-  CUarray handle = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &desc, sizeof(desc)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuArrayCreate_v2(&handle, &desc);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_manual_cuArray3DCreate_v2(conn_t *conn) {
-  CUDA_ARRAY3D_DESCRIPTOR desc = {};
-  CUarray handle = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &desc, sizeof(desc)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuArray3DCreate_v2(&handle, &desc);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 struct lupine_jit_server_state {
   std::vector<CUjit_option> options;
   std::vector<uintptr_t> raw_values;
@@ -1474,39 +1430,6 @@ int handle_manual_cuDeviceSetGraphMemAttribute(conn_t *conn) {
 
   result = cuDeviceSetGraphMemAttribute(device, attr, &value);
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_manual_cuTexObjectCreate(conn_t *conn) {
-  CUDA_RESOURCE_DESC resDesc = {};
-  CUDA_TEXTURE_DESC texDesc = {};
-  CUDA_RESOURCE_VIEW_DESC resViewDesc = {};
-  uint32_t hasTexDesc = 0;
-  uint32_t hasResViewDesc = 0;
-  CUtexObject texObject = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &resDesc, sizeof(resDesc)) < 0 ||
-      rpc_read(conn, &hasTexDesc, sizeof(hasTexDesc)) < 0 ||
-      (hasTexDesc != 0 && rpc_read(conn, &texDesc, sizeof(texDesc)) < 0) ||
-      rpc_read(conn, &hasResViewDesc, sizeof(hasResViewDesc)) < 0 ||
-      (hasResViewDesc != 0 &&
-       rpc_read(conn, &resViewDesc, sizeof(resViewDesc)) < 0)) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuTexObjectCreate(&texObject, &resDesc,
-                             hasTexDesc != 0 ? &texDesc : nullptr,
-                             hasResViewDesc != 0 ? &resViewDesc : nullptr);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &texObject, sizeof(texObject)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }

@@ -4619,58 +4619,6 @@ extern "C" CUresult lupine_cuLinkDestroy_safe(CUlinkState state) {
   return return_value;
 }
 
-extern "C" CUresult
-lupine_cuArrayCreate_v2_safe(CUarray *pHandle,
-                             const CUDA_ARRAY_DESCRIPTOR *pAllocateArray) {
-  if (pHandle == nullptr || pAllocateArray == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUarray *, const CUDA_ARRAY_DESCRIPTOR *);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuArrayCreate_v2");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(pHandle, pAllocateArray);
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (rpc_write_start_request(conn, RPC_cuArrayCreate_v2) < 0 ||
-      rpc_write(conn, pAllocateArray, sizeof(*pAllocateArray)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pHandle, sizeof(*pHandle)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
-extern "C" CUresult
-lupine_cuArray3DCreate_v2_safe(CUarray *pHandle,
-                               const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray) {
-  if (pHandle == nullptr || pAllocateArray == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUarray *, const CUDA_ARRAY3D_DESCRIPTOR *);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuArray3DCreate_v2");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(pHandle, pAllocateArray);
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (rpc_write_start_request(conn, RPC_cuArray3DCreate_v2) < 0 ||
-      rpc_write(conn, pAllocateArray, sizeof(*pAllocateArray)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pHandle, sizeof(*pHandle)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
 static int lupine_forward_remote_stdout(conn_t *conn) {
   uint64_t output_size = 0;
   if (rpc_read(conn, &output_size, sizeof(output_size)) < 0) {

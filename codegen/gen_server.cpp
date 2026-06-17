@@ -2829,11 +2829,11 @@ ERROR_0:
 
 int handle_cuArrayCreate_v2(conn_t *conn) {
   CUarray pHandle;
-  const CUDA_ARRAY_DESCRIPTOR *pAllocateArray;
+  CUDA_ARRAY_DESCRIPTOR pAllocateArray;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &pHandle, sizeof(CUarray)) < 0 ||
-      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY_DESCRIPTOR *)) <
+      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY_DESCRIPTOR)) <
           0 ||
       false)
     goto ERROR_0;
@@ -2841,7 +2841,7 @@ int handle_cuArrayCreate_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuArrayCreate_v2(&pHandle, pAllocateArray);
+  lupine_intercept_result = cuArrayCreate_v2(&pHandle, &pAllocateArray);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pHandle, sizeof(CUarray)) < 0 ||
@@ -3046,11 +3046,11 @@ ERROR_0:
 
 int handle_cuArray3DCreate_v2(conn_t *conn) {
   CUarray pHandle;
-  const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray;
+  CUDA_ARRAY3D_DESCRIPTOR pAllocateArray;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &pHandle, sizeof(CUarray)) < 0 ||
-      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY3D_DESCRIPTOR *)) <
+      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY3D_DESCRIPTOR)) <
           0 ||
       false)
     goto ERROR_0;
@@ -3058,7 +3058,7 @@ int handle_cuArray3DCreate_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuArray3DCreate_v2(&pHandle, pAllocateArray);
+  lupine_intercept_result = cuArray3DCreate_v2(&pHandle, &pAllocateArray);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pHandle, sizeof(CUarray)) < 0 ||
