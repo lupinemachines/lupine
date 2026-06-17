@@ -6364,13 +6364,18 @@ extern "C" CUresult cuGraphAddNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 // the remaining query fns are remapped to *_v2 by cuda.h so they stay manual.
 // ---------------------------------------------------------------------------
 
-// cuGraphGetEdges is remapped to cuGraphGetEdges_v2 by cuda.h on CUDA 12.3+,
-// which adds an optional CUgraphEdgeData out-array. Export both the modern and
-// legacy symbols so either ABI resolves to the RPC path.
+// cuGraphGetEdges gained an optional CUgraphEdgeData out-array (the _v2 form)
+// in CUDA 12.3. Newer headers also remap cuGraphGetEdges to cuGraphGetEdges_v2
+// via macro; undef it and bind to the literal ABI symbol names (the macro is
+// absent on some 12.x), exporting both so old and new callers reach the RPC.
 #if CUDA_VERSION >= 12030
-extern "C" CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from,
-                                    CUgraphNode *to, CUgraphEdgeData *edgeData,
-                                    size_t *numEdges) {
+#ifdef cuGraphGetEdges
+#undef cuGraphGetEdges
+#endif
+extern "C" CUresult cuGraphGetEdges_v2(CUgraph hGraph, CUgraphNode *from,
+                                       CUgraphNode *to,
+                                       CUgraphEdgeData *edgeData,
+                                       size_t *numEdges) {
   if (numEdges == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -6399,9 +6404,6 @@ extern "C" CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from,
   *numEdges = returned;
   return return_value;
 }
-#ifdef cuGraphGetEdges
-#undef cuGraphGetEdges
-#endif
 extern "C" CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from,
                                     CUgraphNode *to, size_t *numEdges) {
   return cuGraphGetEdges_v2(hGraph, from, to, nullptr, numEdges);
@@ -6470,42 +6472,40 @@ static CUresult lupine_client_node_dep_query(int rpc_id, CUgraphNode hNode,
   return return_value;
 }
 
-extern "C" CUresult cuGraphNodeGetDependencies(CUgraphNode hNode,
-                                               CUgraphNode *dependencies,
-                                               CUgraphEdgeData *edgeData,
-                                               size_t *numDependencies) {
+#ifdef cuGraphNodeGetDependencies
+#undef cuGraphNodeGetDependencies
+#endif
+#ifdef cuGraphNodeGetDependentNodes
+#undef cuGraphNodeGetDependentNodes
+#endif
+extern "C" CUresult cuGraphNodeGetDependencies_v2(CUgraphNode hNode,
+                                                  CUgraphNode *dependencies,
+                                                  CUgraphEdgeData *edgeData,
+                                                  size_t *numDependencies) {
   return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependencies,
                                       hNode, dependencies, edgeData,
                                       numDependencies);
 }
-#ifdef cuGraphNodeGetDependencies
-#undef cuGraphNodeGetDependencies
-#endif
 extern "C" CUresult cuGraphNodeGetDependencies(CUgraphNode hNode,
                                                CUgraphNode *dependencies,
                                                size_t *numDependencies) {
-  return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependencies,
-                                      hNode, dependencies, nullptr,
-                                      numDependencies);
+  return cuGraphNodeGetDependencies_v2(hNode, dependencies, nullptr,
+                                       numDependencies);
 }
 
-extern "C" CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
-                                                 CUgraphNode *dependentNodes,
-                                                 CUgraphEdgeData *edgeData,
-                                                 size_t *numDependentNodes) {
+extern "C" CUresult cuGraphNodeGetDependentNodes_v2(CUgraphNode hNode,
+                                                    CUgraphNode *dependentNodes,
+                                                    CUgraphEdgeData *edgeData,
+                                                    size_t *numDependentNodes) {
   return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependentNodes,
                                       hNode, dependentNodes, edgeData,
                                       numDependentNodes);
 }
-#ifdef cuGraphNodeGetDependentNodes
-#undef cuGraphNodeGetDependentNodes
-#endif
 extern "C" CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
                                                  CUgraphNode *dependentNodes,
                                                  size_t *numDependentNodes) {
-  return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependentNodes,
-                                      hNode, dependentNodes, nullptr,
-                                      numDependentNodes);
+  return cuGraphNodeGetDependentNodes_v2(hNode, dependentNodes, nullptr,
+                                         numDependentNodes);
 }
 #else
 static CUresult lupine_client_node_dep_query(int rpc_id, CUgraphNode hNode,
@@ -8198,12 +8198,6 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
        (void *)cuGraphExecKernelNodeSetParams_v2},
       {"cuGraphGetNodes", (void *)cuGraphGetNodes},
       {"cuGraphGetRootNodes", (void *)cuGraphGetRootNodes},
-      {"cuGraphGetEdges", (void *)cuGraphGetEdges},
-      {"cuGraphGetEdges_v2", (void *)cuGraphGetEdges},
-      {"cuGraphNodeGetDependencies", (void *)cuGraphNodeGetDependencies},
-      {"cuGraphNodeGetDependencies_v2", (void *)cuGraphNodeGetDependencies},
-      {"cuGraphNodeGetDependentNodes", (void *)cuGraphNodeGetDependentNodes},
-      {"cuGraphNodeGetDependentNodes_v2", (void *)cuGraphNodeGetDependentNodes},
       {"cuGraphAddExternalSemaphoresSignalNode",
        (void *)cuGraphAddExternalSemaphoresSignalNode},
       {"cuGraphExternalSemaphoresSignalNodeGetParams",
@@ -8492,12 +8486,6 @@ void *dlsym(void *handle, const char *name) __THROW {
        (void *)cuGraphExecKernelNodeSetParams_v2},
       {"cuGraphGetNodes", (void *)cuGraphGetNodes},
       {"cuGraphGetRootNodes", (void *)cuGraphGetRootNodes},
-      {"cuGraphGetEdges", (void *)cuGraphGetEdges},
-      {"cuGraphGetEdges_v2", (void *)cuGraphGetEdges},
-      {"cuGraphNodeGetDependencies", (void *)cuGraphNodeGetDependencies},
-      {"cuGraphNodeGetDependencies_v2", (void *)cuGraphNodeGetDependencies},
-      {"cuGraphNodeGetDependentNodes", (void *)cuGraphNodeGetDependentNodes},
-      {"cuGraphNodeGetDependentNodes_v2", (void *)cuGraphNodeGetDependentNodes},
       {"cuGraphAddExternalSemaphoresSignalNode",
        (void *)cuGraphAddExternalSemaphoresSignalNode},
       {"cuGraphExternalSemaphoresSignalNodeGetParams",

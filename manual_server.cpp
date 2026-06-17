@@ -2191,8 +2191,8 @@ static int lupine_handle_node_dependency_query(conn_t *conn, bool dependent) {
   std::vector<CUgraphEdgeData> edges;
   auto call = [&](CUgraphNode *out, CUgraphEdgeData *edge,
                   size_t *n) -> CUresult {
-    return dependent ? cuGraphNodeGetDependentNodes(hNode, out, edge, n)
-                     : cuGraphNodeGetDependencies(hNode, out, edge, n);
+    return dependent ? cuGraphNodeGetDependentNodes_v2(hNode, out, edge, n)
+                     : cuGraphNodeGetDependencies_v2(hNode, out, edge, n);
   };
   if (requested == 0) {
     result = call(nullptr, nullptr, &count);
@@ -2269,7 +2269,7 @@ int handle_manual_cuGraphGetEdges(conn_t *conn) {
 #if CUDA_VERSION >= 12030
   std::vector<CUgraphEdgeData> edges;
   if (requested == 0) {
-    result = cuGraphGetEdges(hGraph, nullptr, nullptr, nullptr, &count);
+    result = cuGraphGetEdges_v2(hGraph, nullptr, nullptr, nullptr, &count);
   } else {
     count = requested;
     from.resize(count);
@@ -2277,8 +2277,8 @@ int handle_manual_cuGraphGetEdges(conn_t *conn) {
     if (want_edge) {
       edges.resize(count);
     }
-    result = cuGraphGetEdges(hGraph, from.data(), to.data(),
-                             want_edge ? edges.data() : nullptr, &count);
+    result = cuGraphGetEdges_v2(hGraph, from.data(), to.data(),
+                                want_edge ? edges.data() : nullptr, &count);
   }
 #else
   if (requested == 0) {
