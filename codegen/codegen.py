@@ -1492,6 +1492,130 @@ class OptionalArrayOperation:
 
 
 @dataclass
+class DeepStructOperation:
+    """
+    A pointer to a struct that embeds array pointers sized by sibling count
+    members, declared in the function doxygen with:
+
+        @deeparray <param> <array_member> <count_member>
+
+    The struct header is copied by value, then each embedded array is walked
+    using sizeof(*member) / decltype(member). No element types or struct names
+    are needed here -- the generated text is type-checked by the C++ compiler
+    (a shallow copy would instead send dangling client pointers).
+
+    SEND is an input deep-copy (cuGraphAdd* / *SetParams). RECV fills the
+    caller's struct from node-owned memory (*GetParams); the array storage lives
+    in a per-output-pointer client cache (lupine_deep_cache_*) so the returned
+    pointers stay valid until the next deep query into the same struct.
+    """
+
+    send: bool
+    recv: bool
+    parameter: Parameter
+    ptr: Pointer
+    members: list  # list of (array_member, count_member)
+
+    def struct_type(self) -> str:
+        c = self.ptr.ptr_to.const
+        self.ptr.ptr_to.const = False
+        result = self.ptr.ptr_to.format()
+        self.ptr.ptr_to.const = c
+        return result
+
+    def client_declaration(self) -> str:
+        # Reject a null struct pointer before the request is framed so we return
+        # cleanly instead of desyncing the RPC stream.
+        return (
+            f"    if ({self.parameter.name} == nullptr) "
+            "return CUDA_ERROR_INVALID_VALUE;\n"
+        )
+
+    @property
+    def server_declaration(self) -> str:
+        s = f"    {self.struct_type()} {self.parameter.name} = {{}};\n"
+        if self.send:
+            for member, _count in self.members:
+                s += (
+                    "    std::vector<unsigned char> "
+                    f"{self.parameter.name}_{member}_buf;\n"
+                )
+        return s
+
+    def server_rpc_read(self, f):
+        if not self.send:
+            return
+        name = self.parameter.name
+        f.write(f"        rpc_read(conn, &{name}, sizeof({name})) < 0 ||\n")
+        for member, count in self.members:
+            buf = f"{name}_{member}_buf"
+            f.write(
+                f"        (({buf}.resize({name}.{count} * sizeof(*{name}.{member})),"
+                " false)) ||\n"
+            )
+            f.write(
+                f"        ({name}.{count} != 0 && "
+                f"rpc_read(conn, {buf}.data(), {buf}.size()) < 0) ||\n"
+            )
+            f.write(
+                f"        (({name}.{member} = (decltype({name}.{member})){buf}.data()),"
+                " false) ||\n"
+            )
+
+    @property
+    def server_reference(self) -> str:
+        return f"&{self.parameter.name}"
+
+    def server_rpc_write(self, f):
+        if not self.recv:
+            return
+        name = self.parameter.name
+        f.write(f"        rpc_write(conn, &{name}, sizeof({name})) < 0 ||\n")
+        for member, count in self.members:
+            f.write(
+                f"        ({name}.{count} != 0 && "
+                f"rpc_write(conn, {name}.{member}, "
+                f"{name}.{count} * sizeof(*{name}.{member})) < 0) ||\n"
+            )
+
+    def client_rpc_write(self, f):
+        if not self.send:
+            return
+        name = self.parameter.name
+        f.write(f"        rpc_write(conn, {name}, sizeof(*{name})) < 0 ||\n")
+        for member, count in self.members:
+            f.write(
+                f"        ({name}->{count} != 0 && "
+                f"rpc_write(conn, {name}->{member}, "
+                f"{name}->{count} * sizeof(*{name}->{member})) < 0) ||\n"
+            )
+
+    def client_rpc_read(self, f):
+        if not self.recv:
+            return
+        name = self.parameter.name
+        f.write(
+            f"        (lupine_deep_cache_reset((const void *){name}), false) ||\n"
+        )
+        f.write(f"        rpc_read(conn, {name}, sizeof(*{name})) < 0 ||\n")
+        for member, count in self.members:
+            esz = f"{name}->{count} * sizeof(*{name}->{member})"
+            f.write(
+                f"        (({name}->{member} = ({name}->{count} != 0 ? "
+                f"(decltype({name}->{member}))"
+                f"lupine_deep_cache_add((const void *){name}, {esz}) : nullptr)),"
+                " false) ||\n"
+            )
+            f.write(
+                f"        ({name}->{count} != 0 && {name}->{member} == nullptr) ||\n"
+            )
+            f.write(
+                f"        ({name}->{count} != 0 && "
+                f"rpc_read(conn, (void *){name}->{member}, {esz}) < 0) ||\n"
+            )
+
+
+@dataclass
 class NullTerminatedOperation:
     """
     Null terminated operations are operations that are passed as a null terminated string.
@@ -1845,6 +1969,9 @@ def parse_annotation(
 ) -> FunctionAnnotationMetadata:
     operations: list[Operation] = []
     metadata = FunctionAnnotationMetadata(operations=operations)
+    # @deeparray <param> <array_member> <count_member> entries, grouped by the
+    # struct-pointer param they describe (see DeepStructOperation).
+    deep_arrays: dict[str, list[tuple[str, str]]] = {}
 
     if not annotation:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
@@ -1896,6 +2023,13 @@ def parse_annotation(
                 ),
                 async_="ASYNC" in parts[4:],
             )
+            continue
+        if line.startswith("@deeparray"):
+            # @deeparray <param> <array_member> <count_member>
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            deep_arrays.setdefault(parts[1], []).append((parts[2], parts[3]))
             continue
         if line.startswith("@param"):
             parts = line.split()
@@ -2167,6 +2301,19 @@ def parse_annotation(
                         anchor=anchor,
                     )
                     break
+    # Promote any param with @deeparray entries to a DeepStructOperation,
+    # inheriting the send/recv direction from its @param line.
+    for pname, members in deep_arrays.items():
+        for i, op in enumerate(operations):
+            if op.parameter.name == pname:
+                operations[i] = DeepStructOperation(
+                    send=getattr(op, "send", True),
+                    recv=getattr(op, "recv", False),
+                    parameter=op.parameter,
+                    ptr=op.parameter.type,
+                    members=members,
+                )
+                break
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
     return metadata
@@ -2479,7 +2626,10 @@ def main():
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
-            "extern void rpc_close(conn_t *conn);\n\n"
+            "extern void rpc_close(conn_t *conn);\n"
+            'extern "C" void lupine_deep_cache_reset(const void *key);\n'
+            'extern "C" void *lupine_deep_cache_add(const void *key, '
+            "size_t bytes);\n\n"
             "struct lupine_route {\n"
             "    int kind;\n"
             "    conn_t *conn;\n"
@@ -2731,8 +2881,10 @@ def main():
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
                     f.write(operation.client_declaration())
-                if isinstance(operation, InOutCountOperation) or isinstance(
-                    operation, OptionalArrayOperation
+                if (
+                    isinstance(operation, InOutCountOperation)
+                    or isinstance(operation, OptionalArrayOperation)
+                    or isinstance(operation, DeepStructOperation)
                 ):
                     f.write(operation.client_declaration())
 

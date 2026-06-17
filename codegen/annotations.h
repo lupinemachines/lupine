@@ -3594,24 +3594,25 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc);
 // occupancy, texref/surfref, tex/surf object, peer access, and graphics interop
 // entries have been reviewed.
 //
-// Optional out-arrays sized by an in/out count (the cuGraphGetNodes pattern)
-// are expressed with the OPTIONAL grammar: the count param is SEND_RECV and
-// the array is "RECV_ONLY LENGTH:<count> OPTIONAL". codegen then generates the
-// query-or-fill handler. cuGraphGetNodes and cuGraphGetRootNodes use this.
+// Two grammar extensions cover most of the CUDA graph APIs that a shallow
+// @param copy gets wrong:
+// - Optional out-arrays sized by an in/out count (the cuGraphGetNodes pattern):
+//   the count param is SEND_RECV and the array is
+//   "RECV_ONLY LENGTH:<count> OPTIONAL". codegen generates the query-or-fill
+//   handler. Used by cuGraphGetNodes and cuGraphGetRootNodes.
+// - Structs that embed pointer arrays sized by a sibling count member: mark the
+//   struct-pointer param's arrays with "@deeparray <param> <member> <count>"
+//   lines (see DeepStructOperation). Used by the external-semaphore signal/wait
+//   and batch-mem-op node params (Add / Get / Set / Exec variants).
 //
-// The remaining graph query and node-params APIs still need manual handlers in
-// manual_server.cpp / client.cpp (the cuGraphGetNodes / cuGraphAddHostNode
-// pattern):
+// The remaining graph APIs still need manual handlers in manual_server.cpp /
+// client.cpp:
 // - cuGraphGetEdges / cuGraphNodeGetDependencies /
 //   cuGraphNodeGetDependentNodes: same optional out-array shape, but cuda.h
 //   remaps them to *_v2 (adding an optional CUgraphEdgeData out-array) only on
 //   CUDA 12.3+. Driving that through the grammar would break the older-CUDA
 //   build matrix, so they stay manual with #if CUDA_VERSION guards, manual
 //   LUPINE_RPC_* ids, and export both the legacy and _v2 symbols.
-// - cuGraphAddExternalSemaphoresSignalNode / ...WaitNode /
-//   cuGraphAddBatchMemOpNode and their Get/Set/Exec params variants: the node
-//   params structs embed pointer arrays (extSemArray + paramsArray, paramArray)
-//   that are serialized element-by-element by the manual handlers.
 // - cuGraphHostNodeGetParams / SetParams / cuGraphExecHostNodeSetParams: the
 //   host fn pointer is meaningless across the RPC boundary, so the manual
 //   handlers route it through the same callback trampoline as
@@ -3926,87 +3927,93 @@ CUresult cuGraphEventWaitNodeGetEvent(CUgraphNode hNode, CUevent *event_out);
  */
 CUresult cuGraphEventWaitNodeSetEvent(CUgraphNode hNode, CUevent event);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams extSemArray numExtSems
+ * @deeparray nodeParams paramsArray numExtSems
  */
 CUresult cuGraphAddExternalSemaphoresSignalNode(
     CUgraphNode *phGraphNode, CUgraph hGraph, const CUgraphNode *dependencies,
     size_t numDependencies, const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param hNode SEND_ONLY
- * @param params_out SEND_RECV
+ * @param params_out RECV_ONLY
+ * @deeparray params_out extSemArray numExtSems
+ * @deeparray params_out paramsArray numExtSems
  */
 CUresult cuGraphExternalSemaphoresSignalNodeGetParams(
     CUgraphNode hNode, CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *params_out);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param hNode SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams extSemArray numExtSems
+ * @deeparray nodeParams paramsArray numExtSems
  */
 CUresult cuGraphExternalSemaphoresSignalNodeSetParams(
     CUgraphNode hNode, const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams extSemArray numExtSems
+ * @deeparray nodeParams paramsArray numExtSems
  */
 CUresult cuGraphAddExternalSemaphoresWaitNode(
     CUgraphNode *phGraphNode, CUgraph hGraph, const CUgraphNode *dependencies,
     size_t numDependencies, const CUDA_EXT_SEM_WAIT_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param hNode SEND_ONLY
- * @param params_out SEND_RECV
+ * @param params_out RECV_ONLY
+ * @deeparray params_out extSemArray numExtSems
+ * @deeparray params_out paramsArray numExtSems
  */
 CUresult cuGraphExternalSemaphoresWaitNodeGetParams(
     CUgraphNode hNode, CUDA_EXT_SEM_WAIT_NODE_PARAMS *params_out);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param hNode SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams extSemArray numExtSems
+ * @deeparray nodeParams paramsArray numExtSems
  */
 CUresult cuGraphExternalSemaphoresWaitNodeSetParams(
     CUgraphNode hNode, const CUDA_EXT_SEM_WAIT_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual embedded paramArray serialization
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams paramArray count
  */
 CUresult cuGraphAddBatchMemOpNode(
     CUgraphNode *phGraphNode, CUgraph hGraph, const CUgraphNode *dependencies,
     size_t numDependencies, const CUDA_BATCH_MEM_OP_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual embedded paramArray serialization
  * @param hNode SEND_ONLY
- * @param nodeParams_out SEND_RECV
+ * @param nodeParams_out RECV_ONLY
+ * @deeparray nodeParams_out paramArray count
  */
 CUresult
 cuGraphBatchMemOpNodeGetParams(CUgraphNode hNode,
                                CUDA_BATCH_MEM_OP_NODE_PARAMS *nodeParams_out);
 /**
- * @disabled - manual embedded paramArray serialization
  * @param hNode SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams paramArray count
  */
 CUresult
 cuGraphBatchMemOpNodeSetParams(CUgraphNode hNode,
                                const CUDA_BATCH_MEM_OP_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual embedded paramArray serialization
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams paramArray count
  */
 CUresult cuGraphExecBatchMemOpNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4218,19 +4225,21 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
 CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
                                           CUgraphNode hNode, CUevent event);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
- * @param nodeParams SEND_ONLY DEREF
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams extSemArray numExtSems
+ * @deeparray nodeParams paramsArray numExtSems
  */
 CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
     const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual embedded extSemArray + paramsArray serialization
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
- * @param nodeParams SEND_ONLY DEREF
+ * @param nodeParams SEND_ONLY
+ * @deeparray nodeParams extSemArray numExtSems
+ * @deeparray nodeParams paramsArray numExtSems
  */
 CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
