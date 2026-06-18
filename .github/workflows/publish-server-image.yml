@@ -51,7 +51,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # CUDA image builds need substantial buildkit snapshot space, so reclaim
       # preinstalled tooling this job never uses.

@@ -74,7 +74,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build ${{ matrix.component }}
         run: |
@@ -138,7 +138,7 @@ jobs:
 
       - name: Upload client artifacts
         if: matrix.component == 'client'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lupine-client-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64
           path: artifacts/lupine-client-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64/
@@ -146,7 +146,7 @@ jobs:
 
       - name: Upload server artifacts
         if: matrix.component == 'server'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lupine-server-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64
           path: artifacts/lupine-server-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64/

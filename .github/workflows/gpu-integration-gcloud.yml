@@ -46,7 +46,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free runner disk
         run: |
@@ -161,6 +161,7 @@ jobs:
 
           python3 -m venv "$PWD/.venv-pytorch312"
           "$PWD/.venv-pytorch312/bin/pip" install --no-cache-dir --upgrade pip
+          "$PWD/.venv-pytorch312/bin/pip" install --no-cache-dir numpy
           "$PWD/.venv-pytorch312/bin/pip" install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch
 
           cmake -S "$PWD" -B "$PWD/build" \
@@ -377,7 +378,7 @@ jobs:
 
       - name: Upload compliance results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gpu-integration-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
