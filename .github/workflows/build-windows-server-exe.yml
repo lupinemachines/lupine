@@ -1,11 +1,16 @@
 name: Build Windows Server EXE
 
 on:
+  release:
+    types: [published]
   pull_request:
   push:
     branches:
       - main
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -76,15 +81,33 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = 'artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64'
+          $archive = "$out.zip"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           Copy-Item 'build/windows-server/Release/lupine_driver_server.exe' "$out/lupine_driver_server.exe"
           Get-FileHash "$out/lupine_driver_server.exe" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLowerInvariant())  lupine_driver_server.exe" } |
             Set-Content "$out/SHA256SUMS"
+          if (Test-Path $archive) {
+            Remove-Item $archive -Force
+          }
+          Compress-Archive -Path "$out/*" -DestinationPath $archive
 
       - name: Upload server executable
         uses: actions/upload-artifact@v7
         with:
           name: lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64
-          path: artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64/
+          path: artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64.zip
           if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload `
+            '${{ github.event.release.tag_name }}' `
+            'artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64.zip' `
+            --repo '${{ github.repository }}' `
+            --clobber

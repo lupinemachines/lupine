@@ -1,6 +1,8 @@
 name: Publish Server Image
 
 on:
+  release:
+    types: [published]
   pull_request:
     branches:
       - main
@@ -74,6 +76,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare image tags
+        id: image-tags
+        run: |
+          set -euo pipefail
+          {
+            echo 'server<<EOF'
+            echo 'ghcr.io/${{ github.repository_owner }}/lupine-server:cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}-${{ matrix.platform.arch }}'
+            if [ '${{ github.event_name }}' = 'release' ]; then
+              echo 'ghcr.io/${{ github.repository_owner }}/lupine-server:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}-${{ matrix.platform.arch }}'
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and publish server image
         uses: docker/build-push-action@v6
         with:
@@ -85,8 +100,7 @@ jobs:
           build-args: |
             CUDA_VERSION=${{ matrix.cuda.version }}
             UBUNTU_VERSION=${{ matrix.cuda.ubuntu }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/lupine-server:cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}-${{ matrix.platform.arch }}
+          tags: ${{ steps.image-tags.outputs.server }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -132,8 +146,16 @@ jobs:
 
       - name: Publish server manifest
         run: |
+          set -euo pipefail
           image="ghcr.io/${{ github.repository_owner }}/lupine-server:cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}"
           docker buildx imagetools create \
             --tag "${image}" \
             "${image}-amd64" \
             "${image}-arm64"
+          if [ '${{ github.event_name }}' = 'release' ]; then
+            release_image="ghcr.io/${{ github.repository_owner }}/lupine-server:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}"
+            docker buildx imagetools create \
+              --tag "${release_image}" \
+              "${release_image}-amd64" \
+              "${release_image}-arm64"
+          fi
