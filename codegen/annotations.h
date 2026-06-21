@@ -4050,11 +4050,13 @@ CUresult cuGraphClone(CUgraph *phGraphClone, CUgraph originalGraph);
 CUresult cuGraphNodeFindInClone(CUgraphNode *phNode, CUgraphNode hOriginalNode,
                                 CUgraph hClonedGraph);
 /**
+ * @disabled client - manual client reads graph node type metadata cache
  * @param hNode SEND_ONLY
  * @param type SEND_RECV
  */
 CUresult cuGraphNodeGetType(CUgraphNode hNode, CUgraphNodeType *type);
 /**
+ * @disabled client - manual client prefetches graph node metadata
  * @param hGraph SEND_ONLY
  * @param numNodes SEND_RECV
  * @param nodes RECV_ONLY LENGTH:numNodes OPTIONAL
@@ -4247,6 +4249,7 @@ CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
  */
 CUresult cuGraphDestroy(CUgraph hGraph);
 /**
+ * @disabled client - manual client batches deferred kernel node param updates
  * @param hGraphExec SEND_ONLY
  * @param hGraph SEND_ONLY
  * @param resultInfo SEND_RECV

@@ -43,6 +43,8 @@ static constexpr int LUPINE_RPC_cuLinkAddData_v2 = 1000018;
 static constexpr int LUPINE_RPC_cuGraphGetEdges = 1000019;
 static constexpr int LUPINE_RPC_cuGraphNodeGetDependencies = 1000020;
 static constexpr int LUPINE_RPC_cuGraphNodeGetDependentNodes = 1000021;
+static constexpr int LUPINE_RPC_cuGraphGetNodesWithMetadata = 1000022;
+static constexpr int LUPINE_RPC_cuGraphExecUpdateWithSetParams = 1000023;
 
 static bool lupine_server_trace_enabled() {
   static int enabled = []() {
@@ -149,6 +151,9 @@ lupine_manual_handlers() {
       {RPC_cuGraphLaunch, {handle_manual_cuGraphLaunch, "cuGraphLaunch"}},
       {LUPINE_RPC_cuGraphGetEdges,
        {handle_manual_cuGraphGetEdges, "cuGraphGetEdges"}},
+      {LUPINE_RPC_cuGraphGetNodesWithMetadata,
+       {handle_manual_cuGraphGetNodesWithMetadata,
+        "cuGraphGetNodesWithMetadata"}},
       {LUPINE_RPC_cuGraphNodeGetDependencies,
        {handle_manual_cuGraphNodeGetDependencies,
         "cuGraphNodeGetDependencies"}},
@@ -197,6 +202,9 @@ lupine_manual_handlers() {
       {RPC_cuGraphExecDestroy,
        {handle_manual_cuGraphExecDestroy, "cuGraphExecDestroy"}},
       {RPC_cuGraphDestroy, {handle_manual_cuGraphDestroy, "cuGraphDestroy"}},
+      {LUPINE_RPC_cuGraphExecUpdateWithSetParams,
+       {handle_manual_cuGraphExecUpdateWithSetParams,
+        "cuGraphExecUpdateWithSetParams"}},
       {RPC_cuMemcpyHtoD_v2, {handle_manual_cuMemcpyHtoD_v2, "cuMemcpyHtoD_v2"}},
       {RPC_cuMemcpyHtoDAsync_v2,
        {handle_manual_cuMemcpyHtoDAsync_v2, "cuMemcpyHtoDAsync_v2"}},
