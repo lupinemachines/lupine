@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lupine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Small PyTorch adapter helpers for LUPINE-backed CUDA devices"
 readme = "README.md"
 requires-python = ">=3.9"

@@ -1,0 +1,113 @@
+name: Build Windows Server EXE
+
+on:
+  release:
+    types: [published]
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Windows server executable CUDA ${{ matrix.cuda }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda:
+          - 13.1.0
+          - 13.0.2
+          - 12.9.1
+          - 12.8.1
+          - 12.6.2
+          - 12.5.1
+          - 12.4.1
+          - 11.8.0
+          - 11.7.1
+
+    env:
+      VCPKG_TARGET_TRIPLET: x64-windows-static
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.34
+        with:
+          cuda: ${{ matrix.cuda }}
+          method: network
+          sub-packages: '["cudart", "nvml_dev"]'
+
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgRoot
+          & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install nghttp2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "nghttp2:$env:VCPKG_TARGET_TRIPLET"
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build/windows-server `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
+            "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+
+      - name: Build
+        run: cmake --build build/windows-server --config Release --target lupine_driver_server --parallel
+
+      - name: Collect artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64'
+          $archive = "$out.zip"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item 'build/windows-server/Release/lupine_driver_server.exe' "$out/lupine_driver_server.exe"
+          Get-FileHash "$out/lupine_driver_server.exe" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  lupine_driver_server.exe" } |
+            Set-Content "$out/SHA256SUMS"
+          if (Test-Path $archive) {
+            Remove-Item $archive -Force
+          }
+          Compress-Archive -Path "$out/*" -DestinationPath $archive
+
+      - name: Upload server executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64
+          path: artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64.zip
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload `
+            '${{ github.event.release.tag_name }}' `
+            'artifacts/lupine-server-windows-cuda-${{ matrix.cuda }}-x86_64.zip' `
+            --repo '${{ github.repository }}' `
+            --clobber

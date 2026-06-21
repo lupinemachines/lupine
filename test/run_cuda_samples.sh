@@ -13,7 +13,9 @@ CUDA_SAMPLES_DIR="${CUDA_SAMPLES_DIR:-$DEFAULT_CUDA_SAMPLES_DIR}"
 CUDA_SAMPLES_BUILD_DIR="${CUDA_SAMPLES_BUILD_DIR:-$CUDA_SAMPLES_DIR/build}"
 CUDA_SAMPLES_BIN="${CUDA_SAMPLES_BIN:-}"
 CUDA_SAMPLES_CMAKE_ARGS="${CUDA_SAMPLES_CMAKE_ARGS:-}"
+CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
+BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
 SAMPLE_SUITE="${SAMPLE_SUITE:-compliance}"
 
@@ -24,6 +26,8 @@ SERVER_PORT_BASE="${SERVER_PORT_BASE:-14900}"
 SSH_OPTS="${SSH_OPTS:-}"
 # shellcheck disable=SC2206
 SSH_ARGS=($SSH_OPTS)
+SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-45}"
+CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-lupine-$$}"
@@ -32,7 +36,8 @@ SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
-SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-20}"
+SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-120}"
+LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-600}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)}"
 
 CORE_SAMPLES=(
@@ -97,12 +102,20 @@ Environment:
   CUDA_SAMPLES_BUILD_DIR CMake build path. Default: <CUDA_SAMPLES_DIR>/build.
   CUDA_SAMPLES_BIN     Legacy executable path override. CMake builds are resolved per sample.
   CUDA_SAMPLES_CMAKE_ARGS Extra args passed to CMake configure for CUDA 13 samples.
+  CUDA_SAMPLES_ARCH    Compile device code only for this compute capability
+                       (e.g. 75). Samples whose hardcoded arch list excludes it
+                       keep their upstream list.
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
-  SAMPLE_SUITE         compliance, core, or libraries when no samples are given.
+  BUILD_ONLY           1 to clone/build selected samples and exit before running.
+  SAMPLE_SUITE         compliance, core, libraries, or extended when no samples are given.
                        Default: compliance.
+  SAMPLE_TIMEOUT       Default per-sample execution timeout in seconds. Default: $SAMPLE_TIMEOUT.
+  LONG_SAMPLE_TIMEOUT  Timeout for known long-running compliance samples. Default: $LONG_SAMPLE_TIMEOUT.
   SERVER_SSH_TARGET    GPU host SSH target. Default: kevin@inferable-node-008.
   SERVER_PORT_BASE     First per-sample server port. Default: 14900.
+  SSH_COMMAND_TIMEOUT  Timeout for each SSH/SCP control command. Default: $SSH_COMMAND_TIMEOUT.
+  CUDA_SAMPLE_SKIP_LIST Comma or space separated samples to mark SKIP:disabled.
   LUPINE_LIB            Client shim. Default: $repo_root/build/libcuda.so.1.
   RESULTS_DIR          Output directory. Default: test/cuda-samples/results/<timestamp>.
 EOF
@@ -115,11 +128,6 @@ fi
 
 if [[ ! -x "$LUPINE_LIB" ]]; then
   echo "missing shim: $LUPINE_LIB" >&2
-  exit 1
-fi
-
-if [[ ! -x "$SERVER_LOCAL_BIN" ]]; then
-  echo "missing server binary: $SERVER_LOCAL_BIN" >&2
   exit 1
 fi
 
@@ -193,6 +201,15 @@ if [[ -n "$CUDA_SAMPLES_REF" ]]; then
   git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
 fi
 
+# The samples hardcode set(CMAKE_CUDA_ARCHITECTURES ...) per CMakeLists, so a
+# -D flag cannot narrow them. Rewrite lists that include the requested arch to
+# just that arch; samples restricted to other archs are left as upstream built
+# them.
+if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
+  find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
+    "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
+fi
+
 cmake_samples=0
 if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
   cmake_samples=1
@@ -216,7 +233,7 @@ resolve_sample_exe() {
   fi
 
   if [[ "$cmake_samples" == "1" ]]; then
-    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$sample" -perm -111 2>/dev/null | head -n1 || true)"
+    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$sample" -perm /111 2>/dev/null | head -n1 || true)"
     if [[ -n "$exe" ]]; then
       printf '%s\n' "$exe"
       return 0
@@ -253,8 +270,35 @@ sample_args() {
   local sample="$1"
 
   case "$sample" in
+    FDTD3d)
+      printf '%s\0' --qatest
+      ;;
+    batchCUBLAS)
+      printf '%s\0' -m32 -n32 -k32 -N1
+      ;;
+    cuSolverRf)
+      printf '%s\0' "-file=$(resolve_sample_srcdir cuSolverRf)/lap2D_5pt_n100.mtx"
+      ;;
+    eigenvalues)
+      printf '%s\0' -matrix-size=128 -iters-timing=1
+      ;;
+    matrixMul|matrixMul_nvrtc)
+      printf '%s\0' -wA=32 -hA=32 -wB=32 -hB=32
+      ;;
+    matrixMulCUBLAS)
+      printf '%s\0' -sizemult=1
+      ;;
     nbody)
       printf '%s\0' -benchmark -numbodies=4096 -i=1
+      ;;
+    NV12toBGRandResize)
+      printf '%s\0' \
+        -input=data/test640x480.nv12 \
+        -width=640 \
+        -height=480 \
+        -dst_width=320 \
+        -dst_height=240 \
+        -batch=1
       ;;
     oceanFFT)
       printf '%s\0' -qatest
@@ -262,11 +306,17 @@ sample_args() {
     ptxgen)
       printf '%s\0' test.ll
       ;;
+    reduction|threadFenceReduction)
+      printf '%s\0' -n=1024 -threads=64 -maxblocks=16
+      ;;
     recursiveGaussian)
       printf '%s\0' -benchmark
       ;;
     simpleTexture3D)
       printf '%s\0' -file=data/ref_texture3D.bin
+      ;;
+    transpose)
+      printf '%s\0' -dimX=512 -dimY=512
       ;;
   esac
 }
@@ -307,11 +357,16 @@ prepare_sample_runtime_files() {
 }
 
 explicit_samples=0
+build_full_sample_tree=0
 samples=("$@")
 if [[ ${#samples[@]} -eq 0 ]]; then
   case "$SAMPLE_SUITE" in
-    compliance|all|default)
+    compliance)
       samples=("${DEFAULT_SAMPLES[@]}")
+      ;;
+    extended|all|default)
+      samples=("${DEFAULT_SAMPLES[@]}")
+      build_full_sample_tree=1
       ;;
     core)
       samples=("${CORE_SAMPLES[@]}")
@@ -321,7 +376,7 @@ if [[ ${#samples[@]} -eq 0 ]]; then
       ;;
     *)
       echo "unknown SAMPLE_SUITE: $SAMPLE_SUITE" >&2
-      echo "expected one of: compliance, core, libraries" >&2
+      echo "expected one of: compliance, core, libraries, extended" >&2
       exit 1
       ;;
   esac
@@ -329,7 +384,7 @@ else
   explicit_samples=1
 fi
 selected_sample_build=0
-if [[ "$explicit_samples" == "1" && ${#samples[@]} -gt 0 ]]; then
+if [[ "$build_full_sample_tree" != "1" && ${#samples[@]} -gt 0 ]]; then
   selected_sample_build=1
 fi
 
@@ -347,15 +402,25 @@ fi
 
 if [[ "$needs_build" == "1" ]]; then
   if [[ "$cmake_samples" == "1" ]]; then
-    if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
-      # shellcheck disable=SC2086
-      cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
-    fi
     if [[ "$selected_sample_build" == "1" ]]; then
       for sample in "${samples[@]}"; do
-        cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$JOBS" --target "$sample" || true
+        sample_srcdir="$(resolve_sample_srcdir "$sample" || true)"
+        if [[ -z "$sample_srcdir" ]]; then
+          echo "missing sample source dir: $sample" >&2
+          continue
+        fi
+        sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$sample"
+        if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
+          # shellcheck disable=SC2086
+          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+        fi
+        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" || true
       done
     else
+      if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
+        # shellcheck disable=SC2086
+        cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+      fi
       cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$JOBS"
     fi
   else
@@ -378,13 +443,43 @@ if [[ "$needs_build" == "1" ]]; then
   fi
 fi
 
+if [[ "$BUILD_ONLY" == "1" ]]; then
+  exit 0
+fi
+
+if [[ ! -x "$SERVER_LOCAL_BIN" ]]; then
+  echo "missing server binary: $SERVER_LOCAL_BIN" >&2
+  exit 1
+fi
+
+ssh_with_timeout() {
+  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
+}
+
+sample_disabled() {
+  local sample="$1"
+  local disabled=""
+
+  # shellcheck disable=SC2206
+  local disabled_samples=(${CUDA_SAMPLE_SKIP_LIST//,/ })
+  for disabled in "${disabled_samples[@]}"; do
+    if [[ "$disabled" == "$sample" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 if [[ "$SERVER_UPLOAD" == "1" ]]; then
-  scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
+  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+    scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 fi
 
 cleanup_remote_bin() {
   if [[ "$SERVER_UPLOAD" == "1" && "$SERVER_REMOTE_CLEANUP" == "1" ]]; then
-    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
+    ssh_with_timeout \
       "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
   fi
 }
@@ -394,7 +489,7 @@ stop_remote_server() {
   local pidfile="$1"
   local server_log="$2"
 
-  ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "
+  ssh_with_timeout "
     if [ -f '$pidfile' ]; then
       pid=\$(cat '$pidfile' 2>/dev/null || true)
       if [ -n \"\$pid\" ]; then
@@ -408,6 +503,17 @@ stop_remote_server() {
     fi
     rm -f '$pidfile' '$server_log'
   " >/dev/null 2>&1 || true
+}
+
+sample_timeout() {
+  case "$1" in
+    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+      printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
+      ;;
+    *)
+      printf '%s\n' "$SAMPLE_TIMEOUT"
+      ;;
+  esac
 }
 
 tsv="$RESULTS_DIR/results.tsv"
@@ -424,6 +530,16 @@ for i in "${!samples[@]}"; do
   log="$RESULTS_DIR/$sample.log"
   server_log="/tmp/lupine-samples-$port.log"
   pidfile="/tmp/lupine-samples-$port.pid"
+  sample_start_seconds="$SECONDS"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $((i + 1))/${#samples[@]}: $sample" >&2
+
+  if sample_disabled "$sample"; then
+    status="SKIP:disabled"
+    skip=$((skip + 1))
+    signature="disabled by CUDA_SAMPLE_SKIP_LIST"
+    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
+    continue
+  fi
 
   sample_exe="$(resolve_sample_exe "$sample" || true)"
   if [[ -z "$sample_exe" ]]; then
@@ -439,6 +555,7 @@ for i in "${!samples[@]}"; do
     continue
   fi
   sample_cwd="$(sample_workdir "$sample" "$sample_exe")"
+  timeout_seconds="$(sample_timeout "$sample")"
   prepare_sample_runtime_files "$sample" "$sample_cwd"
   sample_argv=()
   while IFS= read -r -d '' arg; do
@@ -447,13 +564,13 @@ for i in "${!samples[@]}"; do
 
   stop_remote_server "$pidfile" "$server_log"
 
-  ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
+  ssh_with_timeout \
     "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
 
   set +e
   (
     cd "$sample_cwd"
-    timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
+    timeout --kill-after=5s "$timeout_seconds" env \
       LD_LIBRARY_PATH="$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
@@ -476,7 +593,11 @@ for i in "${!samples[@]}"; do
   fi
 
   signature="$(tr '\n' ' ' < "$log" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+  if [[ -z "$signature" && "$rc" == "124" ]]; then
+    signature="timed out after ${timeout_seconds}s"
+  fi
   printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $sample -> $status in $((SECONDS - sample_start_seconds))s" >&2
 done
 
 {

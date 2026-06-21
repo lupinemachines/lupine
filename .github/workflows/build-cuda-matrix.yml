@@ -1,12 +1,17 @@
 name: Build CUDA Matrix
 
 on:
+  release:
+    types: [published]
   pull_request:
   push:
     branches:
       - main
       - cuda-11-builder-support
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -74,7 +79,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build ${{ matrix.component }}
         run: |
@@ -110,6 +115,7 @@ jobs:
           set -euo pipefail
           image="lupine-client:cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}"
           out="artifacts/lupine-client-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64"
+          archive="${out}.zip"
           mkdir -p "$out"
 
           container="$(docker create "$image")"
@@ -120,6 +126,7 @@ jobs:
           cp "$out/libcuda.so.1" "$out/libcuda.so"
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           (cd "$out" && sha256sum libcuda.so libcuda.so.1 libnvidia-ml.so libnvidia-ml.so.1 > SHA256SUMS)
+          (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts
         if: matrix.component == 'server'
@@ -127,6 +134,7 @@ jobs:
           set -euo pipefail
           image="lupine-server:cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}"
           out="artifacts/lupine-server-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64"
+          archive="${out}.zip"
           mkdir -p "$out"
 
           container="$(docker create "$image")"
@@ -135,19 +143,33 @@ jobs:
           docker cp "$container:/opt/lupine/bin/lupine_driver_server" "$out/lupine_driver_server"
           chmod +x "$out/lupine_driver_server"
           (cd "$out" && sha256sum lupine_driver_server > SHA256SUMS)
+          (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Upload client artifacts
         if: matrix.component == 'client'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lupine-client-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64
-          path: artifacts/lupine-client-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64/
+          path: artifacts/lupine-client-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64.zip
           if-no-files-found: error
 
       - name: Upload server artifacts
         if: matrix.component == 'server'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lupine-server-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64
-          path: artifacts/lupine-server-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64/
+          path: artifacts/lupine-server-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64.zip
           if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset="artifacts/lupine-${{ matrix.component }}-cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}-x86_64.zip"
+          gh release upload \
+            "${{ github.event.release.tag_name }}" \
+            "$asset" \
+            --repo "${{ github.repository }}" \
+            --clobber

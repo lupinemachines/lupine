@@ -115,7 +115,6 @@ ERROR_0:
 int handle_cuDeviceGetName(conn_t *conn) {
   int len;
   char *name;
-  size_t name_size;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
@@ -147,7 +146,6 @@ ERROR_0:
 
 int handle_cuDeviceGetUuid_v2(conn_t *conn) {
   CUuuid *uuid;
-  size_t uuid_size;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
@@ -177,28 +175,31 @@ ERROR_0:
 
 int handle_cuDeviceGetLuid(conn_t *conn) {
   char *luid;
-  std::size_t luid_len;
   unsigned int deviceNodeMask;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
+  if (false)
     goto ERROR_0;
+  luid = (char *)malloc(8 * sizeof(char));
+  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuDeviceGetLuid(luid, &deviceNodeMask, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &luid_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, luid, luid_len) < 0 ||
+      (8 != 0 && rpc_write(conn, luid, 8) < 0) ||
       rpc_write(conn, &deviceNodeMask, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)luid);
 ERROR_0:
   return -1;
 }
@@ -1030,45 +1031,6 @@ int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
     goto ERROR_0;
 
   return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuModuleLoad(conn_t *conn) {
-  CUmodule module = nullptr;
-  char *fname;
-  std::size_t fname_len;
-  size_t image_size = 0;
-  std::vector<unsigned char> image;
-  int request_id;
-  CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &fname_len, sizeof(std::size_t)) < 0)
-    goto ERROR_0;
-  fname = (char *)malloc(fname_len);
-  if (fname == nullptr)
-    goto ERROR_0;
-  if (rpc_read(conn, (void *)fname, fname_len) < 0 || false)
-    goto ERROR_1;
-  if (rpc_read(conn, &image_size, sizeof(size_t)) < 0)
-    goto ERROR_1;
-  image.assign(image_size + 1, 0);
-  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0)
-    goto ERROR_1;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_1;
-  lupine_intercept_result = cuModuleLoadData(&module, image.data());
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &module, sizeof(CUmodule)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_1;
-
-  return 0;
-ERROR_1:
-  free((void *)fname);
 ERROR_0:
   return -1;
 }
@@ -2019,7 +1981,6 @@ ERROR_0:
 int handle_cuDeviceGetPCIBusId(conn_t *conn) {
   int len;
   char *pciBusId;
-  size_t pciBusId_size;
   CUdevice dev;
   int request_id;
   CUresult lupine_intercept_result;
@@ -2244,7 +2205,9 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   srcHost = (void *)malloc(srcHost_size);
   if (srcHost_size != 0 && srcHost == nullptr)
     goto ERROR_0;
-  if ((srcHost_size != 0 && rpc_read(conn, srcHost, srcHost_size) < 0) || false)
+  if ((srcHost_size != 0 &&
+       rpc_read_payload(conn, srcHost, srcHost_size) < 0) ||
+      false)
     goto ERROR_1;
 
   request_id = rpc_read_end(conn);
@@ -2269,7 +2232,6 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr srcDevice;
   size_t ByteCount;
   void *dstHost;
-  size_t dstHost_size;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -2286,7 +2248,7 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
       (ByteCount == 0 ? nullptr : dstHost), srcDevice, ByteCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (ByteCount != 0 && rpc_write(conn, dstHost, ByteCount) < 0) ||
+      (ByteCount != 0 && rpc_write_payload(conn, dstHost, ByteCount) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_1;
@@ -2387,7 +2349,6 @@ int handle_cuMemcpyAtoH_v2(conn_t *conn) {
   size_t srcOffset;
   size_t ByteCount;
   void *dstHost;
-  size_t dstHost_size;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &srcArray, sizeof(CUarray)) < 0 ||
@@ -2477,43 +2438,6 @@ int handle_cuMemcpyPeerAsync(conn_t *conn) {
     goto ERROR_0;
 
   return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
-  CUdeviceptr dstDevice;
-  size_t ByteCount;
-  void *srcHost;
-  size_t srcHost_size;
-  CUstream hStream;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  srcHost_size = ByteCount;
-  srcHost = (void *)malloc(srcHost_size);
-  if (srcHost_size != 0 && srcHost == nullptr)
-    goto ERROR_0;
-  if ((srcHost_size != 0 && rpc_read(conn, srcHost, srcHost_size) < 0) ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
-    goto ERROR_1;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_1;
-  lupine_intercept_result = cuMemcpyHtoDAsync_v2(
-      dstDevice, (ByteCount == 0 ? nullptr : srcHost), ByteCount, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_1;
-
-  return 0;
-ERROR_1:
-  free((void *)srcHost);
 ERROR_0:
   return -1;
 }
@@ -2903,11 +2827,11 @@ ERROR_0:
 
 int handle_cuArrayCreate_v2(conn_t *conn) {
   CUarray pHandle;
-  const CUDA_ARRAY_DESCRIPTOR *pAllocateArray;
+  CUDA_ARRAY_DESCRIPTOR pAllocateArray;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &pHandle, sizeof(CUarray)) < 0 ||
-      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY_DESCRIPTOR *)) <
+      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY_DESCRIPTOR)) <
           0 ||
       false)
     goto ERROR_0;
@@ -2915,7 +2839,7 @@ int handle_cuArrayCreate_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuArrayCreate_v2(&pHandle, pAllocateArray);
+  lupine_intercept_result = cuArrayCreate_v2(&pHandle, &pAllocateArray);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pHandle, sizeof(CUarray)) < 0 ||
@@ -3120,11 +3044,11 @@ ERROR_0:
 
 int handle_cuArray3DCreate_v2(conn_t *conn) {
   CUarray pHandle;
-  const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray;
+  CUDA_ARRAY3D_DESCRIPTOR pAllocateArray;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &pHandle, sizeof(CUarray)) < 0 ||
-      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY3D_DESCRIPTOR *)) <
+      rpc_read(conn, &pAllocateArray, sizeof(const CUDA_ARRAY3D_DESCRIPTOR)) <
           0 ||
       false)
     goto ERROR_0;
@@ -3132,7 +3056,7 @@ int handle_cuArray3DCreate_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuArray3DCreate_v2(&pHandle, pAllocateArray);
+  lupine_intercept_result = cuArray3DCreate_v2(&pHandle, &pAllocateArray);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pHandle, sizeof(CUarray)) < 0 ||
@@ -4062,32 +3986,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuStreamWaitEvent(conn_t *conn) {
-  CUstream hStream;
-  CUevent hEvent;
-  unsigned int Flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuStreamWaitEvent(hStream, hEvent, Flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuStreamBeginCapture_v2(conn_t *conn) {
   CUstream hStream;
   CUstreamCaptureMode mode;
@@ -4405,28 +4303,6 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result = cuEventRecordWithFlags(hEvent, hStream, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuEventQuery(conn_t *conn) {
-  CUevent hEvent;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuEventQuery(hEvent);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -5450,84 +5326,46 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuGraphHostNodeGetParams(conn_t *conn) {
-  CUgraphNode hNode;
-  CUDA_HOST_NODE_PARAMS nodeParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(CUDA_HOST_NODE_PARAMS)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphHostNodeGetParams(hNode, &nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &nodeParams, sizeof(CUDA_HOST_NODE_PARAMS)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphHostNodeSetParams(conn_t *conn) {
-  CUgraphNode hNode;
-  const CUDA_HOST_NODE_PARAMS *nodeParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(const CUDA_HOST_NODE_PARAMS *)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphHostNodeSetParams(hNode, nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuGraphAddChildGraphNode(conn_t *conn) {
   CUgraphNode phGraphNode;
   CUgraph hGraph;
-  const CUgraphNode *dependencies;
   size_t numDependencies;
+  CUgraphNode *dependencies;
+  size_t dependencies_size;
   CUgraph childGraph;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &childGraph, sizeof(CUgraph)) < 0 || false)
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(const CUgraphNode);
+  dependencies = (CUgraphNode *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      rpc_read(conn, &childGraph, sizeof(CUgraph)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuGraphAddChildGraphNode(
-      &phGraphNode, hGraph, dependencies, numDependencies, childGraph);
+      &phGraphNode, hGraph,
+      (numDependencies * sizeof(const CUgraphNode) == 0 ? nullptr
+                                                        : dependencies),
+      numDependencies, childGraph);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)dependencies);
 ERROR_0:
   return -1;
 }
@@ -5560,29 +5398,42 @@ ERROR_0:
 int handle_cuGraphAddEmptyNode(conn_t *conn) {
   CUgraphNode phGraphNode;
   CUgraph hGraph;
-  const CUgraphNode *dependencies;
   size_t numDependencies;
+  CUgraphNode *dependencies;
+  size_t dependencies_size;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
       rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(const CUgraphNode);
+  dependencies = (CUgraphNode *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphAddEmptyNode(&phGraphNode, hGraph, dependencies, numDependencies);
+    goto ERROR_1;
+  lupine_intercept_result = cuGraphAddEmptyNode(
+      &phGraphNode, hGraph,
+      (numDependencies * sizeof(const CUgraphNode) == 0 ? nullptr
+                                                        : dependencies),
+      numDependencies);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)dependencies);
 ERROR_0:
   return -1;
 }
@@ -5590,31 +5441,43 @@ ERROR_0:
 int handle_cuGraphAddEventRecordNode(conn_t *conn) {
   CUgraphNode phGraphNode;
   CUgraph hGraph;
-  const CUgraphNode *dependencies;
   size_t numDependencies;
+  CUgraphNode *dependencies;
+  size_t dependencies_size;
   CUevent event;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(const CUgraphNode);
+  dependencies = (CUgraphNode *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuGraphAddEventRecordNode(
-      &phGraphNode, hGraph, dependencies, numDependencies, event);
+      &phGraphNode, hGraph,
+      (numDependencies * sizeof(const CUgraphNode) == 0 ? nullptr
+                                                        : dependencies),
+      numDependencies, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)dependencies);
 ERROR_0:
   return -1;
 }
@@ -5671,31 +5534,43 @@ ERROR_0:
 int handle_cuGraphAddEventWaitNode(conn_t *conn) {
   CUgraphNode phGraphNode;
   CUgraph hGraph;
-  const CUgraphNode *dependencies;
   size_t numDependencies;
+  CUgraphNode *dependencies;
+  size_t dependencies_size;
   CUevent event;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(const CUgraphNode);
+  dependencies = (CUgraphNode *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuGraphAddEventWaitNode(
-      &phGraphNode, hGraph, dependencies, numDependencies, event);
+      &phGraphNode, hGraph,
+      (numDependencies * sizeof(const CUgraphNode) == 0 ? nullptr
+                                                        : dependencies),
+      numDependencies, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)dependencies);
 ERROR_0:
   return -1;
 }
@@ -5752,46 +5627,74 @@ ERROR_0:
 int handle_cuGraphAddExternalSemaphoresSignalNode(conn_t *conn) {
   CUgraphNode phGraphNode;
   CUgraph hGraph;
-  const CUgraphNode *dependencies;
   size_t numDependencies;
-  const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *nodeParams;
+  CUgraphNode *dependencies;
+  size_t dependencies_size;
+  CUDA_EXT_SEM_SIGNAL_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_extSemArray_buf;
+  std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *)) < 0 ||
-      false)
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(const CUgraphNode);
+  dependencies = (CUgraphNode *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.extSemArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_extSemArray_buf.data(),
+                nodeParams_extSemArray_buf.size()) < 0) ||
+      ((nodeParams.extSemArray = (decltype(nodeParams.extSemArray))
+                                     nodeParams_extSemArray_buf.data()),
+       false) ||
+      ((nodeParams_paramsArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.paramsArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_paramsArray_buf.data(),
+                nodeParams_paramsArray_buf.size()) < 0) ||
+      ((nodeParams.paramsArray = (decltype(nodeParams.paramsArray))
+                                     nodeParams_paramsArray_buf.data()),
+       false) ||
+      false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuGraphAddExternalSemaphoresSignalNode(
-      &phGraphNode, hGraph, dependencies, numDependencies, nodeParams);
+      &phGraphNode, hGraph,
+      (numDependencies * sizeof(const CUgraphNode) == 0 ? nullptr
+                                                        : dependencies),
+      numDependencies, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)dependencies);
 ERROR_0:
   return -1;
 }
 
 int handle_cuGraphExternalSemaphoresSignalNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_EXT_SEM_SIGNAL_NODE_PARAMS params_out;
+  CUDA_EXT_SEM_SIGNAL_NODE_PARAMS params_out = {};
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &params_out, sizeof(CUDA_EXT_SEM_SIGNAL_NODE_PARAMS)) <
-          0 ||
-      false)
+  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5801,8 +5704,15 @@ int handle_cuGraphExternalSemaphoresSignalNodeGetParams(conn_t *conn) {
       cuGraphExternalSemaphoresSignalNodeGetParams(hNode, &params_out);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &params_out, sizeof(CUDA_EXT_SEM_SIGNAL_NODE_PARAMS)) <
-          0 ||
+      rpc_write(conn, &params_out, sizeof(params_out)) < 0 ||
+      (params_out.numExtSems != 0 &&
+       rpc_write(conn, params_out.extSemArray,
+                 params_out.numExtSems * sizeof(*params_out.extSemArray)) <
+           0) ||
+      (params_out.numExtSems != 0 &&
+       rpc_write(conn, params_out.paramsArray,
+                 params_out.numExtSems * sizeof(*params_out.paramsArray)) <
+           0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -5814,12 +5724,31 @@ ERROR_0:
 
 int handle_cuGraphExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
-  const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *nodeParams;
+  CUDA_EXT_SEM_SIGNAL_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_extSemArray_buf;
+  std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *)) < 0 ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.extSemArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_extSemArray_buf.data(),
+                nodeParams_extSemArray_buf.size()) < 0) ||
+      ((nodeParams.extSemArray = (decltype(nodeParams.extSemArray))
+                                     nodeParams_extSemArray_buf.data()),
+       false) ||
+      ((nodeParams_paramsArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.paramsArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_paramsArray_buf.data(),
+                nodeParams_paramsArray_buf.size()) < 0) ||
+      ((nodeParams.paramsArray = (decltype(nodeParams.paramsArray))
+                                     nodeParams_paramsArray_buf.data()),
+       false) ||
       false)
     goto ERROR_0;
 
@@ -5827,7 +5756,7 @@ int handle_cuGraphExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuGraphExternalSemaphoresSignalNodeSetParams(hNode, nodeParams);
+      cuGraphExternalSemaphoresSignalNodeSetParams(hNode, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -5842,45 +5771,74 @@ ERROR_0:
 int handle_cuGraphAddExternalSemaphoresWaitNode(conn_t *conn) {
   CUgraphNode phGraphNode;
   CUgraph hGraph;
-  const CUgraphNode *dependencies;
   size_t numDependencies;
-  const CUDA_EXT_SEM_WAIT_NODE_PARAMS *nodeParams;
+  CUgraphNode *dependencies;
+  size_t dependencies_size;
+  CUDA_EXT_SEM_WAIT_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_extSemArray_buf;
+  std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_EXT_SEM_WAIT_NODE_PARAMS *)) < 0 ||
-      false)
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(const CUgraphNode);
+  dependencies = (CUgraphNode *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.extSemArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_extSemArray_buf.data(),
+                nodeParams_extSemArray_buf.size()) < 0) ||
+      ((nodeParams.extSemArray = (decltype(nodeParams.extSemArray))
+                                     nodeParams_extSemArray_buf.data()),
+       false) ||
+      ((nodeParams_paramsArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.paramsArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_paramsArray_buf.data(),
+                nodeParams_paramsArray_buf.size()) < 0) ||
+      ((nodeParams.paramsArray = (decltype(nodeParams.paramsArray))
+                                     nodeParams_paramsArray_buf.data()),
+       false) ||
+      false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuGraphAddExternalSemaphoresWaitNode(
-      &phGraphNode, hGraph, dependencies, numDependencies, nodeParams);
+      &phGraphNode, hGraph,
+      (numDependencies * sizeof(const CUgraphNode) == 0 ? nullptr
+                                                        : dependencies),
+      numDependencies, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)dependencies);
 ERROR_0:
   return -1;
 }
 
 int handle_cuGraphExternalSemaphoresWaitNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_EXT_SEM_WAIT_NODE_PARAMS params_out;
+  CUDA_EXT_SEM_WAIT_NODE_PARAMS params_out = {};
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &params_out, sizeof(CUDA_EXT_SEM_WAIT_NODE_PARAMS)) < 0 ||
-      false)
+  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5890,7 +5848,15 @@ int handle_cuGraphExternalSemaphoresWaitNodeGetParams(conn_t *conn) {
       cuGraphExternalSemaphoresWaitNodeGetParams(hNode, &params_out);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &params_out, sizeof(CUDA_EXT_SEM_WAIT_NODE_PARAMS)) < 0 ||
+      rpc_write(conn, &params_out, sizeof(params_out)) < 0 ||
+      (params_out.numExtSems != 0 &&
+       rpc_write(conn, params_out.extSemArray,
+                 params_out.numExtSems * sizeof(*params_out.extSemArray)) <
+           0) ||
+      (params_out.numExtSems != 0 &&
+       rpc_write(conn, params_out.paramsArray,
+                 params_out.numExtSems * sizeof(*params_out.paramsArray)) <
+           0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -5902,12 +5868,31 @@ ERROR_0:
 
 int handle_cuGraphExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
-  const CUDA_EXT_SEM_WAIT_NODE_PARAMS *nodeParams;
+  CUDA_EXT_SEM_WAIT_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_extSemArray_buf;
+  std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_EXT_SEM_WAIT_NODE_PARAMS *)) < 0 ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.extSemArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_extSemArray_buf.data(),
+                nodeParams_extSemArray_buf.size()) < 0) ||
+      ((nodeParams.extSemArray = (decltype(nodeParams.extSemArray))
+                                     nodeParams_extSemArray_buf.data()),
+       false) ||
+      ((nodeParams_paramsArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.paramsArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_paramsArray_buf.data(),
+                nodeParams_paramsArray_buf.size()) < 0) ||
+      ((nodeParams.paramsArray = (decltype(nodeParams.paramsArray))
+                                     nodeParams_paramsArray_buf.data()),
+       false) ||
       false)
     goto ERROR_0;
 
@@ -5915,7 +5900,7 @@ int handle_cuGraphExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuGraphExternalSemaphoresWaitNodeSetParams(hNode, nodeParams);
+      cuGraphExternalSemaphoresWaitNodeSetParams(hNode, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -5930,46 +5915,64 @@ ERROR_0:
 int handle_cuGraphAddBatchMemOpNode(conn_t *conn) {
   CUgraphNode phGraphNode;
   CUgraph hGraph;
-  const CUgraphNode *dependencies;
   size_t numDependencies;
-  const CUDA_BATCH_MEM_OP_NODE_PARAMS *nodeParams;
+  CUgraphNode *dependencies;
+  size_t dependencies_size;
+  CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_paramArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &dependencies, sizeof(const CUgraphNode *)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_BATCH_MEM_OP_NODE_PARAMS *)) < 0 ||
-      false)
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(const CUgraphNode);
+  dependencies = (CUgraphNode *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_paramArray_buf.resize(nodeParams.count *
+                                         sizeof(*nodeParams.paramArray)),
+        false)) ||
+      (nodeParams.count != 0 &&
+       rpc_read(conn, nodeParams_paramArray_buf.data(),
+                nodeParams_paramArray_buf.size()) < 0) ||
+      ((nodeParams.paramArray =
+            (decltype(nodeParams.paramArray))nodeParams_paramArray_buf.data()),
+       false) ||
+      false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuGraphAddBatchMemOpNode(
-      &phGraphNode, hGraph, dependencies, numDependencies, nodeParams);
+      &phGraphNode, hGraph,
+      (numDependencies * sizeof(const CUgraphNode) == 0 ? nullptr
+                                                        : dependencies),
+      numDependencies, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)dependencies);
 ERROR_0:
   return -1;
 }
 
 int handle_cuGraphBatchMemOpNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams_out;
+  CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams_out = {};
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams_out, sizeof(CUDA_BATCH_MEM_OP_NODE_PARAMS)) <
-          0 ||
-      false)
+  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5979,8 +5982,11 @@ int handle_cuGraphBatchMemOpNodeGetParams(conn_t *conn) {
       cuGraphBatchMemOpNodeGetParams(hNode, &nodeParams_out);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &nodeParams_out, sizeof(CUDA_BATCH_MEM_OP_NODE_PARAMS)) <
-          0 ||
+      rpc_write(conn, &nodeParams_out, sizeof(nodeParams_out)) < 0 ||
+      (nodeParams_out.count != 0 &&
+       rpc_write(conn, nodeParams_out.paramArray,
+                 nodeParams_out.count * sizeof(*nodeParams_out.paramArray)) <
+           0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -5992,19 +5998,28 @@ ERROR_0:
 
 int handle_cuGraphBatchMemOpNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
-  const CUDA_BATCH_MEM_OP_NODE_PARAMS *nodeParams;
+  CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_paramArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_BATCH_MEM_OP_NODE_PARAMS *)) < 0 ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_paramArray_buf.resize(nodeParams.count *
+                                         sizeof(*nodeParams.paramArray)),
+        false)) ||
+      (nodeParams.count != 0 &&
+       rpc_read(conn, nodeParams_paramArray_buf.data(),
+                nodeParams_paramArray_buf.size()) < 0) ||
+      ((nodeParams.paramArray =
+            (decltype(nodeParams.paramArray))nodeParams_paramArray_buf.data()),
+       false) ||
       false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuGraphBatchMemOpNodeSetParams(hNode, nodeParams);
+  lupine_intercept_result = cuGraphBatchMemOpNodeSetParams(hNode, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -6019,13 +6034,22 @@ ERROR_0:
 int handle_cuGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
-  const CUDA_BATCH_MEM_OP_NODE_PARAMS *nodeParams;
+  CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_paramArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_BATCH_MEM_OP_NODE_PARAMS *)) < 0 ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_paramArray_buf.resize(nodeParams.count *
+                                         sizeof(*nodeParams.paramArray)),
+        false)) ||
+      (nodeParams.count != 0 &&
+       rpc_read(conn, nodeParams_paramArray_buf.data(),
+                nodeParams_paramArray_buf.size()) < 0) ||
+      ((nodeParams.paramArray =
+            (decltype(nodeParams.paramArray))nodeParams_paramArray_buf.data()),
+       false) ||
       false)
     goto ERROR_0;
 
@@ -6033,7 +6057,7 @@ int handle_cuGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuGraphExecBatchMemOpNodeSetParams(hGraphExec, hNode, nodeParams);
+      cuGraphExecBatchMemOpNodeSetParams(hGraphExec, hNode, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -6286,31 +6310,86 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuGraphGetRootNodes(conn_t *conn) {
+int handle_cuGraphGetNodes(conn_t *conn) {
   CUgraph hGraph;
-  CUgraphNode rootNodes;
-  size_t numRootNodes;
+  size_t numNodes = 0;
+  size_t numNodes_requested = 0;
+  CUgraphNode *nodes = nullptr;
+  uint8_t nodes_present = 0;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &rootNodes, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &numRootNodes, sizeof(size_t)) < 0 || false)
+      rpc_read(conn, &numNodes_requested, sizeof(size_t)) < 0 ||
+      ((numNodes = numNodes_requested), false) ||
+      rpc_read(conn, &nodes_present, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
+  if (nodes_present && numNodes_requested != 0) {
+    nodes = (CUgraphNode *)malloc(numNodes_requested * sizeof(CUgraphNode));
+    if (nodes == nullptr)
+      goto ERROR_0;
+  }
+  if (false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphGetRootNodes(hGraph, &rootNodes, &numRootNodes);
+    goto ERROR_1;
+  lupine_intercept_result = cuGraphGetNodes(hGraph, nodes, &numNodes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &rootNodes, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &numRootNodes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &numNodes, sizeof(size_t)) < 0 ||
+      (nodes_present && numNodes != 0 &&
+       rpc_write(conn, nodes, numNodes * sizeof(CUgraphNode)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)nodes);
+ERROR_0:
+  return -1;
+}
+
+int handle_cuGraphGetRootNodes(conn_t *conn) {
+  CUgraph hGraph;
+  size_t numRootNodes = 0;
+  size_t numRootNodes_requested = 0;
+  CUgraphNode *rootNodes = nullptr;
+  uint8_t rootNodes_present = 0;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &numRootNodes_requested, sizeof(size_t)) < 0 ||
+      ((numRootNodes = numRootNodes_requested), false) ||
+      rpc_read(conn, &rootNodes_present, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (rootNodes_present && numRootNodes_requested != 0) {
+    rootNodes =
+        (CUgraphNode *)malloc(numRootNodes_requested * sizeof(CUgraphNode));
+    if (rootNodes == nullptr)
+      goto ERROR_0;
+  }
+  if (false)
+    goto ERROR_1;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_1;
+  lupine_intercept_result =
+      cuGraphGetRootNodes(hGraph, rootNodes, &numRootNodes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &numRootNodes, sizeof(size_t)) < 0 ||
+      (rootNodes_present && numRootNodes != 0 &&
+       rpc_write(conn, rootNodes, numRootNodes * sizeof(CUgraphNode)) < 0) ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_1;
+
+  return 0;
+ERROR_1:
+  free((void *)rootNodes);
 ERROR_0:
   return -1;
 }
@@ -6509,34 +6588,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
-  CUgraphExec hGraphExec;
-  CUgraphNode hNode;
-  CUDA_HOST_NODE_PARAMS nodeParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(const CUDA_HOST_NODE_PARAMS)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphExecHostNodeSetParams(hGraphExec, hNode, &nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuGraphExecChildGraphNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
@@ -6621,13 +6672,32 @@ ERROR_0:
 int handle_cuGraphExecExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
-  CUDA_EXT_SEM_SIGNAL_NODE_PARAMS nodeParams;
+  CUDA_EXT_SEM_SIGNAL_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_extSemArray_buf;
+  std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams,
-               sizeof(const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS)) < 0 ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.extSemArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_extSemArray_buf.data(),
+                nodeParams_extSemArray_buf.size()) < 0) ||
+      ((nodeParams.extSemArray = (decltype(nodeParams.extSemArray))
+                                     nodeParams_extSemArray_buf.data()),
+       false) ||
+      ((nodeParams_paramsArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.paramsArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_paramsArray_buf.data(),
+                nodeParams_paramsArray_buf.size()) < 0) ||
+      ((nodeParams.paramsArray = (decltype(nodeParams.paramsArray))
+                                     nodeParams_paramsArray_buf.data()),
+       false) ||
       false)
     goto ERROR_0;
 
@@ -6650,13 +6720,32 @@ ERROR_0:
 int handle_cuGraphExecExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
-  CUDA_EXT_SEM_WAIT_NODE_PARAMS nodeParams;
+  CUDA_EXT_SEM_WAIT_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_extSemArray_buf;
+  std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(const CUDA_EXT_SEM_WAIT_NODE_PARAMS)) <
-          0 ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.extSemArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_extSemArray_buf.data(),
+                nodeParams_extSemArray_buf.size()) < 0) ||
+      ((nodeParams.extSemArray = (decltype(nodeParams.extSemArray))
+                                     nodeParams_extSemArray_buf.data()),
+       false) ||
+      ((nodeParams_paramsArray_buf.resize(nodeParams.numExtSems *
+                                          sizeof(*nodeParams.paramsArray)),
+        false)) ||
+      (nodeParams.numExtSems != 0 &&
+       rpc_read(conn, nodeParams_paramsArray_buf.data(),
+                nodeParams_paramsArray_buf.size()) < 0) ||
+      ((nodeParams.paramsArray = (decltype(nodeParams.paramsArray))
+                                     nodeParams_paramsArray_buf.data()),
+       false) ||
       false)
     goto ERROR_0;
 
@@ -6933,25 +7022,31 @@ ERROR_0:
 int handle_cuGraphDebugDotPrint(conn_t *conn) {
   CUgraph hGraph;
   const char *path;
+  std::size_t path_len;
   unsigned int flags;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &path, sizeof(const char *)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+      rpc_read(conn, &path_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
+  path = (const char *)malloc(path_len);
+  if (rpc_read(conn, (void *)path, path_len) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
+    goto ERROR_1;
   lupine_intercept_result = cuGraphDebugDotPrint(hGraph, path, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)path);
 ERROR_0:
   return -1;
 }
@@ -8398,55 +8493,72 @@ ERROR_0:
 
 int handle_cuGraphicsMapResources(conn_t *conn) {
   unsigned int count;
-  CUgraphicsResource resources;
+  CUgraphicsResource *resources;
+  size_t resources_size;
   CUstream hStream;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &resources, sizeof(CUgraphicsResource)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+  if (rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
+  resources_size = count * sizeof(CUgraphicsResource);
+  resources = (CUgraphicsResource *)malloc(resources_size);
+  if (resources_size != 0 && resources == nullptr)
+    goto ERROR_0;
+  if ((resources_size != 0 && rpc_read(conn, resources, resources_size) < 0) ||
+      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphicsMapResources(count, &resources, hStream);
+    goto ERROR_1;
+  lupine_intercept_result = cuGraphicsMapResources(
+      count, (count * sizeof(CUgraphicsResource) == 0 ? nullptr : resources),
+      hStream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &resources, sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)resources);
 ERROR_0:
   return -1;
 }
 
 int handle_cuGraphicsUnmapResources(conn_t *conn) {
   unsigned int count;
-  CUgraphicsResource resources;
+  CUgraphicsResource *resources;
+  size_t resources_size;
   CUstream hStream;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &resources, sizeof(CUgraphicsResource)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+  if (rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
+  resources_size = count * sizeof(CUgraphicsResource);
+  resources = (CUgraphicsResource *)malloc(resources_size);
+  if (resources_size != 0 && resources == nullptr)
+    goto ERROR_0;
+  if ((resources_size != 0 && rpc_read(conn, resources, resources_size) < 0) ||
+      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+    goto ERROR_1;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphicsUnmapResources(count, &resources, hStream);
+    goto ERROR_1;
+  lupine_intercept_result = cuGraphicsUnmapResources(
+      count, (count * sizeof(CUgraphicsResource) == 0 ? nullptr : resources),
+      hStream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &resources, sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    goto ERROR_1;
 
   return 0;
+ERROR_1:
+  free((void *)resources);
 ERROR_0:
   return -1;
 }
@@ -8498,7 +8610,7 @@ static RequestHandler opHandlers[] = {
     handle_cuCtxDetach,
     handle_cuCtxGetSharedMemConfig,
     handle_cuCtxSetSharedMemConfig,
-    handle_cuModuleLoad,
+    nullptr,
     nullptr,
     nullptr,
     nullptr,
@@ -8559,7 +8671,7 @@ static RequestHandler opHandlers[] = {
     nullptr,
     nullptr,
     handle_cuMemcpyPeerAsync,
-    handle_cuMemcpyHtoDAsync_v2,
+    nullptr,
     nullptr,
     handle_cuMemcpyDtoDAsync_v2,
     nullptr,
@@ -8621,7 +8733,7 @@ static RequestHandler opHandlers[] = {
     handle_cuStreamGetFlags,
     handle_cuStreamGetId,
     handle_cuStreamGetCtx,
-    handle_cuStreamWaitEvent,
+    nullptr,
     handle_cuStreamBeginCapture_v2,
     handle_cuThreadExchangeStreamCaptureMode,
     handle_cuStreamEndCapture,
@@ -8636,7 +8748,7 @@ static RequestHandler opHandlers[] = {
     handle_cuEventCreate,
     handle_cuEventRecord,
     handle_cuEventRecordWithFlags,
-    handle_cuEventQuery,
+    nullptr,
     nullptr,
     handle_cuEventDestroy_v2,
     handle_cuEventElapsedTime_v2,
@@ -8683,8 +8795,8 @@ static RequestHandler opHandlers[] = {
     handle_cuGraphMemsetNodeGetParams,
     handle_cuGraphMemsetNodeSetParams,
     nullptr,
-    handle_cuGraphHostNodeGetParams,
-    handle_cuGraphHostNodeSetParams,
+    nullptr,
+    nullptr,
     handle_cuGraphAddChildGraphNode,
     handle_cuGraphChildGraphNodeGetGraph,
     handle_cuGraphAddEmptyNode,
@@ -8712,7 +8824,7 @@ static RequestHandler opHandlers[] = {
     handle_cuGraphClone,
     handle_cuGraphNodeFindInClone,
     handle_cuGraphNodeGetType,
-    nullptr,
+    handle_cuGraphGetNodes,
     handle_cuGraphGetRootNodes,
     handle_cuGraphDestroyNode,
     handle_cuGraphInstantiateWithFlags,
@@ -8721,7 +8833,7 @@ static RequestHandler opHandlers[] = {
     handle_cuGraphExecKernelNodeSetParams_v2,
     handle_cuGraphExecMemcpyNodeSetParams,
     handle_cuGraphExecMemsetNodeSetParams,
-    handle_cuGraphExecHostNodeSetParams,
+    nullptr,
     handle_cuGraphExecChildGraphNodeSetParams,
     handle_cuGraphExecEventRecordNodeSetEvent,
     handle_cuGraphExecEventWaitNodeSetEvent,
@@ -8849,6 +8961,9 @@ static RequestHandler opHandlers[] = {
     handle_nvmlEventSetWait_v2,
     handle_nvmlDeviceRegisterEvents,
     handle_nvmlDeviceGetMaxMigDeviceCount,
+    handle_nvmlDeviceGetTotalEccErrors,
+    handle_nvmlDeviceGetDetailedEccErrors,
+    handle_nvmlDeviceGetMemoryErrorCounter,
     handle_nvmlDeviceGetEccMode,
     handle_nvmlDeviceGetTemperatureV,
     handle_nvmlDeviceGetEnforcedPowerLimit,

@@ -2,7 +2,6 @@ name: Codegen Test
 
 on:
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -11,15 +10,31 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Run codegen in CUDA builder
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "13.1.0"
+          method: network
+          sub-packages: '["nvcc"]'
+
+      - name: Install codegen dependencies
         run: |
-          docker build \
-            -f Dockerfile \
-            --target builder \
-            --build-arg RUN_CODEGEN=1 \
-            --build-arg CUDA_VERSION=13.1.0 \
-            --build-arg UBUNTU_VERSION=24.04 \
-            -t lupine-codegen:test \
-            .
+          python3 -m venv .venv-codegen
+          .venv-codegen/bin/pip install --no-cache-dir -r codegen/requirements.txt
+
+      - name: Regenerate checked-in sources
+        run: |
+          sudo ln -sfn "$CUDA_PATH" /usr/local/cuda
+          cd codegen
+          ../.venv-codegen/bin/python ./codegen.py
+
+      - name: Format generated C++
+        run: clang-format -i codegen/gen_client.cpp codegen/gen_server.cpp
+
+      - name: Verify generated files are current
+        run: git diff --exit-code -- codegen

@@ -3,20 +3,37 @@
 LUPINE is a GPU over IP bridge allowing GPUs on remote machines to be attached
 to CPU-only machines.
 
-## Demo
+## Hosted Demo
 
-### CUBLAS Matrix Multiplication using Unified Memory
+Connect to a hosted demo server with a T4 attached for free. This might take a while if there's no GPU
+currently provisioned, but subsequent requests should be faster.
 
-The below demo displays a NVIDIA GeForce RTX 4090 running on a remote machine (right pane).
-Left pane is a Mac running a docker container with nvidia utils installed.
+```
+$ docker run --rm \
+  -e LUPINE_SERVER=demo.lupinemachines.com:14833 \
+  ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04 \
+  nvidia-smi -L
+GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
+```
 
-The docker container runs this [matrixMulCUBLAS](./test/cublas_unified.cu) example. This example not only uses cuBLAS, but also takes advantage of unified memory.
+Are you interested in a paid, hosted GPU? Send me an email at kevmo314@gmail.com, we're considering this offering.
 
-You can view the docker image used [here](./deploy/Dockerfile.unified).
+## Mac Demo
 
-https://github.com/user-attachments/assets/b2db5d82-f214-41cf-8274-b913c04080f9
+LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to a Linux GPU server.
 
-You can see a list of some currently working examples in the [test folder](./test/).
+```sh
+% uname -mors 
+Darwin 25.5.0 arm64
+% uv run https://raw.githubusercontent.com/lupinemachines/lupine/main/python/examples/tensor.py
+LUPINE server host: 100.106.167.98  <-- the ip of a machine with the LUPINE server running
+LUPINE server port [14833]: 
+cuda available: True
+device: lupine:0
+count: 1
+gpu: NVIDIA GeForce RTX 4090
+result: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
+```
 
 ## Quick Start
 
@@ -121,6 +138,12 @@ For a specific CUDA version:
 docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
+
+Client images are also published with a `-slim` tag, for example
+`ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04-slim`. The
+default client tag keeps the CUDA runtime libraries for applications that link
+against them; the slim tag includes only the LUPINE shims, their runtime
+dependencies, and `nvidia-smi`.
 
 ## Slow Start for the Skeptics
 
@@ -257,7 +280,7 @@ You can also use the local shell script to run your commands.
 ## Questions
 
 1. **What does LUPINE stand for?** Nothing, it just looks cool in all caps.
-2. **Does this support authentication? TLS?** Indirectly, yes. It's a plain HTTP/3 server, so you can front it with whatever TLS/auth server you want.
+2. **Does this support authentication? TLS?** Indirectly, yes. It's a plain HTTP/2 server, so you can front it with whatever TLS/auth server you want.
 3. **Was this repo AI-generated?** A chunk of it, yes. I mean, would you want to hand write hundreds of tedious API stubs? No? Me neither.
 4. **Doesn't this incur a lot of latency?** Surprisingly, no! You will see device transfers get slower because this is basically bottlenecking a PCIe link over the network, but there is very little overhead besides that. For things like model training and inference, once the model is on the GPU very little data transfer happens to the host. As a result, it might be faster than you expect.
 5. **Can I do remote video encoding/decoding?** This is probably one use case we wouldn't recommend because that's a lot heavier on the PCIe link. It works in theory though, so if you do have access to a 1 Tbps link it might work for you.

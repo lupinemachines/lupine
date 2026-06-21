@@ -5,6 +5,20 @@ from typing import Optional, Union
 from dataclasses import dataclass
 import os
 import glob
+from ops import (
+    NullableOperation,
+    ArrayOperation,
+    InOutCountOperation,
+    OptionalArrayOperation,
+    DeepStructOperation,
+    NullTerminatedOperation,
+    OpaqueTypeOperation,
+    DereferenceOperation,
+    Operation,
+    OwnerAnnotation,
+    CrossServerCopyAnnotation,
+    FunctionAnnotationMetadata,
+)
 
 # this table is manually generated from the cuda.h headers
 MANUAL_REMAPPINGS = [
@@ -138,6 +152,9 @@ NVML_RPC_FUNCTIONS = [
     "nvmlEventSetWait_v2",
     "nvmlDeviceRegisterEvents",
     "nvmlDeviceGetMaxMigDeviceCount",
+    "nvmlDeviceGetTotalEccErrors",
+    "nvmlDeviceGetDetailedEccErrors",
+    "nvmlDeviceGetMemoryErrorCounter",
     "nvmlDeviceGetEccMode",
     "nvmlDeviceGetTemperatureV",
     "nvmlDeviceGetEnforcedPowerLimit",
@@ -149,6 +166,743 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceGetNvLinkRemotePciInfo_v2",
 ]
 
+NVML_CODEGEN_FUNCTIONS = []
+
+
+def nvml_codegen_function(name, params, client_body, server_body):
+    NVML_CODEGEN_FUNCTIONS.append(
+        {
+            "name": name,
+            "params": params,
+            "client_body": client_body,
+            "server_body": server_body,
+        }
+    )
+
+
+def nvml_client_string_no_device(name, value_name):
+    return f"""conn_t *_lupine_conn = connection();
+nvmlReturn_t _lupine_result = rpc_error();
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &length, sizeof(length)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    (length != 0 && rpc_read(_lupine_conn, {value_name}, length) < 0) ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+return _lupine_result;"""
+
+
+def nvml_server_string_no_device(name):
+    return f"""unsigned int _lupine_length = 0;
+if (rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+std::vector<char> _lupine_buffer(std::max(1u, _lupine_length), '\\0');
+using _lupine_fn_t = nvmlReturn_t (*)(char *, unsigned int);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found()
+                           : _lupine_fn(_lupine_buffer.data(), _lupine_length);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    (_lupine_length != 0 &&
+     rpc_write(conn, _lupine_buffer.data(), _lupine_length) < 0) ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_int_out(name, value_name):
+    return f"""conn_t *_lupine_conn = connection();
+nvmlReturn_t _lupine_result = rpc_error();
+int _lupine_value = 0;
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_int_out(name):
+    return f"""int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+int _lupine_value = 0;
+using _lupine_fn_t = nvmlReturn_t (*)(int *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found() : _lupine_fn(&_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_from_string(name, value_name):
+    return f"""conn_t *_lupine_conn = connection();
+nvmlReturn_t _lupine_result = rpc_error();
+nvmlDevice_t _lupine_device = nullptr;
+unsigned int _lupine_length =
+    {value_name} == nullptr ? 0 : static_cast<unsigned int>(strlen({value_name}) + 1);
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &_lupine_length, sizeof(_lupine_length)) < 0 ||
+    (_lupine_length != 0 &&
+     rpc_write(_lupine_conn, {value_name}, _lupine_length) < 0) ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if (device != nullptr) {{
+  *device = _lupine_device;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_from_string(name):
+    return f"""unsigned int _lupine_length = 0;
+if (rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
+  return -1;
+}}
+std::vector<char> _lupine_value(std::max(1u, _lupine_length), '\\0');
+if (_lupine_length != 0 &&
+    rpc_read(conn, _lupine_value.data(), _lupine_length) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+nvmlDevice_t _lupine_device = nullptr;
+using _lupine_fn_t = nvmlReturn_t (*)(const char *, nvmlDevice_t *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_value.data(), &_lupine_device);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_string(name, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &length, sizeof(length)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    (length != 0 && rpc_read(_lupine_conn, {value_name}, length) < 0) ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_string(name):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+unsigned int _lupine_length = 0;
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+std::vector<char> _lupine_buffer(std::max(1u, _lupine_length), '\\0');
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, _lupine_buffer.data(), _lupine_length);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    (_lupine_length != 0 &&
+     rpc_write(conn, _lupine_buffer.data(), _lupine_length) < 0) ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_struct(name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {value_name} == nullptr ? {out_type}{{}} : *{value_name};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_struct(name, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{out_type} _lupine_value = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_value, sizeof(_lupine_value)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found()
+                           : _lupine_fn(_lupine_device, &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_value(name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_value(name, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr ? function_not_found()
+                           : _lupine_fn(_lupine_device, &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_arg_value(name, arg_name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &{arg_name}, sizeof({arg_name})) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_arg_value(name, arg_type, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{arg_type} _lupine_arg = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_arg, sizeof(_lupine_arg)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {arg_type}, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result = _lupine_fn == nullptr
+                                   ? function_not_found()
+                                   : _lupine_fn(_lupine_device, _lupine_arg,
+                                                &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_two_args_value(name, first_name, second_name, out_type, value_name):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &{first_name}, sizeof({first_name})) < 0 ||
+    rpc_write(_lupine_conn, &{second_name}, sizeof({second_name})) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_two_args_value(name, first_type, second_type, out_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t =
+    nvmlReturn_t (*)(nvmlDevice_t, {first_type}, {second_type}, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
+                     &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_three_args_value(
+    name, first_name, second_name, third_name, out_type, value_name
+):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{out_type} _lupine_value = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_write(_lupine_conn, &{first_name}, sizeof({first_name})) < 0 ||
+    rpc_write(_lupine_conn, &{second_name}, sizeof({second_name})) < 0 ||
+    rpc_write(_lupine_conn, &{third_name}, sizeof({third_name})) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({value_name} != nullptr) {{
+  *{value_name} = _lupine_value;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_three_args_value(
+    name, first_type, second_type, third_type, out_type
+):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+{third_type} _lupine_third = {{}};
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
+    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
+    rpc_read(conn, &_lupine_third, sizeof(_lupine_third)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{out_type} _lupine_value = {{}};
+using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {first_type}, {second_type},
+                                      {third_type}, {out_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
+                     _lupine_third, &_lupine_value);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_client_device_two_values(name, first_name, second_name, first_type, second_type):
+    return f"""conn_t *_lupine_conn = connection_for_device(&device);
+nvmlReturn_t _lupine_result = rpc_error();
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+if (_lupine_conn == nullptr ||
+    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
+    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
+    rpc_wait_for_response(_lupine_conn) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
+    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_read_end(_lupine_conn) < 0) {{
+  return rpc_error();
+}}
+if ({first_name} != nullptr) {{
+  *{first_name} = _lupine_first;
+}}
+if ({second_name} != nullptr) {{
+  *{second_name} = _lupine_second;
+}}
+return _lupine_result;"""
+
+
+def nvml_server_device_two_values(name, first_type, second_type):
+    return f"""nvmlDevice_t _lupine_device = nullptr;
+if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0) {{
+  return -1;
+}}
+int _lupine_request_id = rpc_read_end(conn);
+if (_lupine_request_id < 0) {{
+  return -1;
+}}
+
+{first_type} _lupine_first = {{}};
+{second_type} _lupine_second = {{}};
+using _lupine_fn_t =
+    nvmlReturn_t (*)(nvmlDevice_t, {first_type} *, {second_type} *);
+_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
+nvmlReturn_t _lupine_result =
+    _lupine_fn == nullptr
+        ? function_not_found()
+        : _lupine_fn(_lupine_device, &_lupine_first, &_lupine_second);
+
+if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
+    rpc_write(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
+    rpc_write(conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
+    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
+    rpc_write_end(conn) < 0) {{
+  return -1;
+}}
+return 0;"""
+
+
+def nvml_string_no_device(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"char *{value_name}, unsigned int length",
+        nvml_client_string_no_device(name, value_name),
+        nvml_server_string_no_device(name),
+    )
+
+
+def nvml_int_out(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"int *{value_name}",
+        nvml_client_int_out(name, value_name),
+        nvml_server_int_out(name),
+    )
+
+
+def nvml_device_from_string(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"const char *{value_name}, nvmlDevice_t *device",
+        nvml_client_device_from_string(name, value_name),
+        nvml_server_device_from_string(name),
+    )
+
+
+def nvml_device_string(name, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, char *{value_name}, unsigned int length",
+        nvml_client_device_string(name, value_name),
+        nvml_server_device_string(name),
+    )
+
+
+def nvml_device_struct(name, out_type, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {out_type} *{value_name}",
+        nvml_client_device_struct(name, out_type, value_name),
+        nvml_server_device_struct(name, out_type),
+    )
+
+
+def nvml_device_value(name, out_type, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {out_type} *{value_name}",
+        nvml_client_device_value(name, out_type, value_name),
+        nvml_server_device_value(name, out_type),
+    )
+
+
+def nvml_device_arg_value(name, arg_type, arg_name, out_type, value_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {arg_type} {arg_name}, {out_type} *{value_name}",
+        nvml_client_device_arg_value(name, arg_name, out_type, value_name),
+        nvml_server_device_arg_value(name, arg_type, out_type),
+    )
+
+
+def nvml_device_two_args_value(
+    name, first_type, first_name, second_type, second_name, out_type, value_name
+):
+    nvml_codegen_function(
+        name,
+        (
+            f"nvmlDevice_t device, {first_type} {first_name}, "
+            f"{second_type} {second_name}, {out_type} *{value_name}"
+        ),
+        nvml_client_device_two_args_value(
+            name, first_name, second_name, out_type, value_name
+        ),
+        nvml_server_device_two_args_value(name, first_type, second_type, out_type),
+    )
+
+
+def nvml_device_three_args_value(
+    name,
+    first_type,
+    first_name,
+    second_type,
+    second_name,
+    third_type,
+    third_name,
+    out_type,
+    value_name,
+):
+    nvml_codegen_function(
+        name,
+        (
+            f"nvmlDevice_t device, {first_type} {first_name}, "
+            f"{second_type} {second_name}, {third_type} {third_name}, "
+            f"{out_type} *{value_name}"
+        ),
+        nvml_client_device_three_args_value(
+            name, first_name, second_name, third_name, out_type, value_name
+        ),
+        nvml_server_device_three_args_value(
+            name, first_type, second_type, third_type, out_type
+        ),
+    )
+
+
+def nvml_device_two_values(name, first_type, first_name, second_type, second_name):
+    nvml_codegen_function(
+        name,
+        f"nvmlDevice_t device, {first_type} *{first_name}, {second_type} *{second_name}",
+        nvml_client_device_two_values(
+            name, first_name, second_name, first_type, second_type
+        ),
+        nvml_server_device_two_values(name, first_type, second_type),
+    )
+
+
+nvml_string_no_device("nvmlSystemGetDriverVersion", "version")
+nvml_string_no_device("nvmlSystemGetNVMLVersion", "version")
+nvml_int_out("nvmlSystemGetCudaDriverVersion", "cudaDriverVersion")
+nvml_int_out("nvmlSystemGetCudaDriverVersion_v2", "cudaDriverVersion")
+nvml_device_from_string("nvmlDeviceGetHandleByUUID", "uuid")
+nvml_device_from_string("nvmlDeviceGetHandleByPciBusId_v2", "pciBusId")
+nvml_device_string("nvmlDeviceGetUUID", "uuid")
+nvml_device_string("nvmlDeviceGetVbiosVersion", "version")
+nvml_device_string("nvmlDeviceGetSerial", "serial")
+nvml_device_string("nvmlDeviceGetBoardPartNumber", "partNumber")
+nvml_device_struct("nvmlDeviceGetPciInfo_v3", "nvmlPciInfo_t", "pci")
+nvml_device_struct("nvmlDeviceGetMemoryInfo", "nvmlMemory_t", "memory")
+nvml_device_struct(
+    "nvmlDeviceGetUtilizationRates", "nvmlUtilization_t", "utilization"
+)
+nvml_device_struct(
+    "nvmlDeviceGetTemperatureV", "lupine_nvmlTemperature_t", "temperature"
+)
+nvml_device_struct("nvmlDeviceGetMemoryInfo_v2", "nvmlMemory_v2_t", "memory")
+nvml_device_value("nvmlDeviceGetMinorNumber", "unsigned int", "minorNumber")
+nvml_device_value("nvmlDeviceGetPowerUsage", "unsigned int", "power")
+nvml_device_value("nvmlDeviceGetPowerManagementLimit", "unsigned int", "limit")
+nvml_device_value("nvmlDeviceGetEnforcedPowerLimit", "unsigned int", "limit")
+nvml_device_value("nvmlDeviceGetPerformanceState", "nvmlPstates_t", "pState")
+nvml_device_value("nvmlDeviceGetComputeMode", "nvmlComputeMode_t", "mode")
+nvml_device_value("nvmlDeviceGetPersistenceMode", "nvmlEnableState_t", "mode")
+nvml_device_value("nvmlDeviceGetFanSpeed", "unsigned int", "speed")
+nvml_device_value("nvmlDeviceGetBrand", "nvmlBrandType_t", "type")
+nvml_device_value("nvmlDeviceGetDisplayMode", "nvmlEnableState_t", "display")
+nvml_device_value("nvmlDeviceGetDisplayActive", "nvmlEnableState_t", "active")
+nvml_device_value("nvmlDeviceGetCurrPcieLinkGeneration", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetCurrPcieLinkWidth", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetMaxPcieLinkGeneration", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetMaxPcieLinkWidth", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetPcieReplayCounter", "unsigned int", "value")
+nvml_device_value("nvmlDeviceGetMaxMigDeviceCount", "unsigned int", "count")
+nvml_device_value(
+    "nvmlDeviceGetVirtualizationMode", "nvmlGpuVirtualizationMode_t", "pVirtualMode"
+)
+nvml_device_value("nvmlDeviceIsMigDeviceHandle", "unsigned int", "isMigDevice")
+nvml_device_arg_value(
+    "nvmlDeviceGetTemperature",
+    "nvmlTemperatureSensors_t",
+    "sensorType",
+    "unsigned int",
+    "temp",
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetClockInfo", "nvmlClockType_t", "type", "unsigned int", "clock"
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetMaxClockInfo", "nvmlClockType_t", "type", "unsigned int", "clock"
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetPcieThroughput",
+    "nvmlPcieUtilCounter_t",
+    "counter",
+    "unsigned int",
+    "value",
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetNvLinkRemoteDeviceType",
+    "unsigned int",
+    "link",
+    "nvmlIntNvLinkDeviceType_t",
+    "pNvLinkDeviceType",
+)
+nvml_device_arg_value(
+    "nvmlDeviceGetNvLinkRemotePciInfo_v2",
+    "unsigned int",
+    "link",
+    "nvmlPciInfo_t",
+    "pci",
+)
+nvml_device_two_args_value(
+    "nvmlDeviceGetTotalEccErrors",
+    "nvmlMemoryErrorType_t",
+    "errorType",
+    "nvmlEccCounterType_t",
+    "counterType",
+    "unsigned long long",
+    "eccCounts",
+)
+nvml_device_two_args_value(
+    "nvmlDeviceGetDetailedEccErrors",
+    "nvmlMemoryErrorType_t",
+    "errorType",
+    "nvmlEccCounterType_t",
+    "counterType",
+    "nvmlEccErrorCounts_t",
+    "eccCounts",
+)
+nvml_device_three_args_value(
+    "nvmlDeviceGetMemoryErrorCounter",
+    "nvmlMemoryErrorType_t",
+    "errorType",
+    "nvmlEccCounterType_t",
+    "counterType",
+    "nvmlMemoryLocation_t",
+    "locationType",
+    "unsigned long long",
+    "count",
+)
+nvml_device_two_values(
+    "nvmlDeviceGetEccMode",
+    "nvmlEnableState_t",
+    "current",
+    "nvmlEnableState_t",
+    "pending",
+)
+nvml_device_two_values(
+    "nvmlDeviceGetMigMode", "unsigned int", "currentMode", "unsigned int", "pendingMode"
+)
+
 SKIP_FUNCTIONS = {
     "cuStreamUpdateCaptureDependencies_v2",
     "cuGraphGetEdges_v2",
@@ -159,755 +913,12 @@ SKIP_FUNCTIONS = {
 }
 
 
-@dataclass
-class NullableOperation:
-    """
-    Nullable operations are operations that are passed as a pointer that can be null.
-    """
 
-    send: bool
-    recv: bool
-    parameter: Parameter
-    ptr: Pointer
-
-    def client_rpc_write(self, f):
-        if not self.send:
-            return
-        f.write(
-            "        rpc_write(conn, &{param_name}, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
-        )
-
-        f.write(
-            "        ({param_name} != nullptr && rpc_write(conn, {param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                # void is treated differently from non void pointer types
-                base_type=(
-                    self.ptr.format()
-                    if self.ptr.ptr_to.format() == "const void"
-                    else self.ptr.ptr_to.format()
-                ),
-            )
-        )
-
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, cudaMemcpyDeviceToHost) < 0)\n".format(
-                name=self.parameter.name
-            )
-        )
-        f.write("      return {error};\n".format(error=error))
-
-    @property
-    def server_declaration(self) -> str:
-        c = self.ptr.ptr_to.const
-        self.ptr.ptr_to.const = False
-        # void is treated differently from non void pointer types
-        s = (
-            f"    {self.ptr.format()} {self.parameter.name}_null_check;\n"
-            + f"""    {self.ptr.format() if self.ptr.ptr_to.format() == "void" else self.ptr.ptr_to.format()} {self.parameter.name};\n"""
-        )
-        self.ptr.ptr_to.const = c
-        return s
-
-    def server_rpc_read(self, f):
-        if not self.send:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
-        )
-        f.write(
-            "        ({param_name}_null_check && rpc_read(conn, &{param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                # void is treated differently from non void pointer types
-                base_type=(
-                    self.ptr.format()
-                    if self.ptr.ptr_to.format() == "const void"
-                    else self.ptr.ptr_to.format()
-                ),
-            )
-        )
-
-    @property
-    def server_reference(self) -> str:
-        return f"{self.parameter.name}_null_check ? &{self.parameter.name} : nullptr"
-
-    def server_rpc_write(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_write(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
-        )
-        f.write(
-            "        ({param_name}_null_check && rpc_write(conn, &{param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                base_type=self.ptr.ptr_to.format(),
-            )
-        )
-
-    def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
-        )
-        f.write(
-            "        ({param_name}_null_check && rpc_read(conn, {param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                base_type=self.ptr.ptr_to.format(),
-            )
-        )
-
-
-@dataclass
-class ArrayOperation:
-    """
-    Array operations are operations that are passed as a pointer to an array.
-    """
-
-    send: bool
-    recv: bool
-    iter: bool
-    parameter: Parameter
-    ptr: Pointer
-    # if int, it's a constant length, if Parameter, it's a variable length.
-    length: Union[int, Parameter]
-
-    @property
-    def is_void_bytes(self) -> bool:
-        return self.ptr.ptr_to.format() in ("void", "const void")
-
-    def byte_count_expr(self) -> str:
-        if isinstance(self.length, int):
-            return str(self.length)
-        if isinstance(self.length.type, Pointer):
-            return f"*{self.length.name}"
-        return self.length.name
-
-    def element_count_expr(self) -> str:
-        if isinstance(self.length, int):
-            return str(self.length)
-        if isinstance(self.length.type, Pointer):
-            return f"*{self.length.name}"
-        return self.length.name
-
-    def transfer_size_expr(self) -> str:
-        if self.is_void_bytes:
-            return self.byte_count_expr()
-        return f"{self.element_count_expr()} * sizeof({self.ptr.ptr_to.format()})"
-
-    def mutable_ptr_format(self) -> str:
-        c = self.ptr.ptr_to.const
-        self.ptr.ptr_to.const = False
-        result = self.ptr.format()
-        self.ptr.ptr_to.const = c
-        return result
-
-    def client_rpc_write(self, f):
-        if self.iter:
-            loop_template = """
-                [=]() -> bool {{
-                    for (size_t i = 0; i < {length}; ++i) {{
-                        if (rpc_write(0, &{param_name}[i], sizeof({param_type})) < 0) {{
-                            printf("Failed to write Dependency[%zu]\\n", i);
-                            return false;
-                        }}
-                    }}
-                    return true;
-                }}() == false ||
-                """.strip()
-
-            f.write(loop_template.format(
-                length=self.length.name,
-                param_type=self.ptr.ptr_to.format(),
-                param_name=self.parameter.name,
-            ))
-            return
-
-        if not self.send:
-            return
-        if isinstance(self.length, int):
-            f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
-            )
-        # array length operations are handled differently than char
-        elif isinstance(self.ptr, Array):
-            f.write(
-                "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    param_type=self.ptr.array_of.format(),
-                )
-            )
-        else:
-            f.write(
-                "        ({size} != 0 && {param_name} == nullptr) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-            f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
-    def client_prepare_rpc_read(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        (lupine_prepare_host_range_write({param_name}, {size}), false) ||\n".format(
-                param_name=self.parameter.name,
-                size=self.transfer_size_expr(),
-            )
-        )
-
-    def client_post_rpc_read_success(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "    if (return_value == CUDA_SUCCESS) lupine_mark_host_range_clean({param_name}, {size});\n".format(
-                param_name=self.parameter.name,
-                size=self.transfer_size_expr(),
-            )
-        )
-
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                name=self.parameter.name, direction=direction
-            )
-        )
-        f.write("      return {error};\n".format(error=error))
-
-        if isinstance(self.length, int):
-            f.write(
-                "    for (int i = 0; i < {name} && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                    param=self.parameter.name, name=self.length
-                )
-            )
-            f.write(
-                "      if (maybe_copy_unified_arg(conn, (void*)&{name}[i], {direction}) < 0 )\n".format(
-                    name=self.parameter.name, direction=direction
-                )
-            )
-            f.write("        return {error};\n".format(error=error))
-
-            return
-
-        if hasattr(self.length.type, "ptr_to"):
-            # need to cast the int a bit differently here
-            f.write(
-                "    for (int i = 0; i < static_cast<int>(*{name}) && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                    param=self.parameter.name, name=self.length.name
-                )
-            )
-            f.write(
-                "      if (maybe_copy_unified_arg(conn, (void*)&{name}[i], {direction}) < 0)\n".format(
-                    name=self.parameter.name, direction=direction
-                )
-            )
-            f.write("        return {error};\n".format(error=error))
-        else:
-            if hasattr(self.parameter.type, "ptr_to"):
-                f.write(
-                    "    for (int i = 0; i < static_cast<int>({name}) && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                        param=self.parameter.name, name=self.length.name
-                    )
-                )
-                f.write(
-                    "      if (maybe_copy_unified_arg(conn, (void*)&{name}[i], {direction}) < 0)\n".format(
-                        name=self.parameter.name, direction=direction
-                    )
-                )
-                f.write("        return {error};\n".format(error=error))
-            else:
-                f.write(
-                    "    for (int i = 0; i < static_cast<int>({name}) && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                        param=self.parameter.name, name=self.length.name
-                    )
-                )
-                f.write(
-                    "      if (maybe_copy_unified_arg(conn, (void*){name}[i], {direction}) < 0)\n".format(
-                        name=self.parameter.name, direction=direction
-                    )
-                )
-                f.write("        return {error};\n".format(error=error))
-
-    @property
-    def server_declaration(self) -> str:
-        if isinstance(self.ptr, Array):
-            c = self.ptr.array_of.const
-            self.ptr.array_of.const = False
-            s = f"    {self.ptr.array_of.format()}* {self.parameter.name} = nullptr;\n"
-            self.ptr.array_of.const = c
-        elif self.iter:
-            c = self.ptr.ptr_to.const
-            self.ptr.ptr_to.const = False
-            s = f"    std::vector<{self.ptr.ptr_to.format()}> {self.parameter.name};\n"
-            self.ptr.ptr_to.const = c
-        else:
-            c = self.ptr.ptr_to.const
-            self.ptr.ptr_to.const = False
-            s = (
-                f"    {self.ptr.format()} {self.parameter.name};\n"
-                f"    size_t {self.parameter.name}_size;\n"
-            )
-            self.ptr.ptr_to.const = c
-        return s
-
-    def server_rpc_read(self, f, index) -> Optional[str]:
-        if self.iter:
-            lambda_template = """
-            [=, &{param_name}]() -> bool {{
-                {param_name}.resize({length});  // Resize the dependencies vector
-                for (size_t i = 0; i < {length}; ++i) {{
-                    if (rpc_read(conn, &{param_name}[i], sizeof({param_type})) < 0) {{
-                        return false;
-                    }}
-                }}
-                return true;
-            }}() == false ||
-            """.strip()
-
-            f.write(lambda_template.format(
-                param_name=self.parameter.name,
-                length=self.length.name,
-                param_type=self.ptr.ptr_to.format(),
-            ))
-            return
-
-        if not self.send:
-            # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
-            if isinstance(self.ptr, Pointer):
-                f.write("        false)\n")
-                f.write("        goto ERROR_{index};\n".format(index=index))
-                f.write(
-                    "    {param_name} = ({server_type})malloc({size});\n".format(
-                        param_name=self.parameter.name,
-                        server_type=self.ptr.format(),
-                        size=self.transfer_size_expr(),
-                    )
-                )
-                f.write("    if(")
-                return self.parameter.name
-            return
-        elif isinstance(self.ptr, Pointer):
-            f.write("        false)\n")
-            f.write("        goto ERROR_{index};\n".format(index=index))
-            f.write(
-                "    {param_name}_size = {size};\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-            f.write(
-                "    {param_name} = ({server_type})malloc({size});\n".format(
-                    param_name=self.parameter.name,
-                    server_type=self.mutable_ptr_format(),
-                    size=f"{self.parameter.name}_size",
-                )
-            )
-            f.write(
-                "    if ({param_name}_size != 0 && {param_name} == nullptr)\n".format(
-                    param_name=self.parameter.name
-                )
-            )
-            f.write("        goto ERROR_{index};\n".format(index=index))
-            f.write("    if(\n")
-            f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=f"{self.parameter.name}_size",
-                )
-            )
-            defer = self.parameter.name
-        elif isinstance(self.length, int):
-            f.write(
-                "        rpc_read(conn, &{param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
-            )
-        elif isinstance(self.ptr, Array):
-            f.write(
-                "        rpc_read(conn, &{param_name}, sizeof({param_type}*)) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    param_type=self.ptr.array_of.format(),
-                )
-            )
-        else:
-            f.write(
-                "        rpc_read(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-        if 'defer' in locals():
-            return defer
-
-    @property
-    def server_reference(self) -> str:
-        if self.iter:
-            return f"{self.parameter.name}.data()"
-        if isinstance(self.length, int):
-            return f"{self.parameter.name}"
-        return f"({self.transfer_size_expr()} == 0 ? nullptr : {self.parameter.name})"
-
-    def server_rpc_write(self, f):
-        if not self.recv:
-            return
-        if isinstance(self.length, int):
-            f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
-            )
-        else:
-            f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
-    def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        if isinstance(self.length, int):
-            f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
-            )
-        else:
-            f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
-
-@dataclass
-class NullTerminatedOperation:
-    """
-    Null terminated operations are operations that are passed as a null terminated string.
-    """
-
-    send: bool
-    recv: bool
-    parameter: Parameter
-    ptr: Pointer
-
-    def client_rpc_write(self, f):
-        if not self.send:
-            return
-        f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
-                param_name=self.parameter.name,
-            )
-        )
-        f.write(
-            "        rpc_write(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name,
-            )
-        )
-
-    @property
-    def server_declaration(self) -> str:
-        return (
-            f"    {self.ptr.format()} {self.parameter.name};\n"
-            + f"    std::size_t {self.parameter.name}_len;\n"
-        )
-
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                name=self.parameter.name, direction=direction
-            )
-        )
-        f.write("      return {error};\n".format(error=error))
-
-    def server_rpc_read(self, f, index) -> Optional[str]:
-        if not self.send:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof(std::size_t)) < 0)\n".format(
-                param_name=self.parameter.name
-            )
-        )
-        f.write("        goto ERROR_{index};\n".format(index=index))
-        f.write(
-            "    {param_name} = ({server_type})malloc({param_name}_len);\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
-        )
-        f.write(
-            "    if (rpc_read(conn, (void *){param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name
-            )
-        )
-        return self.parameter.name
-
-    @property
-    def server_reference(self) -> str:
-        return self.parameter.name
-
-    def server_rpc_write(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
-                param_name=self.parameter.name,
-            )
-        )
-        f.write(
-            "        rpc_write(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name,
-            )
-        )
-
-    def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
-                param_name=self.parameter.name
-            )
-        )
-        f.write(
-            "        rpc_read(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name
-            )
-        )
-
-
-@dataclass
-class OpaqueTypeOperation:
-    """
-    Opaque type operations are operations that are passed as an opaque type. That is, the
-    data is written directly without any additional dereferencing.
-    """
-
-    send: bool
-    recv: bool
-    parameter: Parameter
-    type_: Union[Type, Pointer]
-
-    def is_sent_cufunction(self) -> bool:
-        type_name = self.type_.format().replace("const ", "").strip()
-        return self.send and type_name == "CUfunction"
-
-    def client_declaration(self) -> str:
-        if self.is_sent_cufunction():
-            return (
-                f"    CUfunction {self.parameter.name}_rpc = "
-                f"lupine_translate_private_function_for_rpc({self.parameter.name});\n"
-            )
-        return ""
-
-    def client_rpc_write(self, f):
-        if not self.send:
-            return
-        else:
-            param_name = (
-                f"{self.parameter.name}_rpc"
-                if self.is_sent_cufunction()
-                else self.parameter.name
-            )
-            f.write(
-                "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                    param_name=param_name,
-                    param_type=self.type_.format(),
-                )
-            )
-
-    @property
-    def server_declaration(self) -> str:
-        if isinstance(self.type_, Pointer) and self.recv:
-            return f"    {self.type_.ptr_to.format()} {self.parameter.name};\n"
-        # ensure we don't have a const struct, otherwise we can't initialise it properly; ex: "const cudnnTensorDescriptor_t xDesc;" is invalid...
-        # but "const cudnnTensorDescriptor_t *xDesc" IS valid. This subtle change carries reprecussions.
-        elif (
-            "const " in self.type_.format()
-            and "void" not in self.type_.format()
-            and "*" not in self.type_.format()
-        ):
-            return f"   {self.type_.format().replace('const', '')} {self.parameter.name};\n"
-        else:
-            return f"    {self.type_.format()} {self.parameter.name};\n"
-
-    def client_unified_copy(self, f, direction, error):
-        if isinstance(self.type_, Pointer):
-            f.write(
-                "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                    name=self.parameter.name, direction=direction
-                )
-            )
-            f.write("      return {error};\n".format(error=error))
-        else:
-            f.write(
-                "    if (maybe_copy_unified_arg(conn, (void*)&{name}, {direction}) < 0)\n".format(
-                    name=self.parameter.name, direction=direction
-                )
-            )
-            f.write("      return {error};\n".format(error=error))
-
-    def server_rpc_read(self, f):
-        if not self.send:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.format(),
-            )
-        )
-
-    @property
-    def server_reference(self) -> str:
-        if self.recv:
-            return f"&{self.parameter.name}"
-        return self.parameter.name
-
-    def server_rpc_write(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.format(),
-            )
-        )
-
-    def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.format(),
-            )
-        )
-
-
-@dataclass
-class DereferenceOperation:
-    """
-    Opaque type operations are operations that are passed as an opaque type. That is, the
-    data is written directly without any additional dereferencing.
-    """
-
-    send: bool
-    recv: bool
-    parameter: Parameter
-    type_: Pointer
-
-    def client_rpc_write(self, f):
-        if not self.send:
-            return
-        f.write(
-            "        rpc_write(conn, {param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
-        )
-
-    @property
-    def server_declaration(self) -> str:
-        c = self.type_.ptr_to.const
-        self.type_.ptr_to.const = False
-        result = f"    {self.type_.ptr_to.format()} {self.parameter.name};\n"
-        self.type_.ptr_to.const = c
-        return result
-
-    def server_rpc_read(self, f):
-        if not self.send:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
-        )
-
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                name=self.parameter.name, direction=direction
-            )
-        )
-        f.write("      return {error};\n".format(error=error))
-
-    @property
-    def server_reference(self) -> str:
-        return f"&{self.parameter.name}"
-
-    def server_rpc_write(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
-        )
-
-    def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        # if this parameter is recv only then dereference it.
-        f.write(
-            "        rpc_read(conn, {param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
-        )
-
-
-Operation = Union[
-    NullableOperation,
-    ArrayOperation,
-    NullTerminatedOperation,
-    OpaqueTypeOperation,
-    DereferenceOperation,
-]
-
-
-@dataclass
-class OwnerAnnotation:
-    kind: str
-    parameter: Parameter
-
-
-@dataclass
-class FunctionAnnotationMetadata:
-    operations: list[Operation]
-    disabled: bool = False
-    routing_kind: Optional[str] = None
-    routing_parameter: Optional[Parameter] = None
-    record_owners: list[OwnerAnnotation] = None
-
-    def __post_init__(self):
-        if self.record_owners is None:
-            self.record_owners = []
+def annotation_param(params: list[Parameter], name: str) -> Parameter:
+    try:
+        return next(p for p in params if p.name == name)
+    except StopIteration:
+        raise NotImplementedError(f"Parameter {name} not found")
 
 
 def infer_routing_key(
@@ -942,6 +953,9 @@ def parse_annotation(
 ) -> FunctionAnnotationMetadata:
     operations: list[Operation] = []
     metadata = FunctionAnnotationMetadata(operations=operations)
+    # @deeparray <param> <array_member> <count_member> entries, grouped by the
+    # struct-pointer param they describe (see DeepStructOperation).
+    deep_arrays: dict[str, list[tuple[str, str]]] = {}
 
     if not annotation:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
@@ -966,34 +980,47 @@ def parse_annotation(
                 continue
             metadata.routing_kind = parts[1].upper()
             if len(parts) >= 3:
-                try:
-                    metadata.routing_parameter = next(
-                        p for p in params if p.name == parts[2]
-                    )
-                except StopIteration:
-                    raise NotImplementedError(
-                        f"Routing parameter {parts[2]} not found"
-                    )
+                metadata.routing_parameter = annotation_param(params, parts[2])
             continue
         if line.startswith("@recordowner"):
             parts = line.split()
             if len(parts) < 3:
                 continue
-            try:
-                param = next(p for p in params if p.name == parts[2])
-            except StopIteration:
-                raise NotImplementedError(f"Owner parameter {parts[2]} not found")
+            param = annotation_param(params, parts[2])
             metadata.record_owners.append(OwnerAnnotation(parts[1].upper(), param))
+            continue
+        if line.startswith("@crossservercopy"):
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            stream_arg = next(
+                (arg for arg in parts[4:] if arg.startswith("STREAM:")), None
+            )
+            metadata.cross_server_copy = CrossServerCopyAnnotation(
+                dst=annotation_param(params, parts[1]),
+                src=annotation_param(params, parts[2]),
+                bytes=annotation_param(params, parts[3]),
+                stream=(
+                    annotation_param(params, stream_arg.split(":", 1)[1])
+                    if stream_arg is not None
+                    else None
+                ),
+                async_="ASYNC" in parts[4:],
+            )
+            continue
+        if line.startswith("@deeparray"):
+            # @deeparray <param> <array_member> <count_member>
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            deep_arrays.setdefault(parts[1], []).append((parts[2], parts[3]))
             continue
         if line.startswith("@param"):
             parts = line.split()
 
             if len(parts) < 3:
                 continue
-            try:
-                param = next(p for p in params if p.name == parts[1])
-            except StopIteration:
-                raise NotImplementedError(f"Parameter {parts[1]} not found")
+            param = annotation_param(params, parts[1])
             args = parts[3:]
             send = parts[2] == "SEND_ONLY" or parts[2] == "SEND_RECV"
             recv = parts[2] == "RECV_ONLY" or parts[2] == "SEND_RECV"
@@ -1034,16 +1061,29 @@ def parse_annotation(
                     length_param = next(
                         p for p in params if p.name == length_arg.split(":")[1]
                     )
-                    operations.append(
-                        ArrayOperation(
-                            send=send,
-                            recv=recv,
-                            parameter=param,
-                            ptr=param.type,
-                            length=length_param,
-                            iter=False
+                    if "OPTIONAL" in args:
+                        # optional out-array sized by an in/out count param (the
+                        # cuGraphGetNodes query pattern); linked to its count in
+                        # the post-pass below.
+                        operations.append(
+                            OptionalArrayOperation(
+                                parameter=param,
+                                ptr=param.type,
+                                count=length_param,
+                            )
                         )
-                    )
+                    else:
+                        operations.append(
+                            ArrayOperation(
+                                send=send,
+                                recv=recv,
+                                parameter=param,
+                                ptr=param.type,
+                                length=length_param,
+                                iter=False,
+                                compressible="COMPRESSIBLE" in args,
+                            )
+                        )
                 elif size_arg:
                     # if it has a size, it's an array operation with constant length
                     operations.append(
@@ -1072,6 +1112,10 @@ def parse_annotation(
                         )
                     )
                 elif null_terminated:
+                    if recv:
+                        raise NotImplementedError(
+                            "NULL_TERMINATED parameters cannot be received; use LENGTH or SIZE for output buffers"
+                        )
                     # if it's null terminated, it's a null terminated operation
                     operations.append(
                         NullTerminatedOperation(
@@ -1224,6 +1268,40 @@ def parse_annotation(
             )
         else:
             raise NotImplementedError("Unknown type")
+    # Promote the count param of any optional out-array to an
+    # InOutCountOperation. Several arrays may share one count (cuGraphGetEdges);
+    # the first one is the anchor whose presence the client uses to decide
+    # between a count-only query and a fill.
+    optional_ops = [op for op in operations if isinstance(op, OptionalArrayOperation)]
+    if optional_ops:
+        anchors: dict[str, str] = {}
+        for op in optional_ops:
+            anchors.setdefault(op.count.name, op.parameter.name)
+        for count_name, anchor in anchors.items():
+            for i, op in enumerate(operations):
+                if op.parameter.name == count_name and isinstance(
+                    op, DereferenceOperation
+                ):
+                    operations[i] = InOutCountOperation(
+                        send=True,
+                        recv=True,
+                        parameter=op.parameter,
+                        anchor=anchor,
+                    )
+                    break
+    # Promote any param with @deeparray entries to a DeepStructOperation,
+    # inheriting the send/recv direction from its @param line.
+    for pname, members in deep_arrays.items():
+        for i, op in enumerate(operations):
+            if op.parameter.name == pname:
+                operations[i] = DeepStructOperation(
+                    send=getattr(op, "send", True),
+                    recv=getattr(op, "recv", False),
+                    parameter=op.parameter,
+                    ptr=op.parameter.type,
+                    members=members,
+                )
+                break
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
     return metadata
@@ -1477,6 +1555,46 @@ def main():
                 )
             )
 
+    with open("gen_nvml_client.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function in NVML_CODEGEN_FUNCTIONS:
+            f.write(
+                'extern "C" nvmlReturn_t {name}({params}) {{\n'.format(
+                    name=function["name"],
+                    params=function["params"],
+                )
+            )
+            for line in function["client_body"].splitlines():
+                if line:
+                    f.write(f"  {line}\n")
+                else:
+                    f.write("\n")
+            f.write("}\n\n")
+
+    with open("gen_nvml_server.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function in NVML_CODEGEN_FUNCTIONS:
+            f.write(
+                "int handle_{name}(conn_t *conn) {{\n".format(
+                    name=function["name"],
+                )
+            )
+            for line in function["server_body"].splitlines():
+                if line:
+                    f.write(f"  {line}\n")
+                else:
+                    f.write("\n")
+            f.write("}\n\n")
+
+    with open("gen_nvml_server.h", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function in NVML_CODEGEN_FUNCTIONS:
+            f.write(
+                "int handle_{name}(conn_t *conn);\n".format(
+                    name=function["name"],
+                )
+            )
+
     with open("gen_client.cpp", "w") as f:
         f.write(
             "#include <cuda.h>\n"
@@ -1496,7 +1614,10 @@ def main():
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
-            "extern void rpc_close(conn_t *conn);\n\n"
+            "extern void rpc_close(conn_t *conn);\n"
+            'extern "C" void lupine_deep_cache_reset(const void *key);\n'
+            'extern "C" void *lupine_deep_cache_add(const void *key, '
+            "size_t bytes);\n\n"
             "struct lupine_route {\n"
             "    int kind;\n"
             "    conn_t *conn;\n"
@@ -1546,9 +1667,13 @@ def main():
             'extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
-            'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n\n'
-            'extern "C" CUresult lupine_cuArrayCreate_v2_safe(CUarray *pHandle, const CUDA_ARRAY_DESCRIPTOR *pAllocateArray);\n'
-            'extern "C" CUresult lupine_cuArray3DCreate_v2_safe(CUarray *pHandle, const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray);\n'
+            'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
+            'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
+            'extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,\n'
+            '                                                   CUdeviceptr srcDevice,\n'
+            '                                                   size_t ByteCount,\n'
+            '                                                   CUstream hStream,\n'
+            '                                                   bool async);\n\n'
             'extern "C" CUresult lupine_cuLinkCreate_v2_safe(unsigned int numOptions, CUjit_option *options, void **optionValues, CUlinkState *stateOut);\n'
             'extern "C" CUresult lupine_cuLinkAddData_v2_safe(CUlinkState state, CUjitInputType type, void *data, size_t size, const char *name, unsigned int numOptions, CUjit_option *options, void **optionValues);\n'
             'extern "C" CUresult lupine_cuLinkAddFile_v2_safe(CUlinkState state, CUjitInputType type, const char *path, unsigned int numOptions, CUjit_option *options, void **optionValues);\n'
@@ -1616,8 +1741,6 @@ def main():
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
                 "cuMemFree_v2": "lupine_cuMemFree_v2_safe(dptr)",
                 "cuMemAllocManaged": "lupine_cuMemAllocManaged_safe(dptr, bytesize, flags)",
-                "cuArrayCreate_v2": "lupine_cuArrayCreate_v2_safe(pHandle, pAllocateArray)",
-                "cuArray3DCreate_v2": "lupine_cuArray3DCreate_v2_safe(pHandle, pAllocateArray)",
                 "cuLinkCreate_v2": "lupine_cuLinkCreate_v2_safe(numOptions, options, optionValues, stateOut)",
                 "cuLinkAddData_v2": "lupine_cuLinkAddData_v2_safe(state, type, data, size, name, numOptions, options, optionValues)",
                 "cuLinkAddFile_v2": "lupine_cuLinkAddFile_v2_safe(state, type, path, numOptions, options, optionValues)",
@@ -1685,6 +1808,26 @@ def main():
                     route_expr=client_routing_route_expr(metadata)
                 )
             )
+            if metadata.cross_server_copy is not None:
+                copy = metadata.cross_server_copy
+                stream_arg = copy.stream.name if copy.stream is not None else "nullptr"
+                async_arg = "true" if copy.async_ else "false"
+                f.write(
+                    "    if (!lupine_deviceptrs_share_route({dst}, {src})) {{\n".format(
+                        dst=copy.dst.name,
+                        src=copy.src.name,
+                    )
+                )
+                f.write(
+                    "        return lupine_cuMemcpyDtoD_via_client({dst}, {src}, {bytes}, {stream}, {async_});\n".format(
+                        dst=copy.dst.name,
+                        src=copy.src.name,
+                        bytes=copy.bytes.name,
+                        stream=stream_arg,
+                        async_=async_arg,
+                    )
+                )
+                f.write("    }\n")
             f.write("    if (lupine_route_is_local(route)) {\n")
             f.write(
                 "        using real_fn_t = {return_type} (*)({params});\n".format(
@@ -1721,6 +1864,12 @@ def main():
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
+                    f.write(operation.client_declaration())
+                if (
+                    isinstance(operation, InOutCountOperation)
+                    or isinstance(operation, OptionalArrayOperation)
+                    or isinstance(operation, DeepStructOperation)
+                ):
                     f.write(operation.client_declaration())
 
             # compute the strlen's for null-terminated operations.
@@ -1873,7 +2022,7 @@ def main():
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
         )
-        for function, annotation, operations, disabled, _ in functions_with_annotations:
+        for function, annotation, operations, disabled, metadata in functions_with_annotations:
             if disabled:
                 continue
 
@@ -1904,8 +2053,10 @@ def main():
 
             f.write("    if (\n")
             for operation in operations:
-                if isinstance(operation, NullTerminatedOperation) or isinstance(
-                    operation, ArrayOperation
+                if (
+                    isinstance(operation, NullTerminatedOperation)
+                    or isinstance(operation, ArrayOperation)
+                    or isinstance(operation, OptionalArrayOperation)
                 ):
                     if error := operation.server_rpc_read(f, len(defers)):
                         defers.append(error)
