@@ -2,6 +2,7 @@
 #define RPC_H
 
 #include "lupine_platform.h"
+#include <stdint.h>
 
 // Uncompressed block size for the optional LZ4 payload framing. The framed
 // bytes are produced lazily, one block at a time, by the HTTP/2 transport
@@ -46,6 +47,20 @@ extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
+
+extern int rpc_kernel_param_payload_size(uint32_t count, const size_t *sizes,
+                                         size_t *payload_size);
+extern int rpc_kernel_param_storage_size(uint32_t count, const size_t *offsets,
+                                         const size_t *sizes,
+                                         size_t *storage_size);
+extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
+                                         const size_t *sizes,
+                                         void *const *values);
+extern int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
+                                        const size_t *offsets,
+                                        const size_t *sizes,
+                                        size_t payload_size, void *storage,
+                                        size_t storage_size, void **values);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, struct iovec *iov,

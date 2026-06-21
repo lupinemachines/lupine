@@ -40,6 +40,8 @@ int handle_manual_cuFuncGetParamLayout(conn_t *conn);
 int handle_manual_cuLaunchKernel(conn_t *conn);
 int handle_manual_cuLaunchCooperativeKernel(conn_t *conn);
 int handle_manual_cuGraphAddKernelNode(conn_t *conn);
+int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn);
+int handle_manual_cuGraphKernelNodeSetParams(conn_t *conn);
 int handle_manual_cuGraphAddMemcpyNode(conn_t *conn);
 int handle_manual_cuGraphAddMemsetNode(conn_t *conn);
 int handle_manual_cuGraphAddHostNode(conn_t *conn);

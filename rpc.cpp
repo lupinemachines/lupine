@@ -195,6 +195,75 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
   return 0;
 }
 
+int rpc_kernel_param_payload_size(uint32_t count, const size_t *sizes,
+                                  size_t *payload_size) {
+  if (payload_size == nullptr || (count != 0 && sizes == nullptr)) {
+    return -1;
+  }
+  *payload_size = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    *payload_size += sizes[i];
+  }
+  return 0;
+}
+
+int rpc_kernel_param_storage_size(uint32_t count, const size_t *offsets,
+                                  const size_t *sizes, size_t *storage_size) {
+  if (storage_size == nullptr ||
+      (count != 0 && (offsets == nullptr || sizes == nullptr))) {
+    return -1;
+  }
+  *storage_size = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    *storage_size = std::max(*storage_size, offsets[i] + sizes[i]);
+  }
+  return 0;
+}
+
+int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
+                                  const size_t *sizes, void *const *values) {
+  if (conn == nullptr ||
+      (count != 0 && (sizes == nullptr || values == nullptr))) {
+    return -1;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    if (values[i] == nullptr || rpc_write(conn, values[i], sizes[i]) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
+                                 const size_t *offsets, const size_t *sizes,
+                                 size_t payload_size, void *storage,
+                                 size_t storage_size, void **values) {
+  if (conn == nullptr ||
+      (count != 0 && (offsets == nullptr || sizes == nullptr ||
+                      storage == nullptr || values == nullptr))) {
+    return -1;
+  }
+
+  size_t expected_payload_size = 0;
+  if (rpc_kernel_param_payload_size(count, sizes, &expected_payload_size) < 0 ||
+      payload_size != expected_payload_size) {
+    return -1;
+  }
+
+  auto *bytes = static_cast<unsigned char *>(storage);
+  for (uint32_t i = 0; i < count; ++i) {
+    if (offsets[i] + sizes[i] > storage_size) {
+      return -1;
+    }
+    unsigned char *dst = bytes + offsets[i];
+    if (sizes[i] != 0 && rpc_read(conn, dst, sizes[i]) < 0) {
+      return -1;
+    }
+    values[i] = dst;
+  }
+  return 0;
+}
+
 // rpc_write_framed queues a payload that the transport LZ4-frames lazily,
 // one block at a time, as the bytes are streamed to the socket. The caller's
 // buffer must stay valid until rpc_write_end() returns, exactly like

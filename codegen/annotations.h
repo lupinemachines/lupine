@@ -2304,6 +2304,7 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name);
 /**
+ * @disabled client - manual client handles JIT option values
  * @param numOptions SEND_ONLY
  * @param options SEND_RECV
  * @param optionValues SEND_RECV
@@ -2312,6 +2313,7 @@ CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
 CUresult cuLinkCreate_v2(unsigned int numOptions, CUjit_option *options,
                          void **optionValues, CUlinkState *stateOut);
 /**
+ * @disabled client - manual client handles JIT option values and input bytes
  * @param state SEND_ONLY
  * @param type SEND_ONLY
  * @param data SEND_ONLY
@@ -2326,6 +2328,7 @@ CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type, void *data,
                           unsigned int numOptions, CUjit_option *options,
                           void **optionValues);
 /**
+ * @disabled client - manual client handles JIT option values and file bytes
  * @param state SEND_ONLY
  * @param type SEND_ONLY
  * @param path SEND_ONLY NULL_TERMINATED
@@ -2337,12 +2340,14 @@ CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
                           const char *path, unsigned int numOptions,
                           CUjit_option *options, void **optionValues);
 /**
+ * @disabled client - manual client owns returned cubin storage
  * @param state SEND_ONLY
  * @param cubinOut RECV_ONLY
  * @param sizeOut RECV_ONLY
  */
 CUresult cuLinkComplete(CUlinkState state, void **cubinOut, size_t *sizeOut);
 /**
+ * @disabled client - manual client clears JIT state
  * @param state SEND_ONLY
  */
 CUresult cuLinkDestroy(CUlinkState state);
@@ -2494,6 +2499,7 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
                             size_t WidthInBytes, size_t Height,
                             unsigned int ElementSizeBytes);
 /**
+ * @disabled client - manual client handles managed host alias
  * @param dptr SEND_ONLY
  */
 CUresult cuMemFree_v2(CUdeviceptr dptr);
@@ -2538,6 +2544,7 @@ CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
  */
 CUresult cuMemHostGetFlags(unsigned int *pFlags, void *p);
 /**
+ * @disabled client - manual client creates managed host alias
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  * @param flags SEND_ONLY
@@ -2731,7 +2738,8 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
 CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
                               size_t ByteCount, CUstream hStream);
 /**
- * @disabled - manual client sends destination host pointer for capture callbacks
+ * @disabled - manual client sends destination host pointer for capture
+ * callbacks
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
  * @param dstHost RECV_ONLY LENGTH:ByteCount
@@ -3250,6 +3258,7 @@ CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
 CUresult cuPointerSetAttribute(const void *value, CUpointer_attribute attribute,
                                CUdeviceptr ptr);
 /**
+ * @disabled client - manual client handles managed host aliases
  * @param numAttributes SEND_ONLY
  * @param attributes SEND_RECV
  * @param data SEND_RECV
@@ -3617,6 +3626,7 @@ CUresult cuLaunchKernel(CUfunction f, unsigned int gridDimX,
 CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
                           void **kernelParams, void **extra);
 /**
+ * @disabled client - manual kernel parameter packing
  * @param f SEND_ONLY
  * @param gridDimX SEND_ONLY
  * @param gridDimY SEND_ONLY
@@ -3718,7 +3728,7 @@ CUresult cuParamSetTexRef(CUfunction hfunc, int texunit, CUtexref hTexRef);
  */
 CUresult cuGraphCreate(CUgraph *phGraph, unsigned int flags);
 /**
- * @disabled - manual kernel parameter packing
+ * @disabled both - manual kernel parameter packing
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param dependencies SEND_RECV
@@ -3730,12 +3740,14 @@ CUresult cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
                                  size_t numDependencies,
                                  const CUDA_KERNEL_NODE_PARAMS *nodeParams);
 /**
+ * @disabled both - manual kernel parameter packing
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_RECV
  */
 CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
                                        CUDA_KERNEL_NODE_PARAMS *nodeParams);
 /**
+ * @disabled both - manual kernel parameter packing
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
  */
@@ -4124,6 +4136,7 @@ cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
  */
 CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
 /**
+ * @disabled both - manual kernel parameter packing
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
@@ -6081,7 +6094,7 @@ cudaError_t cudaGraphCreate(cudaGraph_t *pGraph, unsigned int flags);
 
 /**
  * @DISABLED
- * @param numDependencies SEND_ONLY 
+ * @param numDependencies SEND_ONLY
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param pDependencies SEND_ONLY ITER:numDependencies
@@ -6322,7 +6335,7 @@ cudaError_t cudaGraphAddEmptyNode(cudaGraphNode_t *pGraphNode,
                                   const cudaGraphNode_t *pDependencies,
                                   size_t numDependencies);
 /**
- * @param numDependencies SEND_ONLY 
+ * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
  * @param pDependencies SEND_ONLY ITER:numDependencies
