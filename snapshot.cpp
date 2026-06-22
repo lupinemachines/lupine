@@ -479,9 +479,8 @@ int run_criu_restore(const std::string &images_dir, const std::string &log_file,
     signal(SIGCHLD, SIG_DFL);
     execlp("criu", "criu", "restore", "--unprivileged", "-v4", "--images-dir",
            images_dir.c_str(), "--restore-detached", "--shell-job",
-           "--tcp-close", "--file-locks", "--inherit-fd",
-           inherit_arg.c_str(), "--log-file", log_file.c_str(),
-           static_cast<char *>(nullptr));
+           "--file-locks", "--inherit-fd", inherit_arg.c_str(), "--log-file",
+           log_file.c_str(), static_cast<char *>(nullptr));
     _exit(127);
   }
   int status = 0;
