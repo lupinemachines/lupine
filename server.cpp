@@ -22,28 +22,6 @@
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
 
-static constexpr int LUPINE_RPC_cuFuncGetParamLayout = 1000001;
-static constexpr int LUPINE_RPC_cuCtxCreate_v2 = 1000002;
-static constexpr int LUPINE_RPC_cuMemPoolSetAttribute = 1000003;
-static constexpr int LUPINE_RPC_cuMemPoolGetAttribute = 1000004;
-static constexpr int LUPINE_RPC_cuLaunchHostFunc = 1000005;
-static constexpr int LUPINE_RPC_cuPointerGetAttribute = 1000006;
-static constexpr int LUPINE_RPC_cuGetExportTableMetadata = 1000007;
-static constexpr int LUPINE_RPC_cuPrivateGetModuleNode = 1000008;
-static constexpr int LUPINE_RPC_cuPointerGetAttributes = 1000009;
-static constexpr int LUPINE_RPC_cuStreamAddCallback = 1000010;
-static constexpr int LUPINE_RPC_cuGraphConditionalHandleCreate = 1000011;
-static constexpr int LUPINE_RPC_cuGraphAddNode_v2 = 1000012;
-static constexpr int LUPINE_RPC_cuStreamBeginCaptureToGraph = 1000013;
-static constexpr int LUPINE_RPC_cuStreamUpdateCaptureDependencies_v2 = 1000014;
-static constexpr int LUPINE_RPC_cuStreamGetCaptureInfo_v3 = 1000015;
-static constexpr int LUPINE_RPC_cuDeviceGetGraphMemAttribute = 1000016;
-static constexpr int LUPINE_RPC_cuDeviceSetGraphMemAttribute = 1000017;
-static constexpr int LUPINE_RPC_cuLinkAddData_v2 = 1000018;
-static constexpr int LUPINE_RPC_cuGraphGetEdges = 1000019;
-static constexpr int LUPINE_RPC_cuGraphNodeGetDependencies = 1000020;
-static constexpr int LUPINE_RPC_cuGraphNodeGetDependentNodes = 1000021;
-
 static void lupine_log_manual_handler_error(const char *name) {
   LUPINE_LOG_ERROR("Error handling manual " << name << " request.");
 }
@@ -67,18 +45,17 @@ lupine_manual_handlers() {
        {handle_manual_cuModuleLoadData, "cuModuleLoadData"}},
       {RPC_cuLibraryLoadData,
        {handle_manual_cuLibraryLoadData, "cuLibraryLoadData"}},
-      {LUPINE_RPC_cuCtxCreate_v2,
-       {handle_manual_cuCtxCreate_v2, "cuCtxCreate_v2"}},
-      {LUPINE_RPC_cuMemPoolSetAttribute,
+      {RPC_cuCtxCreate_v2, {handle_manual_cuCtxCreate_v2, "cuCtxCreate_v2"}},
+      {RPC_cuMemPoolSetAttribute,
        {handle_manual_cuMemPoolSetAttribute, "cuMemPoolSetAttribute"}},
-      {LUPINE_RPC_cuMemPoolGetAttribute,
+      {RPC_cuMemPoolGetAttribute,
        {handle_manual_cuMemPoolGetAttribute, "cuMemPoolGetAttribute"}},
-      {LUPINE_RPC_cuPointerGetAttribute,
+      {RPC_cuPointerGetAttribute,
        {handle_manual_cuPointerGetAttribute, "cuPointerGetAttribute"}},
-      {LUPINE_RPC_cuPointerGetAttributes,
+      {RPC_cuPointerGetAttributes,
        {handle_manual_cuPointerGetAttributes, "cuPointerGetAttributes"}},
       {RPC_cuLinkCreate_v2, {handle_manual_cuLinkCreate_v2, "cuLinkCreate_v2"}},
-      {LUPINE_RPC_cuLinkAddData_v2,
+      {RPC_cuLinkAddData_v2,
        {handle_manual_cuLinkAddData_v2, "cuLinkAddData_v2"}},
       {RPC_cuLinkAddFile_v2,
        {handle_manual_cuLinkAddFile_v2, "cuLinkAddFile_v2"}},
@@ -90,10 +67,10 @@ lupine_manual_handlers() {
        {handle_manual_cuMemcpy2DUnaligned_v2, "cuMemcpy2DUnaligned_v2"}},
       {RPC_cuMemcpy2DAsync_v2,
        {handle_manual_cuMemcpy2DAsync_v2, "cuMemcpy2DAsync_v2"}},
-      {LUPINE_RPC_cuDeviceGetGraphMemAttribute,
+      {RPC_cuDeviceGetGraphMemAttribute,
        {handle_manual_cuDeviceGetGraphMemAttribute,
         "cuDeviceGetGraphMemAttribute"}},
-      {LUPINE_RPC_cuDeviceSetGraphMemAttribute,
+      {RPC_cuDeviceSetGraphMemAttribute,
        {handle_manual_cuDeviceSetGraphMemAttribute,
         "cuDeviceSetGraphMemAttribute"}},
       {RPC_cuLibraryGetModule,
@@ -133,12 +110,12 @@ lupine_manual_handlers() {
       {LUPINE_RPC_cuGraphAddNode_v2,
        {handle_manual_cuGraphAddNode, "cuGraphAddNode"}},
       {RPC_cuGraphLaunch, {handle_manual_cuGraphLaunch, "cuGraphLaunch"}},
-      {LUPINE_RPC_cuGraphGetEdges,
+      {RPC_cuGraphGetEdges_v2,
        {handle_manual_cuGraphGetEdges, "cuGraphGetEdges"}},
-      {LUPINE_RPC_cuGraphNodeGetDependencies,
+      {RPC_cuGraphNodeGetDependencies_v2,
        {handle_manual_cuGraphNodeGetDependencies,
         "cuGraphNodeGetDependencies"}},
-      {LUPINE_RPC_cuGraphNodeGetDependentNodes,
+      {RPC_cuGraphNodeGetDependentNodes_v2,
        {handle_manual_cuGraphNodeGetDependentNodes,
         "cuGraphNodeGetDependentNodes"}},
       {RPC_cuGraphHostNodeGetParams,
@@ -148,9 +125,9 @@ lupine_manual_handlers() {
       {RPC_cuGraphExecHostNodeSetParams,
        {handle_manual_cuGraphExecHostNodeSetParams,
         "cuGraphExecHostNodeSetParams"}},
-      {LUPINE_RPC_cuLaunchHostFunc,
+      {RPC_cuLaunchHostFunc,
        {handle_manual_cuLaunchHostFunc, "cuLaunchHostFunc"}},
-      {LUPINE_RPC_cuStreamAddCallback,
+      {RPC_cuStreamAddCallback,
        {handle_manual_cuStreamAddCallback, "cuStreamAddCallback"}},
       {RPC_cuEventRecord,
        {[](conn_t *conn) { return handle_manual_cuEventRecord(conn, false); },
@@ -164,7 +141,7 @@ lupine_manual_handlers() {
       {LUPINE_RPC_cuStreamBeginCaptureToGraph,
        {handle_manual_cuStreamBeginCaptureToGraph,
         "cuStreamBeginCaptureToGraph"}},
-      {LUPINE_RPC_cuStreamUpdateCaptureDependencies_v2,
+      {RPC_cuStreamUpdateCaptureDependencies_v2,
        {handle_manual_cuStreamUpdateCaptureDependencies,
         "cuStreamUpdateCaptureDependencies"}},
       {LUPINE_RPC_cuStreamGetCaptureInfo_v3,
