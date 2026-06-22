@@ -32,12 +32,8 @@ MANUAL_REMAPPINGS = [
     ("cuCtxPopCurrent", "cuCtxPopCurrent_v2"),
     ("cuCtxPushCurrent", "cuCtxPushCurrent_v2"),
     ("cuModuleGetGlobal", "cuModuleGetGlobal_v2"),
-    ("cuLinkCreate", "cuLinkCreate_v2"),
-    ("cuLinkAddData", "cuLinkAddData_v2"),
-    ("cuLinkAddFile", "cuLinkAddFile_v2"),
     ("cuMemAlloc", "cuMemAlloc_v2"),
     ("cuMemAllocPitch", "cuMemAllocPitch_v2"),
-    ("cuMemFree", "cuMemFree_v2"),
     ("cuMemcpyHtoD", "cuMemcpyHtoD_v2"),
     ("cuMemcpyHtoDAsync", "cuMemcpyHtoDAsync_v2"),
     ("cuMemcpyDtoH", "cuMemcpyDtoH_v2"),
@@ -49,7 +45,6 @@ MANUAL_REMAPPINGS = [
     ("cuMemsetD2D16", "cuMemsetD2D16_v2"),
     ("cuMemsetD2D32", "cuMemsetD2D32_v2"),
     ("cuStreamBeginCapture", "cuStreamBeginCapture_v2"),
-    ("cuGraphAddKernelNode", "cuGraphAddKernelNode_v2"),
     ("cuGraphExecUpdate", "cuGraphExecUpdate_v2"),
     ("cuMemcpy_ptds", "cuMemcpy"),
     ("cuMemcpyAsync_ptsz", "cuMemcpyAsync"),
@@ -83,7 +78,6 @@ MANUAL_REMAPPINGS = [
     ("cuLaunchHostFunc_ptsz", "cuLaunchHostFunc"),
     ("cuGraphicsMapResources_ptsz", "cuGraphicsMapResources"),
     ("cuGraphicsUnmapResources_ptsz", "cuGraphicsUnmapResources"),
-    ("cuLaunchCooperativeKernel_ptsz", "cuLaunchCooperativeKernel"),
     ("cuSignalExternalSemaphoresAsync_ptsz", "cuSignalExternalSemaphoresAsync"),
     ("cuWaitExternalSemaphoresAsync_ptsz", "cuWaitExternalSemaphoresAsync"),
     ("cuGraphInstantiateWithParams_ptsz", "cuGraphInstantiateWithParams"),
@@ -971,7 +965,7 @@ def infer_routing_key(
     return None, None
 
 
-# parses a function annotation. if disabled is encountered, returns True for short circuiting.
+# Parses a function annotation into marshalling operations and metadata.
 def parse_annotation(
     annotation: str, params: list[Parameter]
 ) -> FunctionAnnotationMetadata:
@@ -985,13 +979,22 @@ def parse_annotation(
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
         return metadata
     for line in annotation.split("\n"):
-        # we treat disabled functions a bit differently.
-        # we should record that this function is disabled so that we can create the RPC method but not the actual handler.
-        # this is so that we don't break API compatability by commenting/uncommenting functions from our annotations file.
-        if "@disabled" in line:
-            # we can return instantly; the function is disabled and we don't care about operations at this time.
-            metadata.disabled = True
-            return metadata
+        # Disabled annotations can apply to client generation, server
+        # generation, or both. Bare @disabled keeps the historical behavior
+        # by setting both scoped flags.
+        if "@disabled" in line or "@DISABLED" in line:
+            disabled_parts = line.lower().lstrip(" *").split()
+            scope = disabled_parts[1] if len(disabled_parts) > 1 else "both"
+            if scope == "client":
+                metadata.disabled_client = True
+                continue
+            elif scope == "server":
+                metadata.disabled_server = True
+                continue
+            else:
+                metadata.disabled_client = True
+                metadata.disabled_server = True
+                return metadata
         if line.startswith("/**"):
             continue
         if line.startswith("*/"):
@@ -1535,7 +1538,7 @@ def main():
     ]
 
     functions_with_annotations: list[
-        tuple[Function, Function, list[Operation], bool, FunctionAnnotationMetadata]
+        tuple[Function, Function, list[Operation], FunctionAnnotationMetadata]
     ] = []
 
     dupes = {}
@@ -1560,7 +1563,7 @@ def main():
             print(f"Error parsing annotation for {function.name}: {e}")
             continue
         functions_with_annotations.append(
-            (function, annotation, metadata.operations, metadata.disabled, metadata)
+            (function, annotation, metadata.operations, metadata)
         )
 
     annotated_names = annotated_rpc_names(annotations)
@@ -1585,7 +1588,7 @@ def main():
             emitted_macros.add(macro_name)
             f.write(f"#define {macro_name} {value}\n")
 
-        for function, _, _, _, _ in functions_with_annotations:
+        for function, _, _, _ in functions_with_annotations:
             name = function.name.format()
             write_rpc_define(f"RPC_{name}", name)
         for name in annotated_names:
@@ -1715,15 +1718,6 @@ def main():
             '                                                   size_t ByteCount,\n'
             '                                                   CUstream hStream,\n'
             '                                                   bool async);\n\n'
-            'extern "C" CUresult lupine_cuLinkCreate_v2_safe(unsigned int numOptions, CUjit_option *options, void **optionValues, CUlinkState *stateOut);\n'
-            'extern "C" CUresult lupine_cuLinkAddData_v2_safe(CUlinkState state, CUjitInputType type, void *data, size_t size, const char *name, unsigned int numOptions, CUjit_option *options, void **optionValues);\n'
-            'extern "C" CUresult lupine_cuLinkAddFile_v2_safe(CUlinkState state, CUjitInputType type, const char *path, unsigned int numOptions, CUjit_option *options, void **optionValues);\n'
-            'extern "C" CUresult lupine_cuLinkComplete_safe(CUlinkState state, void **cubinOut, size_t *sizeOut);\n'
-            'extern "C" CUresult lupine_cuLinkDestroy_safe(CUlinkState state);\n'
-            'extern "C" CUresult lupine_cuLaunchCooperativeKernel_safe(CUfunction f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream, void **kernelParams);\n'
-            'extern "C" CUresult lupine_cuGraphExecKernelNodeSetParams_v2_safe(CUgraphExec hGraphExec, CUgraphNode hNode, const CUDA_KERNEL_NODE_PARAMS *nodeParams);\n'
-            'extern "C" CUresult lupine_cuMemAllocManaged_safe(CUdeviceptr *dptr, size_t bytesize, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuMemFree_v2_safe(CUdeviceptr dptr);\n'
             'extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx);\n'
             'extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);\n'
@@ -1736,16 +1730,16 @@ def main():
             'extern "C" void lupine_invalidate_primary_context_state(CUdevice dev);\n'
             'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
-            'extern "C" CUresult lupine_cuPointerGetAttributes_safe(unsigned int numAttributes, CUpointer_attribute *attributes, void **data, CUdeviceptr ptr);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
             'extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer, CUdevice dev, CUdevice peerDev);\n'
             'extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext, unsigned int flags);\n'
             'extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);\n\n'
         )
-        for function, annotation, operations, disabled, metadata in functions_with_annotations:
-            # we don't generate client function definitions for disabled functions; only the RPC definitions.
-            if disabled:
+        for function, annotation, operations, metadata in functions_with_annotations:
+            # We don't generate client function definitions for client-disabled
+            # functions; their RPC/server definitions may still be generated.
+            if metadata.disabled_client:
                 continue
 
             joined_params = ", ".join(format_function_params(function))
@@ -1780,16 +1774,6 @@ def main():
                 "cuCtxGetCurrent": "lupine_cuCtxGetCurrent_virtual(pctx)",
                 "cuCtxGetDevice": "lupine_cuCtxGetDevice_cached(device)",
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
-                "cuMemFree_v2": "lupine_cuMemFree_v2_safe(dptr)",
-                "cuMemAllocManaged": "lupine_cuMemAllocManaged_safe(dptr, bytesize, flags)",
-                "cuLinkCreate_v2": "lupine_cuLinkCreate_v2_safe(numOptions, options, optionValues, stateOut)",
-                "cuLinkAddData_v2": "lupine_cuLinkAddData_v2_safe(state, type, data, size, name, numOptions, options, optionValues)",
-                "cuLinkAddFile_v2": "lupine_cuLinkAddFile_v2_safe(state, type, path, numOptions, options, optionValues)",
-                "cuLinkComplete": "lupine_cuLinkComplete_safe(state, cubinOut, sizeOut)",
-                "cuLinkDestroy": "lupine_cuLinkDestroy_safe(state)",
-                "cuLaunchCooperativeKernel": "lupine_cuLaunchCooperativeKernel_safe(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes, hStream, kernelParams)",
-                "cuGraphExecKernelNodeSetParams_v2": "lupine_cuGraphExecKernelNodeSetParams_v2_safe(hGraphExec, hNode, nodeParams)",
-                "cuPointerGetAttributes": "lupine_cuPointerGetAttributes_safe(numAttributes, attributes, data, ptr)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
                 "cuDeviceCanAccessPeer": "lupine_cuDeviceCanAccessPeer_multi(canAccessPeer, dev, peerDev)",
@@ -1977,8 +1961,8 @@ def main():
 
         function_by_name = {
             function.name.format(): function
-            for function, _, _, disabled, _ in functions_with_annotations
-            if not disabled
+            for function, _, _, metadata in functions_with_annotations
+            if not metadata.disabled_client
         }
         for alias, target in MANUAL_REMAPPINGS:
             if alias in function_by_name or target not in function_by_name:
@@ -2010,8 +1994,8 @@ def main():
                 f.write("#endif\n\n")
 
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
-        for function, _, _, disabled, _ in functions_with_annotations:
-            if disabled:
+        for function, _, _, metadata in functions_with_annotations:
+            if metadata.disabled_client:
                 continue
 
             f.write(
@@ -2022,8 +2006,8 @@ def main():
         # write manual overrides
         function_names = set(
             f.name.format()
-            for f, _, _, disabled, _ in functions_with_annotations
-            if not disabled
+            for f, _, _, metadata in functions_with_annotations
+            if not metadata.disabled_client
         )
         for x, y in MANUAL_REMAPPINGS:
             # ensure y exists in the function list
@@ -2063,8 +2047,8 @@ def main():
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
         )
-        for function, annotation, operations, disabled, metadata in functions_with_annotations:
-            if disabled:
+        for function, annotation, operations, metadata in functions_with_annotations:
+            if metadata.disabled_server:
                 continue
 
             # parse the annotation doxygen
@@ -2157,8 +2141,8 @@ def main():
             f.write("}\n\n")
 
         f.write("static const std::unordered_map<int, RequestHandler> opHandlers = {\n")
-        for function, _, _, disabled, _ in functions_with_annotations:
-            if disabled:
+        for function, _, _, metadata in functions_with_annotations:
+            if metadata.disabled_server:
                 continue
             else:
                 f.write(

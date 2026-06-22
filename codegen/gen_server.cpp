@@ -5177,56 +5177,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuGraphKernelNodeGetParams_v2(conn_t *conn) {
-  CUgraphNode hNode;
-  CUDA_KERNEL_NODE_PARAMS nodeParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(CUDA_KERNEL_NODE_PARAMS)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphKernelNodeGetParams_v2(hNode, &nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &nodeParams, sizeof(CUDA_KERNEL_NODE_PARAMS)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphKernelNodeSetParams_v2(conn_t *conn) {
-  CUgraphNode hNode;
-  CUDA_KERNEL_NODE_PARAMS nodeParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(const CUDA_KERNEL_NODE_PARAMS)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphKernelNodeSetParams_v2(hNode, &nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuGraphMemcpyNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUDA_MEMCPY3D nodeParams;
@@ -6492,34 +6442,6 @@ int handle_cuGraphExecGetFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(cuuint64_t)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphExecKernelNodeSetParams_v2(conn_t *conn) {
-  CUgraphExec hGraphExec;
-  CUgraphNode hNode;
-  CUDA_KERNEL_NODE_PARAMS nodeParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(const CUDA_KERNEL_NODE_PARAMS)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphExecKernelNodeSetParams_v2(hGraphExec, hNode, &nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -8761,8 +8683,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuParamSetTexRef, handle_cuParamSetTexRef},
     {RPC_cuFuncSetSharedMemConfig, handle_cuFuncSetSharedMemConfig},
     {RPC_cuGraphCreate, handle_cuGraphCreate},
-    {RPC_cuGraphKernelNodeGetParams_v2, handle_cuGraphKernelNodeGetParams_v2},
-    {RPC_cuGraphKernelNodeSetParams_v2, handle_cuGraphKernelNodeSetParams_v2},
     {RPC_cuGraphMemcpyNodeGetParams, handle_cuGraphMemcpyNodeGetParams},
     {RPC_cuGraphMemcpyNodeSetParams, handle_cuGraphMemcpyNodeSetParams},
     {RPC_cuGraphMemsetNodeGetParams, handle_cuGraphMemsetNodeGetParams},
@@ -8807,8 +8727,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuGraphInstantiateWithFlags, handle_cuGraphInstantiateWithFlags},
     {RPC_cuGraphInstantiateWithParams, handle_cuGraphInstantiateWithParams},
     {RPC_cuGraphExecGetFlags, handle_cuGraphExecGetFlags},
-    {RPC_cuGraphExecKernelNodeSetParams_v2,
-     handle_cuGraphExecKernelNodeSetParams_v2},
     {RPC_cuGraphExecMemcpyNodeSetParams, handle_cuGraphExecMemcpyNodeSetParams},
     {RPC_cuGraphExecMemsetNodeSetParams, handle_cuGraphExecMemsetNodeSetParams},
     {RPC_cuGraphExecChildGraphNodeSetParams,

@@ -101,34 +101,6 @@ extern "C" CUresult
 lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                                size_t ByteCount, CUstream hStream, bool async);
 
-extern "C" CUresult lupine_cuLinkCreate_v2_safe(unsigned int numOptions,
-                                                CUjit_option *options,
-                                                void **optionValues,
-                                                CUlinkState *stateOut);
-extern "C" CUresult
-lupine_cuLinkAddData_v2_safe(CUlinkState state, CUjitInputType type, void *data,
-                             size_t size, const char *name,
-                             unsigned int numOptions, CUjit_option *options,
-                             void **optionValues);
-extern "C" CUresult
-lupine_cuLinkAddFile_v2_safe(CUlinkState state, CUjitInputType type,
-                             const char *path, unsigned int numOptions,
-                             CUjit_option *options, void **optionValues);
-extern "C" CUresult
-lupine_cuLinkComplete_safe(CUlinkState state, void **cubinOut, size_t *sizeOut);
-extern "C" CUresult lupine_cuLinkDestroy_safe(CUlinkState state);
-extern "C" CUresult lupine_cuLaunchCooperativeKernel_safe(
-    CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
-    unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,
-    unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream,
-    void **kernelParams);
-extern "C" CUresult lupine_cuGraphExecKernelNodeSetParams_v2_safe(
-    CUgraphExec hGraphExec, CUgraphNode hNode,
-    const CUDA_KERNEL_NODE_PARAMS *nodeParams);
-extern "C" CUresult lupine_cuMemAllocManaged_safe(CUdeviceptr *dptr,
-                                                  size_t bytesize,
-                                                  unsigned int flags);
-extern "C" CUresult lupine_cuMemFree_v2_safe(CUdeviceptr dptr);
 extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx);
 extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx);
 extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);
@@ -147,10 +119,6 @@ lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
                                    CUdevice dev);
 extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc,
                                                       CUkernel kernel);
-extern "C" CUresult
-lupine_cuPointerGetAttributes_safe(unsigned int numAttributes,
-                                   CUpointer_attribute *attributes, void **data,
-                                   CUdeviceptr ptr);
 extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);
 extern "C" CUresult
@@ -1123,35 +1091,6 @@ CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
   return return_value;
 }
 
-CUresult cuLinkCreate_v2(unsigned int numOptions, CUjit_option *options,
-                         void **optionValues, CUlinkState *stateOut) {
-  return lupine_cuLinkCreate_v2_safe(numOptions, options, optionValues,
-                                     stateOut);
-}
-
-CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type, void *data,
-                          size_t size, const char *name,
-                          unsigned int numOptions, CUjit_option *options,
-                          void **optionValues) {
-  return lupine_cuLinkAddData_v2_safe(state, type, data, size, name, numOptions,
-                                      options, optionValues);
-}
-
-CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
-                          const char *path, unsigned int numOptions,
-                          CUjit_option *options, void **optionValues) {
-  return lupine_cuLinkAddFile_v2_safe(state, type, path, numOptions, options,
-                                      optionValues);
-}
-
-CUresult cuLinkComplete(CUlinkState state, void **cubinOut, size_t *sizeOut) {
-  return lupine_cuLinkComplete_safe(state, cubinOut, sizeOut);
-}
-
-CUresult cuLinkDestroy(CUlinkState state) {
-  return lupine_cuLinkDestroy_safe(state);
-}
-
 CUresult cuModuleGetTexRef(CUtexref *pTexRef, CUmodule hmod, const char *name) {
   lupine_route route = lupine_route_for_module(hmod);
   if (lupine_route_is_local(route)) {
@@ -1626,10 +1565,6 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
   return return_value;
 }
 
-CUresult cuMemFree_v2(CUdeviceptr dptr) {
-  return lupine_cuMemFree_v2_safe(dptr);
-}
-
 CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
                                  CUdeviceptr dptr) {
   lupine_route route = lupine_route_for_deviceptr(dptr);
@@ -1656,11 +1591,6 @@ CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
-}
-
-CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
-                           unsigned int flags) {
-  return lupine_cuMemAllocManaged_safe(dptr, bytesize, flags);
 }
 
 CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId) {
@@ -3523,13 +3453,6 @@ CUresult cuPointerSetAttribute(const void *value, CUpointer_attribute attribute,
   return return_value;
 }
 
-CUresult cuPointerGetAttributes(unsigned int numAttributes,
-                                CUpointer_attribute *attributes, void **data,
-                                CUdeviceptr ptr) {
-  return lupine_cuPointerGetAttributes_safe(numAttributes, attributes, data,
-                                            ptr);
-}
-
 CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags) {
   lupine_route route = lupine_route_for_current_context();
   if (lupine_route_is_local(route)) {
@@ -4582,18 +4505,6 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc) {
   return return_value;
 }
 
-CUresult cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
-                                   unsigned int gridDimY, unsigned int gridDimZ,
-                                   unsigned int blockDimX,
-                                   unsigned int blockDimY,
-                                   unsigned int blockDimZ,
-                                   unsigned int sharedMemBytes,
-                                   CUstream hStream, void **kernelParams) {
-  return lupine_cuLaunchCooperativeKernel_safe(
-      f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
-      sharedMemBytes, hStream, kernelParams);
-}
-
 CUresult
 cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
                                      unsigned int numDevices,
@@ -4896,59 +4807,6 @@ CUresult cuGraphCreate(CUgraph *phGraph, unsigned int flags) {
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
-                                       CUDA_KERNEL_NODE_PARAMS *nodeParams) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUgraphNode, CUDA_KERNEL_NODE_PARAMS *);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuGraphKernelNodeGetParams_v2"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hNode, nodeParams);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphKernelNodeGetParams_v2) < 0 ||
-      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, nodeParams, sizeof(CUDA_KERNEL_NODE_PARAMS)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, nodeParams, sizeof(CUDA_KERNEL_NODE_PARAMS)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult
-cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
-                              const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t =
-        CUresult (*)(CUgraphNode, const CUDA_KERNEL_NODE_PARAMS *);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuGraphKernelNodeSetParams_v2"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hNode, nodeParams);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetParams_v2) < 0 ||
-      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, nodeParams, sizeof(const CUDA_KERNEL_NODE_PARAMS)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6146,13 +6004,6 @@ CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags) {
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
-}
-
-CUresult
-cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
-                                  const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
-  return lupine_cuGraphExecKernelNodeSetParams_v2_safe(hGraphExec, hNode,
-                                                       nodeParams);
 }
 
 CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
@@ -8126,34 +7977,6 @@ extern "C" CUresult cuModuleGetGlobal(CUdeviceptr *dptr, size_t *bytes,
   return cuModuleGetGlobal_v2(dptr, bytes, hmod, name);
 }
 
-#ifdef cuLinkCreate
-#undef cuLinkCreate
-#endif
-extern "C" CUresult cuLinkCreate(unsigned int numOptions, CUjit_option *options,
-                                 void **optionValues, CUlinkState *stateOut) {
-  return cuLinkCreate_v2(numOptions, options, optionValues, stateOut);
-}
-
-#ifdef cuLinkAddData
-#undef cuLinkAddData
-#endif
-extern "C" CUresult cuLinkAddData(CUlinkState state, CUjitInputType type,
-                                  void *data, size_t size, const char *name,
-                                  unsigned int numOptions,
-                                  CUjit_option *options, void **optionValues) {
-  return cuLinkAddData_v2(state, type, data, size, name, numOptions, options,
-                          optionValues);
-}
-
-#ifdef cuLinkAddFile
-#undef cuLinkAddFile
-#endif
-extern "C" CUresult cuLinkAddFile(CUlinkState state, CUjitInputType type,
-                                  const char *path, unsigned int numOptions,
-                                  CUjit_option *options, void **optionValues) {
-  return cuLinkAddFile_v2(state, type, path, numOptions, options, optionValues);
-}
-
 #ifdef cuMemAlloc
 #undef cuMemAlloc
 #endif
@@ -8170,11 +7993,6 @@ extern "C" CUresult cuMemAllocPitch(CUdeviceptr *dptr, size_t *pPitch,
   return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
                             ElementSizeBytes);
 }
-
-#ifdef cuMemFree
-#undef cuMemFree
-#endif
-extern "C" CUresult cuMemFree(CUdeviceptr dptr) { return cuMemFree_v2(dptr); }
 
 #ifdef cuMemcpyHtoD
 #undef cuMemcpyHtoD
@@ -8447,19 +8265,6 @@ extern "C" CUresult cuGraphicsUnmapResources_ptsz(unsigned int count,
   return cuGraphicsUnmapResources(count, resources, hStream);
 }
 
-#ifdef cuLaunchCooperativeKernel_ptsz
-#undef cuLaunchCooperativeKernel_ptsz
-#endif
-extern "C" CUresult cuLaunchCooperativeKernel_ptsz(
-    CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
-    unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,
-    unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream,
-    void **kernelParams) {
-  return cuLaunchCooperativeKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
-                                   blockDimY, blockDimZ, sharedMemBytes,
-                                   hStream, kernelParams);
-}
-
 #ifdef cuSignalExternalSemaphoresAsync_ptsz
 #undef cuSignalExternalSemaphoresAsync_ptsz
 #endif
@@ -8614,11 +8419,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuModuleGetLoadingMode", (void *)cuModuleGetLoadingMode},
     {"cuModuleGetFunction", (void *)cuModuleGetFunction},
     {"cuModuleGetGlobal_v2", (void *)cuModuleGetGlobal_v2},
-    {"cuLinkCreate_v2", (void *)cuLinkCreate_v2},
-    {"cuLinkAddData_v2", (void *)cuLinkAddData_v2},
-    {"cuLinkAddFile_v2", (void *)cuLinkAddFile_v2},
-    {"cuLinkComplete", (void *)cuLinkComplete},
-    {"cuLinkDestroy", (void *)cuLinkDestroy},
     {"cuModuleGetTexRef", (void *)cuModuleGetTexRef},
     {"cuModuleGetSurfRef", (void *)cuModuleGetSurfRef},
     {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
@@ -8635,9 +8435,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemGetInfo_v2", (void *)cuMemGetInfo_v2},
     {"cuMemAlloc_v2", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch_v2", (void *)cuMemAllocPitch_v2},
-    {"cuMemFree_v2", (void *)cuMemFree_v2},
     {"cuMemGetAddressRange_v2", (void *)cuMemGetAddressRange_v2},
-    {"cuMemAllocManaged", (void *)cuMemAllocManaged},
     {"cuDeviceGetByPCIBusId", (void *)cuDeviceGetByPCIBusId},
     {"cuDeviceGetPCIBusId", (void *)cuDeviceGetPCIBusId},
     {"cuIpcGetEventHandle", (void *)cuIpcGetEventHandle},
@@ -8707,7 +8505,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemPoolImportPointer", (void *)cuMemPoolImportPointer},
     {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
     {"cuPointerSetAttribute", (void *)cuPointerSetAttribute},
-    {"cuPointerGetAttributes", (void *)cuPointerGetAttributes},
     {"cuStreamCreate", (void *)cuStreamCreate},
     {"cuStreamCreateWithPriority", (void *)cuStreamCreateWithPriority},
     {"cuStreamGetPriority", (void *)cuStreamGetPriority},
@@ -8750,7 +8547,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuFuncSetAttribute", (void *)cuFuncSetAttribute},
     {"cuFuncSetCacheConfig", (void *)cuFuncSetCacheConfig},
     {"cuFuncGetModule", (void *)cuFuncGetModule},
-    {"cuLaunchCooperativeKernel", (void *)cuLaunchCooperativeKernel},
     {"cuLaunchCooperativeKernelMultiDevice",
      (void *)cuLaunchCooperativeKernelMultiDevice},
     {"cuFuncSetBlockShape", (void *)cuFuncSetBlockShape},
@@ -8764,8 +8560,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuParamSetTexRef", (void *)cuParamSetTexRef},
     {"cuFuncSetSharedMemConfig", (void *)cuFuncSetSharedMemConfig},
     {"cuGraphCreate", (void *)cuGraphCreate},
-    {"cuGraphKernelNodeGetParams_v2", (void *)cuGraphKernelNodeGetParams_v2},
-    {"cuGraphKernelNodeSetParams_v2", (void *)cuGraphKernelNodeSetParams_v2},
     {"cuGraphMemcpyNodeGetParams", (void *)cuGraphMemcpyNodeGetParams},
     {"cuGraphMemcpyNodeSetParams", (void *)cuGraphMemcpyNodeSetParams},
     {"cuGraphMemsetNodeGetParams", (void *)cuGraphMemsetNodeGetParams},
@@ -8810,8 +8604,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphInstantiateWithFlags", (void *)cuGraphInstantiateWithFlags},
     {"cuGraphInstantiateWithParams", (void *)cuGraphInstantiateWithParams},
     {"cuGraphExecGetFlags", (void *)cuGraphExecGetFlags},
-    {"cuGraphExecKernelNodeSetParams_v2",
-     (void *)cuGraphExecKernelNodeSetParams_v2},
     {"cuGraphExecMemcpyNodeSetParams", (void *)cuGraphExecMemcpyNodeSetParams},
     {"cuGraphExecMemsetNodeSetParams", (void *)cuGraphExecMemsetNodeSetParams},
     {"cuGraphExecChildGraphNodeSetParams",
@@ -8910,12 +8702,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuCtxPopCurrent", (void *)cuCtxPopCurrent_v2},
     {"cuCtxPushCurrent", (void *)cuCtxPushCurrent_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
-    {"cuLinkCreate", (void *)cuLinkCreate_v2},
-    {"cuLinkAddData", (void *)cuLinkAddData_v2},
-    {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
-    {"cuMemFree", (void *)cuMemFree_v2},
     {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
     {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
     {"cuMemcpyDtoD", (void *)cuMemcpyDtoD_v2},
@@ -8947,7 +8735,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuEventRecordWithFlags_ptsz", (void *)cuEventRecordWithFlags},
     {"cuGraphicsMapResources_ptsz", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources_ptsz", (void *)cuGraphicsUnmapResources},
-    {"cuLaunchCooperativeKernel_ptsz", (void *)cuLaunchCooperativeKernel},
     {"cuSignalExternalSemaphoresAsync_ptsz",
      (void *)cuSignalExternalSemaphoresAsync},
     {"cuWaitExternalSemaphoresAsync_ptsz",
