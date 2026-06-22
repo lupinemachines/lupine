@@ -47,3 +47,36 @@ The adapter does not create a new PyTorch backend such as
 `torch.device("lupine")`. A true custom PyTorch device would require registering
 PrivateUse1 kernels and backend support. LUPINE already works best when PyTorch
 sees CUDA tensors and the LUPINE library is selected through the dynamic linker.
+
+## Persistent GPU snapshots
+
+Server-side snapshots are enabled by setting `LUPINE_SNAPSHOT_DIR` on the
+LUPINE server. If it is unset or empty, snapshot calls return an unsupported
+CUDA error.
+
+```python
+import lupine
+
+with lupine.connect(host="<server>:14833") as s:
+    snapshot_id = s.snapshot()
+    status = s.snapshot_status(snapshot_id)
+```
+
+For reconnect-boundary restore, pass the persistent id when opening the
+session. The client sends the id before the HTTP/2 RPC session starts; the
+server restores the saved worker process if the artifact exists. When the
+context exits after CUDA has initialized, LUPINE saves the worker under the same
+id and exits that server worker.
+
+```python
+snapshot_id = "0123456789abcdef0123456789abcdef"
+
+with lupine.connect(host="<server>:14833", snapshot_id=snapshot_id) as s:
+    device = s.device()
+```
+
+Snapshots are stored on the server under
+`$LUPINE_SNAPSHOT_DIR/objects/<snapshot_id>/`. Creation waits until the artifact
+has been published and is ready. The current implementation writes persistent
+artifacts with NVIDIA CUDA process checkpointing plus CRIU. CRIU is required on
+the server only; clients never read or write snapshot artifacts directly.

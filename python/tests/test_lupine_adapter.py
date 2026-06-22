@@ -27,6 +27,7 @@ class FakeCuda:
         self.count = 2
         self.current = 1
         self.synchronized = None
+        self.synchronize_calls = 0
 
     def is_initialized(self):
         return self.initialized
@@ -40,7 +41,8 @@ class FakeCuda:
     def current_device(self):
         return self.current
 
-    def synchronize(self, selected):
+    def synchronize(self, selected=None):
+        self.synchronize_calls += 1
         self.synchronized = selected
 
 
@@ -159,6 +161,29 @@ def test_connect_leaves_env_when_cuda_initialized_inside_context(lupine_module):
     assert os.environ["LUPINE_SERVER"] == "host-a:14833"
 
 
+def test_connect_sets_snapshot_id_env(lupine_module):
+    lupine, _ = lupine_module
+    snapshot_id = "0123456789abcdef0123456789abcdef"
+
+    with lupine.connect(host="host-a", snapshot_id=snapshot_id):
+        assert os.environ["LUPINE_SNAPSHOT_ID"] == snapshot_id
+
+    assert "LUPINE_SNAPSHOT_ID" not in os.environ
+
+
+def test_connect_snapshot_exit_saves_when_cuda_initialized(lupine_module, monkeypatch):
+    lupine, fake_torch = lupine_module
+    snapshot_id = "0123456789abcdef0123456789abcdef"
+    saved = []
+    monkeypatch.setattr(lupine, "save_snapshot_and_exit", lambda value: saved.append(value))
+
+    with lupine.connect(host="host-a", snapshot_id=snapshot_id):
+        fake_torch.cuda.initialized = True
+
+    assert saved == [snapshot_id]
+    assert "LUPINE_SNAPSHOT_ID" not in os.environ
+
+
 def test_connect_accepts_matching_preconfigured_env(lupine_module, monkeypatch):
     lupine, _ = lupine_module
     monkeypatch.setenv("LUPINE_SERVER", "host-a:14833")
@@ -191,6 +216,92 @@ def test_devices_use_current_env(lupine_module, monkeypatch):
 
     assert lupine.devices() == [FakeDevice("cuda", 0), FakeDevice("cuda", 1)]
     assert lupine.device(1) == FakeDevice("cuda", 1)
+
+
+class FakeSnapshotFunc:
+    def __init__(self, fn):
+        self.fn = fn
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args):
+        return self.fn(*args)
+
+
+class FakeSnapshotLib:
+    def __init__(self):
+        self.created = []
+        self.loaded = []
+        self.deleted = []
+        self.lupine_snapshot_create = FakeSnapshotFunc(self._create)
+        self.lupine_snapshot_status = FakeSnapshotFunc(self._status)
+        self.lupine_snapshot_load = FakeSnapshotFunc(self._load)
+        self.lupine_snapshot_delete = FakeSnapshotFunc(self._delete)
+        self.lupine_snapshot_save_and_exit = FakeSnapshotFunc(self._save)
+
+    def _create(self, buf, size, flags):
+        assert size >= 33
+        assert flags == 0
+        snapshot_id = b"0123456789abcdef0123456789abcdef"
+        buf.value = snapshot_id
+        self.created.append(snapshot_id.decode())
+        return 0
+
+    def _status(self, snapshot_id, info):
+        assert snapshot_id == b"0123456789abcdef0123456789abcdef"
+        info._obj.state = 2
+        info._obj.bytes = 123
+        info._obj.created_unix_seconds = 456
+        return 0
+
+    def _load(self, snapshot_id, flags):
+        self.loaded.append((snapshot_id.decode(), flags))
+        return 0
+
+    def _delete(self, snapshot_id):
+        self.deleted.append(snapshot_id.decode())
+        return 0
+
+    def _save(self, snapshot_id):
+        self.saved = snapshot_id.decode()
+        return 0
+
+
+def test_snapshot_python_api_calls_c_exports(lupine_module, monkeypatch):
+    lupine, fake_torch = lupine_module
+    lib = FakeSnapshotLib()
+    monkeypatch.setattr(lupine, "_snapshot_lib", lambda: lib)
+
+    snapshot_id = lupine.snapshot()
+    state = lupine.snapshot_status(snapshot_id)
+    lupine.save_snapshot_and_exit(snapshot_id)
+    lupine.delete_snapshot(snapshot_id)
+
+    assert snapshot_id == "0123456789abcdef0123456789abcdef"
+    assert fake_torch.cuda.synchronize_calls == 2
+    assert fake_torch.cuda.synchronized is None
+    assert state == lupine.SnapshotState(
+        id=snapshot_id,
+        state="READY",
+        bytes=123,
+        created_unix_seconds=456,
+    )
+    assert lib.saved == snapshot_id
+    assert lib.deleted == [snapshot_id]
+
+
+def test_load_snapshot_points_to_reconnect_api(lupine_module):
+    lupine, _ = lupine_module
+
+    with pytest.raises(lupine.LupineError, match="connect"):
+        lupine.load_snapshot("0123456789abcdef0123456789abcdef")
+
+
+def test_snapshot_rejects_bad_id(lupine_module):
+    lupine, _ = lupine_module
+
+    with pytest.raises(lupine.LupineError, match="snapshot id"):
+        lupine.snapshot_status("../bad")
 
 
 def test_device_bounds_check(lupine_module):

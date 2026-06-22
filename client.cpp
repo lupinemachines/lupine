@@ -50,6 +50,7 @@
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "rpc.h"
+#include "snapshot.h"
 
 pthread_mutex_t conn_mutex;
 conn_t conns[16];
@@ -7926,6 +7927,13 @@ int rpc_open() {
     if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
       LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
                                         << " failed: " << strerror(errno));
+      close(sockfd);
+      continue;
+    }
+
+    if (lupine_snapshot_write_bootstrap(sockfd) < 0) {
+      LUPINE_LOG_ERROR("Writing snapshot bootstrap to " << host << " port "
+                                                        << port << " failed.");
       close(sockfd);
       continue;
     }

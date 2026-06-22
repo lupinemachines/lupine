@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_PORT = 14833
+_SNAPSHOT_ID_BYTES = 33
+_loaded_libcuda: Any | None = None
 
 
 class LupineError(RuntimeError):
@@ -87,12 +89,71 @@ def _default_libcuda() -> Path | None:
 
 
 def _load_libcuda(path: str | os.PathLike[str] | None) -> None:
+    global _loaded_libcuda
     libcuda = Path(path) if path is not None else _default_libcuda()
     if libcuda is None:
         return
     if not libcuda.exists():
         raise LupineError(f"LUPINE libcuda does not exist: {libcuda}")
-    ctypes.CDLL(str(libcuda), mode=ctypes.RTLD_GLOBAL)
+    _loaded_libcuda = ctypes.CDLL(str(libcuda), mode=ctypes.RTLD_GLOBAL)
+
+
+class _CSnapshotInfo(ctypes.Structure):
+    _fields_ = [
+        ("state", ctypes.c_int),
+        ("bytes", ctypes.c_uint64),
+        ("created_unix_seconds", ctypes.c_int64),
+    ]
+
+
+@dataclass(frozen=True)
+class SnapshotState:
+    """Server-side snapshot artifact status."""
+
+    id: str
+    state: str
+    bytes: int
+    created_unix_seconds: int
+
+
+def _snapshot_lib() -> Any:
+    global _loaded_libcuda
+    if _loaded_libcuda is not None:
+        return _loaded_libcuda
+    libcuda = _default_libcuda()
+    if libcuda is not None:
+        _loaded_libcuda = ctypes.CDLL(str(libcuda), mode=ctypes.RTLD_GLOBAL)
+        return _loaded_libcuda
+    _loaded_libcuda = ctypes.CDLL("libcuda.so.1", mode=ctypes.RTLD_GLOBAL)
+    return _loaded_libcuda
+
+
+def _snapshot_result(result: int, action: str) -> None:
+    if int(result) != 0:
+        raise LupineError(f"LUPINE snapshot {action} failed with CUDA error {int(result)}")
+
+
+def _snapshot_state_name(value: int) -> str:
+    return {
+        0: "UNKNOWN",
+        1: "CREATING",
+        2: "READY",
+        3: "FAILED",
+        4: "UNSUPPORTED",
+    }.get(int(value), "UNKNOWN")
+
+
+def _require_snapshot_id(snapshot_id: str) -> str:
+    snapshot_id = str(snapshot_id)
+    if len(snapshot_id) != 32 or any(c not in "0123456789abcdef" for c in snapshot_id):
+        raise LupineError("snapshot id must be 32 lowercase hexadecimal characters")
+    return snapshot_id
+
+
+def _snapshot_synchronize() -> None:
+    torch = _torch()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
 
 
 def _servers_from_env() -> tuple[str, ...]:
@@ -122,28 +183,46 @@ class Session:
     servers: tuple[str, ...]
     require_available: bool = False
     libcuda: str | os.PathLike[str] | None = None
+    snapshot_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.servers:
             raise LupineError("at least one LUPINE host is required")
+        if self.snapshot_id is not None:
+            self.snapshot_id = _require_snapshot_id(self.snapshot_id)
 
     def __enter__(self) -> "Session":
         _require_mutable_config()
         self._previous_server = os.environ.get("LUPINE_SERVER")
+        self._previous_snapshot_id = os.environ.get("LUPINE_SNAPSHOT_ID")
         configured = _servers_from_env()
         if configured and configured != self.servers:
             raise LupineError(
                 "LUPINE_SERVER is already configured differently; start a new "
                 "process or pass the same hosts to lupine.connect()."
             )
+        configured_snapshot_id = os.environ.get("LUPINE_SNAPSHOT_ID")
+        if (
+            configured_snapshot_id
+            and self.snapshot_id is not None
+            and configured_snapshot_id != self.snapshot_id
+        ):
+            raise LupineError("LUPINE_SNAPSHOT_ID is already configured differently")
         if not configured:
             _set_server_env(self.servers)
+        if self.snapshot_id is not None:
+            os.environ["LUPINE_SNAPSHOT_ID"] = self.snapshot_id
         _load_libcuda(self.libcuda)
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        if not _cuda_initialized():
-            self._restore_env()
+        try:
+            if self.snapshot_id is not None and _cuda_initialized():
+                save_snapshot_and_exit(self.snapshot_id)
+        finally:
+            if not _cuda_initialized():
+                self._restore_env()
+            self._restore_snapshot_env()
         return False
 
     def _restore_env(self) -> None:
@@ -151,6 +230,13 @@ class Session:
             os.environ.pop("LUPINE_SERVER", None)
         else:
             os.environ["LUPINE_SERVER"] = self._previous_server
+
+    def _restore_snapshot_env(self) -> None:
+        if getattr(self, "_previous_snapshot_id", None) is None:
+            os.environ.pop("LUPINE_SNAPSHOT_ID", None)
+        else:
+            os.environ["LUPINE_SNAPSHOT_ID"] = self._previous_snapshot_id
+
     def devices(self, *, require_available: bool | None = None) -> list[Any]:
         """Return all declared LUPINE GPUs as ``torch.device("cuda:N")``."""
 
@@ -171,6 +257,32 @@ class Session:
         check = self.require_available if require_available is None else require_available
         return _cuda_device(index, require_available=check)
 
+    def snapshot(self, *, timeout: float | None = None) -> str:
+        """Create a persistent server-side GPU snapshot and return its id."""
+
+        return snapshot(timeout=timeout)
+
+    def snapshot_status(self, snapshot_id: str) -> SnapshotState:
+        """Return persistent snapshot status for this session."""
+
+        return snapshot_status(snapshot_id)
+
+    def load_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        strict: bool = True,
+        timeout: float | None = None,
+    ) -> None:
+        """Restore a persistent server-side GPU snapshot on a new connection."""
+
+        load_snapshot(snapshot_id, strict=strict, timeout=timeout)
+
+    def delete_snapshot(self, snapshot_id: str) -> None:
+        """Delete a persistent server-side GPU snapshot."""
+
+        delete_snapshot(snapshot_id)
+
 
 def connect(
     *,
@@ -178,6 +290,7 @@ def connect(
     port: int | None = None,
     require_available: bool = False,
     libcuda: str | os.PathLike[str] | None = None,
+    snapshot_id: str | None = None,
 ) -> Any:
     """Create a LUPINE session for one or more remote GPU hosts.
 
@@ -192,12 +305,16 @@ def connect(
     """
 
     servers = _normalize_hosts(host, port)
+    snapshot_id = _require_snapshot_id(snapshot_id) if snapshot_id is not None else None
+
     if not _has_native_cuda_backend():
         if sys.platform != "darwin":
             raise LupineError(
                 "PyTorch is not compiled with CUDA and automatic LUPINE sidecar "
                 "fallback is only supported on macOS."
             )
+        if snapshot_id is not None:
+            raise LupineError("snapshot_id is only supported with native CUDA PyTorch")
         if len(servers) != 1:
             raise LupineError("automatic LUPINE sidecar fallback supports one host")
         if libcuda is not None:
@@ -208,6 +325,7 @@ def connect(
         servers=servers,
         require_available=require_available,
         libcuda=libcuda,
+        snapshot_id=snapshot_id,
     )
 
 
@@ -272,6 +390,82 @@ def synchronize(index: int = 0) -> None:
     torch.cuda.synchronize(_cuda_device(index, require_available=False))
 
 
+def snapshot(*, timeout: float | None = None) -> str:
+    """Create a persistent server-side GPU snapshot and return its id.
+
+    ``LUPINE_SNAPSHOT_DIR`` must be configured on the server. The call waits
+    until the artifact is ready before returning.
+    """
+
+    del timeout
+    _snapshot_synchronize()
+    lib = _snapshot_lib()
+    func = lib.lupine_snapshot_create
+    func.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint]
+    func.restype = ctypes.c_int
+    buf = ctypes.create_string_buffer(_SNAPSHOT_ID_BYTES)
+    result = func(buf, ctypes.sizeof(buf), 0)
+    _snapshot_result(result, "create")
+    return buf.value.decode("ascii")
+
+
+def snapshot_status(snapshot_id: str) -> SnapshotState:
+    """Return persistent snapshot status."""
+
+    snapshot_id = _require_snapshot_id(snapshot_id)
+    lib = _snapshot_lib()
+    func = lib.lupine_snapshot_status
+    func.argtypes = [ctypes.c_char_p, ctypes.POINTER(_CSnapshotInfo)]
+    func.restype = ctypes.c_int
+    info = _CSnapshotInfo()
+    result = func(snapshot_id.encode("ascii"), ctypes.byref(info))
+    _snapshot_result(result, "status")
+    return SnapshotState(
+        id=snapshot_id,
+        state=_snapshot_state_name(info.state),
+        bytes=int(info.bytes),
+        created_unix_seconds=int(info.created_unix_seconds),
+    )
+
+
+def load_snapshot(
+    snapshot_id: str,
+    *,
+    strict: bool = True,
+    timeout: float | None = None,
+) -> None:
+    """Restore a snapshot by connecting with ``snapshot_id``."""
+
+    _require_snapshot_id(snapshot_id)
+    del strict, timeout
+    raise LupineError("restore snapshots with lupine.connect(..., snapshot_id=snapshot_id)")
+
+
+def save_snapshot_and_exit(snapshot_id: str) -> None:
+    """Save this server-side session snapshot and close the server worker."""
+
+    snapshot_id = _require_snapshot_id(snapshot_id)
+    _snapshot_synchronize()
+    lib = _snapshot_lib()
+    func = lib.lupine_snapshot_save_and_exit
+    func.argtypes = [ctypes.c_char_p]
+    func.restype = ctypes.c_int
+    result = func(snapshot_id.encode("ascii"))
+    _snapshot_result(result, "save")
+
+
+def delete_snapshot(snapshot_id: str) -> None:
+    """Delete a persistent server-side GPU snapshot."""
+
+    snapshot_id = _require_snapshot_id(snapshot_id)
+    lib = _snapshot_lib()
+    func = lib.lupine_snapshot_delete
+    func.argtypes = [ctypes.c_char_p]
+    func.restype = ctypes.c_int
+    result = func(snapshot_id.encode("ascii"))
+    _snapshot_result(result, "delete")
+
+
 def sidecar(
     server: str | None = None,
     *,
@@ -299,14 +493,20 @@ __all__ = [
     "DEFAULT_PORT",
     "LupineError",
     "Session",
+    "SnapshotState",
     "connect",
     "current_device",
+    "delete_snapshot",
     "device",
     "device_count",
     "devices",
     "is_available",
     "is_configured",
+    "load_snapshot",
+    "save_snapshot_and_exit",
     "sidecar",
+    "snapshot",
+    "snapshot_status",
     "servers",
     "synchronize",
 ]

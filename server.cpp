@@ -18,6 +18,7 @@
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
+#include "snapshot.h"
 
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
@@ -141,6 +142,16 @@ lupine_manual_handlers() {
       {LUPINE_RPC_cuGraphNodeGetDependentNodes,
        {handle_manual_cuGraphNodeGetDependentNodes,
         "cuGraphNodeGetDependentNodes"}},
+      {LUPINE_RPC_snapshot_create,
+       {handle_lupine_snapshot_create, "lupine snapshot create"}},
+      {LUPINE_RPC_snapshot_status,
+       {handle_lupine_snapshot_status, "lupine snapshot status"}},
+      {LUPINE_RPC_snapshot_load,
+       {handle_lupine_snapshot_load, "lupine snapshot load"}},
+      {LUPINE_RPC_snapshot_delete,
+       {handle_lupine_snapshot_delete, "lupine snapshot delete"}},
+      {LUPINE_RPC_snapshot_save_and_exit,
+       {handle_lupine_snapshot_save_and_exit, "lupine snapshot save and exit"}},
       {RPC_cuGraphHostNodeGetParams,
        {handle_manual_cuGraphHostNodeGetParams, "cuGraphHostNodeGetParams"}},
       {RPC_cuGraphHostNodeSetParams,
@@ -249,6 +260,28 @@ void client_handler(lupine_socket_t connfd) {
   lupine_socket_close(connfd);
 }
 
+static void restored_or_fresh_client_handler(lupine_socket_t connfd) {
+  char snapshot_id[LUPINE_SNAPSHOT_ID_BUFFER_BYTES] = {};
+  int bootstrap = lupine_snapshot_read_bootstrap(connfd, snapshot_id);
+  if (bootstrap < 0) {
+    LUPINE_LOG_ERROR("Error reading snapshot bootstrap.");
+    lupine_socket_close(connfd);
+    return;
+  }
+  if (bootstrap > 0) {
+    int restore = lupine_snapshot_restore_for_connection(snapshot_id, connfd);
+    if (restore == 0) {
+      return;
+    }
+    if (restore < 0) {
+      LUPINE_LOG_ERROR("Error restoring snapshot " << snapshot_id);
+      lupine_socket_close(connfd);
+      return;
+    }
+  }
+  client_handler(connfd);
+}
+
 int main() {
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
@@ -331,13 +364,13 @@ int main() {
     }
     if (pid == 0) {
       lupine_socket_close(sockfd);
-      client_handler(connfd);
+      restored_or_fresh_client_handler(connfd);
       exit(0);
     }
     lupine_socket_close(connfd);
 #else
     // Windows has no fork; connections share the server process.
-    std::thread client_thread(client_handler, connfd);
+    std::thread client_thread(restored_or_fresh_client_handler, connfd);
 
     // detach the thread so it runs independently
     client_thread.detach();

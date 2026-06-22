@@ -2,6 +2,11 @@
   global:
     cu*;
     dlsym;
+    lupine_snapshot_create;
+    lupine_snapshot_status;
+    lupine_snapshot_load;
+    lupine_snapshot_delete;
+    lupine_snapshot_save_and_exit;
   local:
     *;
 };
