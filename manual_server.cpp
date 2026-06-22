@@ -3278,6 +3278,33 @@ int handle_manual_cuCtxSynchronize(conn_t *conn) {
   return 0;
 }
 
+int handle_manual_cuCtxGetStreamPriorityRange(conn_t *conn) {
+  uint8_t want_least = 0;
+  uint8_t want_greatest = 0;
+  if (rpc_read(conn, &want_least, sizeof(want_least)) < 0 ||
+      rpc_read(conn, &want_greatest, sizeof(want_greatest)) < 0) {
+    return -1;
+  }
+
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  int least = 0;
+  int greatest = 0;
+  CUresult result = cuCtxGetStreamPriorityRange(
+      want_least ? &least : nullptr, want_greatest ? &greatest : nullptr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (want_least && rpc_write(conn, &least, sizeof(least)) < 0) ||
+      (want_greatest && rpc_write(conn, &greatest, sizeof(greatest)) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuStreamSynchronize(conn_t *conn) {
   CUstream stream = nullptr;
   if (rpc_read(conn, &stream, sizeof(stream)) < 0) {

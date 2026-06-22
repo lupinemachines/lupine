@@ -4758,6 +4758,35 @@ extern "C" CUresult cuCtxSynchronize() {
   return lupine_sync_mapped_device_to_host();
 }
 
+extern "C" CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
+                                                int *greatestPriority) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(int *, int *);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuCtxGetStreamPriorityRange");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(leastPriority, greatestPriority);
+  }
+
+  uint8_t want_least = leastPriority != nullptr;
+  uint8_t want_greatest = greatestPriority != nullptr;
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuCtxGetStreamPriorityRange) < 0 ||
+      rpc_write(conn, &want_least, sizeof(want_least)) < 0 ||
+      rpc_write(conn, &want_greatest, sizeof(want_greatest)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (want_least &&
+       rpc_read(conn, leastPriority, sizeof(*leastPriority)) < 0) ||
+      (want_greatest &&
+       rpc_read(conn, greatestPriority, sizeof(*greatestPriority)) < 0) ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
 extern "C" CUresult cuStreamSynchronize(CUstream hStream) {
   lupine_route route = hStream == nullptr ? lupine_route_for_current_context()
                                           : lupine_route_for_stream(hStream);
@@ -6381,6 +6410,17 @@ cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
+}
+
+#ifdef cuGraphAddKernelNode
+#undef cuGraphAddKernelNode
+#endif
+extern "C" CUresult
+cuGraphAddKernelNode(CUgraphNode *phGraphNode, CUgraph hGraph,
+                     const CUgraphNode *dependencies, size_t numDependencies,
+                     const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphAddKernelNode_v2(phGraphNode, hGraph, dependencies,
+                                 numDependencies, nodeParams);
 }
 
 extern "C" CUresult
@@ -8430,6 +8470,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuStreamGetCaptureInfo_v2", (void *)cuStreamGetCaptureInfo_v2},
       {"cuStreamGetCaptureInfo_v3", (void *)cuStreamGetCaptureInfo_v3},
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
+      {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
       {"cuEventQuery", (void *)cuEventQuery},
@@ -8728,6 +8769,7 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuStreamGetCaptureInfo_v2", (void *)cuStreamGetCaptureInfo_v2},
       {"cuStreamGetCaptureInfo_v3", (void *)cuStreamGetCaptureInfo_v3},
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
+      {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
       {"cuEventQuery", (void *)cuEventQuery},

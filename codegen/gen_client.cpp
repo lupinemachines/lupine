@@ -821,31 +821,6 @@ CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version) {
   return return_value;
 }
 
-CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
-                                     int *greatestPriority) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(int *, int *);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuCtxGetStreamPriorityRange"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(leastPriority, greatestPriority);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuCtxGetStreamPriorityRange) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, leastPriority, sizeof(int)) < 0 ||
-      rpc_read(conn, greatestPriority, sizeof(int)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuCtxResetPersistingL2Cache() {
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
@@ -8408,7 +8383,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuCtxGetCacheConfig", (void *)cuCtxGetCacheConfig},
     {"cuCtxSetCacheConfig", (void *)cuCtxSetCacheConfig},
     {"cuCtxGetApiVersion", (void *)cuCtxGetApiVersion},
-    {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
     {"cuCtxResetPersistingL2Cache", (void *)cuCtxResetPersistingL2Cache},
     {"cuCtxGetExecAffinity", (void *)cuCtxGetExecAffinity},
     {"cuCtxAttach", (void *)cuCtxAttach},

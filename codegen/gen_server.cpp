@@ -873,32 +873,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuCtxGetStreamPriorityRange(conn_t *conn) {
-  int leastPriority;
-  int greatestPriority;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuCtxGetStreamPriorityRange(&leastPriority, &greatestPriority);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &leastPriority, sizeof(int)) < 0 ||
-      rpc_write(conn, &greatestPriority, sizeof(int)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuCtxResetPersistingL2Cache(conn_t *conn) {
   int request_id;
   CUresult lupine_intercept_result;
@@ -8522,7 +8496,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuCtxGetCacheConfig, handle_cuCtxGetCacheConfig},
     {RPC_cuCtxSetCacheConfig, handle_cuCtxSetCacheConfig},
     {RPC_cuCtxGetApiVersion, handle_cuCtxGetApiVersion},
-    {RPC_cuCtxGetStreamPriorityRange, handle_cuCtxGetStreamPriorityRange},
     {RPC_cuCtxResetPersistingL2Cache, handle_cuCtxResetPersistingL2Cache},
     {RPC_cuCtxGetExecAffinity, handle_cuCtxGetExecAffinity},
     {RPC_cuCtxAttach, handle_cuCtxAttach},
