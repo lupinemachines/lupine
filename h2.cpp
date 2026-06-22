@@ -290,8 +290,7 @@ bool lupine_h2_debug_enabled() {
   if (debug != nullptr && debug[0] != '\0' && strcmp(debug, "0") != 0) {
     return true;
   }
-  const char *trace = getenv("LUPINE_TRACE");
-  return trace != nullptr && trace[0] != '\0' && strcmp(trace, "0") != 0;
+  return lupine_trace_stream() != nullptr;
 }
 
 int h2_submit_server_response(h2_transport *transport) {
@@ -322,7 +321,11 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     if (!debug.empty()) {
       message << " debug=\"" << debug << "\"";
     }
-    LUPINE_LOG_DEBUG(message.str());
+    if (lupine_trace_stream() != nullptr) {
+      LUPINE_TRACE_LOG(message.str());
+    } else {
+      LUPINE_LOG_DEBUG(message.str());
+    }
   }
   if (transport->server && frame->hd.type == NGHTTP2_HEADERS &&
       frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
