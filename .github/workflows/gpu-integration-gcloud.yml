@@ -36,6 +36,7 @@ jobs:
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
+      CUDA_SAMPLE_JOBS: 4
       PYTORCH_TEST_TIMEOUT: 180
       CUDA_HOME: /usr/local/cuda-12.9
       USE_SPOT: "false"
@@ -85,6 +86,7 @@ jobs:
           test "$COMPLIANCE_TIMEOUT" = 240m
           test "$CUDA_SAMPLE_TIMEOUT" = 120
           test "$CUDA_LONG_SAMPLE_TIMEOUT" = 600
+          test "$CUDA_SAMPLE_JOBS" = 4
           test "$PYTORCH_TEST_TIMEOUT" = 180
 
       - name: Prepare SSH key and runner allowlist
