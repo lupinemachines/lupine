@@ -230,78 +230,31 @@ class FakeSnapshotFunc:
 
 class FakeSnapshotLib:
     def __init__(self):
-        self.created = []
-        self.loaded = []
-        self.deleted = []
-        self.lupine_snapshot_create = FakeSnapshotFunc(self._create)
-        self.lupine_snapshot_status = FakeSnapshotFunc(self._status)
-        self.lupine_snapshot_load = FakeSnapshotFunc(self._load)
-        self.lupine_snapshot_delete = FakeSnapshotFunc(self._delete)
         self.lupine_snapshot_save_and_exit = FakeSnapshotFunc(self._save)
-
-    def _create(self, buf, size, flags):
-        assert size >= 33
-        assert flags == 0
-        snapshot_id = b"0123456789abcdef0123456789abcdef"
-        buf.value = snapshot_id
-        self.created.append(snapshot_id.decode())
-        return 0
-
-    def _status(self, snapshot_id, info):
-        assert snapshot_id == b"0123456789abcdef0123456789abcdef"
-        info._obj.state = 2
-        info._obj.bytes = 123
-        info._obj.created_unix_seconds = 456
-        return 0
-
-    def _load(self, snapshot_id, flags):
-        self.loaded.append((snapshot_id.decode(), flags))
-        return 0
-
-    def _delete(self, snapshot_id):
-        self.deleted.append(snapshot_id.decode())
-        return 0
 
     def _save(self, snapshot_id):
         self.saved = snapshot_id.decode()
         return 0
 
 
-def test_snapshot_python_api_calls_c_exports(lupine_module, monkeypatch):
+def test_save_snapshot_and_exit_calls_c_export(lupine_module, monkeypatch):
     lupine, fake_torch = lupine_module
     lib = FakeSnapshotLib()
     monkeypatch.setattr(lupine, "_snapshot_lib", lambda: lib)
+    snapshot_id = "0123456789abcdef0123456789abcdef"
 
-    snapshot_id = lupine.snapshot()
-    state = lupine.snapshot_status(snapshot_id)
     lupine.save_snapshot_and_exit(snapshot_id)
-    lupine.delete_snapshot(snapshot_id)
 
-    assert snapshot_id == "0123456789abcdef0123456789abcdef"
-    assert fake_torch.cuda.synchronize_calls == 2
+    assert fake_torch.cuda.synchronize_calls == 1
     assert fake_torch.cuda.synchronized is None
-    assert state == lupine.SnapshotState(
-        id=snapshot_id,
-        state="READY",
-        bytes=123,
-        created_unix_seconds=456,
-    )
     assert lib.saved == snapshot_id
-    assert lib.deleted == [snapshot_id]
-
-
-def test_load_snapshot_points_to_reconnect_api(lupine_module):
-    lupine, _ = lupine_module
-
-    with pytest.raises(lupine.LupineError, match="connect"):
-        lupine.load_snapshot("0123456789abcdef0123456789abcdef")
 
 
 def test_snapshot_rejects_bad_id(lupine_module):
     lupine, _ = lupine_module
 
     with pytest.raises(lupine.LupineError, match="snapshot id"):
-        lupine.snapshot_status("../bad")
+        lupine.save_snapshot_and_exit("../bad")
 
 
 def test_device_bounds_check(lupine_module):

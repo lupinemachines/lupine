@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_PORT = 14833
-_SNAPSHOT_ID_BYTES = 33
 _loaded_libcuda: Any | None = None
 
 
@@ -98,24 +97,6 @@ def _load_libcuda(path: str | os.PathLike[str] | None) -> None:
     _loaded_libcuda = ctypes.CDLL(str(libcuda), mode=ctypes.RTLD_GLOBAL)
 
 
-class _CSnapshotInfo(ctypes.Structure):
-    _fields_ = [
-        ("state", ctypes.c_int),
-        ("bytes", ctypes.c_uint64),
-        ("created_unix_seconds", ctypes.c_int64),
-    ]
-
-
-@dataclass(frozen=True)
-class SnapshotState:
-    """Server-side snapshot artifact status."""
-
-    id: str
-    state: str
-    bytes: int
-    created_unix_seconds: int
-
-
 def _snapshot_lib() -> Any:
     global _loaded_libcuda
     if _loaded_libcuda is not None:
@@ -131,16 +112,6 @@ def _snapshot_lib() -> Any:
 def _snapshot_result(result: int, action: str) -> None:
     if int(result) != 0:
         raise LupineError(f"LUPINE snapshot {action} failed with CUDA error {int(result)}")
-
-
-def _snapshot_state_name(value: int) -> str:
-    return {
-        0: "UNKNOWN",
-        1: "CREATING",
-        2: "READY",
-        3: "FAILED",
-        4: "UNSUPPORTED",
-    }.get(int(value), "UNKNOWN")
 
 
 def _require_snapshot_id(snapshot_id: str) -> str:
@@ -257,33 +228,6 @@ class Session:
         check = self.require_available if require_available is None else require_available
         return _cuda_device(index, require_available=check)
 
-    def snapshot(self, *, timeout: float | None = None) -> str:
-        """Create a persistent server-side GPU snapshot and return its id."""
-
-        return snapshot(timeout=timeout)
-
-    def snapshot_status(self, snapshot_id: str) -> SnapshotState:
-        """Return persistent snapshot status for this session."""
-
-        return snapshot_status(snapshot_id)
-
-    def load_snapshot(
-        self,
-        snapshot_id: str,
-        *,
-        strict: bool = True,
-        timeout: float | None = None,
-    ) -> None:
-        """Restore a persistent server-side GPU snapshot on a new connection."""
-
-        load_snapshot(snapshot_id, strict=strict, timeout=timeout)
-
-    def delete_snapshot(self, snapshot_id: str) -> None:
-        """Delete a persistent server-side GPU snapshot."""
-
-        delete_snapshot(snapshot_id)
-
-
 def connect(
     *,
     host: str | Sequence[str],
@@ -390,57 +334,6 @@ def synchronize(index: int = 0) -> None:
     torch.cuda.synchronize(_cuda_device(index, require_available=False))
 
 
-def snapshot(*, timeout: float | None = None) -> str:
-    """Create a persistent server-side GPU snapshot and return its id.
-
-    ``LUPINE_SNAPSHOT_DIR`` must be configured on the server. The call waits
-    until the artifact is ready before returning.
-    """
-
-    del timeout
-    _snapshot_synchronize()
-    lib = _snapshot_lib()
-    func = lib.lupine_snapshot_create
-    func.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint]
-    func.restype = ctypes.c_int
-    buf = ctypes.create_string_buffer(_SNAPSHOT_ID_BYTES)
-    result = func(buf, ctypes.sizeof(buf), 0)
-    _snapshot_result(result, "create")
-    return buf.value.decode("ascii")
-
-
-def snapshot_status(snapshot_id: str) -> SnapshotState:
-    """Return persistent snapshot status."""
-
-    snapshot_id = _require_snapshot_id(snapshot_id)
-    lib = _snapshot_lib()
-    func = lib.lupine_snapshot_status
-    func.argtypes = [ctypes.c_char_p, ctypes.POINTER(_CSnapshotInfo)]
-    func.restype = ctypes.c_int
-    info = _CSnapshotInfo()
-    result = func(snapshot_id.encode("ascii"), ctypes.byref(info))
-    _snapshot_result(result, "status")
-    return SnapshotState(
-        id=snapshot_id,
-        state=_snapshot_state_name(info.state),
-        bytes=int(info.bytes),
-        created_unix_seconds=int(info.created_unix_seconds),
-    )
-
-
-def load_snapshot(
-    snapshot_id: str,
-    *,
-    strict: bool = True,
-    timeout: float | None = None,
-) -> None:
-    """Restore a snapshot by connecting with ``snapshot_id``."""
-
-    _require_snapshot_id(snapshot_id)
-    del strict, timeout
-    raise LupineError("restore snapshots with lupine.connect(..., snapshot_id=snapshot_id)")
-
-
 def save_snapshot_and_exit(snapshot_id: str) -> None:
     """Save this server-side session snapshot and close the server worker."""
 
@@ -452,18 +345,6 @@ def save_snapshot_and_exit(snapshot_id: str) -> None:
     func.restype = ctypes.c_int
     result = func(snapshot_id.encode("ascii"))
     _snapshot_result(result, "save")
-
-
-def delete_snapshot(snapshot_id: str) -> None:
-    """Delete a persistent server-side GPU snapshot."""
-
-    snapshot_id = _require_snapshot_id(snapshot_id)
-    lib = _snapshot_lib()
-    func = lib.lupine_snapshot_delete
-    func.argtypes = [ctypes.c_char_p]
-    func.restype = ctypes.c_int
-    result = func(snapshot_id.encode("ascii"))
-    _snapshot_result(result, "delete")
 
 
 def sidecar(
@@ -493,20 +374,15 @@ __all__ = [
     "DEFAULT_PORT",
     "LupineError",
     "Session",
-    "SnapshotState",
     "connect",
     "current_device",
-    "delete_snapshot",
     "device",
     "device_count",
     "devices",
     "is_available",
     "is_configured",
-    "load_snapshot",
     "save_snapshot_and_exit",
     "sidecar",
-    "snapshot",
-    "snapshot_status",
     "servers",
     "synchronize",
 ]
