@@ -1239,7 +1239,9 @@ extern "C" lupine_route lupine_route_for_module(CUmodule module) {
       return lupine_route_for_owner(it->second);
     }
   }
-  return lupine_route_for_default();
+  lupine_route current_route = lupine_route_for_current_context();
+  return current_route.kind == LUPINE_ROUTE_INVALID ? lupine_route_for_default()
+                                                    : current_route;
 }
 
 extern "C" lupine_route lupine_route_for_library(CUlibrary library) {
