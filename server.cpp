@@ -7,12 +7,9 @@
 
 #ifndef _WIN32
 #include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <signal.h>
-#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
@@ -213,19 +210,6 @@ lupine_manual_handlers() {
 }
 
 void client_handler(lupine_socket_t connfd) {
-#ifndef _WIN32
-  int fd_flags = fcntl(connfd, F_GETFD);
-  int socket_error = 0;
-  socklen_t socket_error_len = sizeof(socket_error);
-  int socket_error_result =
-      getsockopt(connfd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len);
-  LUPINE_LOG_DEBUG("Starting client handler for fd " << connfd
-                                                     << " fd_flags=" << fd_flags
-                                                     << " so_error_result="
-                                                     << socket_error_result
-                                                     << " so_error="
-                                                     << socket_error);
-#endif
   conn_t conn = {connfd, 1};
   conn.request_id = 1;
   conn.local_request_parity = conn.request_id & 1;

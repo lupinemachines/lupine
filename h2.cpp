@@ -407,9 +407,6 @@ int h2_read_from_net(h2_transport *transport) {
       LUPINE_LOG_ERROR("HTTP/2 socket read failed on fd "
                        << transport->netfd << ": errno=" << errno << " ("
                        << strerror(errno) << ")");
-    } else {
-      LUPINE_LOG_ERROR("HTTP/2 socket read reached EOF on fd "
-                       << transport->netfd);
     }
     return -1;
   }
