@@ -4118,6 +4118,7 @@ CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
  */
 CUresult cuGraphDestroyNode(CUgraphNode hNode);
 /**
+ * @disabled client - manual client flushes deferred kernel node param updates
  * @param phGraphExec SEND_RECV
  * @param hGraph SEND_ONLY
  * @param flags SEND_ONLY
@@ -4125,6 +4126,7 @@ CUresult cuGraphDestroyNode(CUgraphNode hNode);
 CUresult cuGraphInstantiateWithFlags(CUgraphExec *phGraphExec, CUgraph hGraph,
                                      unsigned long long flags);
 /**
+ * @disabled client - manual client flushes deferred kernel node param updates
  * @param phGraphExec SEND_RECV
  * @param hGraph SEND_ONLY
  * @param instantiateParams SEND_RECV
@@ -4236,6 +4238,7 @@ CUresult cuGraphNodeGetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
  */
 CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream);
 /**
+ * @disabled client - manual client batches deferred kernel node param updates
  * @param hGraphExec SEND_ONLY
  * @param hStream SEND_ONLY
  */

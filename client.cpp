@@ -6248,7 +6248,22 @@ static CUresult lupine_remember_graph_kernel_node_params(
   storage.params.extra = nullptr;
 
   std::lock_guard<std::mutex> lock(lupine_graph_kernel_node_params_mutex());
-  lupine_graph_kernel_node_params_cache()[node] = std::move(storage);
+  auto &cache = lupine_graph_kernel_node_params_cache();
+  auto it = cache.find(node);
+  if (it != cache.end() && it->second.kernel_params.size() == layout.count) {
+    auto &existing = it->second;
+    existing.params = *nodeParams;
+    existing.layout = layout;
+    existing.packed = std::move(storage.packed);
+    for (uint32_t i = 0; i < layout.count; ++i) {
+      existing.kernel_params[i] = existing.packed.data() + layout.offsets[i];
+    }
+    existing.params.kernelParams =
+        existing.kernel_params.empty() ? nullptr : existing.kernel_params.data();
+    existing.params.extra = nullptr;
+  } else {
+    cache[node] = std::move(storage);
+  }
   lupine_graph_node_type_cache()[node] = CU_GRAPH_NODE_TYPE_KERNEL;
   return CUDA_SUCCESS;
 }
@@ -6929,6 +6944,138 @@ extern "C" CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes,
   return return_value;
 }
 
+static std::vector<lupine_pending_graph_kernel_node_set>
+lupine_take_pending_graph_kernel_node_sets() {
+  std::vector<lupine_pending_graph_kernel_node_set> pending;
+  std::lock_guard<std::mutex> lock(lupine_graph_kernel_node_params_mutex());
+  pending.swap(lupine_pending_graph_kernel_node_sets());
+  return pending;
+}
+
+static CUresult lupine_write_pending_graph_kernel_node_sets(
+    conn_t *conn,
+    const std::vector<lupine_pending_graph_kernel_node_set> &pending) {
+  if (conn == nullptr || pending.size() > UINT32_MAX) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  uint32_t pending_count = static_cast<uint32_t>(pending.size());
+  if (lupine_trace_enabled()) {
+    LUPINE_LOG_DEBUG("LUPINE writing pending graph setparams count="
+                     << pending_count);
+  }
+  if (rpc_write(conn, &pending_count, sizeof(pending_count)) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  for (const auto &entry : pending) {
+    if (lupine_trace_enabled()) {
+      LUPINE_LOG_DEBUG("LUPINE writing pending graph setparams node="
+                       << entry.node << " params=" << entry.layout.count
+                       << " payload=" << entry.payload_size);
+    }
+    void *const *kernel_params =
+        entry.kernel_params.empty() ? nullptr : entry.kernel_params.data();
+    if (rpc_write(conn, &entry.node, sizeof(entry.node)) < 0 ||
+        rpc_write(conn, &entry.serial_params, sizeof(entry.serial_params)) <
+            0 ||
+        rpc_write(conn, &entry.layout.count, sizeof(entry.layout.count)) < 0 ||
+        rpc_write(conn, &entry.payload_size, sizeof(entry.payload_size)) < 0 ||
+        rpc_write_kernel_param_values(conn, entry.layout.count,
+                                      entry.layout.sizes, kernel_params) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  }
+  return CUDA_SUCCESS;
+}
+
+#ifdef cuGraphInstantiateWithFlags
+#undef cuGraphInstantiateWithFlags
+#endif
+extern "C" CUresult
+cuGraphInstantiateWithFlags(CUgraphExec *phGraphExec, CUgraph hGraph,
+                            unsigned long long flags) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUgraphExec *, CUgraph, unsigned long long);
+    auto real = reinterpret_cast<real_fn_t>(
+        lupine_real_cuda_symbol("cuGraphInstantiateWithFlags"));
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(phGraphExec, hGraph, flags);
+  }
+  if (phGraphExec == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  std::vector<lupine_pending_graph_kernel_node_set> pending =
+      lupine_take_pending_graph_kernel_node_sets();
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuGraphInstantiateWithFlags) < 0 ||
+      rpc_write(conn, phGraphExec, sizeof(*phGraphExec)) < 0 ||
+      rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      lupine_write_pending_graph_kernel_node_sets(conn, pending) !=
+          CUDA_SUCCESS ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phGraphExec, sizeof(*phGraphExec)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+#ifdef cuGraphInstantiateWithParams
+#undef cuGraphInstantiateWithParams
+#endif
+extern "C" CUresult cuGraphInstantiateWithParams(
+    CUgraphExec *phGraphExec, CUgraph hGraph,
+    CUDA_GRAPH_INSTANTIATE_PARAMS *instantiateParams) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t =
+        CUresult (*)(CUgraphExec *, CUgraph, CUDA_GRAPH_INSTANTIATE_PARAMS *);
+    auto real = reinterpret_cast<real_fn_t>(
+        lupine_real_cuda_symbol("cuGraphInstantiateWithParams"));
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(phGraphExec, hGraph, instantiateParams);
+  }
+  if (phGraphExec == nullptr || instantiateParams == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  std::vector<lupine_pending_graph_kernel_node_set> pending =
+      lupine_take_pending_graph_kernel_node_sets();
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuGraphInstantiateWithParams) < 0 ||
+      rpc_write(conn, phGraphExec, sizeof(*phGraphExec)) < 0 ||
+      rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
+      rpc_write(conn, instantiateParams, sizeof(*instantiateParams)) < 0 ||
+      lupine_write_pending_graph_kernel_node_sets(conn, pending) !=
+          CUDA_SUCCESS ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phGraphExec, sizeof(*phGraphExec)) < 0 ||
+      rpc_read(conn, instantiateParams, sizeof(*instantiateParams)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+#ifdef cuGraphInstantiateWithParams_ptsz
+#undef cuGraphInstantiateWithParams_ptsz
+#endif
+extern "C" CUresult cuGraphInstantiateWithParams_ptsz(
+    CUgraphExec *phGraphExec, CUgraph hGraph,
+    CUDA_GRAPH_INSTANTIATE_PARAMS *instantiateParams) {
+  return cuGraphInstantiateWithParams(phGraphExec, hGraph, instantiateParams);
+}
+
 extern "C" CUresult cuGraphExecUpdate_v2(
     CUgraphExec hGraphExec, CUgraph hGraph,
     CUgraphExecUpdateResultInfo *resultInfo) {
@@ -6946,14 +7093,10 @@ extern "C" CUresult cuGraphExecUpdate_v2(
                            : real(hGraphExec, hGraph, resultInfo);
   }
 
-  std::vector<lupine_pending_graph_kernel_node_set> pending;
-  {
-    std::lock_guard<std::mutex> lock(lupine_graph_kernel_node_params_mutex());
-    pending.swap(lupine_pending_graph_kernel_node_sets());
-  }
+  std::vector<lupine_pending_graph_kernel_node_set> pending =
+      lupine_take_pending_graph_kernel_node_sets();
 
   conn_t *conn = lupine_route_remote_conn(route);
-  uint32_t pending_count = static_cast<uint32_t>(pending.size());
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn,
@@ -6961,20 +7104,9 @@ extern "C" CUresult cuGraphExecUpdate_v2(
       rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       rpc_write(conn, resultInfo, sizeof(*resultInfo)) < 0 ||
-      rpc_write(conn, &pending_count, sizeof(pending_count)) < 0) {
+      lupine_write_pending_graph_kernel_node_sets(conn, pending) !=
+          CUDA_SUCCESS) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  for (const auto &entry : pending) {
-    if (rpc_write(conn, &entry.node, sizeof(entry.node)) < 0 ||
-        rpc_write(conn, &entry.serial_params, sizeof(entry.serial_params)) <
-            0 ||
-        rpc_write(conn, &entry.layout.count, sizeof(entry.layout.count)) < 0 ||
-        rpc_write(conn, &entry.payload_size, sizeof(entry.payload_size)) < 0 ||
-        rpc_write_kernel_param_values(conn, entry.layout.count,
-                                      entry.layout.sizes,
-                                      entry.kernel_params.data()) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
   }
   if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, resultInfo, sizeof(*resultInfo)) < 0 ||
@@ -6983,6 +7115,52 @@ extern "C" CUresult cuGraphExecUpdate_v2(
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
+}
+
+#ifdef cuGraphLaunch
+#undef cuGraphLaunch
+#endif
+extern "C" CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
+  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
+                                           : lupine_route_for_default());
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUgraphExec, CUstream);
+    auto real =
+        reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol("cuGraphLaunch"));
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(hGraphExec, hStream);
+  }
+
+  std::vector<lupine_pending_graph_kernel_node_set> pending =
+      lupine_take_pending_graph_kernel_node_sets();
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuGraphLaunch) < 0 ||
+      rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      lupine_write_pending_graph_kernel_node_sets(conn, pending) !=
+          CUDA_SUCCESS ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (lupine_trace_enabled()) {
+    LUPINE_LOG_DEBUG("LUPINE cuGraphLaunch exec="
+                     << hGraphExec << " stream=" << hStream
+                     << " pending_sets=" << pending.size()
+                     << " result=" << return_value);
+  }
+  return return_value;
+}
+
+#ifdef cuGraphLaunch_ptsz
+#undef cuGraphLaunch_ptsz
+#endif
+extern "C" CUresult cuGraphLaunch_ptsz(CUgraphExec hGraphExec,
+                                       CUstream hStream) {
+  return cuGraphLaunch(hGraphExec, hStream);
 }
 
 // ---------------------------------------------------------------------------
@@ -8844,6 +9022,8 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuGraphNodeGetType", (void *)cuGraphNodeGetType},
       {"cuGraphGetNodes", (void *)cuGraphGetNodes},
       {"cuGraphGetRootNodes", (void *)cuGraphGetRootNodes},
+      {"cuGraphLaunch", (void *)cuGraphLaunch},
+      {"cuGraphLaunch_ptsz", (void *)cuGraphLaunch},
       {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
       {"cuGraphExecUpdate_v2", (void *)cuGraphExecUpdate_v2},
       {"cuGraphAddExternalSemaphoresSignalNode",
@@ -8873,6 +9053,10 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuGraphHostNodeSetParams", (void *)cuGraphHostNodeSetParams},
       {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
+      {"cuGraphInstantiateWithFlags", (void *)cuGraphInstantiateWithFlags},
+      {"cuGraphInstantiateWithParams", (void *)cuGraphInstantiateWithParams},
+      {"cuGraphInstantiateWithParams_ptsz",
+       (void *)cuGraphInstantiateWithParams},
       {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
       {"cuStreamAddCallback", (void *)cuStreamAddCallback},
@@ -9151,6 +9335,8 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuGraphNodeGetType", (void *)cuGraphNodeGetType},
       {"cuGraphGetNodes", (void *)cuGraphGetNodes},
       {"cuGraphGetRootNodes", (void *)cuGraphGetRootNodes},
+      {"cuGraphLaunch", (void *)cuGraphLaunch},
+      {"cuGraphLaunch_ptsz", (void *)cuGraphLaunch},
       {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
       {"cuGraphExecUpdate_v2", (void *)cuGraphExecUpdate_v2},
       {"cuGraphAddExternalSemaphoresSignalNode",
@@ -9180,6 +9366,10 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuGraphHostNodeSetParams", (void *)cuGraphHostNodeSetParams},
       {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
+      {"cuGraphInstantiateWithFlags", (void *)cuGraphInstantiateWithFlags},
+      {"cuGraphInstantiateWithParams", (void *)cuGraphInstantiateWithParams},
+      {"cuGraphInstantiateWithParams_ptsz",
+       (void *)cuGraphInstantiateWithParams},
       {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
       {"cuStreamAddCallback", (void *)cuStreamAddCallback},
