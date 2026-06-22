@@ -1239,9 +1239,7 @@ extern "C" lupine_route lupine_route_for_module(CUmodule module) {
       return lupine_route_for_owner(it->second);
     }
   }
-  lupine_route current_route = lupine_route_for_current_context();
-  return current_route.kind == LUPINE_ROUTE_INVALID ? lupine_route_for_default()
-                                                    : current_route;
+  return lupine_route_for_default();
 }
 
 extern "C" lupine_route lupine_route_for_library(CUlibrary library) {
@@ -1310,7 +1308,9 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
       }
     }
   }
-  return lupine_route_for_default();
+  lupine_route current_route = lupine_route_for_current_context();
+  return current_route.kind == LUPINE_ROUTE_INVALID ? lupine_route_for_default()
+                                                    : current_route;
 }
 
 extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx) {
