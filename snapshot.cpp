@@ -547,12 +547,20 @@ int prepare_restore_socket_placeholder(const std::string &path) {
 #else
   int source = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
   if (source < 0) {
+    LUPINE_LOG_ERROR("Failed to create snapshot client socket placeholder "
+                     << path << ": errno=" << errno << " (" << strerror(errno)
+                     << ")");
     return -1;
   }
-  int restore_fd = fcntl(source, F_DUPFD, 1024);
+  int restore_fd = fcntl(source, F_DUPFD, 64);
   int saved_errno = errno;
   close(source);
   errno = saved_errno;
+  if (restore_fd < 0) {
+    LUPINE_LOG_ERROR("Failed to allocate snapshot restore fd for "
+                     << path << ": errno=" << errno << " (" << strerror(errno)
+                     << ")");
+  }
   return restore_fd;
 #endif
 }
