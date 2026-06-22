@@ -366,6 +366,28 @@ bool publish_artifact(const std::string &staging, const std::string &final_dir) 
   return true;
 }
 
+bool write_status(int fd, int result) {
+#ifdef _WIN32
+  (void)fd;
+  (void)result;
+  return false;
+#else
+  const char *cursor = reinterpret_cast<const char *>(&result);
+  size_t written = 0;
+  while (written < sizeof(result)) {
+    ssize_t n = write(fd, cursor + written, sizeof(result) - written);
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n <= 0) {
+      return false;
+    }
+    written += static_cast<size_t>(n);
+  }
+  return true;
+#endif
+}
+
 int run_criu_dump(pid_t pid, const std::string &images_dir,
                   const std::string &log_file) {
 #ifdef _WIN32
@@ -389,7 +411,7 @@ int run_criu_dump(pid_t pid, const std::string &images_dir,
     pid_t helper = fork();
     if (helper < 0) {
       int result = -1;
-      write(status_pipe[1], &result, sizeof(result));
+      write_status(status_pipe[1], result);
       _exit(1);
     }
     if (helper > 0) {
@@ -401,7 +423,7 @@ int run_criu_dump(pid_t pid, const std::string &images_dir,
     pid_t criu_child = fork();
     if (criu_child < 0) {
       int result = -1;
-      write(status_pipe[1], &result, sizeof(result));
+      write_status(status_pipe[1], result);
       _exit(1);
     }
     if (criu_child == 0) {
@@ -422,13 +444,13 @@ int run_criu_dump(pid_t pid, const std::string &images_dir,
       if (errno == EINTR) {
         continue;
       }
-      write(status_pipe[1], &result, sizeof(result));
+      write_status(status_pipe[1], result);
       _exit(1);
     }
     if (WIFEXITED(child_status)) {
       result = WEXITSTATUS(child_status);
     }
-    write(status_pipe[1], &result, sizeof(result));
+    write_status(status_pipe[1], result);
     _exit(0);
   }
 
@@ -479,8 +501,8 @@ int run_criu_restore(const std::string &images_dir, const std::string &log_file,
     signal(SIGCHLD, SIG_DFL);
     execlp("criu", "criu", "restore", "--unprivileged", "-v4", "--images-dir",
            images_dir.c_str(), "--restore-detached", "--shell-job",
-           "--file-locks", "--inherit-fd", inherit_arg.c_str(), "--log-file",
-           log_file.c_str(), static_cast<char *>(nullptr));
+           "--tcp-close", "--file-locks", "--inherit-fd", inherit_arg.c_str(),
+           "--log-file", log_file.c_str(), static_cast<char *>(nullptr));
     _exit(127);
   }
   int status = 0;
@@ -499,13 +521,13 @@ int run_criu_restore(const std::string &images_dir, const std::string &log_file,
 
 CUresult cuda_checkpoint_current_process(const std::string &images_dir,
                                          const std::string &log_file,
-                                         int client_fd,
-                                         const std::string &client_fd_target) {
+                                         int restore_fd,
+                                         const std::string &restore_fd_target) {
   int criu_result = run_criu_dump(getpid(), images_dir, log_file);
 
-  if (client_fd >= 0 && !client_fd_target.empty() &&
-      fd_target(client_fd) != client_fd_target) {
-    client_handler(client_fd);
+  if (restore_fd >= 0 && !restore_fd_target.empty() &&
+      fd_target(restore_fd) != restore_fd_target) {
+    client_handler(restore_fd);
     _exit(0);
   }
 
@@ -516,6 +538,23 @@ CUresult cuda_checkpoint_current_process(const std::string &images_dir,
     return CUDA_ERROR_OPERATING_SYSTEM;
   }
   return CUDA_SUCCESS;
+}
+
+int prepare_restore_socket_placeholder(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return -1;
+#else
+  int source = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (source < 0) {
+    return -1;
+  }
+  int restore_fd = fcntl(source, F_DUPFD, 1024);
+  int saved_errno = errno;
+  close(source);
+  errno = saved_errno;
+  return restore_fd;
+#endif
 }
 
 std::string staging_root_for(const std::string &root) {
@@ -580,12 +619,30 @@ snapshot_result create_snapshot_artifact(unsigned int flags, const char *request
     return {CUDA_ERROR_OPERATING_SYSTEM, ""};
   }
 
-  std::string client_target = client_fd >= 0 ? fd_target(client_fd) : "";
+  int restore_fd = -1;
+  std::string client_target;
+  if (client_fd >= 0) {
+    restore_fd = prepare_restore_socket_placeholder(
+        join_path(staging, "client-socket-placeholder"));
+    if (restore_fd < 0) {
+      remove_tree(staging);
+      return {CUDA_ERROR_OPERATING_SYSTEM, ""};
+    }
+    client_target = fd_target(restore_fd);
+    if (client_target.empty()) {
+      close(restore_fd);
+      remove_tree(staging);
+      return {CUDA_ERROR_OPERATING_SYSTEM, ""};
+    }
+  }
   if (client_fd >= 0) {
     redirect_stdio_to_devnull();
   }
   CUresult result = cuda_checkpoint_current_process(
-      criu_dir, join_path(logs_dir, "dump.log"), client_fd, client_target);
+      criu_dir, join_path(logs_dir, "dump.log"), restore_fd, client_target);
+  if (restore_fd >= 0) {
+    close(restore_fd);
+  }
   if (result != CUDA_SUCCESS) {
     LUPINE_LOG_ERROR("Snapshot checkpoint failed for " << id
                                                        << " with CUDA result "
