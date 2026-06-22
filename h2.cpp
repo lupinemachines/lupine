@@ -90,9 +90,14 @@ int h2_write_all(h2_transport *transport, const struct iovec *iov,
       if (lupine_socket_error_is_intr()) {
         continue;
       }
+      LUPINE_LOG_ERROR("HTTP/2 socket write failed on fd "
+                       << transport->netfd << ": errno=" << errno << " ("
+                       << strerror(errno) << ")");
       return -1;
     }
     if (n == 0) {
+      LUPINE_LOG_ERROR("HTTP/2 socket write returned 0 on fd "
+                       << transport->netfd);
       return -1;
     }
     size_t written = static_cast<size_t>(n);
@@ -375,7 +380,13 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
 
 int h2_flush_session_locked(h2_transport *transport) {
   int result = nghttp2_session_send(transport->session);
-  return result == 0 ? 0 : -1;
+  if (result != 0) {
+    LUPINE_LOG_ERROR("nghttp2_session_send failed: " << result << " ("
+                                                    << nghttp2_strerror(result)
+                                                    << ")");
+    return -1;
+  }
+  return 0;
 }
 
 int h2_flush_session(h2_transport *transport) {
@@ -392,6 +403,14 @@ int h2_read_from_net(h2_transport *transport) {
     n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
   } while (n < 0 && lupine_socket_error_is_intr());
   if (n <= 0) {
+    if (n < 0) {
+      LUPINE_LOG_ERROR("HTTP/2 socket read failed on fd "
+                       << transport->netfd << ": errno=" << errno << " ("
+                       << strerror(errno) << ")");
+    } else {
+      LUPINE_LOG_ERROR("HTTP/2 socket read reached EOF on fd "
+                       << transport->netfd);
+    }
     return -1;
   }
 
@@ -401,6 +420,10 @@ int h2_read_from_net(h2_transport *transport) {
     ssize_t consumed = nghttp2_session_mem_recv(
         transport->session, buffer + offset, static_cast<size_t>(n) - offset);
     if (consumed <= 0) {
+      LUPINE_LOG_ERROR("nghttp2_session_mem_recv failed: " << consumed << " ("
+                                                          << nghttp2_strerror(
+                                                                 consumed)
+                                                          << ")");
       pthread_mutex_unlock(&transport->session_mutex);
       return -1;
     }
@@ -418,6 +441,7 @@ int h2_init_direct(conn_t *conn, bool server) {
 
   nghttp2_session_callbacks *callbacks = nullptr;
   if (nghttp2_session_callbacks_new(&callbacks) != 0) {
+    LUPINE_LOG_ERROR("nghttp2_session_callbacks_new failed.");
     delete transport;
     return -1;
   }
@@ -439,6 +463,10 @@ int h2_init_direct(conn_t *conn, bool server) {
                                     &transport->session, callbacks, transport);
   nghttp2_session_callbacks_del(callbacks);
   if (session_result != 0) {
+    LUPINE_LOG_ERROR("nghttp2_session_new failed: " << session_result << " ("
+                                                   << nghttp2_strerror(
+                                                          session_result)
+                                                   << ")");
     delete transport;
     return -1;
   }
@@ -452,6 +480,7 @@ int h2_init_direct(conn_t *conn, bool server) {
       nghttp2_session_set_local_window_size(
           transport->session, NGHTTP2_FLAG_NONE, 0,
           static_cast<int32_t>(kH2InitialWindow)) != 0) {
+    LUPINE_LOG_ERROR("HTTP/2 settings initialization failed.");
     nghttp2_session_del(transport->session);
     delete transport;
     return -1;
@@ -471,6 +500,9 @@ int h2_init_direct(conn_t *conn, bool server) {
         nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1,
                                nullptr, headers, header_count, nullptr);
     if (stream_id < 0) {
+      LUPINE_LOG_ERROR("HTTP/2 client headers submission failed: "
+                       << stream_id << " (" << nghttp2_strerror(stream_id)
+                       << ")");
       nghttp2_session_del(transport->session);
       delete transport;
       return -1;
@@ -480,6 +512,7 @@ int h2_init_direct(conn_t *conn, bool server) {
 
   conn->http2 = transport;
   if (h2_flush_session(transport) < 0) {
+    LUPINE_LOG_ERROR("HTTP/2 initial session flush failed.");
     conn->http2 = nullptr;
     nghttp2_session_del(transport->session);
     delete transport;

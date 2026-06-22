@@ -7,9 +7,12 @@
 
 #ifndef _WIN32
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
@@ -210,15 +213,44 @@ lupine_manual_handlers() {
 }
 
 void client_handler(lupine_socket_t connfd) {
+#ifndef _WIN32
+  int fd_flags = fcntl(connfd, F_GETFD);
+  int socket_error = 0;
+  socklen_t socket_error_len = sizeof(socket_error);
+  int socket_error_result =
+      getsockopt(connfd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len);
+  LUPINE_LOG_DEBUG("Starting client handler for fd " << connfd
+                                                     << " fd_flags=" << fd_flags
+                                                     << " so_error_result="
+                                                     << socket_error_result
+                                                     << " so_error="
+                                                     << socket_error);
+#endif
   conn_t conn = {connfd, 1};
   conn.request_id = 1;
   conn.local_request_parity = conn.request_id & 1;
-  if (pthread_mutex_init(&conn.read_mutex, NULL) < 0 ||
-      pthread_mutex_init(&conn.write_mutex, NULL) < 0 ||
-      pthread_mutex_init(&conn.call_mutex, NULL) < 0 ||
-      pthread_cond_init(&conn.read_cond, NULL) < 0 ||
-      rpc_http2_server_init(&conn) < 0) {
-    LUPINE_LOG_ERROR("Error initializing mutex.");
+  int init_result = pthread_mutex_init(&conn.read_mutex, NULL);
+  if (init_result != 0) {
+    LUPINE_LOG_ERROR("Error initializing read mutex: " << init_result);
+    return;
+  }
+  init_result = pthread_mutex_init(&conn.write_mutex, NULL);
+  if (init_result != 0) {
+    LUPINE_LOG_ERROR("Error initializing write mutex: " << init_result);
+    return;
+  }
+  init_result = pthread_mutex_init(&conn.call_mutex, NULL);
+  if (init_result != 0) {
+    LUPINE_LOG_ERROR("Error initializing call mutex: " << init_result);
+    return;
+  }
+  init_result = pthread_cond_init(&conn.read_cond, NULL);
+  if (init_result != 0) {
+    LUPINE_LOG_ERROR("Error initializing read condition: " << init_result);
+    return;
+  }
+  if (rpc_http2_server_init(&conn) < 0) {
+    LUPINE_LOG_ERROR("Error initializing HTTP/2 server transport.");
     return;
   }
 
