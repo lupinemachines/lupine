@@ -38,9 +38,15 @@ typedef struct CUgraphExecUpdateResultInfo_st {
 } CUgraphExecUpdateResultInfo;
 
 #ifdef LUPINE_CUDA_COMPAT_TYPES_ONLY
+#ifdef __cplusplus
+extern "C" {
+#endif
 CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode, CUDA_KERNEL_NODE_PARAMS *);
 CUresult cuGraphExecKernelNodeSetParams_v2(CUgraphExec, CUgraphNode,
                                            const CUDA_KERNEL_NODE_PARAMS *);
+#ifdef __cplusplus
+}
+#endif
 #endif
 
 #ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
@@ -230,13 +236,7 @@ typedef unsigned long long CUgraphConditionalHandle;
 
 typedef struct CUgraphNodeParams_st {
   CUgraphNodeType type;
-  struct {
-    CUDA_KERNEL_NODE_PARAMS params;
-    CUfunction func;
-    CUkernel kern;
-    void **kernelParams;
-    void **extra;
-  } kernel;
+  CUDA_KERNEL_NODE_PARAMS kernel;
   struct {
     CUgraphConditionalHandle handle;
     unsigned int type;

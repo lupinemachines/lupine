@@ -6615,8 +6615,10 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
     serial_params.kernel.sharedMemBytes = serial_kernel_params.sharedMemBytes;
     serial_params.kernel.kernelParams = nullptr;
     serial_params.kernel.extra = nullptr;
+#if CUDA_VERSION >= 12000
     serial_params.kernel.kern = serial_kernel_params.kern;
     serial_params.kernel.ctx = serial_kernel_params.ctx;
+#endif
     param_count = layout.count;
   } else if (nodeParams->type == CU_GRAPH_NODE_TYPE_CONDITIONAL) {
     serial_params.conditional.phGraph_out = nullptr;
