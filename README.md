@@ -86,6 +86,27 @@ Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
 so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
 as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
 
+## Trace Logging
+
+Set `LUPINE_TRACE` on the client, server, or both to enable trace logging.
+`LUPINE_TRACE=0` or an unset value disables tracing. `LUPINE_TRACE=1` writes
+trace output to stdout, `LUPINE_TRACE=2` writes it to stderr, and any other
+non-empty value is treated as a file path opened in append mode.
+
+```bash
+# trace to stdout
+LUPINE_TRACE=1 ./your_cuda_program
+
+# trace to stderr
+LUPINE_TRACE=2 ./server
+
+# trace to a file
+LUPINE_TRACE=/tmp/lupine.trace ./your_cuda_program
+```
+
+The same `LUPINE_TRACE` variable controls both client and server tracing;
+`LUPINE_SERVER_TRACE` is no longer used.
+
 ## Multi-GPU Across Multiple Servers
 
 The client accepts a comma-separated `LUPINE_SERVER` list. Devices are exposed as

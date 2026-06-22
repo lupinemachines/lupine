@@ -300,14 +300,6 @@ lupine_get_graph_resources(CUgraph graph) {
   return created;
 }
 
-static bool lupine_server_trace_enabled() {
-  static bool enabled = [] {
-    const char *value = getenv("LUPINE_SERVER_TRACE");
-    return value != nullptr && strcmp(value, "0") != 0;
-  }();
-  return enabled;
-}
-
 static uint64_t lupine_fnv1a64(const void *data, size_t size) {
   static constexpr uint64_t kOffset = 14695981039346656037ull;
   static constexpr uint64_t kPrime = 1099511628211ull;
@@ -373,11 +365,9 @@ int handle_manual_cuGetExportTableMetadata(conn_t *conn) {
     }
   }
 
-  if (lupine_server_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE server cuGetExportTable metadata result="
-                     << result << " bytes=" << byte_size
-                     << " slots=" << slot_count << " trusted=" << trusted);
-  }
+  LUPINE_TRACE_LOG("LUPINE server cuGetExportTable metadata result="
+                   << result << " bytes=" << byte_size
+                   << " slots=" << slot_count << " trusted=" << trusted);
 
   size_t hash_bytes = static_cast<size_t>(slot_count) * sizeof(uint64_t);
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -460,13 +450,11 @@ int handle_manual_cuPrivateGetModuleNode(conn_t *conn) {
       } else {
         result = count == 0 ? CUDA_ERROR_NOT_FOUND : CUDA_ERROR_UNKNOWN;
       }
-      if (lupine_server_trace_enabled()) {
-        LUPINE_LOG_DEBUG("LUPINE server private module node module="
-                         << module << " context=" << context
-                         << " count=" << count << " node=" << node
-                         << " owner=" << reinterpret_cast<void *>(owner)
-                         << " result=" << static_cast<int>(result));
-      }
+      LUPINE_TRACE_LOG("LUPINE server private module node module="
+                       << module << " context=" << context << " count=" << count
+                       << " node=" << node
+                       << " owner=" << reinterpret_cast<void *>(owner)
+                       << " result=" << static_cast<int>(result));
     }
   }
 
@@ -1521,11 +1509,9 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
       }
     }
   }
-  if (lupine_server_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cuModuleGetGlobal name="
-                     << name.data() << " result=" << static_cast<int>(result)
-                     << " bytes=" << bytes);
-  }
+  LUPINE_TRACE_LOG("LUPINE cuModuleGetGlobal name=" << name.data() << " result="
+                                                    << static_cast<int>(result)
+                                                    << " bytes=" << bytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(dptr)) < 0 ||
@@ -2278,12 +2264,10 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }
-  if (lupine_server_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cuGraphAddNode type="
-                     << nodeParams.type << " param_count=" << param_count
-                     << " payload_size=" << payload_size << " graph=" << hGraph
-                     << " node=" << graphNode << " result=" << result);
-  }
+  LUPINE_TRACE_LOG("LUPINE cuGraphAddNode type="
+                   << nodeParams.type << " param_count=" << param_count
+                   << " payload_size=" << payload_size << " graph=" << hGraph
+                   << " node=" << graphNode << " result=" << result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
