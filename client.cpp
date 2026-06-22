@@ -150,14 +150,6 @@ extern int rpc_open();
 extern conn_t *rpc_client_get_connection(unsigned int index);
 extern void rpc_close(conn_t *conn);
 
-static bool lupine_trace_enabled() {
-  static bool enabled = [] {
-    const char *value = getenv("LUPINE_TRACE");
-    return value != nullptr && strcmp(value, "0") != 0;
-  }();
-  return enabled;
-}
-
 static bool lupine_stub_missing_enabled() {
   static bool enabled = [] {
     const char *value = getenv("LUPINE_STUB_MISSING");
@@ -1879,10 +1871,8 @@ static CUfunction lupine_resolve_host_function(CUfunction function) {
     }
   }
   if (kernel_name == nullptr) {
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE could not resolve host kernel symbol for "
-                       << reinterpret_cast<void *>(function));
-    }
+    LUPINE_TRACE_LOG("LUPINE could not resolve host kernel symbol for "
+                     << reinterpret_cast<void *>(function));
     return function;
   }
 
@@ -1897,20 +1887,16 @@ static CUfunction lupine_resolve_host_function(CUfunction function) {
     if (result == CUDA_SUCCESS && remote != nullptr) {
       std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
       lupine_host_function_map()[function] = remote;
-      if (lupine_trace_enabled()) {
-        LUPINE_LOG_DEBUG("LUPINE mapped host kernel "
-                         << kernel_name
-                         << " host=" << reinterpret_cast<void *>(function)
-                         << " remote=" << remote);
-      }
+      LUPINE_TRACE_LOG("LUPINE mapped host kernel "
+                       << kernel_name
+                       << " host=" << reinterpret_cast<void *>(function)
+                       << " remote=" << remote);
       return remote;
     }
   }
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE host kernel "
-                     << kernel_name << " was not found in " << modules.size()
-                     << " loaded modules");
-  }
+  LUPINE_TRACE_LOG("LUPINE host kernel " << kernel_name << " was not found in "
+                                         << modules.size()
+                                         << " loaded modules");
 
   return function;
 }
@@ -2270,15 +2256,13 @@ lupine_private_export_slot_called(int slot, const char *table_name,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
   static uint64_t lupine_private_2131_fake_object[64] = {};
 
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE private export table called: "
-                     << (table_name != nullptr ? table_name : "(null)") << "["
-                     << slot << "]" << std::hex << std::showbase << " hash="
-                     << lupine_private_export_slot_hash(table_name, slot)
-                     << " args=" << arg0 << "," << arg1 << "," << arg2 << ","
-                     << arg3 << "," << arg4 << "," << arg5 << std::dec
-                     << std::noshowbase);
-  }
+  LUPINE_TRACE_LOG("LUPINE private export table called: "
+                   << (table_name != nullptr ? table_name : "(null)") << "["
+                   << slot << "]" << std::hex << std::showbase << " hash="
+                   << lupine_private_export_slot_hash(table_name, slot)
+                   << " args=" << arg0 << "," << arg1 << "," << arg2 << ","
+                   << arg3 << "," << arg4 << "," << arg5 << std::dec
+                   << std::noshowbase);
 
   if (table_name != nullptr &&
       strcmp(table_name, "21318c60971432488ca641ff7324c8f2") == 0 &&
@@ -2288,9 +2272,7 @@ lupine_private_export_slot_called(int slot, const char *table_name,
     }
     uint64_t output = arg0 == 0 ? 0 : 1;
     *reinterpret_cast<uint64_t *>(arg1) = output;
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE private 2131[4] output=" << output);
-    }
+    LUPINE_TRACE_LOG("LUPINE private 2131[4] output=" << output);
     return CUDA_SUCCESS;
   }
 
@@ -2327,11 +2309,9 @@ lupine_private_export_slot_called(int slot, const char *table_name,
         reinterpret_cast<CUcontext>(arg0), reinterpret_cast<CUmodule>(arg1),
         &server_node, &server_owner);
     if (node_result != CUDA_SUCCESS || server_node == nullptr) {
-      if (lupine_trace_enabled()) {
-        LUPINE_LOG_DEBUG("LUPINE private 6e16[7] remote node failed result="
-                         << static_cast<int>(node_result)
-                         << " module=" << reinterpret_cast<void *>(arg1));
-      }
+      LUPINE_TRACE_LOG("LUPINE private 6e16[7] remote node failed result="
+                       << static_cast<int>(node_result)
+                       << " module=" << reinterpret_cast<void *>(arg1));
       return node_result == CUDA_SUCCESS ? CUDA_ERROR_NOT_FOUND : node_result;
     }
 
@@ -2368,12 +2348,10 @@ lupine_private_export_slot_called(int slot, const char *table_name,
         mapping.functions_by_route[route_id] = server_node;
       }
     }
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE private 6e16[7] mapped client_node["
-                       << node_index << "]=" << static_cast<void *>(client_node)
-                       << " server_node=" << server_node << " server_owner="
-                       << reinterpret_cast<void *>(server_owner));
-    }
+    LUPINE_TRACE_LOG("LUPINE private 6e16[7] mapped client_node["
+                     << node_index << "]=" << static_cast<void *>(client_node)
+                     << " server_node=" << server_node << " server_owner="
+                     << reinterpret_cast<void *>(server_owner));
     if (arg2 != 0) {
       using lupine_private_iterator_callback =
           void (*)(void *, void *, uint64_t);
@@ -2554,11 +2532,9 @@ static const void *lupine_remote_private_export_table(const CUuuid *uuid) {
 
   std::string uuid_hex = lupine_uuid_hex(uuid);
   std::vector<uint64_t> code_hashes(hashes, hashes + slot_count);
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE remote cuGetExportTable metadata uuid="
-                     << uuid_hex << " bytes=" << byte_size
-                     << " slots=" << slot_count);
-  }
+  LUPINE_TRACE_LOG("LUPINE remote cuGetExportTable metadata uuid="
+                   << uuid_hex << " bytes=" << byte_size
+                   << " slots=" << slot_count);
   return lupine_make_private_export_table(
       uuid_hex.c_str(), static_cast<size_t>(byte_size), code_hashes);
 }
@@ -2806,13 +2782,11 @@ CUresult cuStreamSynchronize(CUstream hStream);
 extern "C" CUresult
 lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                                size_t ByteCount, CUstream hStream, bool async) {
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cross-route D2D via client dst="
-                     << reinterpret_cast<void *>(dstDevice)
-                     << " src=" << reinterpret_cast<void *>(srcDevice)
-                     << " bytes=" << ByteCount << " async=" << async
-                     << " stream=" << hStream);
-  }
+  LUPINE_TRACE_LOG("LUPINE cross-route D2D via client dst="
+                   << reinterpret_cast<void *>(dstDevice)
+                   << " src=" << reinterpret_cast<void *>(srcDevice)
+                   << " bytes=" << ByteCount << " async=" << async
+                   << " stream=" << hStream);
   if (ByteCount == 0) {
     return CUDA_SUCCESS;
   }
@@ -3832,10 +3806,8 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
     }
   }
   *pp = ptr;
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE local cuMemHostAlloc ptr="
-                     << ptr << " bytes=" << bytesize << " flags=" << Flags);
-  }
+  LUPINE_TRACE_LOG("LUPINE local cuMemHostAlloc ptr="
+                   << ptr << " bytes=" << bytesize << " flags=" << Flags);
   return CUDA_SUCCESS;
 }
 
@@ -4366,11 +4338,9 @@ static int lupine_apply_jit_outputs(conn_t *conn, CUlinkState state) {
   if (rpc_read(conn, &output_count, sizeof(output_count)) < 0) {
     return -1;
   }
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cuLink JIT outputs state="
-                     << reinterpret_cast<void *>(state)
-                     << " count=" << output_count);
-  }
+  LUPINE_TRACE_LOG("LUPINE cuLink JIT outputs state="
+                   << reinterpret_cast<void *>(state)
+                   << " count=" << output_count);
   if (output_count > 32) {
     return -1;
   }
@@ -4384,12 +4354,10 @@ static int lupine_apply_jit_outputs(conn_t *conn, CUlinkState state) {
         rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
       return -1;
     }
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE cuLink JIT output state="
-                       << reinterpret_cast<void *>(state) << " index=" << i
-                       << " option=" << static_cast<int>(option)
-                       << " size=" << payload_size);
-    }
+    LUPINE_TRACE_LOG("LUPINE cuLink JIT output state="
+                     << reinterpret_cast<void *>(state) << " index=" << i
+                     << " option=" << static_cast<int>(option)
+                     << " size=" << payload_size);
     if (payload_size > (16ull << 20)) {
       return -1;
     }
@@ -4569,11 +4537,9 @@ extern "C" CUresult lupine_cuLinkComplete_safe(CUlinkState state,
       rpc_read(conn, &cubin_size, sizeof(cubin_size)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cuLinkComplete state="
-                     << reinterpret_cast<void *>(state)
-                     << " cubin_size=" << cubin_size);
-  }
+  LUPINE_TRACE_LOG("LUPINE cuLinkComplete state="
+                   << reinterpret_cast<void *>(state)
+                   << " cubin_size=" << cubin_size);
 
   {
     std::lock_guard<std::mutex> lock(lupine_jit_client_mutex());
@@ -5098,26 +5064,21 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
        libraryOptions[0] == CU_LIBRARY_BINARY_IS_PRESERVED);
   if (numJitOptions != 0 ||
       !(numLibraryOptions == 0 || can_ignore_library_options)) {
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG(
-          "LUPINE cuLibraryLoadData unsupported options: jit="
-          << numJitOptions << " library=" << numLibraryOptions
-          << " first_library_option="
-          << (libraryOptions == nullptr ? -1 : (int)libraryOptions[0]));
-    }
+    LUPINE_TRACE_LOG(
+        "LUPINE cuLibraryLoadData unsupported options: jit="
+        << numJitOptions << " library=" << numLibraryOptions
+        << " first_library_option="
+        << (libraryOptions == nullptr ? -1 : (int)libraryOptions[0]));
     return CUDA_ERROR_NOT_SUPPORTED;
   }
 
   uint32_t kind = 0;
   std::vector<unsigned char> image_bytes;
   if (!lupine_pack_module_image(code, &kind, &image_bytes)) {
-    if (lupine_trace_enabled()) {
-      const auto *wrapper =
-          reinterpret_cast<const lupine_fatbin_wrapper *>(code);
-      LUPINE_LOG_DEBUG("LUPINE cuLibraryLoadData could not pack image"
-                       << " magic=0x" << std::hex << wrapper->magic
-                       << " version=0x" << wrapper->version << std::dec);
-    }
+    const auto *wrapper = reinterpret_cast<const lupine_fatbin_wrapper *>(code);
+    LUPINE_TRACE_LOG("LUPINE cuLibraryLoadData could not pack image"
+                     << " magic=0x" << std::hex << wrapper->magic
+                     << " version=0x" << wrapper->version << std::dec);
     return CUDA_ERROR_NOT_SUPPORTED;
   }
 
@@ -5269,15 +5230,13 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   f = lupine_translate_private_function(route_function);
 
   lupine_route route = lupine_route_for_function(f);
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cuLaunchKernel f="
-                     << f << " stream=" << hStream
-                     << " launch_route=" << lupine_route_identity(launch_route)
-                     << " function_route=" << lupine_route_identity(route)
-                     << " grid=(" << gridDimX << "," << gridDimY << ","
-                     << gridDimZ << ") block=(" << blockDimX << "," << blockDimY
-                     << "," << blockDimZ << ")");
-  }
+  LUPINE_TRACE_LOG("LUPINE cuLaunchKernel f="
+                   << f << " stream=" << hStream
+                   << " launch_route=" << lupine_route_identity(launch_route)
+                   << " function_route=" << lupine_route_identity(route)
+                   << " grid=(" << gridDimX << "," << gridDimY << ","
+                   << gridDimZ << ") block=(" << blockDimX << "," << blockDimY
+                   << "," << blockDimZ << ")");
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(
         CUfunction, unsigned int, unsigned int, unsigned int, unsigned int,
@@ -5356,10 +5315,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       memcpy(packed.data() + layout.offsets[i], kernelParams[i],
              layout.sizes[i]);
     }
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE cuLaunchKernel rerouted by args f="
-                       << f << " route=" << lupine_route_identity(route));
-    }
+    LUPINE_TRACE_LOG("LUPINE cuLaunchKernel rerouted by args f="
+                     << f << " route=" << lupine_route_identity(route));
   }
 
   status = lupine_sync_mapped_host_to_device_for_launch(
@@ -5389,8 +5346,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (lupine_trace_enabled() && return_value != CUDA_SUCCESS) {
-    LUPINE_LOG_DEBUG(
+  if (return_value != CUDA_SUCCESS) {
+    LUPINE_TRACE_LOG(
         "LUPINE cuLaunchKernel result=" << static_cast<int>(return_value));
   }
   return return_value;
@@ -5401,8 +5358,8 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (config == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  if (config->numAttrs != 0 && lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cuLaunchKernelEx ignoring "
+  if (config->numAttrs != 0) {
+    LUPINE_TRACE_LOG("LUPINE cuLaunchKernelEx ignoring "
                      << config->numAttrs << " launch attributes");
   }
   return cuLaunchKernel(f, config->gridDimX, config->gridDimY, config->gridDimZ,
@@ -5490,11 +5447,9 @@ extern "C" CUresult lupine_cuFuncGetAttribute_safe(int *pi,
   }
   CUfunction translated = lupine_translate_private_function(hfunc);
   if (translated != hfunc) {
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE translated cuFuncGetAttribute attr="
-                       << attrib << " client=" << hfunc
-                       << " server=" << translated);
-    }
+    LUPINE_TRACE_LOG("LUPINE translated cuFuncGetAttribute attr="
+                     << attrib << " client=" << hfunc
+                     << " server=" << translated);
     return cuFuncGetAttribute(pi, attrib, translated);
   }
   return cuFuncGetAttribute(pi, attrib, hfunc);
@@ -5507,13 +5462,11 @@ extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_safe(
   }
   CUfunction translated = lupine_translate_private_function(func);
   if (translated != func) {
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE translated "
-                       "cuOccupancyMaxActiveBlocksPerMultiprocessor"
-                       << " client=" << func << " server=" << translated
-                       << " blockSize=" << blockSize
-                       << " dynamicSMemSize=" << dynamicSMemSize);
-    }
+    LUPINE_TRACE_LOG("LUPINE translated "
+                     "cuOccupancyMaxActiveBlocksPerMultiprocessor"
+                     << " client=" << func << " server=" << translated
+                     << " blockSize=" << blockSize
+                     << " dynamicSMemSize=" << dynamicSMemSize);
     return cuOccupancyMaxActiveBlocksPerMultiprocessor(
         numBlocks, translated, blockSize, dynamicSMemSize);
   }
@@ -5530,13 +5483,11 @@ lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_safe(
   }
   CUfunction translated = lupine_translate_private_function(func);
   if (translated != func) {
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE translated "
-                       "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags"
-                       << " client=" << func << " server=" << translated
-                       << " blockSize=" << blockSize << " dynamicSMemSize="
-                       << dynamicSMemSize << " flags=" << flags);
-    }
+    LUPINE_TRACE_LOG("LUPINE translated "
+                     "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags"
+                     << " client=" << func << " server=" << translated
+                     << " blockSize=" << blockSize << " dynamicSMemSize="
+                     << dynamicSMemSize << " flags=" << flags);
     return cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
         numBlocks, translated, blockSize, dynamicSMemSize, flags);
   }
@@ -6919,22 +6870,18 @@ static bool lupine_uuid_equals(const CUuuid *uuid, const unsigned char *bytes) {
 extern "C" CUresult lupine_cudart_get_module_from_cubin(CUmodule *module,
                                                         const void *fatbin) {
   CUresult result = cuModuleLoadData(module, fatbin);
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cudart get_module_from_cubin result="
-                     << static_cast<int>(result)
-                     << " module=" << (module == nullptr ? nullptr : *module));
-  }
+  LUPINE_TRACE_LOG("LUPINE cudart get_module_from_cubin result="
+                   << static_cast<int>(result)
+                   << " module=" << (module == nullptr ? nullptr : *module));
   return result;
 }
 
 extern "C" CUresult lupine_cudart_get_primary_context(CUcontext *ctx,
                                                       CUdevice dev) {
   CUresult result = cuDevicePrimaryCtxRetain(ctx, dev);
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cudart get_primary_context dev="
-                     << dev << " result=" << static_cast<int>(result)
-                     << " ctx=" << (ctx == nullptr ? nullptr : *ctx));
-  }
+  LUPINE_TRACE_LOG("LUPINE cudart get_primary_context dev="
+                   << dev << " result=" << static_cast<int>(result)
+                   << " ctx=" << (ctx == nullptr ? nullptr : *ctx));
   return result;
 }
 
@@ -6946,11 +6893,9 @@ lupine_cudart_get_module_from_cubin_ext1(CUmodule *module, const void *fatbin,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUresult result = cuModuleLoadData(module, fatbin);
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cudart get_module_from_cubin_ext1 result="
-                     << static_cast<int>(result)
-                     << " module=" << (module == nullptr ? nullptr : *module));
-  }
+  LUPINE_TRACE_LOG("LUPINE cudart get_module_from_cubin_ext1 result="
+                   << static_cast<int>(result)
+                   << " module=" << (module == nullptr ? nullptr : *module));
   return result;
 }
 
@@ -6972,11 +6917,9 @@ lupine_cudart_get_module_from_cubin_ext2(const void *fatbin, CUmodule *module,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUresult result = cuModuleLoadData(module, fatbin);
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE cudart get_module_from_cubin_ext2 result="
-                     << static_cast<int>(result)
-                     << " module=" << (module == nullptr ? nullptr : *module));
-  }
+  LUPINE_TRACE_LOG("LUPINE cudart get_module_from_cubin_ext2 result="
+                   << static_cast<int>(result)
+                   << " module=" << (module == nullptr ? nullptr : *module));
   return result;
 }
 
@@ -7043,10 +6986,8 @@ lupine_context_local_storage_put(CUcontext ctx, void *key, void *value,
 
   std::lock_guard<std::mutex> lock(lupine_context_storage_mutex());
   lupine_context_storage()[ctx][key] = {value, dtor};
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE context storage put ctx=" << ctx << " key=" << key
-                                                       << " value=" << value);
-  }
+  LUPINE_TRACE_LOG("LUPINE context storage put ctx=" << ctx << " key=" << key
+                                                     << " value=" << value);
   return CUDA_SUCCESS;
 }
 
@@ -7070,10 +7011,8 @@ extern "C" CUresult lupine_context_local_storage_delete(CUcontext ctx,
   // invoke here; some CUDA libraries call explicit delete during their own
   // teardown and free the value themselves.
   ctx_it->second.erase(value_it);
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE context storage delete ctx=" << ctx
-                                                          << " key=" << key);
-  }
+  LUPINE_TRACE_LOG("LUPINE context storage delete ctx=" << ctx
+                                                        << " key=" << key);
   return CUDA_SUCCESS;
 }
 
@@ -7094,17 +7033,13 @@ extern "C" CUresult lupine_context_local_storage_get(void **value,
   }
   auto value_it = ctx_it->second.find(key);
   if (value_it == ctx_it->second.end()) {
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE context storage get missing key ctx="
-                       << ctx << " key=" << key);
-    }
+    LUPINE_TRACE_LOG(
+        "LUPINE context storage get missing key ctx=" << ctx << " key=" << key);
     return CUDA_ERROR_INVALID_HANDLE;
   }
   *value = value_it->second.value;
-  if (lupine_trace_enabled()) {
-    LUPINE_LOG_DEBUG("LUPINE context storage get ctx=" << ctx << " key=" << key
-                                                       << " value=" << *value);
-  }
+  LUPINE_TRACE_LOG("LUPINE context storage get ctx=" << ctx << " key=" << key
+                                                     << " value=" << *value);
   return CUDA_SUCCESS;
 }
 
@@ -7502,8 +7437,8 @@ extern "C" CUresult cuGetExportTable(const void **ppExportTable,
       0x26, 0x3e, 0x88, 0x60, 0x7c, 0xd2, 0x61, 0x43,
       0x92, 0xf6, 0xbb, 0xd5, 0x00, 0x6d, 0xfa, 0x7e};
 
-  if (lupine_trace_enabled() && pExportTableId != nullptr) {
-    LUPINE_LOG_DEBUG("LUPINE cuGetExportTable requested UUID: "
+  if (pExportTableId != nullptr) {
+    LUPINE_TRACE_LOG("LUPINE cuGetExportTable requested UUID: "
                      << lupine_uuid_hex(pExportTableId));
   }
 
@@ -8039,9 +7974,7 @@ extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
 CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                              cuuint64_t flags,
                              CUdriverProcAddressQueryResult *symbolStatus) {
-  if (lupine_trace_enabled()) {
-    std::cout << "cuGetProcAddress getting symbol: " << symbol << std::endl;
-  }
+  LUPINE_TRACE_LOG("cuGetProcAddress getting symbol: " << symbol);
 
   if (symbol != nullptr && strcmp(symbol, "cuFuncGetAttribute") == 0) {
     *pfn = reinterpret_cast<void *>(&lupine_cuFuncGetAttribute_safe);
@@ -8083,10 +8016,8 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     if (symbolStatus != nullptr) {
       *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
     }
-    if (lupine_trace_enabled()) {
-      std::cout << "cuGetProcAddress: Mapped symbol '" << symbol
-                << "' to function: " << *pfn << std::endl;
-    }
+    LUPINE_TRACE_LOG("cuGetProcAddress: Mapped symbol '"
+                     << symbol << "' to function: " << *pfn);
     return CUDA_SUCCESS;
   }
 
@@ -8271,10 +8202,8 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
 
-  if (lupine_trace_enabled()) {
-    std::cout << "cuGetProcAddress: Symbol '" << symbol
-              << "' not found in cudaFunctionMap." << std::endl;
-  }
+  LUPINE_TRACE_LOG("cuGetProcAddress: Symbol '"
+                   << symbol << "' not found in cudaFunctionMap.");
 
   // fall back to the real loader before creating a local missing-symbol stub
   *pfn = lupine_real_dlsym(RTLD_DEFAULT, symbol);
@@ -8304,10 +8233,8 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
 
   *pfn = lupine_real_dlsym(libCudaHandle, symbol);
   if (!(*pfn)) {
-    if (lupine_trace_enabled()) {
-      LUPINE_LOG_DEBUG("Error: Could not resolve symbol '" << symbol
-                                                           << "' using dlsym.");
-    }
+    LUPINE_TRACE_LOG("Error: Could not resolve symbol '" << symbol
+                                                         << "' using dlsym.");
     if (lupine_stub_missing_enabled() &&
         lupine_symbol_looks_like_driver_api(symbol)) {
       *pfn = lupine_make_missing_stub(symbol);
@@ -8335,9 +8262,7 @@ extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
 }
 
 void *dlsym(void *handle, const char *name) __THROW {
-  if (lupine_trace_enabled()) {
-    std::cout << "dlsym: " << name << std::endl;
-  }
+  LUPINE_TRACE_LOG("dlsym: " << name);
 
   if (!lupine_symbol_looks_like_driver_api(name)) {
     return lupine_real_dlsym(handle, name);
