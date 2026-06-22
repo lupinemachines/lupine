@@ -161,21 +161,32 @@ def test_connect_leaves_env_when_cuda_initialized_inside_context(lupine_module):
     assert os.environ["LUPINE_SERVER"] == "host-a:14833"
 
 
-def test_connect_sets_snapshot_id_env(lupine_module):
+def test_connect_loads_snapshot_on_enter(lupine_module, monkeypatch):
     lupine, _ = lupine_module
     snapshot_id = "0123456789abcdef0123456789abcdef"
+    loaded = []
+    saved = []
+    cleared = []
+    monkeypatch.setattr(lupine, "load_snapshot", lambda value: loaded.append(value))
+    monkeypatch.setattr(lupine, "save_snapshot_and_exit", lambda value: saved.append(value))
+    monkeypatch.setattr(lupine, "_clear_snapshot_load", lambda: cleared.append(True))
 
     with lupine.connect(host="host-a", snapshot_id=snapshot_id):
-        assert os.environ["LUPINE_SNAPSHOT_ID"] == snapshot_id
+        assert loaded == [snapshot_id]
+        assert "LUPINE_SNAPSHOT_ID" not in os.environ
 
     assert "LUPINE_SNAPSHOT_ID" not in os.environ
+    assert saved == [snapshot_id]
+    assert cleared == [True]
 
 
-def test_connect_snapshot_exit_saves_when_cuda_initialized(lupine_module, monkeypatch):
+def test_connect_snapshot_exit_saves(lupine_module, monkeypatch):
     lupine, fake_torch = lupine_module
     snapshot_id = "0123456789abcdef0123456789abcdef"
     saved = []
+    monkeypatch.setattr(lupine, "load_snapshot", lambda value: None)
     monkeypatch.setattr(lupine, "save_snapshot_and_exit", lambda value: saved.append(value))
+    monkeypatch.setattr(lupine, "_clear_snapshot_load", lambda: None)
 
     with lupine.connect(host="host-a", snapshot_id=snapshot_id):
         fake_torch.cuda.initialized = True
@@ -230,11 +241,28 @@ class FakeSnapshotFunc:
 
 class FakeSnapshotLib:
     def __init__(self):
+        self.loaded = []
         self.lupine_snapshot_save_and_exit = FakeSnapshotFunc(self._save)
+        self.lupine_snapshot_load = FakeSnapshotFunc(self._load)
+
+    def _load(self, snapshot_id):
+        self.loaded.append(None if snapshot_id is None else snapshot_id.decode())
+        return 0
 
     def _save(self, snapshot_id):
         self.saved = snapshot_id.decode()
         return 0
+
+
+def test_load_snapshot_calls_c_export(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
+    lib = FakeSnapshotLib()
+    monkeypatch.setattr(lupine, "_snapshot_lib", lambda: lib)
+    snapshot_id = "0123456789abcdef0123456789abcdef"
+
+    lupine.load_snapshot(snapshot_id)
+
+    assert lib.loaded == [snapshot_id]
 
 
 def test_save_snapshot_and_exit_calls_c_export(lupine_module, monkeypatch):
@@ -254,7 +282,7 @@ def test_snapshot_rejects_bad_id(lupine_module):
     lupine, _ = lupine_module
 
     with pytest.raises(lupine.LupineError, match="snapshot id"):
-        lupine.save_snapshot_and_exit("../bad")
+        lupine.load_snapshot("../bad")
 
 
 def test_device_bounds_check(lupine_module):

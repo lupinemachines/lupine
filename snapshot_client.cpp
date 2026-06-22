@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 extern conn_t *rpc_client_get_connection(unsigned int index);
@@ -11,6 +12,8 @@ namespace {
 
 static const char kBootstrapMagic[] = "LUPSNAP1";
 static constexpr uint32_t kSnapshotIdLen = LUPINE_SNAPSHOT_ID_HEX_BYTES;
+std::mutex g_snapshot_id_mutex;
+char g_snapshot_id[LUPINE_SNAPSHOT_ID_BUFFER_BYTES] = {};
 
 conn_t *snapshot_conn() { return rpc_client_get_connection(0); }
 
@@ -38,6 +41,17 @@ CUresult write_snapshot_id(conn_t *conn, const char *id) {
   return CUDA_SUCCESS;
 }
 
+std::string configured_snapshot_id() {
+  {
+    std::lock_guard<std::mutex> lock(g_snapshot_id_mutex);
+    if (g_snapshot_id[0] != '\0') {
+      return std::string(g_snapshot_id);
+    }
+  }
+  const char *env_id = getenv("LUPINE_SNAPSHOT_ID");
+  return env_id != nullptr ? std::string(env_id) : std::string();
+}
+
 int send_all(lupine_socket_t connfd, const void *data, size_t size) {
   const char *cursor = static_cast<const char *>(data);
   size_t sent = 0;
@@ -56,18 +70,31 @@ int send_all(lupine_socket_t connfd, const void *data, size_t size) {
 
 } // namespace
 
-extern "C" int lupine_snapshot_write_bootstrap(lupine_socket_t connfd) {
-  const char *id = getenv("LUPINE_SNAPSHOT_ID");
+extern "C" CUresult lupine_snapshot_load(const char *id) {
+  std::lock_guard<std::mutex> lock(g_snapshot_id_mutex);
   if (id == nullptr || id[0] == '\0') {
-    return 0;
+    g_snapshot_id[0] = '\0';
+    return CUDA_SUCCESS;
   }
   if (!valid_client_snapshot_id(id)) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  memcpy(g_snapshot_id, id, LUPINE_SNAPSHOT_ID_BUFFER_BYTES);
+  return CUDA_SUCCESS;
+}
+
+extern "C" int lupine_snapshot_write_bootstrap(lupine_socket_t connfd) {
+  std::string id = configured_snapshot_id();
+  if (id.empty()) {
+    return 0;
+  }
+  if (!valid_client_snapshot_id(id.c_str())) {
     return -1;
   }
   uint32_t len = LUPINE_SNAPSHOT_ID_HEX_BYTES;
   if (send_all(connfd, kBootstrapMagic, sizeof(kBootstrapMagic) - 1) < 0 ||
       send_all(connfd, &len, sizeof(len)) < 0 ||
-      send_all(connfd, id, len) < 0) {
+      send_all(connfd, id.data(), len) < 0) {
     return -1;
   }
   return 0;

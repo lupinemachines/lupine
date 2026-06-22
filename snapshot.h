@@ -21,6 +21,7 @@ int lupine_snapshot_read_bootstrap(lupine_socket_t connfd,
 extern "C" {
 #endif
 
+CUresult lupine_snapshot_load(const char *id);
 CUresult lupine_snapshot_save_and_exit(const char *id);
 int lupine_snapshot_write_bootstrap(lupine_socket_t connfd);
 

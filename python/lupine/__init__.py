@@ -114,6 +114,16 @@ def _snapshot_result(result: int, action: str) -> None:
         raise LupineError(f"LUPINE snapshot {action} failed with CUDA error {int(result)}")
 
 
+def _clear_snapshot_load() -> None:
+    lib = _snapshot_lib()
+    func = getattr(lib, "lupine_snapshot_load", None)
+    if func is None:
+        raise LupineError("LUPINE client library does not expose snapshot load")
+    func.argtypes = [ctypes.c_char_p]
+    func.restype = ctypes.c_int
+    _snapshot_result(func(None), "clear load")
+
+
 def _require_snapshot_id(snapshot_id: str) -> str:
     snapshot_id = str(snapshot_id)
     if len(snapshot_id) != 32 or any(c not in "0123456789abcdef" for c in snapshot_id):
@@ -165,35 +175,28 @@ class Session:
     def __enter__(self) -> "Session":
         _require_mutable_config()
         self._previous_server = os.environ.get("LUPINE_SERVER")
-        self._previous_snapshot_id = os.environ.get("LUPINE_SNAPSHOT_ID")
         configured = _servers_from_env()
         if configured and configured != self.servers:
             raise LupineError(
                 "LUPINE_SERVER is already configured differently; start a new "
                 "process or pass the same hosts to lupine.connect()."
             )
-        configured_snapshot_id = os.environ.get("LUPINE_SNAPSHOT_ID")
-        if (
-            configured_snapshot_id
-            and self.snapshot_id is not None
-            and configured_snapshot_id != self.snapshot_id
-        ):
-            raise LupineError("LUPINE_SNAPSHOT_ID is already configured differently")
         if not configured:
             _set_server_env(self.servers)
-        if self.snapshot_id is not None:
-            os.environ["LUPINE_SNAPSHOT_ID"] = self.snapshot_id
         _load_libcuda(self.libcuda)
+        if self.snapshot_id is not None:
+            load_snapshot(self.snapshot_id)
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         try:
-            if self.snapshot_id is not None and _cuda_initialized():
+            if self.snapshot_id is not None:
                 save_snapshot_and_exit(self.snapshot_id)
         finally:
             if not _cuda_initialized():
                 self._restore_env()
-            self._restore_snapshot_env()
+            if self.snapshot_id is not None:
+                _clear_snapshot_load()
         return False
 
     def _restore_env(self) -> None:
@@ -201,12 +204,6 @@ class Session:
             os.environ.pop("LUPINE_SERVER", None)
         else:
             os.environ["LUPINE_SERVER"] = self._previous_server
-
-    def _restore_snapshot_env(self) -> None:
-        if getattr(self, "_previous_snapshot_id", None) is None:
-            os.environ.pop("LUPINE_SNAPSHOT_ID", None)
-        else:
-            os.environ["LUPINE_SNAPSHOT_ID"] = self._previous_snapshot_id
 
     def devices(self, *, require_available: bool | None = None) -> list[Any]:
         """Return all declared LUPINE GPUs as ``torch.device("cuda:N")``."""
@@ -334,6 +331,17 @@ def synchronize(index: int = 0) -> None:
     torch.cuda.synchronize(_cuda_device(index, require_available=False))
 
 
+def load_snapshot(snapshot_id: str) -> None:
+    """Load a server-side snapshot on the next LUPINE connection."""
+
+    snapshot_id = _require_snapshot_id(snapshot_id)
+    lib = _snapshot_lib()
+    func = lib.lupine_snapshot_load
+    func.argtypes = [ctypes.c_char_p]
+    func.restype = ctypes.c_int
+    _snapshot_result(func(snapshot_id.encode("ascii")), "load")
+
+
 def save_snapshot_and_exit(snapshot_id: str) -> None:
     """Save this server-side session snapshot and close the server worker."""
 
@@ -381,6 +389,7 @@ __all__ = [
     "devices",
     "is_available",
     "is_configured",
+    "load_snapshot",
     "save_snapshot_and_exit",
     "sidecar",
     "servers",
