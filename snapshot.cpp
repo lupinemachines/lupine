@@ -112,6 +112,13 @@ std::string fd_target(int fd) {
 #endif
 }
 
+std::string criu_inherit_target(const std::string &target) {
+  if (!target.empty() && target[0] == '/') {
+    return target.substr(1);
+  }
+  return target;
+}
+
 void redirect_stdio_to_devnull() {
 #ifndef _WIN32
   const char *log_path = getenv("LUPINE_SNAPSHOT_STDIO_LOG");
@@ -629,6 +636,7 @@ snapshot_result create_snapshot_artifact(unsigned int flags, const char *request
 
   int restore_fd = -1;
   std::string client_target;
+  std::string restore_fd_target;
   if (client_fd >= 0) {
     restore_fd = prepare_restore_socket_placeholder(
         join_path(staging, "client-socket-placeholder"));
@@ -636,18 +644,19 @@ snapshot_result create_snapshot_artifact(unsigned int flags, const char *request
       remove_tree(staging);
       return {CUDA_ERROR_OPERATING_SYSTEM, ""};
     }
-    client_target = fd_target(restore_fd);
-    if (client_target.empty()) {
+    restore_fd_target = fd_target(restore_fd);
+    if (restore_fd_target.empty()) {
       close(restore_fd);
       remove_tree(staging);
       return {CUDA_ERROR_OPERATING_SYSTEM, ""};
     }
+    client_target = criu_inherit_target(restore_fd_target);
   }
   if (client_fd >= 0) {
     redirect_stdio_to_devnull();
   }
   CUresult result = cuda_checkpoint_current_process(
-      criu_dir, join_path(logs_dir, "dump.log"), restore_fd, client_target);
+      criu_dir, join_path(logs_dir, "dump.log"), restore_fd, restore_fd_target);
   if (restore_fd >= 0) {
     close(restore_fd);
   }
