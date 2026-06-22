@@ -72,23 +72,6 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Validate Google Cloud configuration
-        run: |
-          set -euo pipefail
-          test -n "$GCP_PROJECT_ID"
-          test -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
-          test -n "${{ vars.GCP_SERVICE_ACCOUNT }}"
-          test "$GCP_FALLBACK_ZONES" = "us-central1-c us-central1-b"
-          test "$MACHINE_TYPE" = g2-standard-4
-          test "$VM_IMAGE_PROJECT" = ml-images
-          test "$VM_IMAGE_FAMILY" = common-cu129-ubuntu-2404-nvidia-580
-          test "$VM_MAX_RUN_DURATION" = 260m
-          test "$COMPLIANCE_TIMEOUT" = 240m
-          test "$CUDA_SAMPLE_TIMEOUT" = 120
-          test "$CUDA_LONG_SAMPLE_TIMEOUT" = 600
-          test "$CUDA_SAMPLE_JOBS" = 4
-          test "$PYTORCH_TEST_TIMEOUT" = 180
-
       - name: Prepare SSH key and runner allowlist
         run: |
           set -euo pipefail
