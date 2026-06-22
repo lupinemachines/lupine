@@ -195,31 +195,6 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
   return 0;
 }
 
-int rpc_kernel_param_payload_size(uint32_t count, const size_t *sizes,
-                                  size_t *payload_size) {
-  if (payload_size == nullptr || (count != 0 && sizes == nullptr)) {
-    return -1;
-  }
-  *payload_size = 0;
-  for (uint32_t i = 0; i < count; ++i) {
-    *payload_size += sizes[i];
-  }
-  return 0;
-}
-
-int rpc_kernel_param_storage_size(uint32_t count, const size_t *offsets,
-                                  const size_t *sizes, size_t *storage_size) {
-  if (storage_size == nullptr ||
-      (count != 0 && (offsets == nullptr || sizes == nullptr))) {
-    return -1;
-  }
-  *storage_size = 0;
-  for (uint32_t i = 0; i < count; ++i) {
-    *storage_size = std::max(*storage_size, offsets[i] + sizes[i]);
-  }
-  return 0;
-}
-
 int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                   const size_t *sizes, void *const *values) {
   if (conn == nullptr ||
@@ -245,8 +220,10 @@ int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
   }
 
   size_t expected_payload_size = 0;
-  if (rpc_kernel_param_payload_size(count, sizes, &expected_payload_size) < 0 ||
-      payload_size != expected_payload_size) {
+  for (uint32_t i = 0; i < count; ++i) {
+    expected_payload_size += sizes[i];
+  }
+  if (payload_size != expected_payload_size) {
     return -1;
   }
 

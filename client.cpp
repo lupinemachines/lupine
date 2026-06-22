@@ -5420,9 +5420,16 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  CUcontext launch_context = nullptr;
+  if (lupine_current_context != nullptr &&
+      lupine_route_identity(lupine_route_for_context(lupine_current_context)) ==
+          lupine_route_identity(route)) {
+    launch_context = lupine_current_context;
+  }
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
+      rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
       rpc_write(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
@@ -6117,9 +6124,8 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
   lupine_translate_kernel_node_function(serialParams);
   serialParams->kernelParams = nullptr;
   serialParams->extra = nullptr;
-  if (rpc_kernel_param_payload_size(layout->count, layout->sizes, payloadSize) <
-      0) {
-    return CUDA_ERROR_INVALID_VALUE;
+  for (uint32_t i = 0; i < layout->count; ++i) {
+    *payloadSize += layout->sizes[i];
   }
   return CUDA_SUCCESS;
 }
@@ -6143,9 +6149,8 @@ static CUresult lupine_read_kernel_param_values(
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   size_t storage_size = 0;
-  if (rpc_kernel_param_storage_size(layout.count, layout.offsets, layout.sizes,
-                                    &storage_size) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  for (uint32_t i = 0; i < layout.count; ++i) {
+    storage_size = std::max(storage_size, layout.offsets[i] + layout.sizes[i]);
   }
   storage->assign(storage_size, 0);
   std::vector<void *> values(layout.count);
