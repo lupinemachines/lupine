@@ -43,6 +43,7 @@ static constexpr int LUPINE_RPC_cuLinkAddData_v2 = 1000018;
 static constexpr int LUPINE_RPC_cuGraphGetEdges = 1000019;
 static constexpr int LUPINE_RPC_cuGraphNodeGetDependencies = 1000020;
 static constexpr int LUPINE_RPC_cuGraphNodeGetDependentNodes = 1000021;
+static constexpr int LUPINE_RPC_cuMemPrefetchAsync = 1000022;
 
 static void lupine_log_manual_handler_error(const char *name) {
   LUPINE_LOG_ERROR("Error handling manual " << name << " request.");
@@ -147,6 +148,8 @@ lupine_manual_handlers() {
       {LUPINE_RPC_cuGraphNodeGetDependentNodes,
        {handle_manual_cuGraphNodeGetDependentNodes,
         "cuGraphNodeGetDependentNodes"}},
+      {LUPINE_RPC_cuMemPrefetchAsync,
+       {handle_manual_cuMemPrefetchAsync, "cuMemPrefetchAsync"}},
       {RPC_cuGraphHostNodeGetParams,
        {handle_manual_cuGraphHostNodeGetParams, "cuGraphHostNodeGetParams"}},
       {RPC_cuGraphHostNodeSetParams,
