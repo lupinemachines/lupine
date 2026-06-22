@@ -17,6 +17,7 @@ CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
+CUDA_SAMPLE_JOBS="${CUDA_SAMPLE_JOBS:-1}"
 SAMPLE_SUITE="${SAMPLE_SUITE:-compliance}"
 
 SERVER_HOST="${SERVER_HOST:-inferable-node-008}"
@@ -108,6 +109,7 @@ Environment:
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
   BUILD_ONLY           1 to clone/build selected samples and exit before running.
+  CUDA_SAMPLE_JOBS     Number of samples to run concurrently. Default: $CUDA_SAMPLE_JOBS.
   SAMPLE_SUITE         compliance, core, libraries, or extended when no samples are given.
                        Default: compliance.
   SAMPLE_TIMEOUT       Default per-sample execution timeout in seconds. Default: $SAMPLE_TIMEOUT.
@@ -447,6 +449,17 @@ if [[ "$BUILD_ONLY" == "1" ]]; then
   exit 0
 fi
 
+case "$CUDA_SAMPLE_JOBS" in
+  ''|*[!0-9]*)
+    echo "CUDA_SAMPLE_JOBS must be a positive integer: $CUDA_SAMPLE_JOBS" >&2
+    exit 1
+    ;;
+esac
+if (( CUDA_SAMPLE_JOBS < 1 )); then
+  echo "CUDA_SAMPLE_JOBS must be a positive integer: $CUDA_SAMPLE_JOBS" >&2
+  exit 1
+fi
+
 if [[ ! -x "$SERVER_LOCAL_BIN" ]]; then
   echo "missing server binary: $SERVER_LOCAL_BIN" >&2
   exit 1
@@ -524,39 +537,51 @@ pass=0
 fail=0
 skip=0
 
-for i in "${!samples[@]}"; do
-  sample="${samples[$i]}"
-  port=$((SERVER_PORT_BASE + i))
-  log="$RESULTS_DIR/$sample.log"
-  server_log="/tmp/lupine-samples-$port.log"
-  pidfile="/tmp/lupine-samples-$port.pid"
-  sample_start_seconds="$SECONDS"
+run_sample() {
+  local i="$1"
+  local result_file="$2"
+  local sample="${samples[$i]}"
+  local port=$((SERVER_PORT_BASE + i))
+  local log="$RESULTS_DIR/$sample.log"
+  local server_log="/tmp/lupine-samples-$port.log"
+  local pidfile="/tmp/lupine-samples-$port.pid"
+  local sample_start_seconds="$SECONDS"
+  local sample_exe=""
+  local sample_cwd=""
+  local timeout_seconds=""
+  local rc=0
+  local status=""
+  local signature=""
+  local sample_argv=()
+
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $((i + 1))/${#samples[@]}: $sample" >&2
 
   if sample_disabled "$sample"; then
     status="SKIP:disabled"
-    skip=$((skip + 1))
     signature="disabled by CUDA_SAMPLE_SKIP_LIST"
-    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
-    continue
+    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
+    return 0
   fi
 
   sample_exe="$(resolve_sample_exe "$sample" || true)"
   if [[ -z "$sample_exe" ]]; then
     if [[ "$explicit_samples" == "1" ]]; then
       status="FAIL:missing"
-      fail=$((fail + 1))
     else
       status="SKIP:missing"
-      skip=$((skip + 1))
     fi
     signature="missing executable: $sample"
-    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
-    continue
+    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
+    return 0
   fi
   sample_cwd="$(sample_workdir "$sample" "$sample_exe")"
   timeout_seconds="$(sample_timeout "$sample")"
-  prepare_sample_runtime_files "$sample" "$sample_cwd"
+  if ! prepare_sample_runtime_files "$sample" "$sample_cwd"; then
+    status="FAIL:prepare"
+    signature="failed to prepare runtime files"
+    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
+    return 0
+  fi
   sample_argv=()
   while IFS= read -r -d '' arg; do
     sample_argv+=("$arg")
@@ -564,8 +589,13 @@ for i in "${!samples[@]}"; do
 
   stop_remote_server "$pidfile" "$server_log"
 
-  ssh_with_timeout \
-    "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
+  if ! ssh_with_timeout \
+    "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"; then
+    status="FAIL:ssh"
+    signature="failed to start remote server on port $port"
+    printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
+    return 0
+  fi
 
   set +e
   (
@@ -583,21 +613,65 @@ for i in "${!samples[@]}"; do
 
   if [[ "$rc" == "0" ]]; then
     status="PASS"
-    pass=$((pass + 1))
   elif [[ "$rc" == "2" ]]; then
     status="SKIP:waived"
-    skip=$((skip + 1))
   else
     status="FAIL:$rc"
-    fail=$((fail + 1))
   fi
 
   signature="$(tr '\n' ' ' < "$log" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
   if [[ -z "$signature" && "$rc" == "124" ]]; then
     signature="timed out after ${timeout_seconds}s"
   fi
-  printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
+  printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $sample -> $status in $((SECONDS - sample_start_seconds))s" >&2
+}
+
+result_files=()
+running=0
+
+for i in "${!samples[@]}"; do
+  result_file="$RESULTS_DIR/.sample-$i.tsv"
+  result_files[$i]="$result_file"
+  run_sample "$i" "$result_file" &
+  running=$((running + 1))
+
+  if (( running >= CUDA_SAMPLE_JOBS )); then
+    wait -n || true
+    running=$((running - 1))
+  fi
+done
+
+while (( running > 0 )); do
+  wait -n || true
+  running=$((running - 1))
+done
+
+for i in "${!samples[@]}"; do
+  result_file="${result_files[$i]}"
+  sample="${samples[$i]}"
+
+  if [[ -s "$result_file" ]]; then
+    IFS=$'\t' read -r sample status signature < "$result_file"
+  else
+    status="FAIL:internal"
+    signature="sample worker did not write result"
+  fi
+
+  case "$status" in
+    PASS)
+      pass=$((pass + 1))
+      ;;
+    SKIP:*)
+      skip=$((skip + 1))
+      ;;
+    *)
+      fail=$((fail + 1))
+      ;;
+  esac
+
+  printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" | tee -a "$tsv"
+  rm -f "$result_file"
 done
 
 {

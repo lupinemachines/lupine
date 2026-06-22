@@ -46,14 +46,6 @@ static constexpr int LUPINE_RPC_cuGraphNodeGetDependentNodes = 1000021;
 static constexpr int LUPINE_RPC_cuGraphGetNodesWithMetadata = 1000022;
 static constexpr int LUPINE_RPC_cuGraphExecUpdateWithSetParams = 1000023;
 
-static bool lupine_server_trace_enabled() {
-  static int enabled = []() {
-    const char *env = getenv("LUPINE_SERVER_TRACE");
-    return env != nullptr && env[0] != '\0' && strcmp(env, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
 static void lupine_log_manual_handler_error(const char *name) {
   LUPINE_LOG_ERROR("Error handling manual " << name << " request.");
 }
@@ -241,9 +233,7 @@ void client_handler(lupine_socket_t connfd) {
       LUPINE_LOG_ERROR("RPC dispatch failed; closing client.");
       break;
     }
-    if (lupine_server_trace_enabled()) {
-      LUPINE_LOG_DEBUG("LUPINE server handling op " << op);
-    }
+    LUPINE_TRACE_LOG("LUPINE server handling op " << op);
 
     const auto &manual_handlers = lupine_manual_handlers();
     auto manual = manual_handlers.find(op);

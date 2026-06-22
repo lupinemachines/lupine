@@ -36,6 +36,7 @@ jobs:
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
+      CUDA_SAMPLE_JOBS: 8
       PYTORCH_TEST_TIMEOUT: 180
       CUDA_HOME: /usr/local/cuda-12.9
       USE_SPOT: "false"
@@ -43,6 +44,9 @@ jobs:
       VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
       FIREWALL_ALLOW_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-allow
       FIREWALL_DENY_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-deny
+      CLIENT_APT_ARCHIVES: ${{ github.workspace }}/.cache/gpu-client/apt/archives
+      CUDA_SAMPLES_DIR: ${{ github.workspace }}/test/cuda-samples/cuda-samples
+      CUDA_SAMPLES_BUILD_DIR: ${{ github.workspace }}/test/cuda-samples/cuda-samples/build
 
     steps:
       - name: Check out repository
@@ -71,21 +75,26 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Validate Google Cloud configuration
-        run: |
-          set -euo pipefail
-          test -n "$GCP_PROJECT_ID"
-          test -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
-          test -n "${{ vars.GCP_SERVICE_ACCOUNT }}"
-          test "$GCP_FALLBACK_ZONES" = "us-central1-c us-central1-b"
-          test "$MACHINE_TYPE" = g2-standard-4
-          test "$VM_IMAGE_PROJECT" = ml-images
-          test "$VM_IMAGE_FAMILY" = common-cu129-ubuntu-2404-nvidia-580
-          test "$VM_MAX_RUN_DURATION" = 260m
-          test "$COMPLIANCE_TIMEOUT" = 240m
-          test "$CUDA_SAMPLE_TIMEOUT" = 120
-          test "$CUDA_LONG_SAMPLE_TIMEOUT" = 600
-          test "$PYTORCH_TEST_TIMEOUT" = 180
+      - name: Restore GitHub runner APT package cache
+        id: restore-client-apt-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/gpu-client/apt/archives
+          key: gpu-client-apt-${{ runner.os }}-${{ runner.arch }}-ubuntu-${{ env.UBUNTU_VERSION }}-cuda-${{ env.CUDA_VERSION }}-v1-${{ hashFiles('.github/workflows/gpu-integration-gcloud.yml') }}
+
+      - name: Restore PyTorch virtualenv cache
+        id: restore-pytorch-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv-pytorch312
+          key: gpu-client-pytorch-${{ runner.os }}-${{ runner.arch }}-python312-cu128-v1-${{ hashFiles('.github/workflows/gpu-integration-gcloud.yml') }}
+
+      - name: Restore CUDA samples cache
+        id: restore-cuda-samples-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: test/cuda-samples/cuda-samples
+          key: gpu-client-cuda-samples-${{ runner.os }}-${{ runner.arch }}-cuda-${{ env.CUDA_VERSION }}-sm89-v1-${{ hashFiles('test/run_cuda_samples.sh') }}
 
       - name: Prepare SSH key and runner allowlist
         run: |
@@ -109,8 +118,16 @@ jobs:
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
 
+          mkdir -p "$CLIENT_APT_ARCHIVES/partial"
+          apt_cache_opts=(
+            -o "Dir::Cache::archives=$CLIENT_APT_ARCHIVES"
+            -o "Dir::Cache::archives::partial=$CLIENT_APT_ARCHIVES/partial"
+            -o "APT::Keep-Downloaded-Packages=true"
+            -o "Binary::apt::APT::Keep-Downloaded-Packages=true"
+          )
+
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get "${apt_cache_opts[@]}" install -y --no-install-recommends \
             bash \
             build-essential \
             ca-certificates \
@@ -135,7 +152,7 @@ jobs:
             https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i "$cuda_keyring"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get "${apt_cache_opts[@]}" install -y --no-install-recommends \
             cuda-cudart-dev-12-9 \
             cuda-driver-dev-12-9 \
             cuda-nvcc-12-9 \
@@ -151,6 +168,8 @@ jobs:
             libnpp-dev-12-9 \
             libnvjpeg-dev-12-9 \
             libnvjitlink-dev-12-9
+          sudo find "$CLIENT_APT_ARCHIVES" -type d -exec chmod a+rx {} +
+          sudo find "$CLIENT_APT_ARCHIVES" -type f -name '*.deb' -exec chmod a+r {} +
 
           echo "CUDA_HOME=$CUDA_HOME" >> "$GITHUB_ENV"
           echo "CUDA_LIB_DIR=$CUDA_HOME/lib64" >> "$GITHUB_ENV"
@@ -159,10 +178,14 @@ jobs:
           export PATH="$CUDA_HOME/bin:$PATH"
           export CUDA_LIB_DIR="$CUDA_HOME/lib64"
 
-          python3 -m venv "$PWD/.venv-pytorch312"
-          "$PWD/.venv-pytorch312/bin/pip" install --no-cache-dir --upgrade pip
-          "$PWD/.venv-pytorch312/bin/pip" install --no-cache-dir numpy
-          "$PWD/.venv-pytorch312/bin/pip" install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch
+          if [[ ! -x "$PWD/.venv-pytorch312/bin/python" ]] || \
+             ! "$PWD/.venv-pytorch312/bin/python" -c 'import numpy, torch' >/dev/null 2>&1; then
+            rm -rf "$PWD/.venv-pytorch312"
+            python3 -m venv "$PWD/.venv-pytorch312"
+            "$PWD/.venv-pytorch312/bin/pip" install --upgrade pip
+            "$PWD/.venv-pytorch312/bin/pip" install numpy
+            "$PWD/.venv-pytorch312/bin/pip" install --index-url "$PYTORCH_INDEX_URL" torch
+          fi
 
           cmake -S "$PWD" -B "$PWD/build" \
             -G Ninja \
@@ -176,9 +199,33 @@ jobs:
 
           # CUDA_SAMPLES_ARCH=89: only compile device code for the L4 (sm_89)
           # instead of the 15 architectures the samples build by default.
-          BUILD_ONLY=1 BUILD_SAMPLES=1 SAMPLE_SUITE=extended CUDA_SAMPLES_ARCH=89 \
+          BUILD_ONLY=1 BUILD_SAMPLES=auto SAMPLE_SUITE=extended CUDA_SAMPLES_ARCH=89 \
             CUDA_HOME="$CUDA_HOME" CUDA_LIB_DIR="$CUDA_LIB_DIR" \
             "$PWD/test/run_cuda_samples.sh"
+
+      - name: Save GitHub runner APT package cache
+        if: steps.restore-client-apt-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/gpu-client/apt/archives
+          key: ${{ steps.restore-client-apt-cache.outputs.cache-primary-key }}
+
+      - name: Save PyTorch virtualenv cache
+        if: steps.restore-pytorch-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .venv-pytorch312
+          key: ${{ steps.restore-pytorch-cache.outputs.cache-primary-key }}
+
+      - name: Save CUDA samples cache
+        if: steps.restore-cuda-samples-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: test/cuda-samples/cuda-samples
+          key: ${{ steps.restore-cuda-samples-cache.outputs.cache-primary-key }}
 
       - name: Create locked-down firewall rules
         run: |
