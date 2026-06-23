@@ -7414,11 +7414,10 @@ struct lupine_integrity_pass3_input {
 
 struct lupine_integrity_device_hash_info {
   CUuuid guid;
-  uint32_t pci_device;
-  uint64_t pci_bus;
-} __attribute__((packed));
-
-static_assert(sizeof(lupine_integrity_device_hash_info) == 28);
+  int32_t pci_domain;
+  int32_t pci_bus;
+  int32_t pci_device;
+};
 
 static void lupine_integrity_single_pass(unsigned char state[66],
                                          unsigned char byte) {
@@ -7529,20 +7528,21 @@ static CUresult lupine_get_device_hash_info(
     if (status != CUDA_SUCCESS) {
       return status;
     }
-    int pci_device = 0;
-    status = cuDeviceGetAttribute(
-        &pci_device, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, device);
+    status = cuDeviceGetAttribute(&info.pci_domain,
+                                  CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, device);
     if (status != CUDA_SUCCESS) {
       return status;
     }
-    int pci_bus = 0;
-    status =
-        cuDeviceGetAttribute(&pci_bus, CU_DEVICE_ATTRIBUTE_PCI_BUS_ID, device);
+    status = cuDeviceGetAttribute(&info.pci_bus, CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,
+                                  device);
     if (status != CUDA_SUCCESS) {
       return status;
     }
-    info.pci_device = static_cast<uint32_t>(pci_device);
-    info.pci_bus = static_cast<uint64_t>(static_cast<uint32_t>(pci_bus));
+    status = cuDeviceGetAttribute(&info.pci_device,
+                                  CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, device);
+    if (status != CUDA_SUCCESS) {
+      return status;
+    }
     devices->push_back(info);
   }
   return CUDA_SUCCESS;
