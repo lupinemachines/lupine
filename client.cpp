@@ -65,28 +65,6 @@ void add_host_node(void *fn, void *udata);
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
-static constexpr int LUPINE_RPC_cuFuncGetParamLayout = 1000001;
-static constexpr int LUPINE_RPC_cuCtxCreate_v2 = 1000002;
-static constexpr int LUPINE_RPC_cuMemPoolSetAttribute = 1000003;
-static constexpr int LUPINE_RPC_cuMemPoolGetAttribute = 1000004;
-static constexpr int LUPINE_RPC_cuLaunchHostFunc = 1000005;
-static constexpr int LUPINE_RPC_cuPointerGetAttribute = 1000006;
-static constexpr int LUPINE_RPC_cuGetExportTableMetadata = 1000007;
-static constexpr int LUPINE_RPC_cuPrivateGetModuleNode = 1000008;
-static constexpr int LUPINE_RPC_cuPointerGetAttributes = 1000009;
-static constexpr int LUPINE_RPC_cuStreamAddCallback = 1000010;
-static constexpr int LUPINE_RPC_cuGraphConditionalHandleCreate = 1000011;
-static constexpr int LUPINE_RPC_cuGraphAddNode_v2 = 1000012;
-static constexpr int LUPINE_RPC_cuStreamBeginCaptureToGraph = 1000013;
-static constexpr int LUPINE_RPC_cuStreamUpdateCaptureDependencies_v2 = 1000014;
-static constexpr int LUPINE_RPC_cuStreamGetCaptureInfo_v3 = 1000015;
-static constexpr int LUPINE_RPC_cuDeviceGetGraphMemAttribute = 1000016;
-static constexpr int LUPINE_RPC_cuDeviceSetGraphMemAttribute = 1000017;
-static constexpr int LUPINE_RPC_cuLinkAddData_v2 = 1000018;
-static constexpr int LUPINE_RPC_cuGraphGetEdges = 1000019;
-static constexpr int LUPINE_RPC_cuGraphNodeGetDependencies = 1000020;
-static constexpr int LUPINE_RPC_cuGraphNodeGetDependentNodes = 1000021;
-static constexpr int LUPINE_RPC_cuMemPrefetchAsync = 1000022;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
 #ifdef CU_MEM_LOCATION_TYPE_HOST
 static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
@@ -2882,7 +2860,7 @@ extern "C" CUresult cuMemPoolSetAttribute(CUmemoryPool pool,
 
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuMemPoolSetAttribute) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemPoolSetAttribute) < 0 ||
       rpc_write(conn, &pool, sizeof(pool)) < 0 ||
       rpc_write(conn, &attr, sizeof(attr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
@@ -3210,7 +3188,7 @@ extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
 
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuMemPoolGetAttribute) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemPoolGetAttribute) < 0 ||
       rpc_write(conn, &pool, sizeof(pool)) < 0 ||
       rpc_write(conn, &attr, sizeof(attr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
@@ -4159,7 +4137,7 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuPointerGetAttribute) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuPointerGetAttribute) < 0 ||
       rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
       rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
@@ -4208,7 +4186,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
                            : real(numAttributes, attributes, data, query_ptr);
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuPointerGetAttributes) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
       (numAttributes != 0 &&
        rpc_write(conn, attributes,
@@ -4464,7 +4442,7 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   CUresult return_value;
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
   if (conn == nullptr ||
-      rpc_write_start_request(conn, LUPINE_RPC_cuLinkAddData_v2) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_write(conn, &type, sizeof(type)) < 0 ||
       rpc_write(conn, &size, sizeof(size)) < 0 ||
@@ -4888,7 +4866,7 @@ extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
-      rpc_write_start_request(conn, LUPINE_RPC_cuCtxCreate_v2) < 0 ||
+      rpc_write_start_request(conn, RPC_cuCtxCreate_v2) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_write(conn, &dev, sizeof(dev)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -5813,8 +5791,8 @@ static CUresult lupine_graph_mem_attribute_rpc(CUdevice device,
 
   conn_t *conn = lupine_rpc_conn_for_device(&device);
   CUresult result = CUDA_ERROR_UNKNOWN;
-  int op = set ? LUPINE_RPC_cuDeviceSetGraphMemAttribute
-               : LUPINE_RPC_cuDeviceGetGraphMemAttribute;
+  int op =
+      set ? RPC_cuDeviceSetGraphMemAttribute : RPC_cuDeviceGetGraphMemAttribute;
   if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
       rpc_write(conn, &device, sizeof(device)) < 0 ||
       rpc_write(conn, &attr, sizeof(attr)) < 0 ||
@@ -6679,7 +6657,7 @@ extern "C" CUresult cuGraphGetEdges_v2(CUgraph hGraph, CUgraphNode *from,
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
   size_t returned = 0;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuGraphGetEdges) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuGraphGetEdges_v2) < 0 ||
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       rpc_write(conn, &requested, sizeof(requested)) < 0 ||
       rpc_write(conn, &want_edge, sizeof(want_edge)) < 0 ||
@@ -6714,7 +6692,7 @@ extern "C" CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from,
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
   size_t returned = 0;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuGraphGetEdges) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuGraphGetEdges_v2) < 0 ||
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       rpc_write(conn, &requested, sizeof(requested)) < 0 ||
       rpc_write(conn, &want_edge, sizeof(want_edge)) < 0 ||
@@ -6777,9 +6755,8 @@ extern "C" CUresult cuGraphNodeGetDependencies_v2(CUgraphNode hNode,
                                                   CUgraphNode *dependencies,
                                                   CUgraphEdgeData *edgeData,
                                                   size_t *numDependencies) {
-  return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependencies,
-                                      hNode, dependencies, edgeData,
-                                      numDependencies);
+  return lupine_client_node_dep_query(RPC_cuGraphNodeGetDependencies_v2, hNode,
+                                      dependencies, edgeData, numDependencies);
 }
 extern "C" CUresult cuGraphNodeGetDependencies(CUgraphNode hNode,
                                                CUgraphNode *dependencies,
@@ -6792,7 +6769,7 @@ extern "C" CUresult cuGraphNodeGetDependentNodes_v2(CUgraphNode hNode,
                                                     CUgraphNode *dependentNodes,
                                                     CUgraphEdgeData *edgeData,
                                                     size_t *numDependentNodes) {
-  return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependentNodes,
+  return lupine_client_node_dep_query(RPC_cuGraphNodeGetDependentNodes_v2,
                                       hNode, dependentNodes, edgeData,
                                       numDependentNodes);
 }
@@ -6832,14 +6809,14 @@ static CUresult lupine_client_node_dep_query(int rpc_id, CUgraphNode hNode,
 extern "C" CUresult cuGraphNodeGetDependencies(CUgraphNode hNode,
                                                CUgraphNode *dependencies,
                                                size_t *numDependencies) {
-  return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependencies,
-                                      hNode, dependencies, numDependencies);
+  return lupine_client_node_dep_query(RPC_cuGraphNodeGetDependencies_v2, hNode,
+                                      dependencies, numDependencies);
 }
 
 extern "C" CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
                                                  CUgraphNode *dependentNodes,
                                                  size_t *numDependentNodes) {
-  return lupine_client_node_dep_query(LUPINE_RPC_cuGraphNodeGetDependentNodes,
+  return lupine_client_node_dep_query(RPC_cuGraphNodeGetDependentNodes_v2,
                                       hNode, dependentNodes, numDependentNodes);
 }
 #endif
@@ -6922,7 +6899,7 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
 
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuLaunchHostFunc) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuLaunchHostFunc) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &fn, sizeof(fn)) < 0 ||
       rpc_write(conn, &userData, sizeof(userData)) < 0 ||
@@ -6942,7 +6919,7 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
   }
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuStreamAddCallback) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuStreamAddCallback) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &callback, sizeof(callback)) < 0 ||
       rpc_write(conn, &userData, sizeof(userData)) < 0 ||
@@ -7155,8 +7132,8 @@ extern "C" CUresult cuStreamUpdateCaptureDependencies_v2(
   }
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
-  if (rpc_write_start_request(
-          conn, LUPINE_RPC_cuStreamUpdateCaptureDependencies_v2) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuStreamUpdateCaptureDependencies_v2) <
+          0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
