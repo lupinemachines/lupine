@@ -141,7 +141,6 @@ else()
         NAME nvml_ecc_exports
         COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"
     )
-
     set_source_files_properties(
         ${SERVER_SOURCES}
         PROPERTIES LANGUAGE CUDA

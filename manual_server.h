@@ -51,6 +51,7 @@ int handle_manual_cuGraphAddNode(conn_t *conn);
 int handle_manual_cuGraphGetEdges(conn_t *conn);
 int handle_manual_cuGraphNodeGetDependencies(conn_t *conn);
 int handle_manual_cuGraphNodeGetDependentNodes(conn_t *conn);
+int handle_manual_cuMemPrefetchAsync(conn_t *conn);
 int handle_manual_cuGraphHostNodeGetParams(conn_t *conn);
 int handle_manual_cuGraphHostNodeSetParams(conn_t *conn);
 int handle_manual_cuGraphExecHostNodeSetParams(conn_t *conn);

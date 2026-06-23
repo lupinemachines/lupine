@@ -66,6 +66,13 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
+#ifdef CU_MEM_LOCATION_TYPE_HOST
+static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
+    CU_MEM_LOCATION_TYPE_HOST;
+#else
+static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
+    static_cast<CUmemLocationType>(2);
+#endif
 
 struct lupine_kernel_param_layout {
   uint32_t count = 0;
@@ -7604,14 +7611,17 @@ extern "C" CUresult lupine_integrity_check(unsigned int version,
   return CUDA_SUCCESS;
 }
 
+extern "C" CUresult lupine_context_check_unsupported(CUcontext, unsigned int *,
+                                                     const void **) {
+  return CUDA_ERROR_NOT_SUPPORTED;
+}
+
 extern "C" CUresult lupine_context_check(CUcontext, unsigned int *result1,
                                          const void **result2) {
   if (result1 != nullptr) {
     *result1 = 0;
   }
-  if (result2 != nullptr) {
-    *result2 = nullptr;
-  }
+  (void)result2;
   return CUDA_SUCCESS;
 }
 
@@ -7712,12 +7722,15 @@ static const void *lupine_get_integrity_check_table() {
 }
 
 static const void *lupine_get_context_checks_table() {
-  static const void *table[4] = {
-      reinterpret_cast<const void *>(sizeof(table)),
-      nullptr,
-      reinterpret_cast<const void *>(&lupine_context_check),
-      reinterpret_cast<const void *>(&lupine_context_check_fn3),
-  };
+  static const void *table[17] = {};
+  static std::once_flag once;
+  std::call_once(once, [] {
+    table[0] = reinterpret_cast<const void *>(sizeof(table));
+    table[1] =
+        reinterpret_cast<const void *>(&lupine_context_check_unsupported);
+    table[2] = reinterpret_cast<const void *>(&lupine_context_check);
+    table[3] = reinterpret_cast<const void *>(&lupine_context_check_fn3);
+  });
   return lupine_table_start(table);
 }
 
@@ -7886,7 +7899,6 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3DAsync)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3DPeer)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3DPeerAsync)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemAdvise)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemPrefetchAsync)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemRangeGetAttribute)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorString)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorName)
@@ -7923,9 +7935,159 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxWaitEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxRecordEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxWaitEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuDevSmResourceSplit)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuKernelGetLibrary)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuDeviceGetHostAtomicCapabilities)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuDeviceGetP2PAtomicCapabilities)
+
+#ifdef cuStreamWaitValue32
+#undef cuStreamWaitValue32
+#endif
+#ifdef cuStreamBatchMemOp
+#undef cuStreamBatchMemOp
+#endif
+#ifdef cuMemPrefetchAsync
+#undef cuMemPrefetchAsync
+#endif
+#ifdef cuMemPrefetchAsync_ptsz
+#undef cuMemPrefetchAsync_ptsz
+#endif
+
+extern "C" CUresult cuStreamWaitValue32(CUstream stream, CUdeviceptr addr,
+                                        cuuint32_t value, unsigned int flags) {
+  return cuStreamWaitValue32_v2(stream, addr, value, flags);
+}
+
+extern "C" CUresult
+cuStreamBatchMemOp(CUstream stream, unsigned int count,
+                   CUstreamBatchMemOpParams *paramArray, unsigned int flags) {
+  return cuStreamBatchMemOp_v2(stream, count, paramArray, flags);
+}
+
+static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
+                                                   size_t count,
+                                                   CUmemLocation location,
+                                                   unsigned int flags,
+                                                   CUstream hStream) {
+  CUdeviceptr translated = devPtr;
+  if (lupine_translate_managed_host_ptr(devPtr, &translated)) {
+    if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+      CUresult sync_result = lupine_sync_mapped_host_to_device();
+      if (sync_result != CUDA_SUCCESS) {
+        return sync_result;
+      }
+    }
+    return CUDA_SUCCESS;
+  }
+
+  CUmemLocation route_location = location;
+  lupine_route route;
+  if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+    CUdevice route_device = location.id;
+    route = lupine_route_for_device(&route_device);
+    route_location.id = route_device;
+  } else {
+    route = hStream != nullptr ? lupine_route_for_stream(hStream)
+                               : lupine_route_for_deviceptr(devPtr);
+  }
+  if (hStream != nullptr) {
+    lupine_route stream_route = lupine_route_for_stream(hStream);
+    if (!lupine_routes_share_server(route, stream_route)) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+  }
+  if (lupine_route_is_local(route)) {
+#if CUDA_VERSION >= 12020
+    using real_fn_t =
+        CUresult (*)(CUdeviceptr, size_t, CUmemLocation, unsigned int, CUstream);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemPrefetchAsync_v2");
+    if (real == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return real(devPtr, count, route_location, flags, hStream);
+#else
+    if (flags != 0 ||
+        (route_location.type != CU_MEM_LOCATION_TYPE_DEVICE &&
+         route_location.type != LUPINE_CU_MEM_LOCATION_TYPE_HOST)) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+    using real_fn_t = CUresult (*)(CUdeviceptr, size_t, CUdevice, CUstream);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemPrefetchAsync");
+    if (real == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    CUdevice dstDevice = route_location.type == CU_MEM_LOCATION_TYPE_DEVICE
+                             ? route_location.id
+                             : CU_DEVICE_CPU;
+    return real(devPtr, count, dstDevice, hStream);
+#endif
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  int location_type = static_cast<int>(route_location.type);
+  CUresult return_value;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, LUPINE_RPC_cuMemPrefetchAsync) < 0 ||
+      rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &location_type, sizeof(location_type)) < 0 ||
+      rpc_write(conn, &route_location.id, sizeof(route_location.id)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
+                                       CUdevice dstDevice, CUstream hStream) {
+  CUmemLocation location = {};
+  location.type = dstDevice == CU_DEVICE_CPU ? LUPINE_CU_MEM_LOCATION_TYPE_HOST
+                                             : CU_MEM_LOCATION_TYPE_DEVICE;
+  location.id = dstDevice == CU_DEVICE_CPU ? 0 : dstDevice;
+  return lupine_cuMemPrefetchAsync_location(devPtr, count, location, 0,
+                                            hStream);
+}
+
+extern "C" CUresult cuMemPrefetchAsync_ptsz(CUdeviceptr devPtr, size_t count,
+                                            CUdevice dstDevice,
+                                            CUstream hStream) {
+  return cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
+}
+
+extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
+                                          CUmemLocation location,
+                                          unsigned int flags,
+                                          CUstream hStream) {
+  return lupine_cuMemPrefetchAsync_location(devPtr, count, location, flags,
+                                            hStream);
+}
+
+extern "C" CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel) {
+  if (pLib == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    auto it = lupine_library_kernels().find(kernel);
+    if (it != lupine_library_kernels().end() && it->second.library != nullptr) {
+      *pLib = it->second.library;
+      return CUDA_SUCCESS;
+    }
+  }
+  lupine_route route =
+      lupine_route_for_function(reinterpret_cast<CUfunction>(kernel));
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUlibrary *, CUkernel);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuKernelGetLibrary");
+    if (real != nullptr) {
+      return real(pLib, kernel);
+    }
+  }
+  *pLib = nullptr;
+  return CUDA_ERROR_NOT_FOUND;
+}
 
 static void *lupine_get_unsupported_stub(const char *symbol) {
   // clang-format off
@@ -7958,7 +8120,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuMemcpy3DPeer),
       LUPINE_STUB_ENTRY(cuMemcpy3DPeerAsync),
       LUPINE_STUB_ENTRY(cuMemAdvise),
-      LUPINE_STUB_ENTRY(cuMemPrefetchAsync),
       LUPINE_STUB_ENTRY(cuMemRangeGetAttribute),
       LUPINE_STUB_ENTRY(cuGetErrorString),
       LUPINE_STUB_ENTRY(cuGetErrorName),
@@ -7995,7 +8156,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuGreenCtxRecordEvent),
       LUPINE_STUB_ENTRY(cuGreenCtxWaitEvent),
       LUPINE_STUB_ENTRY(cuDevSmResourceSplit),
-      LUPINE_STUB_ENTRY(cuKernelGetLibrary),
       LUPINE_STUB_ENTRY(cuDeviceGetHostAtomicCapabilities),
       LUPINE_STUB_ENTRY(cuDeviceGetP2PAtomicCapabilities),
 #undef LUPINE_STUB_ENTRY
@@ -8370,6 +8530,9 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuMemHostUnregister", (void *)cuMemHostUnregister},
       {"cuMemGetAddressRange", (void *)cuMemGetAddressRange},
       {"cuMemGetInfo", (void *)cuMemGetInfo},
+      {"cuMemPrefetchAsync", (void *)cuMemPrefetchAsync},
+      {"cuMemPrefetchAsync_ptsz", (void *)cuMemPrefetchAsync_ptsz},
+      {"cuMemPrefetchAsync_v2", (void *)cuMemPrefetchAsync_v2},
       {"cuArrayCreate", (void *)cuArrayCreate_v2},
       {"cuArrayCreate_v2", (void *)cuArrayCreate_v2},
       {"cuArray3DCreate", (void *)cuArray3DCreate_v2},
@@ -8486,6 +8649,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuGraphHostNodeSetParams", (void *)cuGraphHostNodeSetParams},
       {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
+      {"cuKernelGetLibrary", (void *)cuKernelGetLibrary},
       {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
       {"cuStreamAddCallback", (void *)cuStreamAddCallback},
@@ -8668,6 +8832,9 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuMemHostUnregister", (void *)cuMemHostUnregister},
       {"cuMemGetAddressRange", (void *)cuMemGetAddressRange},
       {"cuMemGetInfo", (void *)cuMemGetInfo},
+      {"cuMemPrefetchAsync", (void *)cuMemPrefetchAsync},
+      {"cuMemPrefetchAsync_ptsz", (void *)cuMemPrefetchAsync_ptsz},
+      {"cuMemPrefetchAsync_v2", (void *)cuMemPrefetchAsync_v2},
       {"cuArrayCreate", (void *)cuArrayCreate_v2},
       {"cuArrayCreate_v2", (void *)cuArrayCreate_v2},
       {"cuArray3DCreate", (void *)cuArray3DCreate_v2},
@@ -8784,6 +8951,7 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuGraphHostNodeSetParams", (void *)cuGraphHostNodeSetParams},
       {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
+      {"cuKernelGetLibrary", (void *)cuKernelGetLibrary},
       {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
       {"cuStreamAddCallback", (void *)cuStreamAddCallback},

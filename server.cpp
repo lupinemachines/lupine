@@ -124,6 +124,8 @@ lupine_manual_handlers() {
       {RPC_cuGraphNodeGetDependentNodes_v2,
        {handle_manual_cuGraphNodeGetDependentNodes,
         "cuGraphNodeGetDependentNodes"}},
+      {LUPINE_RPC_cuMemPrefetchAsync,
+       {handle_manual_cuMemPrefetchAsync, "cuMemPrefetchAsync"}},
       {RPC_cuGraphHostNodeGetParams,
        {handle_manual_cuGraphHostNodeGetParams, "cuGraphHostNodeGetParams"}},
       {RPC_cuGraphHostNodeSetParams,
