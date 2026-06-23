@@ -7904,17 +7904,6 @@ extern "C" CUresult cuStreamBeginCapture(CUstream hStream,
   return cuStreamBeginCapture_v2(hStream, mode);
 }
 
-#if CUDA_VERSION >= 12000
-#ifdef cuGraphExecUpdate
-#undef cuGraphExecUpdate
-#endif
-extern "C" CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
-                                      CUgraphExecUpdateResultInfo *resultInfo) {
-  return cuGraphExecUpdate_v2(hGraphExec, hGraph, resultInfo);
-}
-
-#endif
-
 #ifdef cuMemcpy_ptds
 #undef cuMemcpy_ptds
 #endif
@@ -8524,7 +8513,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemsetD2D16", (void *)cuMemsetD2D16_v2},
     {"cuMemsetD2D32", (void *)cuMemsetD2D32_v2},
     {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
-    {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
     {"cuMemcpy_ptds", (void *)cuMemcpy},
     {"cuMemcpyPeer_ptds", (void *)cuMemcpyPeer},
     {"cuMemcpyPeerAsync_ptsz", (void *)cuMemcpyPeerAsync},

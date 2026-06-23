@@ -190,6 +190,14 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
+  // write_iov/write_iov_framed are fixed-size; overrunning them silently
+  // corrupts conn_t, so fail the request instead. Callers already treat a
+  // negative return as a fatal write error.
+  const int capacity =
+      static_cast<int>(sizeof(conn->write_iov) / sizeof(conn->write_iov[0]));
+  if (conn->write_iov_count >= capacity) {
+    return -1;
+  }
   conn->write_iov_framed[conn->write_iov_count] = 0;
   conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
   return 0;
