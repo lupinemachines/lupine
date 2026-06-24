@@ -328,7 +328,7 @@ sample_workdir() {
   local sample_exe="$2"
 
   case "$sample" in
-    nbody|oceanFFT|ptxgen|recursiveGaussian|simpleTexture3D)
+    nbody|NV12toBGRandResize|oceanFFT|ptxgen|recursiveGaussian|simpleTexture3D)
       printf '%s\n' "$(resolve_sample_srcdir "$sample")"
       return 0
       ;;
@@ -613,6 +613,9 @@ run_sample() {
 
   if [[ "$rc" == "0" ]]; then
     status="PASS"
+  elif [[ "$rc" == "222" && ( "$sample" == "simple" || "$sample" == "dsl" ) ]] &&
+       grep -q "CUDA_ERROR_UNSUPPORTED_PTX_VERSION" "$log"; then
+    status="SKIP:waived"
   elif [[ "$rc" == "2" ]]; then
     status="SKIP:waived"
   else

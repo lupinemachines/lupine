@@ -8363,6 +8363,26 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     }
     return CUDA_SUCCESS;
   }
+  if (symbol != nullptr && strcmp(symbol, "cuStreamGetCaptureInfo") == 0) {
+#if CUDA_VERSION < 12000
+    *pfn = cudaVersion >= 11030 ? reinterpret_cast<void *>(
+                                      &cuStreamGetCaptureInfo_v2)
+                                : reinterpret_cast<void *>(
+                                      &cuStreamGetCaptureInfo);
+#else
+    *pfn = cudaVersion >= 12000 ? reinterpret_cast<void *>(
+                                      &cuStreamGetCaptureInfo)
+                                : reinterpret_cast<void *>(
+                                      &cuStreamGetCaptureInfo_v2);
+#endif
+    if (symbolStatus != nullptr) {
+      *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
+    }
+    LUPINE_TRACE_LOG("cuGetProcAddress: Mapped symbol '"
+                     << symbol << "' for CUDA version " << cudaVersion
+                     << " to function: " << *pfn);
+    return CUDA_SUCCESS;
+  }
 
   auto it = get_function_pointer(symbol);
   if (it != nullptr) {
