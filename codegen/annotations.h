@@ -2481,6 +2481,7 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
  */
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
 /**
+ * @disabled server - manual server relaxes thread capture mode for allocation
  * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
@@ -3333,6 +3334,7 @@ CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
  */
 CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
 /**
+ * @disabled client - manual client keeps thread-local capture mode in process
  * @param mode SEND_RECV
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);

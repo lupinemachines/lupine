@@ -229,7 +229,10 @@ static inline CUresult cuOccupancyMaxActiveClusters(int *, CUfunction,
 
 #if CUDA_VERSION < 12000
 typedef struct CUgraphEdgeData_st {
-  unsigned char pad;
+  unsigned char from_port;
+  unsigned char to_port;
+  unsigned char type;
+  unsigned char reserved[5];
 } CUgraphEdgeData;
 
 typedef unsigned long long CUgraphConditionalHandle;

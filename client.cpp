@@ -2285,6 +2285,11 @@ lupine_private_export_slot_called(int slot, const char *table_name,
     if (arg1 == UINT64_MAX) {
       return static_cast<CUresult>(400);
     }
+    uint64_t stream_id = arg1 == 0 ? 1 : ((arg1 >> 4) ^ (arg1 >> 32));
+    if (stream_id == 0) {
+      stream_id = 1;
+    }
+    lupine_private_2131_fake_object[0] = stream_id;
     *reinterpret_cast<uint64_t *>(arg2) =
         reinterpret_cast<uint64_t>(&lupine_private_2131_fake_object[0]);
     return CUDA_SUCCESS;
@@ -2296,7 +2301,8 @@ lupine_private_export_slot_called(int slot, const char *table_name,
     if (arg1 == 0 || arg2 == 0) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    *reinterpret_cast<uint64_t *>(arg2) = 0;
+    *reinterpret_cast<uint64_t *>(arg2) =
+        *reinterpret_cast<uint64_t *>(arg1);
     return CUDA_SUCCESS;
   }
 
@@ -7004,21 +7010,27 @@ static CUresult lupine_cuStreamGetCaptureInfo(
   cuuint64_t id = 0;
   CUgraph graph = nullptr;
   size_t dependency_count = 0;
+  bool has_dependencies = false;
   bool has_edge_data = false;
+  bool wants_edge_data = edgeData_out != nullptr;
   conn_t *conn = rpc_client_get_connection(0);
   CUresult return_value;
   if (rpc_write_start_request(conn, LUPINE_RPC_cuStreamGetCaptureInfo_v3) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_write(conn, &wants_edge_data, sizeof(wants_edge_data)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &status, sizeof(status)) < 0 ||
       rpc_read(conn, &id, sizeof(id)) < 0 ||
       rpc_read(conn, &graph, sizeof(graph)) < 0 ||
       rpc_read(conn, &dependency_count, sizeof(dependency_count)) < 0 ||
+      rpc_read(conn, &has_dependencies, sizeof(has_dependencies)) < 0 ||
       rpc_read(conn, &has_edge_data, sizeof(has_edge_data)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   capture_dependencies.resize(dependency_count);
-  if (dependency_count != 0 &&
+  if (!has_dependencies) {
+    capture_dependencies.clear();
+  } else if (dependency_count != 0 &&
       rpc_read(conn, capture_dependencies.data(),
                dependency_count * sizeof(CUgraphNode)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -7120,6 +7132,34 @@ cuStreamGetCaptureInfo(CUstream stream,
                                        nullptr, nullptr, nullptr, nullptr);
 }
 #endif
+
+static bool lupine_is_valid_stream_capture_mode(CUstreamCaptureMode mode) {
+  return mode == CU_STREAM_CAPTURE_MODE_GLOBAL ||
+         mode == CU_STREAM_CAPTURE_MODE_THREAD_LOCAL ||
+         mode == CU_STREAM_CAPTURE_MODE_RELAXED;
+}
+
+extern "C" CUresult
+cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
+  if (mode == nullptr || !lupine_is_valid_stream_capture_mode(*mode)) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUstreamCaptureMode *);
+    auto real = reinterpret_cast<real_fn_t>(
+        lupine_real_cuda_symbol("cuThreadExchangeStreamCaptureMode"));
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(mode);
+  }
+
+  static thread_local CUstreamCaptureMode local_mode =
+      CU_STREAM_CAPTURE_MODE_GLOBAL;
+  CUstreamCaptureMode previous_mode = local_mode;
+  local_mode = *mode;
+  *mode = previous_mode;
+  return CUDA_SUCCESS;
+}
 
 extern "C" CUresult
 cuStreamBeginCaptureToGraph(CUstream hStream, CUgraph hGraph,
@@ -8489,6 +8529,8 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuStreamGetCaptureInfo", (void *)cuStreamGetCaptureInfo},
       {"cuStreamGetCaptureInfo_v2", (void *)cuStreamGetCaptureInfo_v2},
       {"cuStreamGetCaptureInfo_v3", (void *)cuStreamGetCaptureInfo_v3},
+      {"cuThreadExchangeStreamCaptureMode",
+       (void *)cuThreadExchangeStreamCaptureMode},
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
@@ -8788,6 +8830,8 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuStreamGetCaptureInfo", (void *)cuStreamGetCaptureInfo},
       {"cuStreamGetCaptureInfo_v2", (void *)cuStreamGetCaptureInfo_v2},
       {"cuStreamGetCaptureInfo_v3", (void *)cuStreamGetCaptureInfo_v3},
+      {"cuThreadExchangeStreamCaptureMode",
+       (void *)cuThreadExchangeStreamCaptureMode},
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},

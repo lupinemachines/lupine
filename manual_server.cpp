@@ -729,6 +729,46 @@ int handle_manual_cuCtxCreate_v2(conn_t *conn) {
   return 0;
 }
 
+int handle_manual_cuMemAlloc_v2(conn_t *conn) {
+  CUdeviceptr dptr = 0;
+  size_t bytesize = 0;
+  int request_id;
+  CUresult result = CUDA_ERROR_UNKNOWN;
+  CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+  CUresult exchange_result = CUDA_ERROR_UNKNOWN;
+  if (rpc_read(conn, &dptr, sizeof(dptr)) < 0 ||
+      rpc_read(conn, &bytesize, sizeof(bytesize)) < 0) {
+    goto ERROR_0;
+  }
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    goto ERROR_0;
+  }
+
+  exchange_result = cuThreadExchangeStreamCaptureMode(&mode);
+  if (exchange_result == CUDA_SUCCESS) {
+    result = cuMemAlloc_v2(&dptr, bytesize);
+    CUstreamCaptureMode restore_mode = mode;
+    CUresult restore_result = cuThreadExchangeStreamCaptureMode(&restore_mode);
+    if (result == CUDA_SUCCESS && restore_result != CUDA_SUCCESS) {
+      result = restore_result;
+    }
+  } else {
+    result = exchange_result;
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &dptr, sizeof(dptr)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    goto ERROR_0;
+  }
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_manual_cuMemPoolSetAttribute(conn_t *conn) {
   CUmemoryPool pool = nullptr;
   CUmemPool_attribute attr = CU_MEMPOOL_ATTR_RELEASE_THRESHOLD;
@@ -2766,10 +2806,13 @@ int handle_manual_cuStreamGetCaptureInfo(conn_t *conn) {
   const CUgraphNode *deps_ptr = nullptr;
   const CUgraphEdgeData *edge_ptr = nullptr;
   size_t dep_count = 0;
+  bool has_dependencies = false;
   bool has_edge_data = false;
+  bool wants_edge_data = false;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &wants_edge_data, sizeof(wants_edge_data)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -2779,15 +2822,17 @@ int handle_manual_cuStreamGetCaptureInfo(conn_t *conn) {
 
   result = cuStreamGetCaptureInfo_v3(stream, &status, &id, &graph, &deps_ptr,
                                      &edge_ptr, &dep_count);
-  has_edge_data = edge_ptr != nullptr && dep_count != 0;
+  has_dependencies = deps_ptr != nullptr && dep_count != 0;
+  has_edge_data = wants_edge_data && edge_ptr != nullptr && dep_count != 0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &status, sizeof(status)) < 0 ||
       rpc_write(conn, &id, sizeof(id)) < 0 ||
       rpc_write(conn, &graph, sizeof(graph)) < 0 ||
       rpc_write(conn, &dep_count, sizeof(dep_count)) < 0 ||
+      rpc_write(conn, &has_dependencies, sizeof(has_dependencies)) < 0 ||
       rpc_write(conn, &has_edge_data, sizeof(has_edge_data)) < 0 ||
-      (dep_count != 0 && deps_ptr != nullptr &&
+      (has_dependencies &&
        rpc_write(conn, deps_ptr, dep_count * sizeof(CUgraphNode)) < 0) ||
       (has_edge_data &&
        rpc_write(conn, edge_ptr, dep_count * sizeof(CUgraphEdgeData)) < 0) ||

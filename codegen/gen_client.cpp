@@ -3620,31 +3620,6 @@ CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode) {
   return return_value;
 }
 
-CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUstreamCaptureMode *);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuThreadExchangeStreamCaptureMode"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(mode);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuThreadExchangeStreamCaptureMode) <
-          0 ||
-      rpc_write(conn, mode, sizeof(CUstreamCaptureMode)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, mode, sizeof(CUstreamCaptureMode)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
@@ -8486,8 +8461,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetId", (void *)cuStreamGetId},
     {"cuStreamGetCtx", (void *)cuStreamGetCtx},
     {"cuStreamBeginCapture_v2", (void *)cuStreamBeginCapture_v2},
-    {"cuThreadExchangeStreamCaptureMode",
-     (void *)cuThreadExchangeStreamCaptureMode},
     {"cuStreamEndCapture", (void *)cuStreamEndCapture},
     {"cuStreamIsCapturing", (void *)cuStreamIsCapturing},
     {"cuStreamAttachMemAsync", (void *)cuStreamAttachMemAsync},
