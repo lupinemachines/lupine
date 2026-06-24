@@ -200,27 +200,8 @@ fi
 
 if [[ -n "$CUDA_SAMPLES_REF" ]]; then
   git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
-  git -C "$CUDA_SAMPLES_DIR" checkout --force "$CUDA_SAMPLES_REF"
-  git -C "$CUDA_SAMPLES_DIR" reset --hard "$CUDA_SAMPLES_REF"
+  git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
 fi
-
-cuda_toolkit_identity() {
-  local nvcc_path=""
-  local nvcc_version=""
-  local cuda_home_real=""
-
-  nvcc_path="$(command -v nvcc || true)"
-  if [[ -n "$nvcc_path" ]]; then
-    nvcc_version="$(nvcc --version | sed -nE 's/.*release ([0-9]+(\.[0-9]+){1,2}).*/\1/p' | head -n1)"
-  fi
-  if [[ -n "${CUDA_HOME:-}" ]]; then
-    cuda_home_real="$(readlink -f "$CUDA_HOME" 2>/dev/null || printf '%s' "$CUDA_HOME")"
-  fi
-
-  printf 'cuda_home=%s\n' "$cuda_home_real"
-  printf 'nvcc=%s\n' "$nvcc_path"
-  printf 'nvcc_version=%s\n' "$nvcc_version"
-}
 
 # The samples hardcode set(CMAKE_CUDA_ARCHITECTURES ...) per CMakeLists, so a
 # -D flag cannot narrow them. Rewrite lists that include the requested arch to
@@ -234,35 +215,6 @@ fi
 cmake_samples=0
 if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
   cmake_samples=1
-fi
-
-if [[ "$cmake_samples" == "1" && -n "${CUDA_HOME:-}" ]]; then
-  CUDA_SAMPLES_CMAKE_ARGS="-DCUDAToolkit_ROOT=$CUDA_HOME -DCMAKE_CUDA_COMPILER=$CUDA_HOME/bin/nvcc $CUDA_SAMPLES_CMAKE_ARGS"
-fi
-
-sample_tree_ref="$(git -C "$CUDA_SAMPLES_DIR" rev-parse HEAD 2>/dev/null || true)"
-build_identity="$(
-  cuda_toolkit_identity
-  printf 'samples_ref=%s\n' "${CUDA_SAMPLES_REF:-}"
-  printf 'samples_tree_ref=%s\n' "$sample_tree_ref"
-  printf 'samples_arch=%s\n' "$CUDA_SAMPLES_ARCH"
-  printf 'cmake_samples=%s\n' "$cmake_samples"
-  printf 'cmake_args=%s\n' "$CUDA_SAMPLES_CMAKE_ARGS"
-)"
-build_identity_file="$CUDA_SAMPLES_BUILD_DIR/.lupine-build-id"
-stale_sample_build=0
-if [[ -e "$build_identity_file" ]]; then
-  if ! cmp -s "$build_identity_file" <(printf '%s\n' "$build_identity"); then
-    stale_sample_build=1
-  fi
-elif [[ -d "$CUDA_SAMPLES_BUILD_DIR" ]] &&
-     find "$CUDA_SAMPLES_BUILD_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
-  stale_sample_build=1
-fi
-
-if [[ "$stale_sample_build" == "1" ]]; then
-  echo "CUDA sample build cache does not match current toolkit/ref; rebuilding" >&2
-  rm -rf "$CUDA_SAMPLES_BUILD_DIR"
 fi
 
 if [[ -z "$CUDA_SAMPLES_BIN" ]]; then
@@ -441,8 +393,6 @@ fi
 needs_build=0
 if [[ "$BUILD_SAMPLES" == "1" ]]; then
   needs_build=1
-elif [[ "$stale_sample_build" == "1" ]]; then
-  needs_build=1
 elif [[ "$BUILD_SAMPLES" == "auto" ]]; then
   for sample in "${samples[@]}"; do
     if ! resolve_sample_exe "$sample" >/dev/null; then
@@ -487,20 +437,12 @@ if [[ "$needs_build" == "1" ]]; then
           echo "missing sample Makefile: $sample" >&2
           continue
         fi
-        if [[ "$stale_sample_build" == "1" ]]; then
-          make -C "$sample_srcdir" clean >/dev/null 2>&1 || true
-        fi
         make -C "$sample_srcdir" -j"$JOBS" || echo "sample build failed: $sample" >&2
       done
     else
-      if [[ "$stale_sample_build" == "1" ]]; then
-        make -C "$CUDA_SAMPLES_DIR" clean >/dev/null 2>&1 || true
-      fi
       make -C "$CUDA_SAMPLES_DIR" -j"$JOBS"
     fi
   fi
-  mkdir -p "$CUDA_SAMPLES_BUILD_DIR"
-  printf '%s\n' "$build_identity" > "$build_identity_file"
 fi
 
 if [[ "$BUILD_ONLY" == "1" ]]; then

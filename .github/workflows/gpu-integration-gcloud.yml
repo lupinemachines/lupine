@@ -288,7 +288,6 @@ jobs:
             name: CUDA 13.1
             image: nvidia/cuda:13.1.0-devel-ubuntu24.04
             samples_ref: v13.1
-            samples_cache_key: cuda13-1-v13.1
             pytorch_index_url: https://download.pytorch.org/whl/cu128
             cuda_samples_port_base: 14900
             pytorch_port_base: 20100
@@ -297,7 +296,6 @@ jobs:
             name: CUDA 12.4
             image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
-            samples_cache_key: cuda12-4-v12.4.1
             pytorch_index_url: https://download.pytorch.org/whl/cu124
             cuda_samples_port_base: 15300
             pytorch_port_base: 20300
@@ -306,7 +304,6 @@ jobs:
             name: CUDA 11.8
             image: nvidia/cuda:11.8.0-devel-ubuntu22.04
             samples_ref: v11.8
-            samples_cache_key: cuda11-8-v11.8
             pytorch_index_url: https://download.pytorch.org/whl/cu118
             cuda_samples_port_base: 15600
             pytorch_port_base: 20500
@@ -369,15 +366,6 @@ jobs:
           key: gpu-integration-server-build-${{ github.sha }}
           fail-on-cache-miss: true
 
-      - name: Restore CUDA samples build cache
-        uses: actions/cache@v4
-        with:
-          path: .cache/cuda-samples/${{ matrix.label }}
-          key: gpu-integration-cuda-samples-${{ matrix.samples_cache_key }}-${{ hashFiles('test/run_cuda_samples.sh', '.github/workflows/gpu-integration-gcloud.yml') }}
-          restore-keys: |
-            gpu-integration-cuda-samples-${{ matrix.samples_cache_key }}-
-            gpu-integration-cuda-samples-${{ matrix.label }}-
-
       - name: Run ${{ matrix.name }} client against L4 server
         run: |
           set -euo pipefail
@@ -419,11 +407,6 @@ jobs:
             ${{ matrix.image }} \
             bash -lc '
               set -euo pipefail
-              cleanup_cache_ownership() {
-                chown -R "$(stat -c %u /src):$(stat -c %g /src)" /src/.cache/cuda-samples 2>/dev/null || true
-              }
-              trap cleanup_cache_ownership EXIT
-
               export DEBIAN_FRONTEND=noninteractive
               apt-get update >/dev/null
               apt-get install -y --no-install-recommends \
@@ -468,8 +451,8 @@ jobs:
               export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
               export PYTORCH_SKIP_LIST=compile_elementwise,microgpt_train
               export CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
-              export CUDA_SAMPLES_DIR="/src/.cache/cuda-samples/${MATRIX_LABEL}/src"
-              export CUDA_SAMPLES_BUILD_DIR="/src/.cache/cuda-samples/${MATRIX_LABEL}/build"
+              export CUDA_SAMPLES_DIR="/tmp/cuda-samples-${MATRIX_LABEL}"
+              export CUDA_SAMPLES_BUILD_DIR="$CUDA_SAMPLES_DIR/build"
               export CUDA_SAMPLES_ARCH=89
 
               python3 -m venv /tmp/venv-pytorch
