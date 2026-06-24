@@ -241,6 +241,90 @@ int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
   return 0;
 }
 
+int rpc_write_cuda_kernel_node_params(conn_t *conn,
+                                      const CUDA_KERNEL_NODE_PARAMS *params) {
+  static_assert(sizeof(params->func) == sizeof(uint64_t),
+                "CUfunction wire size must be 64-bit");
+#if CUDA_VERSION >= 12000
+  static_assert(sizeof(params->kern) == sizeof(uint64_t),
+                "CUkernel wire size must be 64-bit");
+  static_assert(sizeof(params->ctx) == sizeof(uint64_t),
+                "CUcontext wire size must be 64-bit");
+#endif
+
+  if (conn == nullptr || params == nullptr) {
+    return -1;
+  }
+  if (rpc_write(conn, &params->func, sizeof(uint64_t)) < 0 ||
+      rpc_write(conn, &params->gridDimX, sizeof(params->gridDimX)) < 0 ||
+      rpc_write(conn, &params->gridDimY, sizeof(params->gridDimY)) < 0 ||
+      rpc_write(conn, &params->gridDimZ, sizeof(params->gridDimZ)) < 0 ||
+      rpc_write(conn, &params->blockDimX, sizeof(params->blockDimX)) < 0 ||
+      rpc_write(conn, &params->blockDimY, sizeof(params->blockDimY)) < 0 ||
+      rpc_write(conn, &params->blockDimZ, sizeof(params->blockDimZ)) < 0 ||
+      rpc_write(conn, &params->sharedMemBytes,
+                sizeof(params->sharedMemBytes)) < 0) {
+    return -1;
+  }
+#if CUDA_VERSION >= 12000
+  if (rpc_write(conn, &params->kern, sizeof(uint64_t)) < 0 ||
+      rpc_write(conn, &params->ctx, sizeof(uint64_t)) < 0) {
+    return -1;
+  }
+#else
+  static const uint64_t zero = 0;
+  if (rpc_write(conn, &zero, sizeof(zero)) < 0 ||
+      rpc_write(conn, &zero, sizeof(zero)) < 0) {
+    return -1;
+  }
+#endif
+  return 0;
+}
+
+int rpc_read_cuda_kernel_node_params(conn_t *conn,
+                                     CUDA_KERNEL_NODE_PARAMS *params) {
+  static_assert(sizeof(params->func) == sizeof(uint64_t),
+                "CUfunction wire size must be 64-bit");
+#if CUDA_VERSION >= 12000
+  static_assert(sizeof(params->kern) == sizeof(uint64_t),
+                "CUkernel wire size must be 64-bit");
+  static_assert(sizeof(params->ctx) == sizeof(uint64_t),
+                "CUcontext wire size must be 64-bit");
+#endif
+
+  if (conn == nullptr || params == nullptr) {
+    return -1;
+  }
+  *params = {};
+  if (rpc_read(conn, &params->func, sizeof(uint64_t)) < 0 ||
+      rpc_read(conn, &params->gridDimX, sizeof(params->gridDimX)) < 0 ||
+      rpc_read(conn, &params->gridDimY, sizeof(params->gridDimY)) < 0 ||
+      rpc_read(conn, &params->gridDimZ, sizeof(params->gridDimZ)) < 0 ||
+      rpc_read(conn, &params->blockDimX, sizeof(params->blockDimX)) < 0 ||
+      rpc_read(conn, &params->blockDimY, sizeof(params->blockDimY)) < 0 ||
+      rpc_read(conn, &params->blockDimZ, sizeof(params->blockDimZ)) < 0 ||
+      rpc_read(conn, &params->sharedMemBytes,
+               sizeof(params->sharedMemBytes)) < 0) {
+    return -1;
+  }
+#if CUDA_VERSION >= 12000
+  if (rpc_read(conn, &params->kern, sizeof(uint64_t)) < 0 ||
+      rpc_read(conn, &params->ctx, sizeof(uint64_t)) < 0) {
+    return -1;
+  }
+#else
+  uint64_t unused_kern = 0;
+  uint64_t unused_ctx = 0;
+  if (rpc_read(conn, &unused_kern, sizeof(unused_kern)) < 0 ||
+      rpc_read(conn, &unused_ctx, sizeof(unused_ctx)) < 0) {
+    return -1;
+  }
+#endif
+  params->kernelParams = nullptr;
+  params->extra = nullptr;
+  return 0;
+}
+
 // rpc_write_framed queues a payload that the transport LZ4-frames lazily,
 // one block at a time, as the bytes are streamed to the socket. The caller's
 // buffer must stay valid until rpc_write_end() returns, exactly like

@@ -2,6 +2,7 @@
 #define RPC_H
 
 #include "lupine_platform.h"
+#include <cuda.h>
 #include <stdint.h>
 
 // Uncompressed block size for the optional LZ4 payload framing. The framed
@@ -56,6 +57,11 @@ extern int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
                                         const size_t *sizes,
                                         size_t payload_size, void *storage,
                                         size_t storage_size, void **values);
+extern int
+rpc_write_cuda_kernel_node_params(conn_t *conn,
+                                  const CUDA_KERNEL_NODE_PARAMS *params);
+extern int rpc_read_cuda_kernel_node_params(conn_t *conn,
+                                            CUDA_KERNEL_NODE_PARAMS *params);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, struct iovec *iov,

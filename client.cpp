@@ -6218,7 +6218,7 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
       rpc_write_start_request(conn, RPC_cuGraphKernelNodeGetParams_v2) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &serial_params, sizeof(serial_params)) < 0 ||
+      rpc_read_cuda_kernel_node_params(conn, &serial_params) < 0 ||
       rpc_read(conn, &layout, sizeof(layout)) < 0 ||
       rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6298,7 +6298,7 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetParams_v2) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_write(conn, &serial_params, sizeof(serial_params)) < 0 ||
+      rpc_write_cuda_kernel_node_params(conn, &serial_params) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
       lupine_write_kernel_param_values(conn, nodeParams, layout) !=
@@ -6357,7 +6357,7 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
-      rpc_write(conn, &serial_params, sizeof(serial_params)) < 0 ||
+      rpc_write_cuda_kernel_node_params(conn, &serial_params) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
       lupine_write_kernel_param_values(conn, nodeParams, layout) !=
@@ -6445,7 +6445,7 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
           0 ||
       rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_write(conn, &serial_params, sizeof(serial_params)) < 0 ||
+      rpc_write_cuda_kernel_node_params(conn, &serial_params) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
       lupine_write_kernel_param_values(conn, nodeParams, layout) !=
