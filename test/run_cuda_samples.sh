@@ -671,9 +671,6 @@ run_sample() {
 
   if [[ "$rc" == "0" ]]; then
     status="PASS"
-  elif [[ "$rc" == "222" && ( "$sample" == "simple" || "$sample" == "dsl" ) ]] &&
-       grep -q "CUDA_ERROR_UNSUPPORTED_PTX_VERSION" "$log"; then
-    status="SKIP:waived"
   elif [[ "$rc" == "2" ]]; then
     status="SKIP:waived"
   else
