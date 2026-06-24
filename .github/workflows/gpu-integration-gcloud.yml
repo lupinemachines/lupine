@@ -471,6 +471,7 @@ jobs:
               export CUDA_SAMPLES_DIR="/src/.cache/cuda-samples/${MATRIX_LABEL}/src"
               export CUDA_SAMPLES_BUILD_DIR="/src/.cache/cuda-samples/${MATRIX_LABEL}/build"
               export CUDA_SAMPLES_ARCH=89
+              export CUDA_SAMPLES_CMAKE_ARCH=89-real
 
               python3 -m venv /tmp/venv-pytorch
               /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
