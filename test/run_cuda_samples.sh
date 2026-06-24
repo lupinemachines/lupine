@@ -14,7 +14,6 @@ CUDA_SAMPLES_BUILD_DIR="${CUDA_SAMPLES_BUILD_DIR:-$CUDA_SAMPLES_DIR/build}"
 CUDA_SAMPLES_BIN="${CUDA_SAMPLES_BIN:-}"
 CUDA_SAMPLES_CMAKE_ARGS="${CUDA_SAMPLES_CMAKE_ARGS:-}"
 CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
-CUDA_SAMPLES_CMAKE_ARCH="${CUDA_SAMPLES_CMAKE_ARCH:-}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -107,9 +106,6 @@ Environment:
   CUDA_SAMPLES_ARCH    Compile device code only for this compute capability
                        (e.g. 75). Samples whose hardcoded arch list excludes it
                        keep their upstream list.
-  CUDA_SAMPLES_CMAKE_ARCH CMake CUDA architecture value. Defaults to
-                       <CUDA_SAMPLES_ARCH>-real when CUDA_SAMPLES_ARCH is set,
-                       avoiding PTX-only/fallback code in CI.
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
   BUILD_ONLY           1 to clone/build selected samples and exit before running.
@@ -231,11 +227,8 @@ cuda_toolkit_identity() {
 # just that arch; samples restricted to other archs are left as upstream built
 # them.
 if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
-  if [[ -z "$CUDA_SAMPLES_CMAKE_ARCH" ]]; then
-    CUDA_SAMPLES_CMAKE_ARCH="${CUDA_SAMPLES_ARCH}-real"
-  fi
   find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
-    "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_CMAKE_ARCH)/" {} +
+    "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
 fi
 
 cmake_samples=0
@@ -253,7 +246,6 @@ build_identity="$(
   printf 'samples_ref=%s\n' "${CUDA_SAMPLES_REF:-}"
   printf 'samples_tree_ref=%s\n' "$sample_tree_ref"
   printf 'samples_arch=%s\n' "$CUDA_SAMPLES_ARCH"
-  printf 'samples_cmake_arch=%s\n' "$CUDA_SAMPLES_CMAKE_ARCH"
   printf 'cmake_samples=%s\n' "$cmake_samples"
   printf 'cmake_args=%s\n' "$CUDA_SAMPLES_CMAKE_ARGS"
 )"
