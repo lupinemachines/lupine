@@ -80,11 +80,13 @@ stop_remote_server() {
     if [ -f '$pidfile' ]; then
       pid=\$(cat '$pidfile' 2>/dev/null || true)
       if [ -n \"\$pid\" ]; then
+        kill -- -\"\$pid\" >/dev/null 2>&1 || true
         kill \"\$pid\" >/dev/null 2>&1 || true
         for _ in 1 2 3 4 5 6 7 8 9 10; do
-          kill -0 \"\$pid\" >/dev/null 2>&1 || break
+          kill -0 -- -\"\$pid\" >/dev/null 2>&1 || kill -0 \"\$pid\" >/dev/null 2>&1 || break
           sleep 0.1
         done
+        kill -9 -- -\"\$pid\" >/dev/null 2>&1 || true
         kill -9 \"\$pid\" >/dev/null 2>&1 || true
       fi
     fi
@@ -133,7 +135,7 @@ for i in "${!TESTS[@]}"; do
   stop_remote_server "$pidfile" "$server_log"
 
   ssh_with_timeout \
-    "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
+    "rm -f '$server_log' '$pidfile'; setsid sh -c 'echo \$\$ > \"\$1\"; shift; exec \"\$@\"' sh '$pidfile' env LUPINE_PORT=$port '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & for _ in 1 2 3 4 5; do [ -s '$pidfile' ] && break; sleep 0.05; done; sleep 0.25"
 
   set +e
   timeout --kill-after=5s "$TEST_TIMEOUT" env \

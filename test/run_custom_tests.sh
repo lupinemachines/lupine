@@ -35,9 +35,10 @@ for f in "$SERVER_LOCAL_BIN" "$LUPINE_LIB"; do
 done
 
 server_pid=""
+server_pidfile="/tmp/lupine-custom-server.pid"
 cleanup() {
   [[ -n "$server_pid" ]] && ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
-    "kill $server_pid 2>/dev/null; rm -f '$SERVER_REMOTE_BIN' /tmp/lupine-custom-server.log" \
+    "kill -- -$server_pid 2>/dev/null || true; kill $server_pid 2>/dev/null || true; rm -f '$SERVER_REMOTE_BIN' /tmp/lupine-custom-server.log '$server_pidfile'" \
     >/dev/null 2>&1 || true
   [[ "$owns_build_dir" == "1" ]] && rm -rf "$BUILD_DIR"
 }
@@ -46,8 +47,9 @@ trap cleanup EXIT
 if [[ "$SERVER_UPLOAD" == "1" ]]; then
   scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 fi
-server_pid="$(ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
-  "LUPINE_PORT=$SERVER_PORT nohup '$SERVER_REMOTE_BIN' >/tmp/lupine-custom-server.log 2>&1 </dev/null & echo \$!")"
+ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
+  "rm -f '$server_pidfile'; setsid sh -c 'echo \$\$ > \"\$1\"; shift; exec \"\$@\"' sh '$server_pidfile' env LUPINE_PORT=$SERVER_PORT '$SERVER_REMOTE_BIN' >/tmp/lupine-custom-server.log 2>&1 </dev/null & for _ in 1 2 3 4 5; do [ -s '$server_pidfile' ] && break; sleep 0.05; done"
+server_pid="$(ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "cat '$server_pidfile'")"
 sleep 1
 
 pass=0 fail=0
