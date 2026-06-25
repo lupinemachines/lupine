@@ -22,7 +22,7 @@ class NullableOperation:
     ptr: Pointer
 
     def client_rpc_write(self, f):
-        if not self.send:
+        if not (self.send or self.recv):
             return
         f.write(
             "        rpc_write(conn, &{param_name}, sizeof({server_type})) < 0 ||\n".format(
@@ -30,6 +30,8 @@ class NullableOperation:
                 server_type=self.ptr.format(),
             )
         )
+        if not self.send:
+            return
 
         f.write(
             "        ({param_name} != nullptr && rpc_write(conn, {param_name}, sizeof({base_type})) < 0) ||\n".format(
@@ -64,7 +66,7 @@ class NullableOperation:
         return s
 
     def server_rpc_read(self, f):
-        if not self.send:
+        if not (self.send or self.recv):
             return
         f.write(
             "        rpc_read(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
@@ -72,6 +74,8 @@ class NullableOperation:
                 server_type=self.ptr.format(),
             )
         )
+        if not self.send:
+            return
         f.write(
             "        ({param_name}_null_check && rpc_read(conn, &{param_name}, sizeof({base_type})) < 0) ||\n".format(
                 param_name=self.parameter.name,

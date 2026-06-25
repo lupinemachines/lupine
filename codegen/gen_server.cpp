@@ -874,22 +874,30 @@ ERROR_0:
 }
 
 int handle_cuCtxGetStreamPriorityRange(conn_t *conn) {
+  int *leastPriority_null_check;
   int leastPriority;
+  int *greatestPriority_null_check;
   int greatestPriority;
   int request_id;
   CUresult lupine_intercept_result;
-  if (false)
+  if (rpc_read(conn, &leastPriority_null_check, sizeof(int *)) < 0 ||
+      rpc_read(conn, &greatestPriority_null_check, sizeof(int *)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuCtxGetStreamPriorityRange(&leastPriority, &greatestPriority);
+  lupine_intercept_result = cuCtxGetStreamPriorityRange(
+      leastPriority_null_check ? &leastPriority : nullptr,
+      greatestPriority_null_check ? &greatestPriority : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &leastPriority, sizeof(int)) < 0 ||
-      rpc_write(conn, &greatestPriority, sizeof(int)) < 0 ||
+      rpc_write(conn, &leastPriority_null_check, sizeof(int *)) < 0 ||
+      (leastPriority_null_check &&
+       rpc_write(conn, &leastPriority, sizeof(int)) < 0) ||
+      rpc_write(conn, &greatestPriority_null_check, sizeof(int *)) < 0 ||
+      (greatestPriority_null_check &&
+       rpc_write(conn, &greatestPriority, sizeof(int)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

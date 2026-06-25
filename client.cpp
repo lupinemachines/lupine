@@ -3409,11 +3409,8 @@ lupine_enable_dirty_tracking_locked(void *host,
     allocation->tracking_enabled = false;
     return false;
   }
-  if (!lupine_protect_host_range(host, allocation->storage_size, PROT_READ)) {
-    lupine_remove_fault_entry(host);
-    allocation->tracking_enabled = false;
-    return false;
-  }
+  // Newly mapped host allocations start dirty and writable. Protect them only
+  // after the first sync so libraries can initialize allocation-owned state.
   return true;
 }
 
@@ -3642,19 +3639,44 @@ static bool lupine_host_ptr_in_mapping(CUdeviceptr ptr,
   return true;
 }
 
-static bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
-                                              CUdeviceptr *translated) {
+struct lupine_host_mapping_alias {
+  void *host = nullptr;
+  size_t size = 0;
+  CUdeviceptr visible_ptr = 0;
+  bool managed = false;
+};
+
+static bool lupine_translate_host_mapping_ptr(CUdeviceptr ptr,
+                                              CUdeviceptr *translated,
+                                              lupine_host_mapping_alias *alias) {
   void *host = reinterpret_cast<void *>(ptr);
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto it = lupine_find_host_allocation_locked(host);
-  if (it == lupine_host_allocations().end() || !it->second.managed) {
+  if (it == lupine_host_allocations().end() || it->second.device_ptr == 0) {
     return false;
   }
 
   uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
   uintptr_t addr = reinterpret_cast<uintptr_t>(host);
+  size_t offset = addr - base;
   if (translated != nullptr) {
-    *translated = it->second.device_ptr + (addr - base);
+    *translated = it->second.device_ptr + offset;
+  }
+  if (alias != nullptr) {
+    alias->host = it->first;
+    alias->size = it->second.size;
+    alias->visible_ptr = reinterpret_cast<CUdeviceptr>(it->first) + offset;
+    alias->managed = it->second.managed;
+  }
+  return true;
+}
+
+static bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
+                                              CUdeviceptr *translated) {
+  lupine_host_mapping_alias alias;
+  if (!lupine_translate_host_mapping_ptr(ptr, translated, &alias) ||
+      !alias.managed) {
+    return false;
   }
   return true;
 }
@@ -3689,8 +3711,7 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(unsigned char *packed,
       CUdeviceptr arg = 0;
       memcpy(&arg, packed + offsets[i], sizeof(arg));
       CUdeviceptr translated = 0;
-      if (mapping.managed &&
-          lupine_host_ptr_in_mapping(arg, mapping, &translated)) {
+      if (lupine_host_ptr_in_mapping(arg, mapping, &translated)) {
         memcpy(packed + offsets[i], &translated, sizeof(translated));
         lupine_mark_mapped_device_dirty(mapping.host);
         break;
@@ -3880,9 +3901,7 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
-  uintptr_t addr = reinterpret_cast<uintptr_t>(p);
-  *pdptr = it->second.device_ptr + (addr - base);
+  *pdptr = reinterpret_cast<CUdeviceptr>(p);
   return CUDA_SUCCESS;
 }
 
@@ -4127,7 +4146,27 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
 
   CUdeviceptr query_ptr = ptr;
-  bool managed_alias = lupine_translate_managed_host_ptr(ptr, &query_ptr);
+  lupine_host_mapping_alias host_alias;
+  bool host_mapping_alias =
+      lupine_translate_host_mapping_ptr(ptr, &query_ptr, &host_alias);
+  if (host_mapping_alias) {
+    if (attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER ||
+        attribute == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+      void *visible = reinterpret_cast<void *>(host_alias.visible_ptr);
+      memcpy(data, &visible, sizeof(visible));
+      return CUDA_SUCCESS;
+    }
+    if (attribute == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
+      int is_managed = host_alias.managed ? 1 : 0;
+      memcpy(data, &is_managed, sizeof(is_managed));
+      return CUDA_SUCCESS;
+    }
+    if (!host_alias.managed && attribute == CU_POINTER_ATTRIBUTE_MEMORY_TYPE) {
+      CUmemorytype memory_type = CU_MEMORYTYPE_HOST;
+      memcpy(data, &memory_type, sizeof(memory_type));
+      return CUDA_SUCCESS;
+    }
+  }
   lupine_route route = lupine_route_for_deviceptr(query_ptr);
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(void *, CUpointer_attribute, CUdeviceptr);
@@ -4149,13 +4188,6 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
   if (return_value == CUDA_SUCCESS) {
     memcpy(data, value, value_size);
-    if (managed_alias && attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
-      void *host = reinterpret_cast<void *>(ptr);
-      memcpy(data, &host, sizeof(host));
-    } else if (managed_alias && attribute == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
-      int is_managed = 1;
-      memcpy(data, &is_managed, sizeof(is_managed));
-    }
   }
   return return_value;
 }
@@ -4176,7 +4208,9 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   }
 
   CUdeviceptr query_ptr = ptr;
-  bool managed_alias = lupine_translate_managed_host_ptr(ptr, &query_ptr);
+  lupine_host_mapping_alias host_alias;
+  bool host_mapping_alias =
+      lupine_translate_host_mapping_ptr(ptr, &query_ptr, &host_alias);
   lupine_route route = lupine_route_for_deviceptr(query_ptr);
   if (lupine_route_is_local(route)) {
     using real_fn_t =
@@ -4222,18 +4256,34 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
       if (data[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
+      if (host_mapping_alias &&
+          attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+        void *host = reinterpret_cast<void *>(ptr);
+        memcpy(data[i], &host, sizeof(host));
+        continue;
+      }
+      if (host_mapping_alias &&
+          attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+        CUdeviceptr visible = ptr;
+        memcpy(data[i], &visible, sizeof(visible));
+        continue;
+      }
+      if (host_mapping_alias &&
+          attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
+        int is_managed = host_alias.managed ? 1 : 0;
+        memcpy(data[i], &is_managed, sizeof(is_managed));
+        continue;
+      }
+      if (host_mapping_alias && !host_alias.managed &&
+          attributes[i] == CU_POINTER_ATTRIBUTE_MEMORY_TYPE) {
+        CUmemorytype memory_type = CU_MEMORYTYPE_HOST;
+        memcpy(data[i], &memory_type, sizeof(memory_type));
+        continue;
+      }
       if (values[i].size() > value_sizes[i]) {
         return CUDA_ERROR_NOT_SUPPORTED;
       }
       memcpy(data[i], values[i].data(), values[i].size());
-      if (managed_alias && attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
-        void *host = reinterpret_cast<void *>(ptr);
-        memcpy(data[i], &host, sizeof(host));
-      } else if (managed_alias &&
-                 attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
-        int is_managed = 1;
-        memcpy(data[i], &is_managed, sizeof(is_managed));
-      }
     }
   }
   return return_value;
@@ -4244,6 +4294,16 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
 #endif
 extern "C" CUresult cuMemGetAddressRange(CUdeviceptr *pbase, size_t *psize,
                                          CUdeviceptr dptr) {
+  lupine_host_mapping_alias host_alias;
+  if (lupine_translate_host_mapping_ptr(dptr, nullptr, &host_alias)) {
+    if (pbase != nullptr) {
+      *pbase = reinterpret_cast<CUdeviceptr>(host_alias.host);
+    }
+    if (psize != nullptr) {
+      *psize = host_alias.size;
+    }
+    return CUDA_SUCCESS;
+  }
   return cuMemGetAddressRange_v2(pbase, psize, dptr);
 }
 

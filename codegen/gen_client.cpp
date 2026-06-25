@@ -835,11 +835,19 @@ CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  int *leastPriority_null_check;
+  int *greatestPriority_null_check;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuCtxGetStreamPriorityRange) < 0 ||
+      rpc_write(conn, &leastPriority, sizeof(int *)) < 0 ||
+      rpc_write(conn, &greatestPriority, sizeof(int *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, leastPriority, sizeof(int)) < 0 ||
-      rpc_read(conn, greatestPriority, sizeof(int)) < 0 ||
+      rpc_read(conn, &leastPriority_null_check, sizeof(int *)) < 0 ||
+      (leastPriority_null_check &&
+       rpc_read(conn, leastPriority, sizeof(int)) < 0) ||
+      rpc_read(conn, &greatestPriority_null_check, sizeof(int *)) < 0 ||
+      (greatestPriority_null_check &&
+       rpc_read(conn, greatestPriority, sizeof(int)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

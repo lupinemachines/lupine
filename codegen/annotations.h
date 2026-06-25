@@ -2224,8 +2224,8 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config);
  */
 CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version);
 /**
- * @param leastPriority RECV_ONLY
- * @param greatestPriority RECV_ONLY
+ * @param leastPriority RECV_ONLY NULLABLE
+ * @param greatestPriority RECV_ONLY NULLABLE
  */
 CUresult cuCtxGetStreamPriorityRange(int *leastPriority, int *greatestPriority);
 /**
