@@ -78,14 +78,22 @@ void queue_bytes(std::deque<h2_buffer> &queue, const unsigned char *data,
   queue.push_back(std::move(buffer));
 }
 
+// Maximum buffers per vectored send. Frames carry far fewer iovecs than this
+// in practice, but cap defensively so a single sendmsg never exceeds the
+// platform's IOV_MAX and fails with EMSGSIZE.
+constexpr int kH2MaxSendIov = 512;
+
 int h2_write_all(h2_transport *transport, const struct iovec *iov,
                  int iov_count) {
   std::vector<struct iovec> local(iov, iov + iov_count);
   struct iovec *cursor = local.data();
   int count = iov_count;
   while (count > 0) {
-    ssize_t n = lupine_socket_send(transport->netfd, cursor[0].iov_base,
-                                   cursor[0].iov_len);
+    // Send all currently pending buffers in one syscall instead of one send()
+    // per buffer. Coalescing avoids emitting the 9-byte HTTP/2 frame header as
+    // its own TCP segment and cuts syscall overhead on every frame.
+    int batch = std::min(count, kH2MaxSendIov);
+    ssize_t n = lupine_socket_sendv(transport->netfd, cursor, batch);
     if (n < 0) {
       if (lupine_socket_error_is_intr()) {
         continue;

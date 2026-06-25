@@ -18,6 +18,7 @@
 #include <io.h>
 #include <mutex>
 #include <thread>
+#include <vector>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -131,6 +132,26 @@ inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
   return recv(socket, static_cast<char *>(data), chunk, 0);
 }
 
+// Vectored send of up to `count` buffers in a single syscall. Returns the
+// number of bytes accepted by the socket (which may be fewer than the total
+// when the send buffer fills), or a negative value on error. Callers advance
+// over the buffers and retry, exactly like a partial lupine_socket_send().
+inline ssize_t lupine_socket_sendv(lupine_socket_t socket,
+                                   const struct iovec *iov, int count) {
+  std::vector<WSABUF> bufs(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    bufs[i].buf = static_cast<CHAR *>(iov[i].iov_base);
+    bufs[i].len = static_cast<ULONG>(
+        std::min<size_t>(iov[i].iov_len, static_cast<size_t>(ULONG_MAX)));
+  }
+  DWORD sent = 0;
+  if (WSASend(socket, bufs.data(), static_cast<DWORD>(count), &sent, 0, nullptr,
+              nullptr) != 0) {
+    return -1;
+  }
+  return static_cast<ssize_t>(sent);
+}
+
 inline int lupine_fd_dup(int fd) { return _dup(fd); }
 inline int lupine_fd_dup2(int source, int dest) { return _dup2(source, dest); }
 inline int lupine_fd_close(int fd) { return _close(fd); }
@@ -172,6 +193,17 @@ inline ssize_t lupine_socket_send(lupine_socket_t socket, const void *data,
 inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
                                   size_t size) {
   return recv(socket, data, size, 0);
+}
+// Vectored send of up to `count` buffers in a single syscall. Returns the
+// number of bytes accepted by the socket (which may be fewer than the total
+// when the send buffer fills), or a negative value on error. Callers advance
+// over the buffers and retry, exactly like a partial lupine_socket_send().
+inline ssize_t lupine_socket_sendv(lupine_socket_t socket,
+                                   const struct iovec *iov, int count) {
+  struct msghdr msg = {};
+  msg.msg_iov = const_cast<struct iovec *>(iov);
+  msg.msg_iovlen = static_cast<size_t>(count);
+  return sendmsg(socket, &msg, MSG_NOSIGNAL);
 }
 
 inline int lupine_fd_dup(int fd) { return dup(fd); }
