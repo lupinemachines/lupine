@@ -26,10 +26,10 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - label: cuda13-1
-            name: CUDA 13.1
-            client_image: nvidia/cuda:13.1.0-devel-ubuntu24.04
-            samples_ref: v13.1
+          - label: cuda13-0
+            name: CUDA 13.0
+            client_image: nvidia/cuda:13.0.2-devel-ubuntu24.04
+            samples_ref: v13.0
             pytorch_index_url: https://download.pytorch.org/whl/cu128
           - label: cuda12-4
             name: CUDA 12.4
