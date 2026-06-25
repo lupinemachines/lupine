@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdio.h>
 #include <string>
 #include <unordered_map>
@@ -1827,6 +1828,27 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   delete callback;
 }
 
+static void CUDA_CB lupine_user_object_callback(void *userData) {
+  auto *callback = static_cast<lupine_host_callback_data *>(userData);
+  if (callback == nullptr) {
+    return;
+  }
+  if (callback->conn != nullptr && callback->fn != nullptr) {
+    conn_t *conn = callback->conn;
+    void *fn = reinterpret_cast<void *>(callback->fn);
+    void *client_user_data = callback->userData;
+    void *response = nullptr;
+    if (rpc_write_start_request(conn, 3) == 0 &&
+        rpc_write(conn, &fn, sizeof(fn)) == 0 &&
+        rpc_write(conn, &client_user_data, sizeof(client_user_data)) == 0 &&
+        rpc_wait_for_response(conn) == 0) {
+      rpc_read(conn, &response, sizeof(response));
+      rpc_read_end(conn);
+    }
+  }
+  delete callback;
+}
+
 struct lupine_kernel_param_payload {
   std::vector<unsigned char> storage;
   std::vector<void *> params;
@@ -2595,6 +2617,55 @@ int handle_manual_cuLaunchHostFunc(conn_t *conn) {
   result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_cuUserObjectCreate(conn_t *conn) {
+  void *ptr = nullptr;
+  CUhostFn destroy = nullptr;
+  unsigned int initialRefcount = 0;
+  unsigned int flags = 0;
+  CUuserObject object = nullptr;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+
+  if (rpc_read(conn, &ptr, sizeof(ptr)) < 0 ||
+      rpc_read(conn, &destroy, sizeof(destroy)) < 0 ||
+      rpc_read(conn, &initialRefcount, sizeof(initialRefcount)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  lupine_host_callback_data *callback = nullptr;
+  void *server_ptr = ptr;
+  CUhostFn server_destroy = destroy;
+  if (destroy != nullptr) {
+    callback = new (std::nothrow)
+        lupine_host_callback_data{conn, destroy, ptr, nullptr};
+    if (callback == nullptr) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    } else {
+      server_ptr = callback;
+      server_destroy = lupine_user_object_callback;
+    }
+  }
+
+  if (result != CUDA_ERROR_OUT_OF_MEMORY) {
+    result = cuUserObjectCreate(&object, server_ptr, server_destroy,
+                                initialRefcount, flags);
+  }
+  if (result != CUDA_SUCCESS && callback != nullptr) {
+    delete callback;
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &object, sizeof(object)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }

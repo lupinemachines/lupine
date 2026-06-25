@@ -133,6 +133,8 @@ lupine_manual_handlers() {
       {RPC_cuGraphExecHostNodeSetParams,
        {handle_manual_cuGraphExecHostNodeSetParams,
         "cuGraphExecHostNodeSetParams"}},
+      {RPC_cuUserObjectCreate,
+       {handle_manual_cuUserObjectCreate, "cuUserObjectCreate"}},
       {RPC_cuLaunchHostFunc,
        {handle_manual_cuLaunchHostFunc, "cuLaunchHostFunc"}},
       {RPC_cuStreamAddCallback,

@@ -6937,6 +6937,47 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
   return return_value;
 }
 
+extern "C" CUresult cuUserObjectCreate(CUuserObject *object_out, void *ptr,
+                                       CUhostFn destroy,
+                                       unsigned int initialRefcount,
+                                       unsigned int flags) {
+  if (object_out == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t =
+        CUresult (*)(CUuserObject *, void *, CUhostFn, unsigned int,
+                     unsigned int);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuUserObjectCreate");
+    if (real == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return real(object_out, ptr, destroy, initialRefcount, flags);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUuserObject object = nullptr;
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuUserObjectCreate) < 0 ||
+      rpc_write(conn, &ptr, sizeof(ptr)) < 0 ||
+      rpc_write(conn, &destroy, sizeof(destroy)) < 0 ||
+      rpc_write(conn, &initialRefcount, sizeof(initialRefcount)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &object, sizeof(object)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    *object_out = object;
+  }
+  return return_value;
+}
+
 extern "C" CUresult cuStreamAddCallback(CUstream hStream,
                                         CUstreamCallback callback,
                                         void *userData, unsigned int flags) {
@@ -7929,7 +7970,6 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemRangeGetAttribute)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorString)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorName)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGraphInstantiate)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuUserObjectCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuStreamBeginCaptureToGraph)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuStreamGetCaptureInfo)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuStreamUpdateCaptureDependencies)
@@ -8150,7 +8190,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuGetErrorString),
       LUPINE_STUB_ENTRY(cuGetErrorName),
       LUPINE_STUB_ENTRY(cuGraphInstantiate),
-      LUPINE_STUB_ENTRY(cuUserObjectCreate),
       LUPINE_STUB_ENTRY(cuStreamBeginCaptureToGraph),
       LUPINE_STUB_ENTRY(cuStreamGetCaptureInfo),
       LUPINE_STUB_ENTRY(cuStreamUpdateCaptureDependencies),
@@ -8351,6 +8390,32 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
 
       callback(stream, status, user_data);
+
+      void *res = nullptr;
+      if (rpc_write_start_response(conn, request_id) < 0 ||
+          rpc_write(conn, &res, sizeof(void *)) < 0 ||
+          rpc_write_end(conn) < 0) {
+        LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
+        break;
+      }
+    } else if (op == 3) {
+      void *fn = nullptr;
+      void *user_data = nullptr;
+      if (rpc_read(conn, &fn, sizeof(fn)) < 0 ||
+          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
+        LUPINE_LOG_ERROR("Failed to read user-object callback request.");
+        break;
+      }
+
+      int request_id = rpc_read_end(conn);
+      if (request_id < 0) {
+        break;
+      }
+
+      if (fn != nullptr) {
+        func_t func = reinterpret_cast<func_t>(fn);
+        func(user_data);
+      }
 
       void *res = nullptr;
       if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8676,6 +8741,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuGraphHostNodeSetParams", (void *)cuGraphHostNodeSetParams},
       {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
+      {"cuUserObjectCreate", (void *)cuUserObjectCreate},
       {"cuKernelGetLibrary", (void *)cuKernelGetLibrary},
       {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
@@ -8979,6 +9045,7 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuGraphHostNodeSetParams", (void *)cuGraphHostNodeSetParams},
       {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
+      {"cuUserObjectCreate", (void *)cuUserObjectCreate},
       {"cuKernelGetLibrary", (void *)cuKernelGetLibrary},
       {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},

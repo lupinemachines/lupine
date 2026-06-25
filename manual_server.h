@@ -55,6 +55,7 @@ int handle_manual_cuMemPrefetchAsync(conn_t *conn);
 int handle_manual_cuGraphHostNodeGetParams(conn_t *conn);
 int handle_manual_cuGraphHostNodeSetParams(conn_t *conn);
 int handle_manual_cuGraphExecHostNodeSetParams(conn_t *conn);
+int handle_manual_cuUserObjectCreate(conn_t *conn);
 int handle_manual_cuLaunchHostFunc(conn_t *conn);
 int handle_manual_cuStreamAddCallback(conn_t *conn);
 int handle_manual_cuEventRecord(conn_t *conn, bool with_flags);
