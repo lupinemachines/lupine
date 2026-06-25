@@ -6349,6 +6349,17 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   return return_value;
 }
 
+#ifdef cuGraphAddKernelNode
+#undef cuGraphAddKernelNode
+#endif
+extern "C" CUresult
+cuGraphAddKernelNode(CUgraphNode *phGraphNode, CUgraph hGraph,
+                     const CUgraphNode *dependencies, size_t numDependencies,
+                     const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphAddKernelNode_v2(phGraphNode, hGraph, dependencies,
+                                 numDependencies, nodeParams);
+}
+
 extern "C" CUresult
 cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                      const CUgraphNode *dependencies, size_t numDependencies,
