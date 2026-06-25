@@ -140,7 +140,7 @@ jobs:
             "$FIREWALL_ALLOW_RULE" \
             ALLOW \
             800 \
-            tcp:22,tcp:14900-16999,tcp:20100-20999 \
+            tcp:22 \
             "$RUNNER_IP/32"
 
           create_firewall_rule \
@@ -159,7 +159,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates libnghttp2-14
+          apt-get install -y --no-install-recommends ca-certificates docker.io libnghttp2-14
           rm -rf /var/lib/apt/lists/*
           SCRIPT
 
@@ -247,9 +247,18 @@ jobs:
               fi
               sleep 15
             done
+
+            deadline=$((SECONDS + 300))
+            until command -v docker >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "Docker did not become ready before the timeout" >&2
+                exit 1
+              fi
+              sleep 5
+            done
           '
 
-      - name: Run ${{ matrix.name }} client against L4 server
+      - name: Run ${{ matrix.name }} client inside L4 VM
         run: |
           set -euo pipefail
 
@@ -262,26 +271,71 @@ jobs:
             exit 1
           fi
 
-          docker run --rm \
+          ssh_base=(
+            ssh
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4
+            "gha@$VM_IP"
+          )
+          scp_base=(
+            scp
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+          )
+
+          remote_src="/home/gha/lupine-src"
+          remote_ssh="/home/gha/lupine-ssh"
+          "${ssh_base[@]}" "rm -rf '$remote_src' '$remote_ssh'; mkdir -p '$remote_src' '$remote_ssh'"
+          tar \
+            --exclude=.git \
+            --exclude=test/cuda-samples/results \
+            --exclude=test/pytorch/results \
+            -czf - . | "${ssh_base[@]}" "tar -xzf - -C '$remote_src'"
+          "${scp_base[@]}" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts" "gha@$VM_IP:$remote_ssh/"
+          "${ssh_base[@]}" "chmod 700 '$remote_ssh'; chmod 600 '$remote_ssh/id_ed25519'"
+
+          remote_status=0
+          "${ssh_base[@]}" \
+            "CLIENT_IMAGE='${{ matrix.client_image }}' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' CUDA_SAMPLES_REF='${{ matrix.samples_ref }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+          set -euo pipefail
+          sudo docker pull "$CLIENT_IMAGE"
+          sudo docker run --rm \
+            --add-host=host.docker.internal:host-gateway \
             -e CUDA_SAMPLE_JOBS="$CUDA_SAMPLE_JOBS" \
             -e CUDA_SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT" \
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
-            -e PYTORCH_INDEX_URL="${{ matrix.pytorch_index_url }}" \
-            -e CUDA_SAMPLES_REF="${{ matrix.samples_ref }}" \
-            -e SERVER_HOST="$VM_IP" \
+            -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
+            -e CUDA_SAMPLES_REF="$CUDA_SAMPLES_REF" \
+            -e SERVER_HOST=host.docker.internal \
             -e SERVER_USER=gha \
-            -e SERVER_SSH_TARGET="gha@$VM_IP" \
-            -e MATRIX_LABEL="${{ matrix.label }}" \
-            -e GITHUB_RUN_ID="${GITHUB_RUN_ID:-local}" \
-            -e GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}" \
-            -v "$PWD:/src" \
-            -v "$SSH_DIR:/ssh:ro" \
+            -e SERVER_SSH_TARGET=gha@host.docker.internal \
+            -e MATRIX_LABEL="$MATRIX_LABEL" \
+            -e GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+            -e GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            -v /home/gha/lupine-src:/src \
+            -v /home/gha/lupine-ssh:/ssh:ro \
             -w /src \
-            ${{ matrix.client_image }} \
+            "$CLIENT_IMAGE" \
             bash -lc '
               set -euo pipefail
+              if [[ -e /dev/nvidiactl || -e /dev/nvidia0 ]]; then
+                echo "NVIDIA device is visible inside the client container; client/server separation is invalid" >&2
+                exit 1
+              fi
+              if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+                echo "NVIDIA GPU is visible inside the client container; client/server separation is invalid" >&2
+                exit 1
+              fi
+
               export DEBIAN_FRONTEND=noninteractive
               apt-get update >/dev/null
               apt-get install -y --no-install-recommends \
@@ -318,7 +372,7 @@ jobs:
               export LUPINE_DISABLE_LOCAL=1
               export SERVER_LOCAL_BIN=/tmp/lupine-build/lupine_driver_server
               export SERVER_REMOTE_BIN="/tmp/lupine-driver-server-${MATRIX_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-              export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/tmp/lupine-ssh/known_hosts -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+              export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
               export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
               export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
               export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
@@ -362,6 +416,15 @@ jobs:
                 exit 1
               fi
             '
+          REMOTE
+
+          results_tgz="$RUNNER_TEMP/gpu-results-${{ matrix.label }}.tgz"
+          "${ssh_base[@]}" "cd '$remote_src' && paths=''; [ -d test/cuda-samples/results ] && paths=\"\$paths test/cuda-samples/results\"; [ -d test/pytorch/results ] && paths=\"\$paths test/pytorch/results\"; [ -z \"\$paths\" ] || tar -czf - \$paths" > "$results_tgz"
+          if [[ -s "$results_tgz" ]]; then
+            tar -xzf "$results_tgz"
+          fi
+
+          exit "$remote_status"
 
       - name: Upload compliance results
         if: always()
