@@ -4291,17 +4291,6 @@ static size_t lupine_jit_option_size(unsigned int numOptions,
   return 0;
 }
 
-static std::vector<uintptr_t>
-lupine_pack_jit_option_values(unsigned int numOptions,
-                              void *const *optionValues) {
-  std::vector<uintptr_t> values(numOptions);
-  for (unsigned int i = 0; i < numOptions; ++i) {
-    values[i] = reinterpret_cast<uintptr_t>(
-        optionValues == nullptr ? nullptr : optionValues[i]);
-  }
-  return values;
-}
-
 static std::vector<lupine_jit_client_binding>
 lupine_capture_jit_client_bindings(unsigned int numOptions,
                                    const CUjit_option *options,
@@ -4326,21 +4315,6 @@ lupine_capture_jit_client_bindings(unsigned int numOptions,
     }
   }
   return bindings;
-}
-
-static int lupine_write_jit_options(conn_t *conn, unsigned int numOptions,
-                                    CUjit_option *options,
-                                    void **optionValues) {
-  auto packed_values = lupine_pack_jit_option_values(numOptions, optionValues);
-  return rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-                 (numOptions != 0 &&
-                  rpc_write(conn, options, numOptions * sizeof(CUjit_option)) <
-                      0) ||
-                 (numOptions != 0 &&
-                  rpc_write(conn, packed_values.data(),
-                            numOptions * sizeof(uintptr_t)) < 0)
-             ? -1
-             : 0;
 }
 
 static int lupine_apply_jit_outputs(conn_t *conn, CUlinkState state) {
@@ -4406,9 +4380,11 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  std::vector<uintptr_t> raw_values;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0 ||
-      lupine_write_jit_options(conn, numOptions, options, optionValues) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues,
+                            &raw_values) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, stateOut, sizeof(*stateOut)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -4441,6 +4417,7 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
+  std::vector<uintptr_t> raw_values;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
@@ -4449,7 +4426,8 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       (size != 0 && rpc_write(conn, data, size) < 0) ||
       rpc_write(conn, &name_len, sizeof(name_len)) < 0 ||
       (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
-      lupine_write_jit_options(conn, numOptions, options, optionValues) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues,
+                            &raw_values) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_apply_jit_outputs(conn, state) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -4480,6 +4458,7 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   size_t mapped_file_size = 0;
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
+  std::vector<uintptr_t> raw_values;
   int file_fd = open(path, O_RDONLY);
   if (file_fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
@@ -4509,7 +4488,8 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
       rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
       (file_size != 0 && rpc_write(conn, file_payload, mapped_file_size) < 0) ||
-      lupine_write_jit_options(conn, numOptions, options, optionValues) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues,
+                            &raw_values) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_apply_jit_outputs(conn, state) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||

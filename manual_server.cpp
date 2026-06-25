@@ -1019,27 +1019,6 @@ static void lupine_prepare_jit_options(lupine_jit_server_state *state) {
   }
 }
 
-static int lupine_read_jit_options(conn_t *conn,
-                                   lupine_jit_server_state *state) {
-  unsigned int num_options = 0;
-  if (rpc_read(conn, &num_options, sizeof(num_options)) < 0) {
-    return -1;
-  }
-  if (state == nullptr) {
-    return -1;
-  }
-  state->options.resize(num_options);
-  state->raw_values.resize(num_options);
-  if (num_options != 0 && (rpc_read(conn, state->options.data(),
-                                    num_options * sizeof(CUjit_option)) < 0 ||
-                           rpc_read(conn, state->raw_values.data(),
-                                    num_options * sizeof(uintptr_t)) < 0)) {
-    return -1;
-  }
-  lupine_prepare_jit_options(state);
-  return 0;
-}
-
 static uint32_t lupine_jit_output_count(const lupine_jit_server_state &state) {
   uint32_t count = 0;
   if (state.capture_wall_time) {
@@ -1058,9 +1037,11 @@ int handle_manual_cuLinkCreate_v2(conn_t *conn) {
   auto jit_state = std::make_unique<lupine_jit_server_state>();
   CUlinkState state = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (lupine_read_jit_options(conn, jit_state.get()) < 0) {
+  if (rpc_read_jit_options(conn, &jit_state->options, &jit_state->raw_values) <
+      0) {
     return -1;
   }
+  lupine_prepare_jit_options(jit_state.get());
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
@@ -1101,9 +1082,11 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
   }
   std::vector<char> name(name_len == 0 ? 1 : name_len, '\0');
   if ((name_len != 0 && rpc_read(conn, name.data(), name_len) < 0) ||
-      lupine_read_jit_options(conn, &jit_state) < 0) {
+      rpc_read_jit_options(conn, &jit_state.options, &jit_state.raw_values) <
+          0) {
     return -1;
   }
+  lupine_prepare_jit_options(&jit_state);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
@@ -1152,9 +1135,11 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
       return -1;
     }
   }
-  if (lupine_read_jit_options(conn, &jit_state) < 0) {
+  if (rpc_read_jit_options(conn, &jit_state.options, &jit_state.raw_values) <
+      0) {
     return -1;
   }
+  lupine_prepare_jit_options(&jit_state);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
