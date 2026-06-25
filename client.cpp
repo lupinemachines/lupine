@@ -4254,6 +4254,41 @@ extern "C" CUresult cuMemGetInfo(size_t *free, size_t *total) {
   return cuMemGetInfo_v2(free, total);
 }
 
+extern "C" CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
+                                                int *greatestPriority) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(int *, int *);
+    auto real = reinterpret_cast<real_fn_t>(
+        lupine_real_cuda_symbol("cuCtxGetStreamPriorityRange"));
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(leastPriority, greatestPriority);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  int least = 0;
+  int greatest = 0;
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuCtxGetStreamPriorityRange) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &least, sizeof(least)) < 0 ||
+      rpc_read(conn, &greatest, sizeof(greatest)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    if (leastPriority != nullptr) {
+      *leastPriority = least;
+    }
+    if (greatestPriority != nullptr) {
+      *greatestPriority = greatest;
+    }
+  }
+  return return_value;
+}
+
 struct lupine_jit_client_binding {
   CUjit_option option;
   void *dst;
@@ -8494,6 +8529,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       {"cuCtxCreate", (void *)cuCtxCreate_v2},
 #endif
       {"cuCtxCreate_v2", (void *)cuCtxCreate_v2},
+      {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
       {"cuOccupancyMaxPotentialBlockSize",
        (void *)cuOccupancyMaxPotentialBlockSize},
       {"cuOccupancyMaxPotentialBlockSizeWithFlags",
@@ -8796,6 +8832,7 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuCtxCreate", (void *)cuCtxCreate_v2},
 #endif
       {"cuCtxCreate_v2", (void *)cuCtxCreate_v2},
+      {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
       {"cuOccupancyMaxPotentialBlockSize",
        (void *)cuOccupancyMaxPotentialBlockSize},
       {"cuOccupancyMaxPotentialBlockSizeWithFlags",

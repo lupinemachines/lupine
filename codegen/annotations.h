@@ -2224,6 +2224,7 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config);
  */
 CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version);
 /**
+ * @disabled client - manual client handles nullable output pointers
  * @param leastPriority RECV_ONLY
  * @param greatestPriority RECV_ONLY
  */

@@ -328,7 +328,7 @@ sample_workdir() {
   local sample_exe="$2"
 
   case "$sample" in
-    nbody|oceanFFT|ptxgen|recursiveGaussian|simpleTexture3D)
+    nbody|NV12toBGRandResize|oceanFFT|ptxgen|recursiveGaussian|simpleTexture3D)
       printf '%s\n' "$(resolve_sample_srcdir "$sample")"
       return 0
       ;;
