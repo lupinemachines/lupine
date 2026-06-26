@@ -8723,6 +8723,12 @@ __attribute__((destructor)) static void lupine_rpc_destructor() {
   lupine_rpc_shutdown();
 }
 
+// Tear down all client connections and reset the pool so the next CUDA call
+// re-opens a fresh connection (re-sending any configured snapshot bootstrap).
+// Used to scope a connection to a `lupine.connect()` context: exiting the
+// context disconnects, and re-entering reconnects and restores.
+extern "C" void lupine_rpc_disconnect() { lupine_rpc_shutdown(); }
+
 typedef void (*func_t)(void *);
 
 void add_host_node(void *fn, void *udata) { host_funcs[fn] = udata; }

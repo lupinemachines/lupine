@@ -133,6 +133,25 @@ def _clear_snapshot_load() -> None:
     _snapshot_result(func(None), "clear load")
 
 
+def _disconnect() -> None:
+    """Tear down the client connection so the next CUDA call reconnects.
+
+    Scopes the connection to a ``connect()`` context: exiting disconnects, and
+    re-entering re-opens a fresh connection (re-sending the snapshot bootstrap,
+    so a restore happens). Uses the already-loaded client library; best-effort,
+    so it is a no-op if the library or the symbol is unavailable.
+    """
+    lib = _loaded_libcuda
+    if lib is None:
+        return
+    func = getattr(lib, "lupine_rpc_disconnect", None)
+    if func is None:
+        return
+    func.argtypes = []
+    func.restype = None
+    func()
+
+
 def _require_snapshot_id(snapshot_id: str) -> str:
     snapshot_id = str(snapshot_id)
     if len(snapshot_id) != 32 or any(c not in "0123456789abcdef" for c in snapshot_id):
@@ -192,7 +211,6 @@ class Session:
         return self.snapshot_id is not None and "w" in self.snapshot_type
 
     def __enter__(self) -> "Session":
-        _require_mutable_config()
         self._previous_server = os.environ.get("LUPINE_SERVER")
         configured = _servers_from_env()
         if configured and configured != self.servers:
@@ -201,6 +219,10 @@ class Session:
                 "process or pass the same hosts to lupine.connect()."
             )
         if not configured:
+            # Configuring the server for the first time must precede PyTorch
+            # CUDA initialization. Re-entering with the same server is fine: the
+            # connection is scoped to the context and reconnects on entry.
+            _require_mutable_config()
             _set_server_env(self.servers)
         _load_libcuda(self.libcuda)
         if self._snapshot_reads:
@@ -212,6 +234,9 @@ class Session:
             if self._snapshot_writes:
                 save_snapshot_and_exit(self.snapshot_id)
         finally:
+            # Scope the connection to the context: drop it so a later context
+            # re-opens a fresh connection (and restores, if it reads).
+            _disconnect()
             if not _cuda_initialized():
                 self._restore_env()
             if self.snapshot_id is not None:

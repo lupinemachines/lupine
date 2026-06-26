@@ -1,9 +1,11 @@
 """PyTorch snapshot read/write integration test.
 
 Verifies the documented contract: a Python variable that owns GPU tensors keeps
-working across a snapshot boundary. A model moved to CUDA under a ``"w"`` context
-is still usable under a later ``"r"`` context in the same process — its tensors
-keep the same device pointer, their contents survive, and they remain writable.
+working across a snapshot boundary in the same process. A tensor moved to CUDA
+under a ``"w"`` context is still usable under a later ``"r"`` context — the
+connection is scoped to the context, so exiting disconnects and re-entering
+reconnects and restores. The tensor keeps the same device pointer, its contents
+survive, and it remains writable.
 
 Needs a real LUPINE setup and is skipped unless ``LUPINE_SNAPSHOT_IT=1``:
 
@@ -13,7 +15,7 @@ Needs a real LUPINE setup and is skipped unless ``LUPINE_SNAPSHOT_IT=1``:
   - the client must target the REMOTE device (e.g. ``CUDA_VISIBLE_DEVICES=""``)
 
 The body runs in a subprocess so CUDA initialization is isolated from the rest
-of the suite and the two contexts share one process (as real usage would).
+of the suite (and so the two contexts share one process, as real usage would).
 """
 
 import os
@@ -39,7 +41,7 @@ def _parse(stdout, key):
 
 def test_tensor_survives_snapshot_in_same_process():
     proc = subprocess.run(
-        [sys.executable, __file__],
+        [sys.executable, "-u", __file__],
         capture_output=True,
         text=True,
         env=os.environ.copy(),
