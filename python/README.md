@@ -64,6 +64,41 @@ with lupine.connect(host="<server>:14833", snapshot_id=snapshot_id) as s:
     device = s.device()
 ```
 
+`snapshot_type` controls how the snapshot is used. Writing the device snapshot
+is the expensive step (it copies GPU memory through the driver), so read-only
+reuse avoids paying it repeatedly:
+
+- `"rw"` (default): restore on enter if the snapshot exists, save on exit.
+- `"r"`: restore on enter but never save on exit. Reuse a snapshot repeatedly,
+  e.g. serving inference from a preloaded model, without re-saving each time.
+- `"w"`: start fresh (do not restore) and save on exit. Use this to create or
+  refresh a snapshot.
+
+Because the snapshot captures GPU memory at the same device addresses, a Python
+variable that owns GPU tensors keeps working across the boundary: restore brings
+its memory back where it was, so you don't reload or re-transfer the model.
+
+```python
+model = MyModel()  # on the CPU, before any context
+
+# "w": move the model onto the GPU and snapshot that state on exit.
+with lupine.connect(host="<server>:14833", snapshot_id=snapshot_id, snapshot_type="w"):
+    model = model.to("cuda")           # weights now live in GPU memory
+
+# "r": restore brings those weights back at the same addresses, so the very
+# same `model` object is still usable — no reload, no host->device copy.
+with lupine.connect(host="<server>:14833", snapshot_id=snapshot_id, snapshot_type="r"):
+    output = model(example_input.to("cuda"))
+```
+
+The first context must write the snapshot (`"w"` or `"rw"`) and the reuse
+contexts must read it (`"r"`). It does **not** work if:
+
+- both contexts are `"r"`: nothing ever saves, so there is no GPU state to
+  restore and `model`'s device tensors become invalid.
+- the second context is `"w"`: `"w"` starts fresh (no restore) and overwrites
+  the snapshot, so `model`'s GPU memory is not brought back.
+
 Snapshots are stored on the server under
 `$LUPINE_SNAPSHOT_DIR/objects/<snapshot_id>/`. The current implementation writes
 persistent artifacts with NVIDIA CUDA process checkpointing plus CRIU. CRIU is

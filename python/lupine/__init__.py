@@ -15,6 +15,15 @@ from typing import Any
 
 DEFAULT_PORT = 14833
 _loaded_libcuda: Any | None = None
+SNAPSHOT_TYPES = ("rw", "r", "w")
+
+
+def _require_snapshot_type(snapshot_type: str) -> str:
+    if snapshot_type not in SNAPSHOT_TYPES:
+        raise LupineError(
+            "snapshot_type must be one of 'rw', 'r', or 'w'"
+        )
+    return snapshot_type
 
 
 class LupineError(RuntimeError):
@@ -165,12 +174,22 @@ class Session:
     require_available: bool = False
     libcuda: str | os.PathLike[str] | None = None
     snapshot_id: str | None = None
+    snapshot_type: str = "rw"
 
     def __post_init__(self) -> None:
         if not self.servers:
             raise LupineError("at least one LUPINE host is required")
+        self.snapshot_type = _require_snapshot_type(self.snapshot_type)
         if self.snapshot_id is not None:
             self.snapshot_id = _require_snapshot_id(self.snapshot_id)
+
+    @property
+    def _snapshot_reads(self) -> bool:
+        return self.snapshot_id is not None and "r" in self.snapshot_type
+
+    @property
+    def _snapshot_writes(self) -> bool:
+        return self.snapshot_id is not None and "w" in self.snapshot_type
 
     def __enter__(self) -> "Session":
         _require_mutable_config()
@@ -184,13 +203,13 @@ class Session:
         if not configured:
             _set_server_env(self.servers)
         _load_libcuda(self.libcuda)
-        if self.snapshot_id is not None:
+        if self._snapshot_reads:
             load_snapshot(self.snapshot_id)
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         try:
-            if self.snapshot_id is not None:
+            if self._snapshot_writes:
                 save_snapshot_and_exit(self.snapshot_id)
         finally:
             if not _cuda_initialized():
@@ -232,6 +251,7 @@ def connect(
     require_available: bool = False,
     libcuda: str | os.PathLike[str] | None = None,
     snapshot_id: str | None = None,
+    snapshot_type: str = "rw",
 ) -> Any:
     """Create a LUPINE session for one or more remote GPU hosts.
 
@@ -241,11 +261,23 @@ def connect(
 
     ``s.devices()`` then returns ``[torch.device("cuda:0"), torch.device("cuda:1")]``.
 
+    When ``snapshot_id`` is set, ``snapshot_type`` selects how the snapshot is
+    used (writing the device snapshot is the expensive step):
+
+    - ``"rw"`` (default): restore the snapshot on enter if it exists, and save
+      it again on exit.
+    - ``"r"``: restore on enter but never save on exit. Use this to reuse a
+      snapshot repeatedly (e.g. serving inference from a preloaded model)
+      without paying the save cost each time.
+    - ``"w"``: start fresh (do not restore) and save on exit. Use this to
+      create or refresh a snapshot.
+
     On macOS with a CPU-only PyTorch build, ``connect()`` automatically returns
     a sidecar session backed by Apple's container runtime.
     """
 
     servers = _normalize_hosts(host, port)
+    snapshot_type = _require_snapshot_type(snapshot_type)
     snapshot_id = _require_snapshot_id(snapshot_id) if snapshot_id is not None else None
 
     if not _has_native_cuda_backend():
@@ -267,6 +299,7 @@ def connect(
         require_available=require_available,
         libcuda=libcuda,
         snapshot_id=snapshot_id,
+        snapshot_type=snapshot_type,
     )
 
 

@@ -195,6 +195,59 @@ def test_connect_snapshot_exit_saves(lupine_module, monkeypatch):
     assert "LUPINE_SNAPSHOT_ID" not in os.environ
 
 
+def _patch_snapshot_calls(lupine, monkeypatch):
+    loaded, saved, cleared = [], [], []
+    monkeypatch.setattr(lupine, "load_snapshot", lambda value: loaded.append(value))
+    monkeypatch.setattr(lupine, "save_snapshot_and_exit", lambda value: saved.append(value))
+    monkeypatch.setattr(lupine, "_clear_snapshot_load", lambda: cleared.append(True))
+    return loaded, saved, cleared
+
+
+def test_connect_snapshot_read_only_restores_without_saving(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
+    snapshot_id = "0123456789abcdef0123456789abcdef"
+    loaded, saved, cleared = _patch_snapshot_calls(lupine, monkeypatch)
+
+    with lupine.connect(host="host-a", snapshot_id=snapshot_id, snapshot_type="r"):
+        assert loaded == [snapshot_id]
+
+    # read-only: restored on enter, never saved on exit (cheap reuse).
+    assert saved == []
+    assert cleared == [True]
+
+
+def test_connect_snapshot_write_only_saves_without_restoring(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
+    snapshot_id = "0123456789abcdef0123456789abcdef"
+    loaded, saved, cleared = _patch_snapshot_calls(lupine, monkeypatch)
+
+    with lupine.connect(host="host-a", snapshot_id=snapshot_id, snapshot_type="w"):
+        # write-only: starts fresh, no restore on enter.
+        assert loaded == []
+
+    assert saved == [snapshot_id]
+
+
+def test_connect_snapshot_default_type_is_read_write(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
+    snapshot_id = "0123456789abcdef0123456789abcdef"
+    loaded, saved, cleared = _patch_snapshot_calls(lupine, monkeypatch)
+
+    with lupine.connect(host="host-a", snapshot_id=snapshot_id):
+        pass
+
+    assert loaded == [snapshot_id]
+    assert saved == [snapshot_id]
+
+
+def test_connect_rejects_invalid_snapshot_type(lupine_module):
+    lupine, _ = lupine_module
+    snapshot_id = "0123456789abcdef0123456789abcdef"
+
+    with pytest.raises(lupine.LupineError, match="snapshot_type"):
+        lupine.connect(host="host-a", snapshot_id=snapshot_id, snapshot_type="x")
+
+
 def test_connect_accepts_matching_preconfigured_env(lupine_module, monkeypatch):
     lupine, _ = lupine_module
     monkeypatch.setenv("LUPINE_SERVER", "host-a:14833")
