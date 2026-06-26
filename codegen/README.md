@@ -14,7 +14,8 @@ be placed in front of the parameter referencing it, otherwise the generated code
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
 generated client wrapper before it writes the RPC. Supported kinds are
-`DEVICE`, `CONTEXT`, `MODULE`, `FUNCTION`, `STREAM`, `EVENT`, and `DEVICEPTR`.
+`DEVICE`, `CONTEXT`, `MODULE`, `FUNCTION`, `STREAM`, `EVENT`, `MEMORY_POOL`,
+`GRAPH`, `GRAPH_NODE`, `GRAPH_EXEC`, and `DEVICEPTR`.
 `@routingkey CURRENT_CONTEXT` routes through the client's current CUDA context
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
@@ -22,8 +23,9 @@ the routing key is not the first matching parameter.
 
 Generated wrappers can record ownership for handles returned by an API with
 `@recordowner <kind> <param>`. Supported owner kinds are `CONTEXT`, `MODULE`,
-`FUNCTION`, `STREAM`, `EVENT`, and `DEVICEPTR`. Ownership is recorded only after
-the CUDA call returns `CUDA_SUCCESS`.
+`FUNCTION`, `STREAM`, `EVENT`, `MEMORY_POOL`, `GRAPH`, `GRAPH_NODE`,
+`GRAPH_EXEC`, and `DEVICEPTR`. Ownership is recorded only after the CUDA call
+returns `CUDA_SUCCESS`.
 
 Some APIs need small, reusable behaviors beyond plain parameter send/receive
 layout. These should be expressed as annotations when the behavior is generic

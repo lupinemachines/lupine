@@ -1029,7 +1029,10 @@ class CrossServerCopyAnnotation:
 @dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
-    disabled: bool = False
+    disabled_client: bool = False
+    disabled_server: bool = False
+    # @async: fire-and-forget op; client does not wait, server sends no response.
+    async_fire_forget: bool = False
     routing_kind: Optional[str] = None
     routing_parameter: Optional[Parameter] = None
     record_owners: list[OwnerAnnotation] = None
@@ -1038,4 +1041,3 @@ class FunctionAnnotationMetadata:
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
-

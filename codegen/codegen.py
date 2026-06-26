@@ -5,6 +5,7 @@ from typing import Optional, Union
 from dataclasses import dataclass
 import os
 import glob
+import zlib
 from ops import (
     NullableOperation,
     ArrayOperation,
@@ -31,12 +32,8 @@ MANUAL_REMAPPINGS = [
     ("cuCtxPopCurrent", "cuCtxPopCurrent_v2"),
     ("cuCtxPushCurrent", "cuCtxPushCurrent_v2"),
     ("cuModuleGetGlobal", "cuModuleGetGlobal_v2"),
-    ("cuLinkCreate", "cuLinkCreate_v2"),
-    ("cuLinkAddData", "cuLinkAddData_v2"),
-    ("cuLinkAddFile", "cuLinkAddFile_v2"),
     ("cuMemAlloc", "cuMemAlloc_v2"),
     ("cuMemAllocPitch", "cuMemAllocPitch_v2"),
-    ("cuMemFree", "cuMemFree_v2"),
     ("cuMemcpyHtoD", "cuMemcpyHtoD_v2"),
     ("cuMemcpyHtoDAsync", "cuMemcpyHtoDAsync_v2"),
     ("cuMemcpyDtoH", "cuMemcpyDtoH_v2"),
@@ -48,7 +45,6 @@ MANUAL_REMAPPINGS = [
     ("cuMemsetD2D16", "cuMemsetD2D16_v2"),
     ("cuMemsetD2D32", "cuMemsetD2D32_v2"),
     ("cuStreamBeginCapture", "cuStreamBeginCapture_v2"),
-    ("cuGraphAddKernelNode", "cuGraphAddKernelNode_v2"),
     ("cuGraphExecUpdate", "cuGraphExecUpdate_v2"),
     ("cuMemcpy_ptds", "cuMemcpy"),
     ("cuMemcpyAsync_ptsz", "cuMemcpyAsync"),
@@ -82,7 +78,6 @@ MANUAL_REMAPPINGS = [
     ("cuLaunchHostFunc_ptsz", "cuLaunchHostFunc"),
     ("cuGraphicsMapResources_ptsz", "cuGraphicsMapResources"),
     ("cuGraphicsUnmapResources_ptsz", "cuGraphicsUnmapResources"),
-    ("cuLaunchCooperativeKernel_ptsz", "cuLaunchCooperativeKernel"),
     ("cuSignalExternalSemaphoresAsync_ptsz", "cuSignalExternalSemaphoresAsync"),
     ("cuWaitExternalSemaphoresAsync_ptsz", "cuWaitExternalSemaphoresAsync"),
     ("cuGraphInstantiateWithParams_ptsz", "cuGraphInstantiateWithParams"),
@@ -167,6 +162,30 @@ NVML_RPC_FUNCTIONS = [
 ]
 
 NVML_CODEGEN_FUNCTIONS = []
+
+PRIVATE_RPC_FUNCTIONS = [
+    "cuFuncGetParamLayout",
+    "cuGetExportTableMetadata",
+    "cuGraphAddNode_v2",
+    "cuGraphConditionalHandleCreate",
+    "cuMemPrefetchAsync",
+    "cuPrivateGetModuleNode",
+    "cuStreamBeginCaptureToGraph",
+    "cuStreamGetCaptureInfo_v3",
+]
+
+
+def rpc_id(name: str) -> int:
+    return zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
+
+
+def annotated_rpc_names(annotations: ParsedData) -> list[str]:
+    names: set[str] = set()
+    for function in annotations.namespace.functions:
+        name = function.name.format()
+        if len(name) > 2 and name.startswith("cu") and name[2].isupper():
+            names.add(name)
+    return sorted(names)
 
 
 def nvml_codegen_function(name, params, client_body, server_body):
@@ -942,12 +961,20 @@ def infer_routing_key(
             return "STREAM", param
         if type_name == "CUevent":
             return "EVENT", param
+        if type_name == "CUmemoryPool":
+            return "MEMORY_POOL", param
+        if type_name == "CUgraph":
+            return "GRAPH", param
+        if type_name == "CUgraphNode":
+            return "GRAPH_NODE", param
+        if type_name == "CUgraphExec":
+            return "GRAPH_EXEC", param
         if type_name == "CUdeviceptr":
             return "DEVICEPTR", param
     return None, None
 
 
-# parses a function annotation. if disabled is encountered, returns True for short circuiting.
+# Parses a function annotation into marshalling operations and metadata.
 def parse_annotation(
     annotation: str, params: list[Parameter]
 ) -> FunctionAnnotationMetadata:
@@ -961,19 +988,31 @@ def parse_annotation(
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
         return metadata
     for line in annotation.split("\n"):
-        # we treat disabled functions a bit differently.
-        # we should record that this function is disabled so that we can create the RPC method but not the actual handler.
-        # this is so that we don't break API compatability by commenting/uncommenting functions from our annotations file.
+        # Disabled annotations can apply to client generation, server
+        # generation, or both. Bare @disabled keeps the historical behavior
+        # by setting both scoped flags.
         if "@disabled" in line or "@DISABLED" in line:
-            # we can return instantly; the function is disabled and we don't care about operations at this time.
-            metadata.disabled = True
-            return metadata
+            disabled_parts = line.lower().lstrip(" *").split()
+            scope = disabled_parts[1] if len(disabled_parts) > 1 else "both"
+            if scope == "client":
+                metadata.disabled_client = True
+                continue
+            elif scope == "server":
+                metadata.disabled_server = True
+                continue
+            else:
+                metadata.disabled_client = True
+                metadata.disabled_server = True
+                return metadata
         if line.startswith("/**"):
             continue
         if line.startswith("*/"):
             continue
         if line.startswith("*"):
             line = line[2:]
+        if line.strip().startswith("@async"):
+            metadata.async_fire_forget = True
+            continue
         if line.startswith("@routingkey"):
             parts = line.split()
             if len(parts) < 2:
@@ -1331,6 +1370,14 @@ def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
         return f"({name} != nullptr ? lupine_route_for_stream({name}) : lupine_route_for_default())"
     if kind == "EVENT":
         return f"lupine_route_for_event({name})"
+    if kind == "MEMORY_POOL":
+        return f"lupine_route_for_memory_pool({name})"
+    if kind == "GRAPH":
+        return f"lupine_route_for_graph({name})"
+    if kind == "GRAPH_NODE":
+        return f"lupine_route_for_graph_node({name})"
+    if kind == "GRAPH_EXEC":
+        return f"lupine_route_for_graph_exec({name})"
     if kind == "DEVICEPTR":
         return f"lupine_route_for_deviceptr({name})"
     raise NotImplementedError(f"Unknown routing key kind: {kind}")
@@ -1353,6 +1400,14 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
         fn = "lupine_note_stream_owner"
     elif kind == "EVENT":
         fn = "lupine_note_event_owner"
+    elif kind == "MEMORY_POOL":
+        fn = "lupine_note_memory_pool_owner"
+    elif kind == "GRAPH":
+        fn = "lupine_note_graph_owner"
+    elif kind == "GRAPH_NODE":
+        fn = "lupine_note_graph_node_owner"
+    elif kind == "GRAPH_EXEC":
+        fn = "lupine_note_graph_exec_owner"
     elif kind == "DEVICEPTR":
         fn = "lupine_note_deviceptr_owner"
     else:
@@ -1511,7 +1566,7 @@ def main():
     ]
 
     functions_with_annotations: list[
-        tuple[Function, Function, list[Operation], bool, FunctionAnnotationMetadata]
+        tuple[Function, Function, list[Operation], FunctionAnnotationMetadata]
     ] = []
 
     dupes = {}
@@ -1536,24 +1591,41 @@ def main():
             print(f"Error parsing annotation for {function.name}: {e}")
             continue
         functions_with_annotations.append(
-            (function, annotation, metadata.operations, metadata.disabled, metadata)
+            (function, annotation, metadata.operations, metadata)
         )
 
+    annotated_names = annotated_rpc_names(annotations)
+
     with open("gen_api.h", "w") as f:
-        for i, (function, _, _, _, _) in enumerate(functions_with_annotations):
-            f.write(
-                "#define RPC_{name} {value}\n".format(
-                    name=function.name.format(),
-                    value=i,
+        f.write("// Generated by codegen.py. Do not edit by hand.\n")
+        f.write("// RPC ids are stable 31-bit CRC32 hashes of their operation names.\n\n")
+
+        seen_rpc_ids: dict[int, str] = {}
+        emitted_macros: set[str] = set()
+
+        def write_rpc_define(macro_name: str, operation_name: str) -> None:
+            if macro_name in emitted_macros:
+                return
+            value = rpc_id(operation_name)
+            if value in seen_rpc_ids:
+                raise RuntimeError(
+                    f"RPC id collision: {operation_name} and {seen_rpc_ids[value]} "
+                    f"both hash to {value}"
                 )
-            )
-        for i, name in enumerate(NVML_RPC_FUNCTIONS, len(functions_with_annotations)):
-            f.write(
-                "#define RPC_{name} {value}\n".format(
-                    name=name,
-                    value=i,
-                )
-            )
+            seen_rpc_ids[value] = operation_name
+            emitted_macros.add(macro_name)
+            f.write(f"#define {macro_name} {value}\n")
+
+        for function, _, _, _ in functions_with_annotations:
+            name = function.name.format()
+            write_rpc_define(f"RPC_{name}", name)
+        for name in annotated_names:
+            write_rpc_define(f"RPC_{name}", name)
+        for name in NVML_RPC_FUNCTIONS:
+            write_rpc_define(f"RPC_{name}", name)
+        f.write("\n")
+        for name in PRIVATE_RPC_FUNCTIONS:
+            write_rpc_define(f"LUPINE_RPC_{name}", name)
 
     with open("gen_nvml_client.inc", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -1611,6 +1683,7 @@ def main():
             "#include <unordered_map>\n"
             "#include <vector>\n\n"
             '#include "gen_api.h"\n\n'
+            '#include "client_routing.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -1618,26 +1691,9 @@ def main():
             'extern "C" void lupine_deep_cache_reset(const void *key);\n'
             'extern "C" void *lupine_deep_cache_add(const void *key, '
             "size_t bytes);\n\n"
-            "struct lupine_route {\n"
-            "    int kind;\n"
-            "    conn_t *conn;\n"
-            "};\n\n"
             'extern "C" CUresult lupine_cuInit_multi(unsigned int flags);\n'
             'extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count);\n'
             'extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal);\n'
-            'extern "C" lupine_route lupine_route_for_default();\n'
-            'extern "C" lupine_route lupine_route_for_device(CUdevice *device);\n'
-            'extern "C" lupine_route lupine_route_for_current_context();\n'
-            'extern "C" lupine_route lupine_route_for_context(CUcontext ctx);\n'
-            'extern "C" lupine_route lupine_route_for_module(CUmodule module);\n'
-            'extern "C" lupine_route lupine_route_for_library(CUlibrary library);\n'
-            'extern "C" lupine_route lupine_route_for_function(CUfunction function);\n'
-            'extern "C" lupine_route lupine_route_for_stream(CUstream stream);\n'
-            'extern "C" lupine_route lupine_route_for_event(CUevent event);\n'
-            'extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);\n'
-            'extern "C" bool lupine_route_is_local(lupine_route route);\n'
-            'extern "C" conn_t *lupine_route_remote_conn(lupine_route route);\n'
-            'extern "C" void *lupine_real_cuda_symbol(const char *name);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
             'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'
@@ -1653,16 +1709,12 @@ def main():
             'extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn);\n'
             'extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn);\n'
             'extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn);\n'
+            'extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn);\n'
             'extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);\n\n'
             'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
-            'extern "C" void lupine_note_context_owner_route(CUcontext ctx, lupine_route route);\n'
-            'extern "C" void lupine_note_module_owner_route(CUmodule module, lupine_route route);\n'
-            'extern "C" void lupine_note_library_owner_route(CUlibrary library, lupine_route route);\n'
-            'extern "C" void lupine_note_function_owner_route(CUfunction function, lupine_route route);\n'
-            'extern "C" void lupine_note_stream_owner_route(CUstream stream, lupine_route route);\n'
-            'extern "C" void lupine_note_event_owner_route(CUevent event, lupine_route route);\n'
-            'extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr, lupine_route route);\n\n'
-            'extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr, size_t size, lupine_route route);\n\n'
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
             'extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
@@ -1674,15 +1726,6 @@ def main():
             '                                                   size_t ByteCount,\n'
             '                                                   CUstream hStream,\n'
             '                                                   bool async);\n\n'
-            'extern "C" CUresult lupine_cuLinkCreate_v2_safe(unsigned int numOptions, CUjit_option *options, void **optionValues, CUlinkState *stateOut);\n'
-            'extern "C" CUresult lupine_cuLinkAddData_v2_safe(CUlinkState state, CUjitInputType type, void *data, size_t size, const char *name, unsigned int numOptions, CUjit_option *options, void **optionValues);\n'
-            'extern "C" CUresult lupine_cuLinkAddFile_v2_safe(CUlinkState state, CUjitInputType type, const char *path, unsigned int numOptions, CUjit_option *options, void **optionValues);\n'
-            'extern "C" CUresult lupine_cuLinkComplete_safe(CUlinkState state, void **cubinOut, size_t *sizeOut);\n'
-            'extern "C" CUresult lupine_cuLinkDestroy_safe(CUlinkState state);\n'
-            'extern "C" CUresult lupine_cuLaunchCooperativeKernel_safe(CUfunction f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream, void **kernelParams);\n'
-            'extern "C" CUresult lupine_cuGraphExecKernelNodeSetParams_v2_safe(CUgraphExec hGraphExec, CUgraphNode hNode, const CUDA_KERNEL_NODE_PARAMS *nodeParams);\n'
-            'extern "C" CUresult lupine_cuMemAllocManaged_safe(CUdeviceptr *dptr, size_t bytesize, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuMemFree_v2_safe(CUdeviceptr dptr);\n'
             'extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx);\n'
             'extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);\n'
@@ -1695,16 +1738,16 @@ def main():
             'extern "C" void lupine_invalidate_primary_context_state(CUdevice dev);\n'
             'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
-            'extern "C" CUresult lupine_cuPointerGetAttributes_safe(unsigned int numAttributes, CUpointer_attribute *attributes, void **data, CUdeviceptr ptr);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
             'extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer, CUdevice dev, CUdevice peerDev);\n'
             'extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext, unsigned int flags);\n'
             'extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);\n\n'
         )
-        for function, annotation, operations, disabled, metadata in functions_with_annotations:
-            # we don't generate client function definitions for disabled functions; only the RPC definitions.
-            if disabled:
+        for function, annotation, operations, metadata in functions_with_annotations:
+            # We don't generate client function definitions for client-disabled
+            # functions; their RPC/server definitions may still be generated.
+            if metadata.disabled_client:
                 continue
 
             joined_params = ", ".join(format_function_params(function))
@@ -1739,16 +1782,6 @@ def main():
                 "cuCtxGetCurrent": "lupine_cuCtxGetCurrent_virtual(pctx)",
                 "cuCtxGetDevice": "lupine_cuCtxGetDevice_cached(device)",
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
-                "cuMemFree_v2": "lupine_cuMemFree_v2_safe(dptr)",
-                "cuMemAllocManaged": "lupine_cuMemAllocManaged_safe(dptr, bytesize, flags)",
-                "cuLinkCreate_v2": "lupine_cuLinkCreate_v2_safe(numOptions, options, optionValues, stateOut)",
-                "cuLinkAddData_v2": "lupine_cuLinkAddData_v2_safe(state, type, data, size, name, numOptions, options, optionValues)",
-                "cuLinkAddFile_v2": "lupine_cuLinkAddFile_v2_safe(state, type, path, numOptions, options, optionValues)",
-                "cuLinkComplete": "lupine_cuLinkComplete_safe(state, cubinOut, sizeOut)",
-                "cuLinkDestroy": "lupine_cuLinkDestroy_safe(state)",
-                "cuLaunchCooperativeKernel": "lupine_cuLaunchCooperativeKernel_safe(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes, hStream, kernelParams)",
-                "cuGraphExecKernelNodeSetParams_v2": "lupine_cuGraphExecKernelNodeSetParams_v2_safe(hGraphExec, hNode, nodeParams)",
-                "cuPointerGetAttributes": "lupine_cuPointerGetAttributes_safe(numAttributes, attributes, data, ptr)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
                 "cuDeviceCanAccessPeer": "lupine_cuDeviceCanAccessPeer_multi(canAccessPeer, dev, peerDev)",
@@ -1828,39 +1861,30 @@ def main():
                     )
                 )
                 f.write("    }\n")
-            f.write("    if (lupine_route_is_local(route)) {\n")
             f.write(
-                "        using real_fn_t = {return_type} (*)({params});\n".format(
+                "    {return_type} return_value;\n".format(
+                    return_type=function.return_type.format()
+                )
+            )
+            f.write(
+                "    using real_fn_t = {return_type} (*)({params});\n".format(
                     return_type=function.return_type.format(),
                     params=", ".join([param.type.format() for param in function.parameters]),
                 )
             )
+            call_args = ", ".join(format_call_args(function))
+            helper_args = f", {call_args}" if call_args else ""
             f.write(
-                "        auto real = reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol(\"{name}\"));\n".format(
-                    name=function.name.format()
-                )
-            )
-            f.write(
-                "        if (real == nullptr) return {error_return};\n".format(
-                    error_return=error_const(function.return_type.format())
-                )
-            )
-            f.write(
-                "        {return_type} return_value = real({args});\n".format(
-                    return_type=function.return_type.format(),
-                    args=", ".join(format_call_args(function)),
+                "    if (lupine_call_local_cuda_if_routed<real_fn_t>(\n"
+                "            route, \"{name}\", &return_value{args})) {{\n".format(
+                    name=function.name.format(),
+                    args=helper_args,
                 )
             )
             write_client_post_call(f, function, metadata)
             f.write("        return return_value;\n")
             f.write("    }\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-
-            f.write(
-                "    {return_type} return_value;\n".format(
-                    return_type=function.return_type.format()
-                )
-            )
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
@@ -1894,6 +1918,29 @@ def main():
                             param_name=operation.parameter.name,
                         )
                     )
+
+            if metadata.async_fire_forget:
+                # Fire-and-forget: send without waiting for a response.
+                f.write(
+                    "    if (conn == nullptr ||\n"
+                    "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
+                        name=function.name.format()
+                    )
+                )
+                for operation in operations:
+                    operation.client_rpc_write(f)
+                f.write("        rpc_write_end(conn) < 0) {\n")
+                f.write("        if (conn != nullptr) pthread_mutex_unlock(&conn->call_mutex);\n")
+                f.write(
+                    "        return {error_return};\n".format(
+                        error_return=error_const(function.return_type.format())
+                    )
+                )
+                f.write("    }\n")
+                f.write("    pthread_mutex_unlock(&conn->call_mutex);\n")
+                f.write("    return CUDA_SUCCESS;\n")
+                f.write("}\n\n")
+                continue
 
             f.write(
                 "    if (conn == nullptr ||\n"
@@ -1936,8 +1983,8 @@ def main():
 
         function_by_name = {
             function.name.format(): function
-            for function, _, _, disabled, _ in functions_with_annotations
-            if not disabled
+            for function, _, _, metadata in functions_with_annotations
+            if not metadata.disabled_client
         }
         for alias, target in MANUAL_REMAPPINGS:
             if alias in function_by_name or target not in function_by_name:
@@ -1969,8 +2016,8 @@ def main():
                 f.write("#endif\n\n")
 
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
-        for function, _, _, disabled, _ in functions_with_annotations:
-            if disabled:
+        for function, _, _, metadata in functions_with_annotations:
+            if metadata.disabled_client:
                 continue
 
             f.write(
@@ -1981,8 +2028,8 @@ def main():
         # write manual overrides
         function_names = set(
             f.name.format()
-            for f, _, _, disabled, _ in functions_with_annotations
-            if not disabled
+            for f, _, _, metadata in functions_with_annotations
+            if not metadata.disabled_client
         )
         for x, y in MANUAL_REMAPPINGS:
             # ensure y exists in the function list
@@ -2022,8 +2069,8 @@ def main():
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
         )
-        for function, annotation, operations, disabled, metadata in functions_with_annotations:
-            if disabled:
+        for function, annotation, operations, metadata in functions_with_annotations:
+            if metadata.disabled_server:
                 continue
 
             # parse the annotation doxygen
@@ -2093,20 +2140,26 @@ def main():
                     )
                 )
 
-            f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+            if metadata.async_fire_forget:
+                # Fire-and-forget: no response is sent.
+                f.write("    (void) lupine_intercept_result;\n")
+                f.write("\n")
+                f.write("    return 0;\n")
+            else:
+                f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
 
-            for operation in operations:
-                operation.server_rpc_write(f)
+                for operation in operations:
+                    operation.server_rpc_write(f)
 
-            f.write(
-                "        rpc_write(conn, &lupine_intercept_result, sizeof({return_type})) < 0 ||\n".format(
-                    return_type=function.return_type.format()
+                f.write(
+                    "        rpc_write(conn, &lupine_intercept_result, sizeof({return_type})) < 0 ||\n".format(
+                        return_type=function.return_type.format()
+                    )
                 )
-            )
-            f.write("        rpc_write_end(conn) < 0)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
-            f.write("\n")
-            f.write("    return 0;\n")
+                f.write("        rpc_write_end(conn) < 0)\n")
+                f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+                f.write("\n")
+                f.write("    return 0;\n")
 
             for i, defer in enumerate(defers):
                 f.write("ERROR_{index}:\n".format(index=len(defers) - i))
@@ -2115,21 +2168,26 @@ def main():
             f.write("    return -1;\n")
             f.write("}\n\n")
 
-        f.write("static RequestHandler opHandlers[] = {\n")
-        for function, _, _, disabled, _ in functions_with_annotations:
-            if disabled:
-                f.write("    nullptr,\n")
+        f.write("static const std::unordered_map<int, RequestHandler> opHandlers = {\n")
+        for function, _, _, metadata in functions_with_annotations:
+            if metadata.disabled_server:
+                continue
             else:
-                f.write("    handle_{name},\n".format(name=function.name.format()))
+                f.write(
+                    "    {{RPC_{name}, handle_{name}}},\n".format(
+                        name=function.name.format()
+                    )
+                )
         for name in NVML_RPC_FUNCTIONS:
-            f.write("    handle_{name},\n".format(name=name))
+            f.write("    {{RPC_{name}, handle_{name}}},\n".format(name=name))
         f.write("};\n\n")
 
         f.write("RequestHandler get_handler(const int op)\n")
         f.write("{\n")
-        f.write("    if (op < 0 || op >= static_cast<int>(sizeof(opHandlers) / sizeof(opHandlers[0])))\n")
+        f.write("    auto it = opHandlers.find(op);\n")
+        f.write("    if (it == opHandlers.end())\n")
         f.write("        return nullptr;\n")
-        f.write("    return opHandlers[op];\n")
+        f.write("    return it->second;\n")
         f.write("}\n")
 
 

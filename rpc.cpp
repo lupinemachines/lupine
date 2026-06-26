@@ -195,6 +195,109 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
   return 0;
 }
 
+int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
+                                  const size_t *sizes, void *const *values) {
+  if (conn == nullptr ||
+      (count != 0 && (sizes == nullptr || values == nullptr))) {
+    return -1;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    if (values[i] == nullptr || rpc_write(conn, values[i], sizes[i]) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
+                                 const size_t *offsets, const size_t *sizes,
+                                 size_t payload_size, void *storage,
+                                 size_t storage_size, void **values) {
+  if (conn == nullptr ||
+      (count != 0 && (offsets == nullptr || sizes == nullptr ||
+                      storage == nullptr || values == nullptr))) {
+    return -1;
+  }
+
+  size_t expected_payload_size = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    expected_payload_size += sizes[i];
+  }
+  if (payload_size != expected_payload_size) {
+    return -1;
+  }
+
+  auto *bytes = static_cast<unsigned char *>(storage);
+  for (uint32_t i = 0; i < count; ++i) {
+    if (offsets[i] + sizes[i] > storage_size) {
+      return -1;
+    }
+    unsigned char *dst = bytes + offsets[i];
+    if (sizes[i] != 0 && rpc_read(conn, dst, sizes[i]) < 0) {
+      return -1;
+    }
+    values[i] = dst;
+  }
+  return 0;
+}
+
+int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,
+                          const CUjit_option *options,
+                          void *const *option_values,
+                          std::vector<uintptr_t> *raw_values) {
+  if (conn == nullptr || num_options == nullptr || raw_values == nullptr ||
+      (*num_options != 0 && (options == nullptr || option_values == nullptr))) {
+    return -1;
+  }
+
+  if (static_cast<size_t>(conn->write_iov_count) + 2 + *num_options >
+      sizeof(conn->write_iov) / sizeof(conn->write_iov[0])) {
+    return -1;
+  }
+
+  raw_values->resize(*num_options);
+  for (unsigned int i = 0; i < *num_options; ++i) {
+    (*raw_values)[i] = reinterpret_cast<uintptr_t>(option_values[i]);
+  }
+
+  if (rpc_write(conn, num_options, sizeof(*num_options)) < 0 ||
+      (*num_options != 0 &&
+       rpc_write(conn, options, *num_options * sizeof(CUjit_option)) < 0)) {
+    return -1;
+  }
+  for (unsigned int i = 0; i < *num_options; ++i) {
+    if (rpc_write(conn, &(*raw_values)[i], sizeof((*raw_values)[i])) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+int rpc_read_jit_options(conn_t *conn, std::vector<CUjit_option> *options,
+                         std::vector<uintptr_t> *raw_values) {
+  if (conn == nullptr || options == nullptr || raw_values == nullptr) {
+    return -1;
+  }
+
+  unsigned int num_options = 0;
+  if (rpc_read(conn, &num_options, sizeof(num_options)) < 0) {
+    return -1;
+  }
+
+  options->resize(num_options);
+  raw_values->resize(num_options);
+  if (num_options != 0 &&
+      rpc_read(conn, options->data(), num_options * sizeof(CUjit_option)) < 0) {
+    return -1;
+  }
+  for (unsigned int i = 0; i < num_options; ++i) {
+    if (rpc_read(conn, &(*raw_values)[i], sizeof((*raw_values)[i])) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 // rpc_write_framed queues a payload that the transport LZ4-frames lazily,
 // one block at a time, as the bytes are streamed to the socket. The caller's
 // buffer must stay valid until rpc_write_end() returns, exactly like

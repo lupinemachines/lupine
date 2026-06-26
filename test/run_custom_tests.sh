@@ -19,6 +19,7 @@ SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-custom-server-$$}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
+LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 NVCC="${NVCC:-$CUDA_HOME/bin/nvcc}"
@@ -63,16 +64,15 @@ for src in "${tests[@]}"; do
   exe="$BUILD_DIR/$name"
   echo "=== building $name ==="
   if ! "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$src" -o "$exe" \
-       -lcuda -L"$CUDA_HOME/lib64/stubs" 2>&1; then
+       -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs" 2>&1; then
     echo "BUILD FAILED: $name" >&2
     fail=$((fail + 1))
     continue
   fi
   echo "=== running $name against $SERVER_HOST:$SERVER_PORT ==="
   if timeout --kill-after=5s "$TEST_TIMEOUT" env \
-       LD_LIBRARY_PATH="$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+       LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
        LUPINE_SERVER="$SERVER_HOST:$SERVER_PORT" \
-       LD_PRELOAD="$LUPINE_LIB" \
        "$exe"; then
     echo "PASS: $name"
     pass=$((pass + 1))
