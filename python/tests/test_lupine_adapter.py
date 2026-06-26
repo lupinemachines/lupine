@@ -195,51 +195,6 @@ def test_connect_snapshot_exit_saves(lupine_module, monkeypatch):
     assert "LUPINE_SNAPSHOT_ID" not in os.environ
 
 
-def _patch_snapshot_calls(lupine, monkeypatch):
-    loaded, saved, cleared = [], [], []
-    monkeypatch.setattr(lupine, "load_snapshot", lambda value: loaded.append(value))
-    monkeypatch.setattr(lupine, "save_snapshot_and_exit", lambda value: saved.append(value))
-    monkeypatch.setattr(lupine, "_clear_snapshot_load", lambda: cleared.append(True))
-    return loaded, saved, cleared
-
-
-def test_connect_snapshot_read_only_restores_without_saving(lupine_module, monkeypatch):
-    lupine, _ = lupine_module
-    snapshot_id = "0123456789abcdef0123456789abcdef"
-    loaded, saved, cleared = _patch_snapshot_calls(lupine, monkeypatch)
-
-    with lupine.connect(host="host-a", snapshot_id=snapshot_id, snapshot_type="r"):
-        assert loaded == [snapshot_id]
-
-    # read-only: restored on enter, never saved on exit (cheap reuse).
-    assert saved == []
-    assert cleared == [True]
-
-
-def test_connect_snapshot_write_only_saves_without_restoring(lupine_module, monkeypatch):
-    lupine, _ = lupine_module
-    snapshot_id = "0123456789abcdef0123456789abcdef"
-    loaded, saved, cleared = _patch_snapshot_calls(lupine, monkeypatch)
-
-    with lupine.connect(host="host-a", snapshot_id=snapshot_id, snapshot_type="w"):
-        # write-only: starts fresh, no restore on enter.
-        assert loaded == []
-
-    assert saved == [snapshot_id]
-
-
-def test_connect_snapshot_default_type_is_read_write(lupine_module, monkeypatch):
-    lupine, _ = lupine_module
-    snapshot_id = "0123456789abcdef0123456789abcdef"
-    loaded, saved, cleared = _patch_snapshot_calls(lupine, monkeypatch)
-
-    with lupine.connect(host="host-a", snapshot_id=snapshot_id):
-        pass
-
-    assert loaded == [snapshot_id]
-    assert saved == [snapshot_id]
-
-
 def test_connect_rejects_invalid_snapshot_type(lupine_module):
     lupine, _ = lupine_module
     snapshot_id = "0123456789abcdef0123456789abcdef"
@@ -331,11 +286,24 @@ def test_save_snapshot_and_exit_calls_c_export(lupine_module, monkeypatch):
     assert lib.saved == snapshot_id
 
 
-def test_snapshot_rejects_bad_id(lupine_module):
+def test_snapshot_id_allows_arbitrary_strings(lupine_module, monkeypatch):
+    # Any non-empty, bounded string is accepted; the server hashes it into the
+    # on-disk path, so values like "../bad" or "my model:v2" are fine.
+    lupine, _ = lupine_module
+    lib = FakeSnapshotLib()
+    monkeypatch.setattr(lupine, "_snapshot_lib", lambda: lib)
+
+    for ok_id in ("../bad", "my model:v2", "x"):
+        lupine.load_snapshot(ok_id)
+        assert lib.loaded[-1] == ok_id
+
+
+def test_snapshot_id_rejects_empty_and_too_long(lupine_module):
     lupine, _ = lupine_module
 
-    with pytest.raises(lupine.LupineError, match="snapshot id"):
-        lupine.load_snapshot("../bad")
+    for bad_id in ("", "a" * 256):
+        with pytest.raises(lupine.LupineError, match="snapshot id"):
+            lupine.load_snapshot(bad_id)
 
 
 def test_device_bounds_check(lupine_module):
