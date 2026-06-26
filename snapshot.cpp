@@ -16,11 +16,7 @@
 #include <vector>
 
 #ifndef _WIN32
-#include <dlfcn.h>
 #include <fcntl.h>
-#include <nvml.h>
-#include <sys/statvfs.h>
-#include <sys/sysinfo.h>
 #endif
 
 #include "lupine_log.h"
@@ -438,244 +434,6 @@ std::string manifest_json(const std::string &id, uint64_t bytes,
   return std::string(buf);
 }
 
-// Resident set size of this process, used together with the GPU memory estimate
-// to size the snapshot before it is written.
-uint64_t current_rss_bytes() {
-#ifdef _WIN32
-  return 0;
-#else
-  FILE *f = fopen("/proc/self/status", "r");
-  if (f == nullptr) {
-    return 0;
-  }
-  char line[256];
-  unsigned long long kb = 0;
-  while (fgets(line, sizeof(line), f) != nullptr) {
-    if (sscanf(line, "VmRSS: %llu kB", &kb) == 1) {
-      break;
-    }
-  }
-  fclose(f);
-  return static_cast<uint64_t>(kb) * 1024;
-#endif
-}
-
-// Device memory currently used by this process across all GPUs, via NVML.
-// Returns 0 if NVML is unavailable, in which case the caller stages on disk.
-uint64_t process_gpu_memory_bytes() {
-#ifdef _WIN32
-  return 0;
-#else
-  void *lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
-  if (lib == nullptr) {
-    return 0;
-  }
-  auto init = reinterpret_cast<nvmlReturn_t (*)()>(dlsym(lib, "nvmlInit_v2"));
-  auto shut = reinterpret_cast<nvmlReturn_t (*)()>(dlsym(lib, "nvmlShutdown"));
-  auto get_count = reinterpret_cast<nvmlReturn_t (*)(unsigned int *)>(
-      dlsym(lib, "nvmlDeviceGetCount_v2"));
-  auto get_handle =
-      reinterpret_cast<nvmlReturn_t (*)(unsigned int, nvmlDevice_t *)>(
-          dlsym(lib, "nvmlDeviceGetHandleByIndex_v2"));
-  auto get_procs = reinterpret_cast<nvmlReturn_t (*)(
-      nvmlDevice_t, unsigned int *, nvmlProcessInfo_t *)>(
-      dlsym(lib, "nvmlDeviceGetComputeRunningProcesses_v3"));
-  uint64_t total = 0;
-  if (init != nullptr && get_count != nullptr && get_handle != nullptr &&
-      get_procs != nullptr && init() == NVML_SUCCESS) {
-    unsigned int count = 0;
-    if (get_count(&count) == NVML_SUCCESS) {
-      unsigned int me = static_cast<unsigned int>(getpid());
-      for (unsigned int i = 0; i < count; ++i) {
-        nvmlDevice_t device;
-        if (get_handle(i, &device) != NVML_SUCCESS) {
-          continue;
-        }
-        unsigned int n = 0;
-        get_procs(device, &n, nullptr);
-        if (n == 0) {
-          continue;
-        }
-        std::vector<nvmlProcessInfo_t> infos(n);
-        if (get_procs(device, &n, infos.data()) != NVML_SUCCESS) {
-          continue;
-        }
-        for (unsigned int j = 0; j < n && j < infos.size(); ++j) {
-          if (infos[j].pid == me &&
-              infos[j].usedGpuMemory != static_cast<unsigned long long>(-1)) {
-            total += infos[j].usedGpuMemory;
-          }
-        }
-      }
-    }
-    if (shut != nullptr) {
-      shut();
-    }
-  }
-  dlclose(lib);
-  return total;
-#endif
-}
-
-uint64_t path_free_bytes(const std::string &path) {
-#ifdef _WIN32
-  (void)path;
-  return 0;
-#else
-  struct statvfs vfs = {};
-  if (statvfs(path.c_str(), &vfs) != 0) {
-    return 0;
-  }
-  return static_cast<uint64_t>(vfs.f_bavail) * vfs.f_frsize;
-#endif
-}
-
-uint64_t free_ram_bytes() {
-#ifdef _WIN32
-  return 0;
-#else
-  struct sysinfo si = {};
-  if (sysinfo(&si) != 0) {
-    return 0;
-  }
-  return static_cast<uint64_t>(si.freeram) * si.mem_unit;
-#endif
-}
-
-std::string ram_staging_root() {
-  const char *configured = getenv("LUPINE_SNAPSHOT_RAM_DIR");
-  if (configured != nullptr && configured[0] != '\0') {
-    return configured;
-  }
-  return "/dev/shm/lupine-snapshots";
-}
-
-// Decide whether to stage CRIU images in RAM. Only do so when both the RAM
-// directory and free system memory have comfortable headroom for an
-// `est_bytes` snapshot: the GPU memory is evicted into host RAM during the dump
-// and the RAM-staged images are a second copy, so we require ~2x headroom.
-// Falls back to disk (returns false) when the size is unknown or RAM is tight.
-bool choose_ram_staging(uint64_t est_bytes, std::string *ram_root_out) {
-  if (getenv("LUPINE_SNAPSHOT_NO_RAM") != nullptr) {
-    return false;
-  }
-  if (est_bytes == 0) {
-    return false;
-  }
-  std::string ram_root = ram_staging_root();
-  if (!mkdir_p(ram_root)) {
-    return false;
-  }
-  uint64_t needed =
-      est_bytes + est_bytes / 4 + static_cast<uint64_t>(512) * 1024 * 1024;
-  if (path_free_bytes(ram_root) < needed) {
-    return false;
-  }
-  if (free_ram_bytes() < needed * 2) {
-    return false;
-  }
-  *ram_root_out = ram_root;
-  return true;
-}
-
-bool copy_tree(const std::string &src, const std::string &dst) {
-#ifdef _WIN32
-  (void)src;
-  (void)dst;
-  return false;
-#else
-  pid_t pid = fork();
-  if (pid < 0) {
-    return false;
-  }
-  if (pid == 0) {
-    execlp("cp", "cp", "-a", src.c_str(), dst.c_str(),
-           static_cast<char *>(nullptr));
-    _exit(127);
-  }
-  int status = 0;
-  while (waitpid(pid, &status, 0) < 0) {
-    if (errno == EINTR) {
-      continue;
-    }
-    return false;
-  }
-  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-#endif
-}
-
-// Flush a RAM-staged snapshot to durable disk and publish it. The manifest is
-// written last so that a present manifest still means the artifact is fully on
-// disk and restorable.
-bool publish_ram_to_disk(const std::string &ram_staging,
-                         const std::string &disk_staging_root,
-                         const std::string &final_dir,
-                         const std::string &snapshot_id, uint64_t bytes,
-                         const std::string &client_target) {
-  std::string disk_partial =
-      join_path(disk_staging_root, snapshot_id + ".disk.partial");
-  remove_tree(disk_partial);
-  if (!copy_tree(ram_staging, disk_partial)) {
-    remove_tree(disk_partial);
-    remove_tree(ram_staging);
-    return false;
-  }
-  remove_tree(ram_staging);
-  if (!publish_artifact(disk_partial, final_dir)) {
-    remove_tree(disk_partial);
-    return false;
-  }
-  if (!write_text_file(join_path(final_dir, "manifest.json"),
-                       manifest_json(snapshot_id, bytes, client_target))) {
-    remove_tree(final_dir);
-    return false;
-  }
-  return true;
-}
-
-// Flush a RAM-staged snapshot to disk off the critical path so the client's
-// save call returns as soon as the (fast) RAM write completes. Detaches via a
-// double fork so the publisher outlives the exiting worker.
-void spawn_ram_publisher(const std::string &ram_staging,
-                         const std::string &disk_staging_root,
-                         const std::string &final_dir,
-                         const std::string &snapshot_id, uint64_t bytes,
-                         const std::string &client_target) {
-#ifdef _WIN32
-  publish_ram_to_disk(ram_staging, disk_staging_root, final_dir, snapshot_id,
-                      bytes, client_target);
-#else
-  pid_t first = fork();
-  if (first < 0) {
-    // Could not detach; flush synchronously so the snapshot is not lost.
-    publish_ram_to_disk(ram_staging, disk_staging_root, final_dir, snapshot_id,
-                        bytes, client_target);
-    return;
-  }
-  if (first > 0) {
-    int status = 0;
-    while (waitpid(first, &status, 0) < 0 && errno == EINTR) {
-    }
-    return;
-  }
-  setsid();
-  // The server reaps SIGCHLD; reset to default so the publisher can waitpid()
-  // on its own helpers (the copy).
-  signal(SIGCHLD, SIG_DFL);
-  pid_t second = fork();
-  if (second != 0) {
-    _exit(0);
-  }
-  redirect_stdio_to_devnull();
-  bool ok = publish_ram_to_disk(ram_staging, disk_staging_root, final_dir,
-                                snapshot_id, bytes, client_target);
-  if (!ok) {
-    LUPINE_LOG_ERROR("Async snapshot publish failed for " << snapshot_id);
-  }
-  _exit(ok ? 0 : 1);
-#endif
-}
-
 snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
   const char *root_env = snapshot_root();
   if (root_env == nullptr) {
@@ -692,15 +450,8 @@ snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
     return {CUDA_ERROR_OPERATING_SYSTEM};
   }
 
-  // Stage CRIU images in RAM when there is headroom (fast write off the disk),
-  // then flush to disk asynchronously; otherwise write straight to disk.
-  uint64_t est_bytes = process_gpu_memory_bytes() + current_rss_bytes();
-  std::string ram_root;
-  bool use_ram = choose_ram_staging(est_bytes, &ram_root);
-  const std::string &active_staging_root = use_ram ? ram_root : staging_root;
-
   std::string snapshot_id(id);
-  std::string staging = join_path(active_staging_root, snapshot_id + ".partial");
+  std::string staging = join_path(staging_root, snapshot_id + ".partial");
   std::string criu_dir = join_path(staging, "criu");
   std::string logs_dir = join_path(staging, "logs");
   std::string final_dir = join_path(objects, snapshot_id);
@@ -750,13 +501,6 @@ snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
   }
 
   uint64_t bytes = tree_size(staging);
-  if (use_ram) {
-    // Hand the durable disk write to a detached publisher and return now; the
-    // client's save completes without waiting on the disk copy.
-    spawn_ram_publisher(staging, staging_root, final_dir, snapshot_id, bytes,
-                        client_target);
-    return {CUDA_SUCCESS};
-  }
   if (!publish_artifact(staging, final_dir)) {
     remove_tree(staging);
     return {CUDA_ERROR_OPERATING_SYSTEM};
@@ -847,6 +591,64 @@ std::string read_manifest_client_fd_target(const std::string &manifest) {
 #endif
 }
 
+// The pid recorded in the manifest is the worker that produced the snapshot.
+// CRIU restores a process at its original pid, so that pid must be free before
+// restore. Returns 0 if the manifest has no pid.
+pid_t read_manifest_pid(const std::string &manifest) {
+#ifdef _WIN32
+  (void)manifest;
+  return 0;
+#else
+  int fd = open(manifest.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  std::string text;
+  char buf[4096];
+  for (;;) {
+    ssize_t n = read(fd, buf, sizeof(buf));
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n <= 0) {
+      break;
+    }
+    text.append(buf, static_cast<size_t>(n));
+  }
+  close(fd);
+  const std::string key = "\"pid\": ";
+  size_t pos = text.find(key);
+  if (pos == std::string::npos) {
+    return 0;
+  }
+  return static_cast<pid_t>(strtoll(text.c_str() + pos + key.size(), nullptr, 10));
+#endif
+}
+
+// Wait for `pid` to exit. The snapshot is taken with CRIU `--leave-running`, so
+// the worker that saved keeps running until its connection closes; a quick
+// reconnect can race its exit and CRIU restore then fails with "Can't fork:
+// File exists". Poll until the pid is gone (or a timeout elapses).
+void wait_for_pid_exit(pid_t pid, int timeout_ms) {
+#ifndef _WIN32
+  if (pid <= 0) {
+    return;
+  }
+  int waited = 0;
+  while (waited < timeout_ms) {
+    if (kill(pid, 0) != 0 && errno == ESRCH) {
+      return;
+    }
+    struct timespec ts = {0, 5 * 1000 * 1000};  // 5ms
+    nanosleep(&ts, nullptr);
+    waited += 5;
+  }
+#else
+  (void)pid;
+  (void)timeout_ms;
+#endif
+}
+
 int read_snapshot_id(conn_t *conn, std::string *id) {
   uint32_t len = 0;
   if (rpc_read(conn, &len, sizeof(len)) < 0) {
@@ -900,6 +702,14 @@ int handle_lupine_snapshot_save_and_exit(conn_t *conn) {
   }
 
   conn->closed = 1;
+#ifndef _WIN32
+  // The snapshot has been taken with CRIU `--leave-running`, so this worker is
+  // still alive. It has served its purpose now; exit immediately (rather than
+  // unwinding the dispatch loop lazily) so its pid is freed for the restore,
+  // which CRIU recreates at this same pid. A FIN flushes the response first.
+  shutdown(conn->connfd, SHUT_WR);
+  _exit(0);
+#endif
   return 0;
 }
 
@@ -939,6 +749,11 @@ int lupine_snapshot_restore_for_connection(const char *id,
   if (inherited_target.empty()) {
     return -1;
   }
+
+  // CRIU restores the worker at its original pid; wait for the worker that
+  // produced this snapshot to exit so its pid is free (avoids a "Can't fork:
+  // File exists" race on a quick reconnect).
+  wait_for_pid_exit(read_manifest_pid(manifest), 5000);
 
   std::string logs_dir = join_path(artifact, "logs");
   mkdir_p(logs_dir);
