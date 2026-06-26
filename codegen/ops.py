@@ -1031,10 +1031,10 @@ class FunctionAnnotationMetadata:
     operations: list[Operation]
     disabled_client: bool = False
     disabled_server: bool = False
-    # @async marks a fire-and-forget op (e.g. an async copy). The client queues
-    # the request in the coalescing buffer and returns CUDA_SUCCESS without
-    # waiting; the server executes it and sends no response. Errors surface at
-    # the next synchronizing RPC (CUDA's deferred-error model).
+    # @async marks a fire-and-forget op (e.g. an async copy). The client sends
+    # the request and returns CUDA_SUCCESS without waiting for an ack; the server
+    # executes it and sends no response. Errors surface at the next synchronizing
+    # RPC (CUDA's deferred-error model).
     async_fire_forget: bool = False
     routing_kind: Optional[str] = None
     routing_parameter: Optional[Parameter] = None

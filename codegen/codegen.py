@@ -1920,18 +1920,18 @@ def main():
                     )
 
             if metadata.async_fire_forget:
-                # Fire-and-forget: queue the request in the coalescing buffer and
-                # return success without waiting. The server sends no response;
-                # errors surface at the next synchronizing RPC.
+                # Fire-and-forget: send the request and return success without
+                # waiting for an ack. The server executes the call and sends no
+                # response; errors surface at the next synchronizing RPC.
                 f.write(
                     "    if (conn == nullptr ||\n"
-                    "        rpc_write_start_request_async(conn, RPC_{name}) < 0 ||\n".format(
+                    "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
                         name=function.name.format()
                     )
                 )
                 for operation in operations:
                     operation.client_rpc_write(f)
-                f.write("        rpc_write_end_batched(conn) < 0) {\n")
+                f.write("        rpc_write_end(conn) < 0) {\n")
                 f.write("        if (conn != nullptr) pthread_mutex_unlock(&conn->call_mutex);\n")
                 f.write(
                     "        return {error_return};\n".format(
