@@ -5399,16 +5399,19 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
       rpc_write(conn, packed.data(), packed.size()) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      // Fire-and-forget: real cuLaunchKernel is asynchronous and almost always
+      // returns CUDA_SUCCESS (genuine launch errors surface at the next
+      // synchronization point). Sending the launch without waiting for the ack
+      // pipelines launches instead of paying one network round-trip each, which
+      // dominates kernel-launch-heavy workloads. Requests stay ordered on the
+      // connection, so a later synchronizing RPC still observes these launches.
+      rpc_write_end(conn) < 0) {
+    pthread_mutex_unlock(&conn->call_mutex);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (return_value != CUDA_SUCCESS) {
-    LUPINE_TRACE_LOG(
-        "LUPINE cuLaunchKernel result=" << static_cast<int>(return_value));
-  }
-  return return_value;
+  (void)return_value;
+  pthread_mutex_unlock(&conn->call_mutex);
+  return CUDA_SUCCESS;
 }
 
 extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,

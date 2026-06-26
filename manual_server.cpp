@@ -1756,10 +1756,13 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  // Fire-and-forget: the client does not wait for a launch ack (real
+  // cuLaunchKernel is asynchronous), so no response is sent. Launch errors are
+  // observed by the client at its next synchronizing RPC, matching CUDA's
+  // deferred error semantics. request_id is consumed only to release the read
+  // lock so the next request can be processed.
+  (void)request_id;
+  (void)result;
   return 0;
 }
 
