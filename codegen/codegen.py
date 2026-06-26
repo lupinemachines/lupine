@@ -1920,9 +1920,7 @@ def main():
                     )
 
             if metadata.async_fire_forget:
-                # Fire-and-forget: send the request and return success without
-                # waiting for an ack. The server executes the call and sends no
-                # response; errors surface at the next synchronizing RPC.
+                # Fire-and-forget: send without waiting for a response.
                 f.write(
                     "    if (conn == nullptr ||\n"
                     "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
@@ -2143,8 +2141,7 @@ def main():
                 )
 
             if metadata.async_fire_forget:
-                # Fire-and-forget: the client does not wait for a response, so
-                # none is sent. Errors surface at the next synchronizing RPC.
+                # Fire-and-forget: no response is sent.
                 f.write("    (void) lupine_intercept_result;\n")
                 f.write("\n")
                 f.write("    return 0;\n")

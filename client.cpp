@@ -5569,11 +5569,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
-  // Fire-and-forget: real cuLaunchKernel is asynchronous and almost always
-  // returns CUDA_SUCCESS (genuine launch errors are sticky and surface at the
-  // next synchronizing RPC). Send the request and return without waiting for an
-  // ack, so launches are not serialized one network round-trip at a time. The
-  // server executes the launch and sends no response.
+  // Fire-and-forget; launch errors are sticky and surface at the next sync.
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||

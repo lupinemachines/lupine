@@ -1756,11 +1756,7 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
     }
   }
 
-  // Fire-and-forget: the client does not wait for a launch ack (real
-  // cuLaunchKernel is asynchronous), so no response is sent. Launch errors are
-  // observed by the client at its next synchronizing RPC, matching CUDA's
-  // deferred error semantics. request_id is consumed only to release the read
-  // lock so the next request can be processed.
+  // Fire-and-forget: no response is sent.
   (void)request_id;
   (void)result;
   return 0;
