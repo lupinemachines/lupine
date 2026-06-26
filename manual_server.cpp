@@ -60,6 +60,67 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
 static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
 
+// cuMemAllocHost / cuMemFreeHost page-lock and unlock host memory on every
+// call, which costs on the order of a millisecond even for a tiny transfer and
+// dominates the latency of small, frequent copies. The server forks one
+// process per connection and runs handlers serially on that connection, so a
+// single process-global staging buffer can be reused across memcpy calls.
+// Buffers up to LUPINE_STAGING_RETAIN_BYTES are kept page-locked and reused;
+// larger requests fall back to a per-call allocation (whose cost is amortized
+// over the large transfer) so a process never pins a huge buffer indefinitely.
+static constexpr size_t LUPINE_STAGING_RETAIN_BYTES = 8 * 1024 * 1024;
+
+struct lupine_staging {
+  void *ptr = nullptr;
+  bool owned = false; // true => caller must release (a per-call allocation)
+  bool pinned = false;
+};
+
+// Returns a host buffer of at least `bytes`. On success ptr != nullptr; when
+// owned is true the caller must release it via lupine_release_staging, when
+// false it borrows the retained buffer and must not free it.
+static lupine_staging lupine_acquire_staging(size_t bytes) {
+  lupine_staging out;
+  if (bytes == 0) {
+    return out;
+  }
+  if (bytes > LUPINE_STAGING_RETAIN_BYTES) {
+    if (cuMemAllocHost(&out.ptr, bytes) == CUDA_SUCCESS) {
+      out.owned = true;
+      out.pinned = true;
+    } else if ((out.ptr = malloc(bytes)) != nullptr) {
+      out.owned = true;
+    }
+    return out;
+  }
+  static void *retained = nullptr;
+  static size_t retained_size = 0;
+  if (retained_size < bytes) {
+    void *grown = nullptr;
+    if (cuMemAllocHost(&grown, bytes) != CUDA_SUCCESS) {
+      return out;
+    }
+    if (retained != nullptr) {
+      cuMemFreeHost(retained);
+    }
+    retained = grown;
+    retained_size = bytes;
+  }
+  out.ptr = retained;
+  out.pinned = true;
+  return out;
+}
+
+static void lupine_release_staging(const lupine_staging &s) {
+  if (s.ptr != nullptr && s.owned) {
+    if (s.pinned) {
+      cuMemFreeHost(s.ptr);
+    } else {
+      free(s.ptr);
+    }
+  }
+}
+
 struct lupine_captured_stdout {
   int saved_stdout = -1;
   FILE *capture_file = nullptr;
@@ -3056,7 +3117,6 @@ int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   size_t byteCount = 0;
   CUresult result = CUDA_SUCCESS;
-  void *host = nullptr;
 
   if (rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
@@ -3065,10 +3125,10 @@ int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
 
   int framed = lupine_payload_framed(conn, byteCount);
   size_t chunk_bytes = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount);
-  if (chunk_bytes != 0) {
-    result = cuMemAllocHost(&host, chunk_bytes);
-  }
-  if (result != CUDA_SUCCESS) {
+  lupine_staging staging = lupine_acquire_staging(chunk_bytes);
+  void *host = staging.ptr;
+  if (chunk_bytes != 0 && host == nullptr) {
+    result = CUDA_ERROR_OUT_OF_MEMORY;
     if (rpc_drain_payload(conn, framed, byteCount) < 0) {
       return -1;
     }
@@ -3078,23 +3138,19 @@ int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
   while (result == CUDA_SUCCESS && offset < byteCount) {
     size_t chunk = std::min(chunk_bytes, byteCount - offset);
     if (rpc_read_payload_part(conn, framed, host, chunk) < 0) {
-      if (host != nullptr) {
-        cuMemFreeHost(host);
-      }
+      lupine_release_staging(staging);
       return -1;
     }
     result = cuMemcpyHtoD_v2(dstDevice + offset, host, chunk);
     offset += chunk;
     if (result != CUDA_SUCCESS &&
         rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
-      cuMemFreeHost(host);
+      lupine_release_staging(staging);
       return -1;
     }
   }
 
-  if (host != nullptr) {
-    cuMemFreeHost(host);
-  }
+  lupine_release_staging(staging);
 
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
