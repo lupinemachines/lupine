@@ -55,6 +55,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
 )
 
@@ -76,6 +77,7 @@ set(NVML_CLIENT_SOURCES
 )
 
 set(CLIENT_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
 )
 

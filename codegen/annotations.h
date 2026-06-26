@@ -2080,11 +2080,13 @@ CUresult cuDeviceGetNvSciSyncAttributes(void *nvSciSyncAttrList, CUdevice dev,
  */
 CUresult cuDeviceSetMemPool(CUdevice dev, CUmemoryPool pool);
 /**
+ * @recordowner MEMORY_POOL pool
  * @param pool RECV_ONLY
  * @param dev SEND_ONLY
  */
 CUresult cuDeviceGetMemPool(CUmemoryPool *pool, CUdevice dev);
 /**
+ * @recordowner MEMORY_POOL pool_out
  * @param pool_out RECV_ONLY
  * @param dev SEND_ONLY
  */
@@ -3156,6 +3158,7 @@ CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
 CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
                             CUmemLocation *location);
 /**
+ * @recordowner MEMORY_POOL pool
  * @param pool SEND_RECV
  * @param poolProps SEND_RECV
  */
@@ -3184,6 +3187,7 @@ CUresult cuMemPoolExportToShareableHandle(void *handle_out, CUmemoryPool pool,
                                           CUmemAllocationHandleType handleType,
                                           unsigned long long flags);
 /**
+ * @recordowner MEMORY_POOL pool_out
  * @param pool_out SEND_RECV
  * @param handle SEND_RECV
  * @param handleType SEND_ONLY
@@ -3337,6 +3341,7 @@ CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**
+ * @recordowner GRAPH phGraph
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param phGraph SEND_RECV NULLABLE
@@ -3724,6 +3729,7 @@ CUresult cuLaunchGridAsync(CUfunction f, int grid_width, int grid_height,
  */
 CUresult cuParamSetTexRef(CUfunction hfunc, int texunit, CUtexref hTexRef);
 /**
+ * @recordowner GRAPH phGraph
  * @param phGraph SEND_RECV
  * @param flags SEND_ONLY
  */
@@ -3833,6 +3839,7 @@ CUresult cuGraphHostNodeGetParams(CUgraphNode hNode,
 CUresult cuGraphHostNodeSetParams(CUgraphNode hNode,
                                   const CUDA_HOST_NODE_PARAMS *nodeParams);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -3843,11 +3850,13 @@ CUresult cuGraphAddChildGraphNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                   const CUgraphNode *dependencies,
                                   size_t numDependencies, CUgraph childGraph);
 /**
+ * @recordowner GRAPH phGraph
  * @param hNode SEND_ONLY
  * @param phGraph SEND_RECV
  */
 CUresult cuGraphChildGraphNodeGetGraph(CUgraphNode hNode, CUgraph *phGraph);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -3857,6 +3866,7 @@ CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                              const CUgraphNode *dependencies,
                              size_t numDependencies);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -3877,6 +3887,7 @@ CUresult cuGraphEventRecordNodeGetEvent(CUgraphNode hNode, CUevent *event_out);
  */
 CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -3897,6 +3908,7 @@ CUresult cuGraphEventWaitNodeGetEvent(CUgraphNode hNode, CUevent *event_out);
  */
 CUresult cuGraphEventWaitNodeSetEvent(CUgraphNode hNode, CUevent event);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -3925,6 +3937,7 @@ CUresult cuGraphExternalSemaphoresSignalNodeGetParams(
 CUresult cuGraphExternalSemaphoresSignalNodeSetParams(
     CUgraphNode hNode, const CUDA_EXT_SEM_SIGNAL_NODE_PARAMS *nodeParams);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -3953,6 +3966,7 @@ CUresult cuGraphExternalSemaphoresWaitNodeGetParams(
 CUresult cuGraphExternalSemaphoresWaitNodeSetParams(
     CUgraphNode hNode, const CUDA_EXT_SEM_WAIT_NODE_PARAMS *nodeParams);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -3989,6 +4003,7 @@ CUresult cuGraphExecBatchMemOpNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
     const CUDA_BATCH_MEM_OP_NODE_PARAMS *nodeParams);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -4006,6 +4021,7 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
                                       CUDA_MEM_ALLOC_NODE_PARAMS *params_out);
 /**
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -4039,11 +4055,13 @@ CUresult cuDeviceGetGraphMemAttribute(CUdevice device,
 CUresult cuDeviceSetGraphMemAttribute(CUdevice device,
                                       CUgraphMem_attribute attr, void *value);
 /**
+ * @recordowner GRAPH phGraphClone
  * @param phGraphClone SEND_RECV
  * @param originalGraph SEND_ONLY
  */
 CUresult cuGraphClone(CUgraph *phGraphClone, CUgraph originalGraph);
 /**
+ * @recordowner GRAPH_NODE phNode
  * @param phNode SEND_RECV
  * @param hOriginalNode SEND_ONLY
  * @param hClonedGraph SEND_ONLY
@@ -4117,6 +4135,7 @@ CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
  */
 CUresult cuGraphDestroyNode(CUgraphNode hNode);
 /**
+ * @recordowner GRAPH_EXEC phGraphExec
  * @param phGraphExec SEND_RECV
  * @param hGraph SEND_ONLY
  * @param flags SEND_ONLY
@@ -4124,6 +4143,7 @@ CUresult cuGraphDestroyNode(CUgraphNode hNode);
 CUresult cuGraphInstantiateWithFlags(CUgraphExec *phGraphExec, CUgraph hGraph,
                                      unsigned long long flags);
 /**
+ * @recordowner GRAPH_EXEC phGraphExec
  * @param phGraphExec SEND_RECV
  * @param hGraph SEND_ONLY
  * @param instantiateParams SEND_RECV

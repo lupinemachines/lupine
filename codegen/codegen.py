@@ -961,6 +961,14 @@ def infer_routing_key(
             return "STREAM", param
         if type_name == "CUevent":
             return "EVENT", param
+        if type_name == "CUmemoryPool":
+            return "MEMORY_POOL", param
+        if type_name == "CUgraph":
+            return "GRAPH", param
+        if type_name == "CUgraphNode":
+            return "GRAPH_NODE", param
+        if type_name == "CUgraphExec":
+            return "GRAPH_EXEC", param
         if type_name == "CUdeviceptr":
             return "DEVICEPTR", param
     return None, None
@@ -1359,6 +1367,14 @@ def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
         return f"({name} != nullptr ? lupine_route_for_stream({name}) : lupine_route_for_default())"
     if kind == "EVENT":
         return f"lupine_route_for_event({name})"
+    if kind == "MEMORY_POOL":
+        return f"lupine_route_for_memory_pool({name})"
+    if kind == "GRAPH":
+        return f"lupine_route_for_graph({name})"
+    if kind == "GRAPH_NODE":
+        return f"lupine_route_for_graph_node({name})"
+    if kind == "GRAPH_EXEC":
+        return f"lupine_route_for_graph_exec({name})"
     if kind == "DEVICEPTR":
         return f"lupine_route_for_deviceptr({name})"
     raise NotImplementedError(f"Unknown routing key kind: {kind}")
@@ -1381,6 +1397,14 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
         fn = "lupine_note_stream_owner"
     elif kind == "EVENT":
         fn = "lupine_note_event_owner"
+    elif kind == "MEMORY_POOL":
+        fn = "lupine_note_memory_pool_owner"
+    elif kind == "GRAPH":
+        fn = "lupine_note_graph_owner"
+    elif kind == "GRAPH_NODE":
+        fn = "lupine_note_graph_node_owner"
+    elif kind == "GRAPH_EXEC":
+        fn = "lupine_note_graph_exec_owner"
     elif kind == "DEVICEPTR":
         fn = "lupine_note_deviceptr_owner"
     else:
@@ -1656,6 +1680,7 @@ def main():
             "#include <unordered_map>\n"
             "#include <vector>\n\n"
             '#include "gen_api.h"\n\n'
+            '#include "client_routing.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -1663,26 +1688,9 @@ def main():
             'extern "C" void lupine_deep_cache_reset(const void *key);\n'
             'extern "C" void *lupine_deep_cache_add(const void *key, '
             "size_t bytes);\n\n"
-            "struct lupine_route {\n"
-            "    int kind;\n"
-            "    conn_t *conn;\n"
-            "};\n\n"
             'extern "C" CUresult lupine_cuInit_multi(unsigned int flags);\n'
             'extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count);\n'
             'extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal);\n'
-            'extern "C" lupine_route lupine_route_for_default();\n'
-            'extern "C" lupine_route lupine_route_for_device(CUdevice *device);\n'
-            'extern "C" lupine_route lupine_route_for_current_context();\n'
-            'extern "C" lupine_route lupine_route_for_context(CUcontext ctx);\n'
-            'extern "C" lupine_route lupine_route_for_module(CUmodule module);\n'
-            'extern "C" lupine_route lupine_route_for_library(CUlibrary library);\n'
-            'extern "C" lupine_route lupine_route_for_function(CUfunction function);\n'
-            'extern "C" lupine_route lupine_route_for_stream(CUstream stream);\n'
-            'extern "C" lupine_route lupine_route_for_event(CUevent event);\n'
-            'extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);\n'
-            'extern "C" bool lupine_route_is_local(lupine_route route);\n'
-            'extern "C" conn_t *lupine_route_remote_conn(lupine_route route);\n'
-            'extern "C" void *lupine_real_cuda_symbol(const char *name);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
             'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'
@@ -1698,16 +1706,12 @@ def main():
             'extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn);\n'
             'extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn);\n'
             'extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn);\n'
+            'extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn);\n'
             'extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);\n\n'
             'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
-            'extern "C" void lupine_note_context_owner_route(CUcontext ctx, lupine_route route);\n'
-            'extern "C" void lupine_note_module_owner_route(CUmodule module, lupine_route route);\n'
-            'extern "C" void lupine_note_library_owner_route(CUlibrary library, lupine_route route);\n'
-            'extern "C" void lupine_note_function_owner_route(CUfunction function, lupine_route route);\n'
-            'extern "C" void lupine_note_stream_owner_route(CUstream stream, lupine_route route);\n'
-            'extern "C" void lupine_note_event_owner_route(CUevent event, lupine_route route);\n'
-            'extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr, lupine_route route);\n\n'
-            'extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr, size_t size, lupine_route route);\n\n'
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
             'extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
@@ -1854,39 +1858,30 @@ def main():
                     )
                 )
                 f.write("    }\n")
-            f.write("    if (lupine_route_is_local(route)) {\n")
             f.write(
-                "        using real_fn_t = {return_type} (*)({params});\n".format(
+                "    {return_type} return_value;\n".format(
+                    return_type=function.return_type.format()
+                )
+            )
+            f.write(
+                "    using real_fn_t = {return_type} (*)({params});\n".format(
                     return_type=function.return_type.format(),
                     params=", ".join([param.type.format() for param in function.parameters]),
                 )
             )
+            call_args = ", ".join(format_call_args(function))
+            helper_args = f", {call_args}" if call_args else ""
             f.write(
-                "        auto real = reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol(\"{name}\"));\n".format(
-                    name=function.name.format()
-                )
-            )
-            f.write(
-                "        if (real == nullptr) return {error_return};\n".format(
-                    error_return=error_const(function.return_type.format())
-                )
-            )
-            f.write(
-                "        {return_type} return_value = real({args});\n".format(
-                    return_type=function.return_type.format(),
-                    args=", ".join(format_call_args(function)),
+                "    if (lupine_call_local_cuda_if_routed<real_fn_t>(\n"
+                "            route, \"{name}\", &return_value{args})) {{\n".format(
+                    name=function.name.format(),
+                    args=helper_args,
                 )
             )
             write_client_post_call(f, function, metadata)
             f.write("        return return_value;\n")
             f.write("    }\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-
-            f.write(
-                "    {return_type} return_value;\n".format(
-                    return_type=function.return_type.format()
-                )
-            )
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
