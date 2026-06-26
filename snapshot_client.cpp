@@ -1,6 +1,7 @@
 #include "snapshot.h"
 
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -11,31 +12,17 @@ extern conn_t *rpc_client_get_connection(unsigned int index);
 namespace {
 
 static const char kBootstrapMagic[] = "LUPSNAP1";
-static constexpr uint32_t kSnapshotIdLen = LUPINE_SNAPSHOT_ID_HEX_BYTES;
 std::mutex g_snapshot_id_mutex;
 char g_snapshot_id[LUPINE_SNAPSHOT_ID_BUFFER_BYTES] = {};
 
 conn_t *snapshot_conn() { return rpc_client_get_connection(0); }
 
-bool valid_client_snapshot_id(const char *id) {
-  if (id == nullptr || strlen(id) != LUPINE_SNAPSHOT_ID_HEX_BYTES) {
-    return false;
-  }
-  for (size_t i = 0; i < LUPINE_SNAPSHOT_ID_HEX_BYTES; ++i) {
-    char c = id[i];
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
-      return false;
-    }
-  }
-  return true;
-}
-
 CUresult write_snapshot_id(conn_t *conn, const char *id) {
-  if (!valid_client_snapshot_id(id)) {
+  if (!lupine_snapshot_id_valid(id)) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  if (rpc_write(conn, &kSnapshotIdLen, sizeof(kSnapshotIdLen)) < 0 ||
-      rpc_write(conn, id, kSnapshotIdLen) < 0) {
+  uint32_t len = static_cast<uint32_t>(strlen(id));
+  if (rpc_write(conn, &len, sizeof(len)) < 0 || rpc_write(conn, id, len) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return CUDA_SUCCESS;
@@ -79,10 +66,10 @@ extern "C" CUresult lupine_snapshot_load(const char *id) {
     g_snapshot_id[0] = '\0';
     return CUDA_SUCCESS;
   }
-  if (!valid_client_snapshot_id(id)) {
+  if (!lupine_snapshot_id_valid(id)) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  memcpy(g_snapshot_id, id, LUPINE_SNAPSHOT_ID_BUFFER_BYTES);
+  snprintf(g_snapshot_id, sizeof(g_snapshot_id), "%s", id);
   return CUDA_SUCCESS;
 }
 
@@ -91,10 +78,10 @@ extern "C" int lupine_snapshot_write_bootstrap(lupine_socket_t connfd) {
   if (id.empty()) {
     return 0;
   }
-  if (!valid_client_snapshot_id(id.c_str())) {
+  if (!lupine_snapshot_id_valid(id.c_str())) {
     return -1;
   }
-  uint32_t len = LUPINE_SNAPSHOT_ID_HEX_BYTES;
+  uint32_t len = static_cast<uint32_t>(id.size());
   if (send_all(connfd, kBootstrapMagic, sizeof(kBootstrapMagic) - 1) < 0 ||
       send_all(connfd, &len, sizeof(len)) < 0 ||
       send_all(connfd, id.data(), len) < 0) {
@@ -104,7 +91,7 @@ extern "C" int lupine_snapshot_write_bootstrap(lupine_socket_t connfd) {
 }
 
 extern "C" CUresult lupine_snapshot_save_and_exit(const char *id) {
-  if (!valid_client_snapshot_id(id)) {
+  if (!lupine_snapshot_id_valid(id)) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   conn_t *conn = snapshot_conn();

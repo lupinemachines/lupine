@@ -152,10 +152,18 @@ def _disconnect() -> None:
     func()
 
 
+SNAPSHOT_ID_MAX_BYTES = 255
+
+
 def _require_snapshot_id(snapshot_id: str) -> str:
+    # Any non-empty string is allowed; the server hashes it into the on-disk
+    # directory name, so it never needs to be a path-safe value itself.
     snapshot_id = str(snapshot_id)
-    if len(snapshot_id) != 32 or any(c not in "0123456789abcdef" for c in snapshot_id):
-        raise LupineError("snapshot id must be 32 lowercase hexadecimal characters")
+    encoded = snapshot_id.encode("utf-8")
+    if not encoded or len(encoded) > SNAPSHOT_ID_MAX_BYTES:
+        raise LupineError(
+            f"snapshot id must be 1-{SNAPSHOT_ID_MAX_BYTES} bytes (UTF-8)"
+        )
     return snapshot_id
 
 

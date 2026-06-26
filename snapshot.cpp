@@ -67,17 +67,20 @@ bool mkdir_p(const std::string &path) {
   return true;
 }
 
-bool valid_snapshot_id(const char *id) {
-  if (id == nullptr || strlen(id) != LUPINE_SNAPSHOT_ID_HEX_BYTES) {
-    return false;
+// Map an arbitrary snapshot id to a stable, path-safe directory name. The id
+// may be any non-empty string; hashing it (FNV-1a 64-bit) means the on-disk
+// name is always a safe single component and is identical across processes
+// (save and restore must resolve to the same directory).
+std::string snapshot_id_dir(const char *id) {
+  uint64_t h = 1469598103934665603ULL;  // FNV-1a offset basis
+  for (const unsigned char *p = reinterpret_cast<const unsigned char *>(id); *p;
+       ++p) {
+    h ^= *p;
+    h *= 1099511628211ULL;  // FNV-1a prime
   }
-  for (size_t i = 0; i < LUPINE_SNAPSHOT_ID_HEX_BYTES; ++i) {
-    char c = id[i];
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
-      return false;
-    }
-  }
-  return true;
+  char buf[17];
+  snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
+  return std::string(buf);
 }
 
 std::string fd_target(int fd) {
@@ -439,7 +442,7 @@ snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
   if (root_env == nullptr) {
     return {CUDA_ERROR_NOT_SUPPORTED};
   }
-  if (!valid_snapshot_id(id)) {
+  if (!lupine_snapshot_id_valid(id)) {
     return {CUDA_ERROR_INVALID_VALUE};
   }
 
@@ -450,7 +453,7 @@ snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
     return {CUDA_ERROR_OPERATING_SYSTEM};
   }
 
-  std::string snapshot_id(id);
+  std::string snapshot_id = snapshot_id_dir(id);
   std::string staging = join_path(staging_root, snapshot_id + ".partial");
   std::string criu_dir = join_path(staging, "criu");
   std::string logs_dir = join_path(staging, "logs");
@@ -655,9 +658,8 @@ int read_snapshot_id(conn_t *conn, std::string *id) {
     LUPINE_LOG_ERROR("Snapshot request failed while reading id length.");
     return -1;
   }
-  if (len != LUPINE_SNAPSHOT_ID_HEX_BYTES) {
-    LUPINE_LOG_ERROR("Snapshot request had id length " << len << ", expected "
-                                                       << LUPINE_SNAPSHOT_ID_HEX_BYTES);
+  if (len == 0 || len > LUPINE_SNAPSHOT_ID_MAX_BYTES) {
+    LUPINE_LOG_ERROR("Snapshot request had out-of-range id length " << len);
     return -1;
   }
   std::vector<char> buf(len + 1, '\0');
@@ -666,7 +668,7 @@ int read_snapshot_id(conn_t *conn, std::string *id) {
     return -1;
   }
   *id = std::string(buf.data(), len);
-  if (!valid_snapshot_id(id->c_str())) {
+  if (!lupine_snapshot_id_valid(id->c_str())) {
     LUPINE_LOG_ERROR("Snapshot request had invalid id bytes: " << *id);
     return -1;
   }
@@ -724,23 +726,23 @@ int lupine_snapshot_read_bootstrap(lupine_socket_t connfd,
   uint32_t len = 0;
   if (recv_exact(connfd, magic, sizeof(magic)) < 0 ||
       memcmp(magic, kBootstrapMagic, sizeof(magic)) != 0 ||
-      recv_exact(connfd, &len, sizeof(len)) < 0 ||
-      len != LUPINE_SNAPSHOT_ID_HEX_BYTES ||
-      recv_exact(connfd, id, LUPINE_SNAPSHOT_ID_HEX_BYTES) < 0) {
+      recv_exact(connfd, &len, sizeof(len)) < 0 || len == 0 ||
+      len > LUPINE_SNAPSHOT_ID_MAX_BYTES || recv_exact(connfd, id, len) < 0) {
     return -1;
   }
-  id[LUPINE_SNAPSHOT_ID_HEX_BYTES] = '\0';
-  return valid_snapshot_id(id) ? 1 : -1;
+  id[len] = '\0';
+  return lupine_snapshot_id_valid(id) ? 1 : -1;
 }
 
 int lupine_snapshot_restore_for_connection(const char *id,
                                            lupine_socket_t connfd) {
   const char *root_env = snapshot_root();
-  if (root_env == nullptr || !valid_snapshot_id(id)) {
+  if (root_env == nullptr || !lupine_snapshot_id_valid(id)) {
     return -1;
   }
 
-  std::string artifact = join_path(join_path(root_env, "objects"), id);
+  std::string artifact =
+      join_path(join_path(root_env, "objects"), snapshot_id_dir(id));
   std::string manifest = join_path(artifact, "manifest.json");
   if (!manifest_exists(artifact)) {
     return 1;

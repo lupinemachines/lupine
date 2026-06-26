@@ -4,11 +4,23 @@
 #include <cuda.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "rpc.h"
 
-#define LUPINE_SNAPSHOT_ID_HEX_BYTES 32
-#define LUPINE_SNAPSHOT_ID_BUFFER_BYTES (LUPINE_SNAPSHOT_ID_HEX_BYTES + 1)
+// A snapshot id can be any non-empty string within this bound; the server
+// hashes it into the on-disk directory name, so it never needs to be a valid
+// path component itself.
+#define LUPINE_SNAPSHOT_ID_MAX_BYTES 255
+#define LUPINE_SNAPSHOT_ID_BUFFER_BYTES (LUPINE_SNAPSHOT_ID_MAX_BYTES + 1)
+
+static inline int lupine_snapshot_id_valid(const char *id) {
+  if (id == NULL) {
+    return 0;
+  }
+  size_t n = strlen(id);
+  return n > 0 && n <= LUPINE_SNAPSHOT_ID_MAX_BYTES;
+}
 
 static constexpr int LUPINE_RPC_snapshot_save_and_exit = 1000104;
 
