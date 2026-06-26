@@ -590,6 +590,20 @@ template <typename Fn> static Fn lupine_real_cuda_fn(const char *name) {
   return reinterpret_cast<Fn>(lupine_real_cuda_symbol(name));
 }
 
+template <typename Fn, typename... Args>
+static bool lupine_call_local_cuda_if_routed(lupine_route route,
+                                             const char *symbol,
+                                             CUresult *result,
+                                             Args... args) {
+  if (route.kind != LUPINE_ROUTE_LOCAL) {
+    return false;
+  }
+  auto real = lupine_real_cuda_fn<Fn>(symbol);
+  *result =
+      real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(args...);
+  return true;
+}
+
 extern "C" bool lupine_route_is_local(lupine_route route) {
   return route.kind == LUPINE_ROUTE_LOCAL;
 }
@@ -6921,11 +6935,20 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
   if (fn == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
+  lupine_route route = hStream == nullptr ? lupine_route_for_current_context()
+                                          : lupine_route_for_stream(hStream);
+  using real_fn_t = CUresult (*)(CUstream, CUhostFn, void *);
+  CUresult local_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuLaunchHostFunc", &local_result, hStream, fn, userData)) {
+    return local_result;
+  }
   add_host_node(reinterpret_cast<void *>(fn), userData);
 
-  conn_t *conn = rpc_client_get_connection(0);
+  conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (rpc_write_start_request(conn, RPC_cuLaunchHostFunc) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuLaunchHostFunc) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &fn, sizeof(fn)) < 0 ||
       rpc_write(conn, &userData, sizeof(userData)) < 0 ||
@@ -6943,9 +6966,20 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
   if (callback == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  conn_t *conn = rpc_client_get_connection(0);
+  lupine_route route = hStream == nullptr ? lupine_route_for_current_context()
+                                          : lupine_route_for_stream(hStream);
+  using real_fn_t =
+      CUresult (*)(CUstream, CUstreamCallback, void *, unsigned int);
+  CUresult local_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuStreamAddCallback", &local_result, hStream, callback,
+          userData, flags)) {
+    return local_result;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (rpc_write_start_request(conn, RPC_cuStreamAddCallback) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuStreamAddCallback) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &callback, sizeof(callback)) < 0 ||
       rpc_write(conn, &userData, sizeof(userData)) < 0 ||

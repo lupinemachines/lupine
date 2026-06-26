@@ -1736,6 +1736,22 @@ def main():
             'extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer, CUdevice dev, CUdevice peerDev);\n'
             'extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext, unsigned int flags);\n'
             'extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);\n\n'
+            "template <typename Fn> static Fn lupine_real_cuda_fn(const char *name) {\n"
+            "    return reinterpret_cast<Fn>(lupine_real_cuda_symbol(name));\n"
+            "}\n\n"
+            "template <typename Fn, typename... Args>\n"
+            "static bool lupine_call_local_cuda_if_routed(lupine_route route,\n"
+            "                                             const char *symbol,\n"
+            "                                             CUresult *result,\n"
+            "                                             Args... args) {\n"
+            "    if (!lupine_route_is_local(route)) {\n"
+            "        return false;\n"
+            "    }\n"
+            "    auto real = lupine_real_cuda_fn<Fn>(symbol);\n"
+            "    *result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE\n"
+            "                              : real(args...);\n"
+            "    return true;\n"
+            "}\n\n"
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1854,39 +1870,30 @@ def main():
                     )
                 )
                 f.write("    }\n")
-            f.write("    if (lupine_route_is_local(route)) {\n")
             f.write(
-                "        using real_fn_t = {return_type} (*)({params});\n".format(
+                "    {return_type} return_value;\n".format(
+                    return_type=function.return_type.format()
+                )
+            )
+            f.write(
+                "    using real_fn_t = {return_type} (*)({params});\n".format(
                     return_type=function.return_type.format(),
                     params=", ".join([param.type.format() for param in function.parameters]),
                 )
             )
+            call_args = ", ".join(format_call_args(function))
+            helper_args = f", {call_args}" if call_args else ""
             f.write(
-                "        auto real = reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol(\"{name}\"));\n".format(
-                    name=function.name.format()
-                )
-            )
-            f.write(
-                "        if (real == nullptr) return {error_return};\n".format(
-                    error_return=error_const(function.return_type.format())
-                )
-            )
-            f.write(
-                "        {return_type} return_value = real({args});\n".format(
-                    return_type=function.return_type.format(),
-                    args=", ".join(format_call_args(function)),
+                "    if (lupine_call_local_cuda_if_routed<real_fn_t>(\n"
+                "            route, \"{name}\", &return_value{args})) {{\n".format(
+                    name=function.name.format(),
+                    args=helper_args,
                 )
             )
             write_client_post_call(f, function, metadata)
             f.write("        return return_value;\n")
             f.write("    }\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-
-            f.write(
-                "    {return_type} return_value;\n".format(
-                    return_type=function.return_type.format()
-                )
-            )
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
