@@ -44,6 +44,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
 #include "lupine_attr_sizes.h"
@@ -229,15 +230,6 @@ static std::vector<CUmodule> &lupine_loaded_modules() {
   static std::vector<CUmodule> modules;
   return modules;
 }
-
-static constexpr int LUPINE_ROUTE_REMOTE = 0;
-static constexpr int LUPINE_ROUTE_LOCAL = 1;
-static constexpr int LUPINE_ROUTE_INVALID = 2;
-
-struct lupine_route {
-  int kind = LUPINE_ROUTE_INVALID;
-  conn_t *conn = nullptr;
-};
 
 struct lupine_owner {
   bool local = false;
@@ -607,30 +599,6 @@ extern "C" void *lupine_real_cuda_symbol(const char *name) {
     return nullptr;
   }
   return lupine_real_dlsym(handle, name);
-}
-
-template <typename Fn> static Fn lupine_real_cuda_fn(const char *name) {
-  return reinterpret_cast<Fn>(lupine_real_cuda_symbol(name));
-}
-
-template <typename Fn, typename... Args>
-static bool lupine_call_local_cuda_if_routed(lupine_route route,
-                                             const char *symbol,
-                                             CUresult *result, Args... args) {
-  if (route.kind != LUPINE_ROUTE_LOCAL) {
-    return false;
-  }
-  auto real = lupine_real_cuda_fn<Fn>(symbol);
-  *result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(args...);
-  return true;
-}
-
-extern "C" bool lupine_route_is_local(lupine_route route) {
-  return route.kind == LUPINE_ROUTE_LOCAL;
-}
-
-extern "C" conn_t *lupine_route_remote_conn(lupine_route route) {
-  return route.kind == LUPINE_ROUTE_REMOTE ? route.conn : nullptr;
 }
 
 static lupine_route lupine_remote_route_for_conn(conn_t *conn) {
