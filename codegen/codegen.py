@@ -1002,6 +1002,9 @@ def parse_annotation(
             continue
         if line.startswith("*"):
             line = line[2:]
+        if line.strip().startswith("@async"):
+            metadata.async_fire_forget = True
+            continue
         if line.startswith("@routingkey"):
             parts = line.split()
             if len(parts) < 2:
@@ -1882,11 +1885,12 @@ def main():
             f.write("    }\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
 
-            f.write(
-                "    {return_type} return_value;\n".format(
-                    return_type=function.return_type.format()
+            if not metadata.async_fire_forget:
+                f.write(
+                    "    {return_type} return_value;\n".format(
+                        return_type=function.return_type.format()
+                    )
                 )
-            )
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
@@ -1920,6 +1924,31 @@ def main():
                             param_name=operation.parameter.name,
                         )
                     )
+
+            if metadata.async_fire_forget:
+                # Fire-and-forget: queue the request in the coalescing buffer and
+                # return success without waiting. The server sends no response;
+                # errors surface at the next synchronizing RPC.
+                f.write(
+                    "    if (conn == nullptr ||\n"
+                    "        rpc_write_start_request_async(conn, RPC_{name}) < 0 ||\n".format(
+                        name=function.name.format()
+                    )
+                )
+                for operation in operations:
+                    operation.client_rpc_write(f)
+                f.write("        rpc_write_end_batched(conn) < 0) {\n")
+                f.write("        if (conn != nullptr) pthread_mutex_unlock(&conn->call_mutex);\n")
+                f.write(
+                    "        return {error_return};\n".format(
+                        error_return=error_const(function.return_type.format())
+                    )
+                )
+                f.write("    }\n")
+                f.write("    pthread_mutex_unlock(&conn->call_mutex);\n")
+                f.write("    return CUDA_SUCCESS;\n")
+                f.write("}\n\n")
+                continue
 
             f.write(
                 "    if (conn == nullptr ||\n"
@@ -2119,20 +2148,27 @@ def main():
                     )
                 )
 
-            f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+            if metadata.async_fire_forget:
+                # Fire-and-forget: the client does not wait for a response, so
+                # none is sent. Errors surface at the next synchronizing RPC.
+                f.write("    (void) lupine_intercept_result;\n")
+                f.write("\n")
+                f.write("    return 0;\n")
+            else:
+                f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
 
-            for operation in operations:
-                operation.server_rpc_write(f)
+                for operation in operations:
+                    operation.server_rpc_write(f)
 
-            f.write(
-                "        rpc_write(conn, &lupine_intercept_result, sizeof({return_type})) < 0 ||\n".format(
-                    return_type=function.return_type.format()
+                f.write(
+                    "        rpc_write(conn, &lupine_intercept_result, sizeof({return_type})) < 0 ||\n".format(
+                        return_type=function.return_type.format()
+                    )
                 )
-            )
-            f.write("        rpc_write_end(conn) < 0)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
-            f.write("\n")
-            f.write("    return 0;\n")
+                f.write("        rpc_write_end(conn) < 0)\n")
+                f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+                f.write("\n")
+                f.write("    return 0;\n")
 
             for i, defer in enumerate(defers):
                 f.write("ERROR_{index}:\n".format(index=len(defers) - i))

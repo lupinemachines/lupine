@@ -2062,18 +2062,19 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemcpyDtoDAsync_v2) < 0 ||
+      rpc_write_start_request_async(conn, RPC_cuMemcpyDtoDAsync_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end_batched(conn) < 0) {
+    if (conn != nullptr)
+      pthread_mutex_unlock(&conn->call_mutex);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  pthread_mutex_unlock(&conn->call_mutex);
+  return CUDA_SUCCESS;
 }
 
 CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N) {

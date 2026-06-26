@@ -2749,6 +2749,7 @@ CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
 CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
 /**
+ * @async
  * @routingkey DEVICEPTR dstDevice
  * @crossservercopy dstDevice srcDevice ByteCount STREAM:hStream ASYNC
  * @param dstDevice SEND_ONLY

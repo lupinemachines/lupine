@@ -2461,10 +2461,7 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   lupine_intercept_result =
       cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  (void)lupine_intercept_result;
 
   return 0;
 ERROR_0:
