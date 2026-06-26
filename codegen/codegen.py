@@ -961,6 +961,14 @@ def infer_routing_key(
             return "STREAM", param
         if type_name == "CUevent":
             return "EVENT", param
+        if type_name == "CUmemoryPool":
+            return "MEMORY_POOL", param
+        if type_name == "CUgraph":
+            return "GRAPH", param
+        if type_name == "CUgraphNode":
+            return "GRAPH_NODE", param
+        if type_name == "CUgraphExec":
+            return "GRAPH_EXEC", param
         if type_name == "CUdeviceptr":
             return "DEVICEPTR", param
     return None, None
@@ -1359,6 +1367,14 @@ def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
         return f"({name} != nullptr ? lupine_route_for_stream({name}) : lupine_route_for_default())"
     if kind == "EVENT":
         return f"lupine_route_for_event({name})"
+    if kind == "MEMORY_POOL":
+        return f"lupine_route_for_memory_pool({name})"
+    if kind == "GRAPH":
+        return f"lupine_route_for_graph({name})"
+    if kind == "GRAPH_NODE":
+        return f"lupine_route_for_graph_node({name})"
+    if kind == "GRAPH_EXEC":
+        return f"lupine_route_for_graph_exec({name})"
     if kind == "DEVICEPTR":
         return f"lupine_route_for_deviceptr({name})"
     raise NotImplementedError(f"Unknown routing key kind: {kind}")
@@ -1381,6 +1397,14 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
         fn = "lupine_note_stream_owner"
     elif kind == "EVENT":
         fn = "lupine_note_event_owner"
+    elif kind == "MEMORY_POOL":
+        fn = "lupine_note_memory_pool_owner"
+    elif kind == "GRAPH":
+        fn = "lupine_note_graph_owner"
+    elif kind == "GRAPH_NODE":
+        fn = "lupine_note_graph_node_owner"
+    elif kind == "GRAPH_EXEC":
+        fn = "lupine_note_graph_exec_owner"
     elif kind == "DEVICEPTR":
         fn = "lupine_note_deviceptr_owner"
     else:
@@ -1679,6 +1703,10 @@ def main():
             'extern "C" lupine_route lupine_route_for_function(CUfunction function);\n'
             'extern "C" lupine_route lupine_route_for_stream(CUstream stream);\n'
             'extern "C" lupine_route lupine_route_for_event(CUevent event);\n'
+            'extern "C" lupine_route lupine_route_for_memory_pool(CUmemoryPool pool);\n'
+            'extern "C" lupine_route lupine_route_for_graph(CUgraph graph);\n'
+            'extern "C" lupine_route lupine_route_for_graph_node(CUgraphNode node);\n'
+            'extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec);\n'
             'extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);\n'
             'extern "C" bool lupine_route_is_local(lupine_route route);\n'
             'extern "C" conn_t *lupine_route_remote_conn(lupine_route route);\n'
@@ -1698,6 +1726,10 @@ def main():
             'extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn);\n'
             'extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn);\n'
             'extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn);\n'
+            'extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn);\n'
+            'extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn);\n'
             'extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);\n\n'
             'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
             'extern "C" void lupine_note_context_owner_route(CUcontext ctx, lupine_route route);\n'
@@ -1706,6 +1738,10 @@ def main():
             'extern "C" void lupine_note_function_owner_route(CUfunction function, lupine_route route);\n'
             'extern "C" void lupine_note_stream_owner_route(CUstream stream, lupine_route route);\n'
             'extern "C" void lupine_note_event_owner_route(CUevent event, lupine_route route);\n'
+            'extern "C" void lupine_note_memory_pool_owner_route(CUmemoryPool pool, lupine_route route);\n'
+            'extern "C" void lupine_note_graph_owner_route(CUgraph graph, lupine_route route);\n'
+            'extern "C" void lupine_note_graph_node_owner_route(CUgraphNode node, lupine_route route);\n'
+            'extern "C" void lupine_note_graph_exec_owner_route(CUgraphExec exec, lupine_route route);\n'
             'extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr, lupine_route route);\n\n'
             'extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr, size_t size, lupine_route route);\n\n'
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'

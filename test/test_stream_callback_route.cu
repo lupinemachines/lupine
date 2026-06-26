@@ -51,6 +51,16 @@ int main() {
     return EXIT_SUCCESS;
   }
 
+  CUdevice first_device = 0;
+  CHECK(cuDeviceGet(&first_device, 0));
+
+  CUcontext first_context = nullptr;
+#if CUDA_VERSION >= 13000
+  CHECK(cuCtxCreate(&first_context, nullptr, 0, first_device));
+#else
+  CHECK(cuCtxCreate(&first_context, 0, first_device));
+#endif
+
   CUdevice device = 0;
   CHECK(cuDeviceGet(&device, device_count - 1));
 
@@ -69,8 +79,7 @@ int main() {
   CHECK(cuStreamAddCallback(stream, stream_callback, &state, 0));
   CHECK(cuStreamSynchronize(stream));
 
-  int launch_count =
-      state.launch_host_count.load(std::memory_order_relaxed);
+  int launch_count = state.launch_host_count.load(std::memory_order_relaxed);
   int callback_count =
       state.stream_callback_count.load(std::memory_order_relaxed);
   if (launch_count != 1 || callback_count != 1 ||
@@ -84,8 +93,38 @@ int main() {
     return EXIT_FAILURE;
   }
 
+  CUgraph graph = nullptr;
+  CHECK(cuGraphCreate(&graph, 0));
+  CHECK(cuCtxSetCurrent(first_context));
+
+  CUDA_HOST_NODE_PARAMS host_params = {};
+  host_params.fn = launch_host_fn;
+  host_params.userData = &state;
+  CUgraphNode host_node = nullptr;
+  CHECK(cuGraphAddHostNode(&host_node, graph, nullptr, 0, &host_params));
+
+  CUDA_HOST_NODE_PARAMS got_params = {};
+  CHECK(cuGraphHostNodeGetParams(host_node, &got_params));
+  if (got_params.fn != launch_host_fn || got_params.userData != &state) {
+    std::fprintf(stderr, "unexpected host node params after context switch\n");
+    return EXIT_FAILURE;
+  }
+
+  size_t edge_count = 0;
+#ifdef cuGraphGetEdges
+  CHECK(cuGraphGetEdges(graph, nullptr, nullptr, nullptr, &edge_count));
+#else
+  CHECK(cuGraphGetEdges(graph, nullptr, nullptr, &edge_count));
+#endif
+  if (edge_count != 0) {
+    std::fprintf(stderr, "unexpected edge count: %zu\n", edge_count);
+    return EXIT_FAILURE;
+  }
+
   CHECK(cuStreamDestroy(stream));
+  CHECK(cuGraphDestroy(graph));
   CHECK(cuCtxDestroy(context));
+  CHECK(cuCtxDestroy(first_context));
   std::printf("PASS: stream callbacks routed on device ordinal %d\n",
               device_count - 1);
   return EXIT_SUCCESS;
