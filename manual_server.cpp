@@ -51,6 +51,13 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
 
+struct lupine_graph_node_type_metadata {
+  CUgraphNode node = nullptr;
+  CUresult type_result = CUDA_ERROR_INVALID_VALUE;
+  CUgraphNodeType type = CU_GRAPH_NODE_TYPE_EMPTY;
+  CUresult params_result = CUDA_ERROR_NOT_SUPPORTED;
+};
+
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
                                            CUdevice dev);
 
@@ -1925,8 +1932,9 @@ lupine_prepare_server_kernel_params(const CUDA_KERNEL_NODE_PARAMS &nodeParams,
   *serialParams = nodeParams;
   serialParams->kernelParams = nullptr;
   serialParams->extra = nullptr;
-  for (uint32_t i = 0; i < layout->count; ++i) {
-    *payloadSize += layout->sizes[i];
+  if (rpc_kernel_param_payload_size(layout->count, layout->sizes, payloadSize) <
+      0) {
+    return CUDA_ERROR_INVALID_VALUE;
   }
   return CUDA_SUCCESS;
 }
@@ -1956,17 +1964,17 @@ lupine_read_kernel_param_values(conn_t *conn,
   if (result != CUDA_SUCCESS) {
     return result;
   }
-  if (layout.count != paramCount) {
+  size_t expected_payload_size = 0;
+  if (layout.count != paramCount ||
+      rpc_kernel_param_payload_size(layout.count, layout.sizes,
+                                    &expected_payload_size) < 0 ||
+      payloadSize != expected_payload_size) {
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  size_t expected_payload_size = 0;
   size_t storage_size = 0;
-  for (uint32_t i = 0; i < layout.count; ++i) {
-    expected_payload_size += layout.sizes[i];
-    storage_size = std::max(storage_size, layout.offsets[i] + layout.sizes[i]);
-  }
-  if (payloadSize != expected_payload_size) {
+  if (rpc_kernel_param_storage_size(layout.count, layout.offsets, layout.sizes,
+                                    &storage_size) < 0) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   payload->storage.assign(storage_size, 0);
@@ -2015,6 +2023,69 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
+  return 0;
+}
+
+int handle_manual_cuGraphGetNodesWithMetadata(conn_t *conn) {
+  CUgraph hGraph = nullptr;
+  size_t numNodes = 0;
+  size_t requested = 0;
+  uint8_t nodes_present = 0;
+  CUgraphNode *nodes = nullptr;
+
+  if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
+      rpc_read(conn, &requested, sizeof(requested)) < 0 ||
+      rpc_read(conn, &nodes_present, sizeof(nodes_present)) < 0) {
+    return -1;
+  }
+  numNodes = requested;
+  if (nodes_present != 0 && requested != 0) {
+    nodes = static_cast<CUgraphNode *>(malloc(requested * sizeof(CUgraphNode)));
+    if (nodes == nullptr) {
+      return -1;
+    }
+  }
+
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    free(nodes);
+    return -1;
+  }
+
+  CUresult result = cuGraphGetNodes(hGraph, nodes, &numNodes);
+  size_t transfer_count =
+      (nodes_present != 0 && nodes != nullptr) ? std::min(numNodes, requested)
+                                               : 0;
+  uint32_t metadata_count =
+      (result == CUDA_SUCCESS && nodes_present != 0 && nodes != nullptr)
+          ? static_cast<uint32_t>(transfer_count)
+          : 0;
+
+  std::vector<lupine_graph_node_type_metadata> metadata(metadata_count);
+  for (uint32_t i = 0; i < metadata_count; ++i) {
+    metadata[i].node = nodes[i];
+    metadata[i].type_result =
+        cuGraphNodeGetType(metadata[i].node, &metadata[i].type);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &numNodes, sizeof(numNodes)) < 0 ||
+      (transfer_count != 0 &&
+       rpc_write(conn, nodes, transfer_count * sizeof(CUgraphNode)) < 0) ||
+      rpc_write(conn, &metadata_count, sizeof(metadata_count)) < 0 ||
+      (metadata_count != 0 &&
+       rpc_write(conn, metadata.data(),
+                 metadata_count * sizeof(lupine_graph_node_type_metadata)) <
+           0)) {
+    free(nodes);
+    return -1;
+  }
+
+  if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    free(nodes);
+    return -1;
+  }
+  free(nodes);
   return 0;
 }
 
@@ -2943,15 +3014,83 @@ int handle_manual_cuGraphClone(conn_t *conn) {
   return 0;
 }
 
+struct lupine_pending_graph_kernel_node_set_server {
+  CUgraphNode node = nullptr;
+  CUDA_KERNEL_NODE_PARAMS nodeParams = {};
+  lupine_kernel_param_payload payload;
+};
+
+static int lupine_read_pending_graph_kernel_node_sets(
+    conn_t *conn, std::vector<lupine_pending_graph_kernel_node_set_server> *sets,
+    CUresult *result) {
+  if (conn == nullptr || sets == nullptr || result == nullptr) {
+    return -1;
+  }
+  uint32_t pending_count = 0;
+  if (rpc_read(conn, &pending_count, sizeof(pending_count)) < 0) {
+    LUPINE_LOG_ERROR("LUPINE failed to read pending graph setparams count");
+    return -1;
+  }
+  LUPINE_TRACE_LOG("LUPINE reading pending graph setparams count="
+                   << pending_count);
+  sets->resize(pending_count);
+  for (uint32_t i = 0; i < pending_count; ++i) {
+    uint32_t param_count = 0;
+    size_t payload_size = 0;
+    if (rpc_read(conn, &(*sets)[i].node, sizeof((*sets)[i].node)) < 0 ||
+        rpc_read(conn, &(*sets)[i].nodeParams,
+                 sizeof((*sets)[i].nodeParams)) < 0 ||
+        rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
+        rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+      LUPINE_LOG_ERROR("LUPINE failed to read pending graph setparams header");
+      return -1;
+    }
+    LUPINE_TRACE_LOG("LUPINE reading pending graph setparams node="
+                     << (*sets)[i].node << " params=" << param_count
+                     << " payload=" << payload_size);
+    CUresult read_result =
+        lupine_read_kernel_param_values(conn, (*sets)[i].nodeParams,
+                                        param_count, payload_size,
+                                        &(*sets)[i].payload);
+    if (read_result != CUDA_SUCCESS && *result == CUDA_SUCCESS) {
+      *result = read_result;
+    }
+  }
+  return 0;
+}
+
+static CUresult lupine_apply_pending_graph_kernel_node_sets(
+    std::vector<lupine_pending_graph_kernel_node_set_server> *sets,
+    CUresult result) {
+  if (sets == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  for (auto &entry : *sets) {
+    entry.nodeParams.kernelParams =
+        entry.payload.params.empty() ? nullptr : entry.payload.params.data();
+    entry.nodeParams.extra = nullptr;
+    result = cuGraphKernelNodeSetParams_v2(entry.node, &entry.nodeParams);
+    if (result != CUDA_SUCCESS) {
+      break;
+    }
+  }
+  return result;
+}
+
 int handle_manual_cuGraphInstantiateWithFlags(conn_t *conn) {
   CUgraphExec exec = nullptr;
   CUgraph graph = nullptr;
   unsigned long long flags = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  std::vector<lupine_pending_graph_kernel_node_set_server> pending;
+  CUresult result = CUDA_SUCCESS;
 
   if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
       rpc_read(conn, &graph, sizeof(graph)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+      rpc_read(conn, &flags, sizeof(flags)) < 0 ||
+      lupine_read_pending_graph_kernel_node_sets(conn, &pending, &result) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -2959,7 +3098,10 @@ int handle_manual_cuGraphInstantiateWithFlags(conn_t *conn) {
     return -1;
   }
 
-  result = cuGraphInstantiateWithFlags(&exec, graph, flags);
+  result = lupine_apply_pending_graph_kernel_node_sets(&pending, result);
+  if (result == CUDA_SUCCESS) {
+    result = cuGraphInstantiateWithFlags(&exec, graph, flags);
+  }
   if (result == CUDA_SUCCESS) {
     auto graph_it = lupine_graph_resource_map().find(graph);
     if (graph_it != lupine_graph_resource_map().end()) {
@@ -2979,11 +3121,13 @@ int handle_manual_cuGraphInstantiateWithParams(conn_t *conn) {
   CUgraphExec exec = nullptr;
   CUgraph graph = nullptr;
   CUDA_GRAPH_INSTANTIATE_PARAMS params = {};
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  std::vector<lupine_pending_graph_kernel_node_set_server> pending;
+  CUresult result = CUDA_SUCCESS;
 
   if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
       rpc_read(conn, &graph, sizeof(graph)) < 0 ||
-      rpc_read(conn, &params, sizeof(params)) < 0) {
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      lupine_read_pending_graph_kernel_node_sets(conn, &pending, &result) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -2991,7 +3135,10 @@ int handle_manual_cuGraphInstantiateWithParams(conn_t *conn) {
     return -1;
   }
 
-  result = cuGraphInstantiateWithParams(&exec, graph, &params);
+  result = lupine_apply_pending_graph_kernel_node_sets(&pending, result);
+  if (result == CUDA_SUCCESS) {
+    result = cuGraphInstantiateWithParams(&exec, graph, &params);
+  }
   if (result == CUDA_SUCCESS) {
     auto graph_it = lupine_graph_resource_map().find(graph);
     if (graph_it != lupine_graph_resource_map().end()) {
@@ -3046,6 +3193,38 @@ int handle_manual_cuGraphDestroy(conn_t *conn) {
     lupine_graph_resource_map().erase(graph_resource_it);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_cuGraphExecUpdateWithSetParams(conn_t *conn) {
+  CUgraphExec hGraphExec = nullptr;
+  CUgraph hGraph = nullptr;
+  CUgraphExecUpdateResultInfo resultInfo = {};
+  std::vector<lupine_pending_graph_kernel_node_set_server> pending;
+  CUresult result = CUDA_SUCCESS;
+
+  if (rpc_read(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
+      rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
+      rpc_read(conn, &resultInfo, sizeof(resultInfo)) < 0 ||
+      lupine_read_pending_graph_kernel_node_sets(conn, &pending, &result) < 0) {
+    return -1;
+  }
+
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  result = lupine_apply_pending_graph_kernel_node_sets(&pending, result);
+  if (result == CUDA_SUCCESS) {
+    result = cuGraphExecUpdate_v2(hGraphExec, hGraph, &resultInfo);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &resultInfo, sizeof(resultInfo)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -3371,15 +3550,25 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
 int handle_manual_cuGraphLaunch(conn_t *conn) {
   CUgraphExec exec = nullptr;
   CUstream stream = nullptr;
+  std::vector<lupine_pending_graph_kernel_node_set_server> pending;
+  CUresult result = CUDA_SUCCESS;
   if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      lupine_read_pending_graph_kernel_node_sets(conn, &pending, &result) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
-  CUresult result = cuGraphLaunch(exec, stream);
+  result = lupine_apply_pending_graph_kernel_node_sets(&pending, result);
+  if (result == CUDA_SUCCESS) {
+    result = cuGraphLaunch(exec, stream);
+  }
+  LUPINE_TRACE_LOG("LUPINE cuGraphLaunch exec="
+                   << exec << " stream=" << stream
+                   << " pending_sets=" << pending.size()
+                   << " result=" << result);
   auto exec_it = lupine_graph_exec_resource_map().find(exec);
   if (result == CUDA_SUCCESS &&
       exec_it != lupine_graph_exec_resource_map().end()) {

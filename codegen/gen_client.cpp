@@ -5788,61 +5788,6 @@ CUresult cuGraphNodeFindInClone(CUgraphNode *phNode, CUgraphNode hOriginalNode,
   return return_value;
 }
 
-CUresult cuGraphNodeGetType(CUgraphNode hNode, CUgraphNodeType *type) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUgraphNode, CUgraphNodeType *);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuGraphNodeGetType"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hNode, type);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetType) < 0 ||
-      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, type, sizeof(CUgraphNodeType)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, type, sizeof(CUgraphNodeType)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUgraph, CUgraphNode *, size_t *);
-    auto real =
-        reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol("cuGraphGetNodes"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hGraph, nodes, numNodes);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  size_t numNodes_requested = (nodes != nullptr) ? *numNodes : 0;
-  uint8_t nodes_present = nodes != nullptr ? 1 : 0;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphGetNodes) < 0 ||
-      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &numNodes_requested, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &nodes_present, sizeof(uint8_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, numNodes, sizeof(size_t)) < 0 ||
-      (nodes != nullptr && *numNodes != 0 &&
-       rpc_read(conn, nodes, *numNodes * sizeof(CUgraphNode)) < 0) ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuGraphGetRootNodes(CUgraph hGraph, CUgraphNode *rootNodes,
                              size_t *numRootNodes) {
   lupine_route route = lupine_route_for_default();
@@ -5891,65 +5836,6 @@ CUresult cuGraphDestroyNode(CUgraphNode hNode) {
       rpc_write_start_request(conn, RPC_cuGraphDestroyNode) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuGraphInstantiateWithFlags(CUgraphExec *phGraphExec, CUgraph hGraph,
-                                     unsigned long long flags) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUgraphExec *, CUgraph, unsigned long long);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuGraphInstantiateWithFlags"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(phGraphExec, hGraph, flags);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphInstantiateWithFlags) < 0 ||
-      rpc_write(conn, phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult
-cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
-                             CUDA_GRAPH_INSTANTIATE_PARAMS *instantiateParams) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t =
-        CUresult (*)(CUgraphExec *, CUgraph, CUDA_GRAPH_INSTANTIATE_PARAMS *);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuGraphInstantiateWithParams"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(phGraphExec, hGraph, instantiateParams);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphInstantiateWithParams) < 0 ||
-      rpc_write(conn, phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, instantiateParams,
-                sizeof(CUDA_GRAPH_INSTANTIATE_PARAMS)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_read(conn, instantiateParams, sizeof(CUDA_GRAPH_INSTANTIATE_PARAMS)) <
-          0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6278,30 +6164,6 @@ CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream) {
   return return_value;
 }
 
-CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUgraphExec, CUstream);
-    auto real =
-        reinterpret_cast<real_fn_t>(lupine_real_cuda_symbol("cuGraphLaunch"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hGraphExec, hStream);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuGraphLaunch) < 0 ||
-      rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuGraphExecDestroy(CUgraphExec hGraphExec) {
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
@@ -6342,34 +6204,6 @@ CUresult cuGraphDestroy(CUgraph hGraph) {
       rpc_write_start_request(conn, RPC_cuGraphDestroy) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuGraphExecUpdate_v2(CUgraphExec hGraphExec, CUgraph hGraph,
-                              CUgraphExecUpdateResultInfo *resultInfo) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    using real_fn_t =
-        CUresult (*)(CUgraphExec, CUgraph, CUgraphExecUpdateResultInfo *);
-    auto real = reinterpret_cast<real_fn_t>(
-        lupine_real_cuda_symbol("cuGraphExecUpdate_v2"));
-    if (real == nullptr)
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    CUresult return_value = real(hGraphExec, hGraph, resultInfo);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphExecUpdate_v2) < 0 ||
-      rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, resultInfo, sizeof(CUgraphExecUpdateResultInfo)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, resultInfo, sizeof(CUgraphExecUpdateResultInfo)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -8045,17 +7879,6 @@ extern "C" CUresult cuStreamBeginCapture(CUstream hStream,
   return cuStreamBeginCapture_v2(hStream, mode);
 }
 
-#if CUDA_VERSION >= 12000
-#ifdef cuGraphExecUpdate
-#undef cuGraphExecUpdate
-#endif
-extern "C" CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
-                                      CUgraphExecUpdateResultInfo *resultInfo) {
-  return cuGraphExecUpdate_v2(hGraphExec, hGraph, resultInfo);
-}
-
-#endif
-
 #ifdef cuMemcpy_ptds
 #undef cuMemcpy_ptds
 #endif
@@ -8262,29 +8085,12 @@ extern "C" CUresult cuWaitExternalSemaphoresAsync_ptsz(
                                        stream);
 }
 
-#ifdef cuGraphInstantiateWithParams_ptsz
-#undef cuGraphInstantiateWithParams_ptsz
-#endif
-extern "C" CUresult cuGraphInstantiateWithParams_ptsz(
-    CUgraphExec *phGraphExec, CUgraph hGraph,
-    CUDA_GRAPH_INSTANTIATE_PARAMS *instantiateParams) {
-  return cuGraphInstantiateWithParams(phGraphExec, hGraph, instantiateParams);
-}
-
 #ifdef cuGraphUpload_ptsz
 #undef cuGraphUpload_ptsz
 #endif
 extern "C" CUresult cuGraphUpload_ptsz(CUgraphExec hGraphExec,
                                        CUstream hStream) {
   return cuGraphUpload(hGraphExec, hStream);
-}
-
-#ifdef cuGraphLaunch_ptsz
-#undef cuGraphLaunch_ptsz
-#endif
-extern "C" CUresult cuGraphLaunch_ptsz(CUgraphExec hGraphExec,
-                                       CUstream hStream) {
-  return cuGraphLaunch(hGraphExec, hStream);
 }
 
 #ifdef cuStreamCopyAttributes_ptsz
@@ -8571,12 +8377,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuDeviceGraphMemTrim", (void *)cuDeviceGraphMemTrim},
     {"cuGraphClone", (void *)cuGraphClone},
     {"cuGraphNodeFindInClone", (void *)cuGraphNodeFindInClone},
-    {"cuGraphNodeGetType", (void *)cuGraphNodeGetType},
-    {"cuGraphGetNodes", (void *)cuGraphGetNodes},
     {"cuGraphGetRootNodes", (void *)cuGraphGetRootNodes},
     {"cuGraphDestroyNode", (void *)cuGraphDestroyNode},
-    {"cuGraphInstantiateWithFlags", (void *)cuGraphInstantiateWithFlags},
-    {"cuGraphInstantiateWithParams", (void *)cuGraphInstantiateWithParams},
     {"cuGraphExecGetFlags", (void *)cuGraphExecGetFlags},
     {"cuGraphExecMemcpyNodeSetParams", (void *)cuGraphExecMemcpyNodeSetParams},
     {"cuGraphExecMemsetNodeSetParams", (void *)cuGraphExecMemsetNodeSetParams},
@@ -8593,10 +8395,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphNodeSetEnabled", (void *)cuGraphNodeSetEnabled},
     {"cuGraphNodeGetEnabled", (void *)cuGraphNodeGetEnabled},
     {"cuGraphUpload", (void *)cuGraphUpload},
-    {"cuGraphLaunch", (void *)cuGraphLaunch},
     {"cuGraphExecDestroy", (void *)cuGraphExecDestroy},
     {"cuGraphDestroy", (void *)cuGraphDestroy},
-    {"cuGraphExecUpdate_v2", (void *)cuGraphExecUpdate_v2},
     {"cuGraphKernelNodeCopyAttributes",
      (void *)cuGraphKernelNodeCopyAttributes},
     {"cuGraphKernelNodeGetAttribute", (void *)cuGraphKernelNodeGetAttribute},
@@ -8687,7 +8487,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemsetD2D16", (void *)cuMemsetD2D16_v2},
     {"cuMemsetD2D32", (void *)cuMemsetD2D32_v2},
     {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
-    {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
     {"cuMemcpy_ptds", (void *)cuMemcpy},
     {"cuMemcpyPeer_ptds", (void *)cuMemcpyPeer},
     {"cuMemcpyPeerAsync_ptsz", (void *)cuMemcpyPeerAsync},
@@ -8713,9 +8512,7 @@ std::unordered_map<std::string, void *> functionMap = {
      (void *)cuSignalExternalSemaphoresAsync},
     {"cuWaitExternalSemaphoresAsync_ptsz",
      (void *)cuWaitExternalSemaphoresAsync},
-    {"cuGraphInstantiateWithParams_ptsz", (void *)cuGraphInstantiateWithParams},
     {"cuGraphUpload_ptsz", (void *)cuGraphUpload},
-    {"cuGraphLaunch_ptsz", (void *)cuGraphLaunch},
     {"cuStreamCopyAttributes_ptsz", (void *)cuStreamCopyAttributes},
     {"cuStreamGetAttribute_ptsz", (void *)cuStreamGetAttribute},
     {"cuStreamSetAttribute_ptsz", (void *)cuStreamSetAttribute},

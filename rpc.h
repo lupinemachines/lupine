@@ -50,6 +50,11 @@ extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 
+extern int rpc_kernel_param_payload_size(uint32_t count, const size_t *sizes,
+                                         size_t *payload_size);
+extern int rpc_kernel_param_storage_size(uint32_t count, const size_t *offsets,
+                                         const size_t *sizes,
+                                         size_t *storage_size);
 extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                          const size_t *sizes,
                                          void *const *values);

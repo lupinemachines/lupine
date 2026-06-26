@@ -168,6 +168,8 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
     "cuGraphConditionalHandleCreate",
+    "cuGraphExecUpdateWithSetParams",
+    "cuGraphGetNodesWithMetadata",
     "cuMemPrefetchAsync",
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",

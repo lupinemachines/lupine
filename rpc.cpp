@@ -190,8 +190,41 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
+  // write_iov/write_iov_framed are fixed-size; overrunning them silently
+  // corrupts conn_t, so fail the request instead. Callers already treat a
+  // negative return as a fatal write error.
+  const int capacity =
+      static_cast<int>(sizeof(conn->write_iov) / sizeof(conn->write_iov[0]));
+  if (conn->write_iov_count >= capacity) {
+    return -1;
+  }
   conn->write_iov_framed[conn->write_iov_count] = 0;
   conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
+  return 0;
+}
+
+int rpc_kernel_param_payload_size(uint32_t count, const size_t *sizes,
+                                  size_t *payload_size) {
+  if (payload_size == nullptr || (count != 0 && sizes == nullptr)) {
+    return -1;
+  }
+  *payload_size = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    *payload_size += sizes[i];
+  }
+  return 0;
+}
+
+int rpc_kernel_param_storage_size(uint32_t count, const size_t *offsets,
+                                  const size_t *sizes, size_t *storage_size) {
+  if (storage_size == nullptr ||
+      (count != 0 && (offsets == nullptr || sizes == nullptr))) {
+    return -1;
+  }
+  *storage_size = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    *storage_size = std::max(*storage_size, offsets[i] + sizes[i]);
+  }
   return 0;
 }
 
@@ -220,10 +253,8 @@ int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
   }
 
   size_t expected_payload_size = 0;
-  for (uint32_t i = 0; i < count; ++i) {
-    expected_payload_size += sizes[i];
-  }
-  if (payload_size != expected_payload_size) {
+  if (rpc_kernel_param_payload_size(count, sizes, &expected_payload_size) < 0 ||
+      payload_size != expected_payload_size) {
     return -1;
   }
 

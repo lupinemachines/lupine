@@ -447,6 +447,8 @@
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphAddNode_v2 1958016248
 #define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620
+#define LUPINE_RPC_cuGraphExecUpdateWithSetParams 160579802
+#define LUPINE_RPC_cuGraphGetNodesWithMetadata 644148209
 #define LUPINE_RPC_cuMemPrefetchAsync 596440383
 #define LUPINE_RPC_cuPrivateGetModuleNode 1986234018
 #define LUPINE_RPC_cuStreamBeginCaptureToGraph 1423223781
