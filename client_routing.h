@@ -2,7 +2,9 @@
 
 #include <cstddef>
 
-#include <cuda.h>
+#define LUPINE_CUDA_COMPAT_TYPES_ONLY
+#include "cuda_compat.h"
+#undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
 #include "rpc.h"
 
