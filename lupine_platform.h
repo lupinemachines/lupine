@@ -112,20 +112,6 @@ inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
 }
 
-inline ssize_t lupine_socket_send(lupine_socket_t socket, const void *data,
-                                  size_t size) {
-  size_t sent = 0;
-  while (sent < size) {
-    int chunk = static_cast<int>(std::min<size_t>(size - sent, INT_MAX));
-    int result = send(socket, static_cast<const char *>(data) + sent, chunk, 0);
-    if (result <= 0) {
-      return result;
-    }
-    sent += static_cast<size_t>(result);
-  }
-  return static_cast<ssize_t>(sent);
-}
-
 inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
                                   size_t size) {
   int chunk = static_cast<int>(std::min<size_t>(size, INT_MAX));
@@ -135,7 +121,7 @@ inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
 // Vectored send of up to `count` buffers in a single syscall. Returns the
 // number of bytes accepted by the socket (which may be fewer than the total
 // when the send buffer fills), or a negative value on error. Callers advance
-// over the buffers and retry, exactly like a partial lupine_socket_send().
+// over the buffers and retry on a short write.
 inline ssize_t lupine_socket_sendv(lupine_socket_t socket,
                                    const struct iovec *iov, int count) {
   std::vector<WSABUF> bufs(static_cast<size_t>(count));
@@ -186,10 +172,6 @@ inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   const int enable = 1;
   return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
 }
-inline ssize_t lupine_socket_send(lupine_socket_t socket, const void *data,
-                                  size_t size) {
-  return send(socket, data, size, MSG_NOSIGNAL);
-}
 inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
                                   size_t size) {
   return recv(socket, data, size, 0);
@@ -197,7 +179,7 @@ inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
 // Vectored send of up to `count` buffers in a single syscall. Returns the
 // number of bytes accepted by the socket (which may be fewer than the total
 // when the send buffer fills), or a negative value on error. Callers advance
-// over the buffers and retry, exactly like a partial lupine_socket_send().
+// over the buffers and retry on a short write.
 inline ssize_t lupine_socket_sendv(lupine_socket_t socket,
                                    const struct iovec *iov, int count) {
   struct msghdr msg = {};
