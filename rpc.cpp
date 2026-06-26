@@ -133,6 +133,42 @@ int rpc_wait_for_response(conn_t *conn) {
   return 0;
 }
 
+// rpc_batch_append copies bytes into the fire-and-forget coalescing buffer.
+// The caller holds write_mutex.
+static int rpc_batch_append(conn_t *conn, const void *data, size_t size) {
+  if (size == 0) {
+    return 0;
+  }
+  if (conn->write_batch_len + size > conn->write_batch_cap) {
+    size_t cap = conn->write_batch_cap != 0 ? conn->write_batch_cap : 64 * 1024;
+    while (cap < conn->write_batch_len + size) {
+      cap *= 2;
+    }
+    auto *grown = static_cast<unsigned char *>(realloc(conn->write_batch, cap));
+    if (grown == nullptr) {
+      return -1;
+    }
+    conn->write_batch = grown;
+    conn->write_batch_cap = cap;
+  }
+  memcpy(conn->write_batch + conn->write_batch_len, data, size);
+  conn->write_batch_len += size;
+  return 0;
+}
+
+// rpc_batch_flush_locked sends the coalescing buffer as one HTTP/2 DATA frame.
+// The caller holds write_mutex.
+int rpc_batch_flush_locked(conn_t *conn) {
+  if (conn->write_batch_len == 0) {
+    return 0;
+  }
+  struct iovec iov = {conn->write_batch, conn->write_batch_len};
+  unsigned char framed = 0;
+  int result = rpc_http2_writev(conn, &iov, &framed, 1);
+  conn->write_batch_len = 0;
+  return result;
+}
+
 // rpc_write_start_request starts a new request builder on the given connection
 // index with a specific op code.
 //
@@ -159,8 +195,41 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     return -1;
   }
 
+  // A response-bearing request must observe any fire-and-forget requests queued
+  // before it, so flush the coalescing buffer onto the wire first (in order).
+  if (rpc_batch_flush_locked(conn) < 0) {
+    pthread_mutex_unlock(&conn->write_mutex);
+    pthread_mutex_unlock(&conn->call_mutex);
+    return -1;
+  }
+
   conn->write_iov_count = 2;               // skip 2 for the header
   conn->request_id = conn->request_id + 2; // leave the last bit the same
+  conn->write_id = conn->request_id;
+  conn->write_op = op;
+  return 0;
+}
+
+// rpc_write_start_request_async starts a fire-and-forget request. It is
+// identical to rpc_write_start_request except it does not flush the coalescing
+// buffer, so consecutive async requests accumulate and are sent together.
+int rpc_write_start_request_async(conn_t *conn, const int op) {
+  if (conn->closed) {
+    return -1;
+  }
+  if (pthread_mutex_lock(&conn->call_mutex) < 0) {
+    return -1;
+  }
+  if (conn->closed) {
+    pthread_mutex_unlock(&conn->call_mutex);
+    return -1;
+  }
+  if (pthread_mutex_lock(&conn->write_mutex) < 0) {
+    pthread_mutex_unlock(&conn->call_mutex);
+    return -1;
+  }
+  conn->write_iov_count = 2;
+  conn->request_id = conn->request_id + 2;
   conn->write_id = conn->request_id;
   conn->write_op = op;
   return 0;
@@ -334,4 +403,35 @@ int rpc_write_end(conn_t *conn) {
   int result = rpc_http2_writev(conn, iov, framed, iov_count);
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
+}
+
+// rpc_write_end_batched finalizes a fire-and-forget request by appending its
+// serialized [id][op][params] bytes to the coalescing buffer instead of sending
+// it immediately. The bytes are copied (the caller's buffers may be reused on
+// return) and flushed later by the next response-bearing request, or here if
+// the buffer grows past a soft cap. Fire-and-forget requests never use LZ4
+// payload framing, so each iovec is appended raw.
+int rpc_write_end_batched(conn_t *conn) {
+  if (conn->closed) {
+    pthread_mutex_unlock(&conn->write_mutex);
+    return -1;
+  }
+  conn->write_iov[0] = {&conn->write_id, sizeof(int)};
+  conn->write_iov_framed[0] = 0;
+  if (conn->write_op != -1) {
+    conn->write_iov[1] = {&conn->write_op, sizeof(unsigned int)};
+    conn->write_iov_framed[1] = 0;
+  }
+  int write_id = conn->write_id;
+  int iov_count = conn->write_iov_count;
+  int rc = 0;
+  for (int i = 0; i < iov_count && rc == 0; ++i) {
+    rc = rpc_batch_append(conn, conn->write_iov[i].iov_base,
+                          conn->write_iov[i].iov_len);
+  }
+  if (rc == 0 && conn->write_batch_len >= (1u << 20)) {
+    rc = rpc_batch_flush_locked(conn);
+  }
+  pthread_mutex_unlock(&conn->write_mutex);
+  return rc == 0 ? write_id : -1;
 }

@@ -34,6 +34,16 @@ typedef struct {
   int local_request_parity;
   int closed;
   void *http2;
+  // Coalescing buffer for fire-and-forget requests (async kernel launches and
+  // async copies). They are serialized here instead of being framed+sent one
+  // at a time, and flushed together as a single HTTP/2 DATA frame when the next
+  // response-bearing request is sent (rpc_write_start_request). This amortizes
+  // per-request framing, syscalls and per-packet netfilter across the whole
+  // batch. The server reads the concatenated [id][op][params] records as a
+  // byte stream, so it needs no changes.
+  unsigned char *write_batch;
+  size_t write_batch_len;
+  size_t write_batch_cap;
 } conn_t;
 
 extern int rpc_dispatch(conn_t *conn, int parity);
@@ -45,10 +55,13 @@ extern int rpc_read_end(conn_t *conn);
 extern int rpc_wait_for_response(conn_t *conn);
 
 extern int rpc_write_start_request(conn_t *conn, const int op);
+extern int rpc_write_start_request_async(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
+extern int rpc_write_end_batched(conn_t *conn);
+extern int rpc_batch_flush_locked(conn_t *conn);
 
 extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                          const size_t *sizes,

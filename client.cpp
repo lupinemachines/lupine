@@ -5384,8 +5384,16 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
+  // Fire-and-forget + batched: real cuLaunchKernel is asynchronous and almost
+  // always returns CUDA_SUCCESS (genuine launch errors surface at the next
+  // synchronization point). The request is queued in the connection's
+  // coalescing buffer rather than framed and sent on its own; the next
+  // response-bearing RPC flushes the whole batch as one DATA frame, amortizing
+  // per-request framing, syscalls and per-packet overhead. Requests stay
+  // ordered on the connection, so a later synchronizing RPC still observes
+  // these launches.
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
+      rpc_write_start_request_async(conn, RPC_cuLaunchKernel) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
@@ -5399,16 +5407,13 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
       rpc_write(conn, packed.data(), packed.size()) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end_batched(conn) < 0) {
+    pthread_mutex_unlock(&conn->call_mutex);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (return_value != CUDA_SUCCESS) {
-    LUPINE_TRACE_LOG(
-        "LUPINE cuLaunchKernel result=" << static_cast<int>(return_value));
-  }
-  return return_value;
+  (void)return_value;
+  pthread_mutex_unlock(&conn->call_mutex);
+  return CUDA_SUCCESS;
 }
 
 extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
