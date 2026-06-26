@@ -56,7 +56,10 @@ int send_all(lupine_socket_t connfd, const void *data, size_t size) {
   const char *cursor = static_cast<const char *>(data);
   size_t sent = 0;
   while (sent < size) {
-    ssize_t n = lupine_socket_send(connfd, cursor + sent, size - sent);
+    struct iovec iov;
+    iov.iov_base = const_cast<char *>(cursor + sent);
+    iov.iov_len = size - sent;
+    ssize_t n = lupine_socket_sendv(connfd, &iov, 1);
     if (n < 0 && lupine_socket_error_is_intr()) {
       continue;
     }
