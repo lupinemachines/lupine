@@ -6,20 +6,24 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <ftw.h>
-#include <signal.h>
 #include <string>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <vector>
 
 #ifndef _WIN32
 #include <fcntl.h>
+#include <ftw.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 #include "lupine_log.h"
+
+// Snapshots are built on CRIU, which is Linux-only. The full implementation is
+// POSIX; on Windows we provide stubs at the bottom so the server still builds.
+#ifndef _WIN32
 
 extern void client_handler(lupine_socket_t connfd);
 
@@ -753,3 +757,26 @@ int lupine_snapshot_restore_for_connection(const char *id,
                                 inherited_target);
   return result == 0 ? 0 : -1;
 }
+
+#else  // _WIN32: CRIU is Linux-only, so snapshots are unavailable here.
+
+int handle_lupine_snapshot_save_and_exit(conn_t *conn) {
+  (void)conn;
+  return -1;
+}
+
+int lupine_snapshot_read_bootstrap(lupine_socket_t connfd,
+                                   char id[LUPINE_SNAPSHOT_ID_BUFFER_BYTES]) {
+  (void)connfd;
+  (void)id;
+  return 0;  // no bootstrap: every connection is handled as a fresh client
+}
+
+int lupine_snapshot_restore_for_connection(const char *id,
+                                           lupine_socket_t connfd) {
+  (void)id;
+  (void)connfd;
+  return 1;  // nothing restored
+}
+
+#endif  // _WIN32
