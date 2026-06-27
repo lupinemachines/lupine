@@ -218,18 +218,9 @@ bool write_status(int fd, int result) {
 #endif
 }
 
-// CRIU verbosity flag. Defaults to "-v1" (warnings + errors) instead of the
-// previous hard-coded "-v4": the verbose debug log is written while the target
-// process (and its GPU) are frozen, so trimming it shortens the freeze window.
-// Override with LUPINE_SNAPSHOT_CRIU_VERBOSITY (0-4) when debugging failures.
-std::string criu_verbosity_flag() {
-  const char *level = getenv("LUPINE_SNAPSHOT_CRIU_VERBOSITY");
-  char value = (level != nullptr && level[0] >= '0' && level[0] <= '4' &&
-                level[1] == '\0')
-                   ? level[0]
-                   : '1';
-  return std::string("-v") + value;
-}
+// CRIU log verbosity: warnings + errors only. The verbose log is written while
+// the target (and its GPU) are frozen, so keep it minimal.
+static const char *kCriuVerbosity = "-v1";
 
 int run_criu_dump(pid_t pid, const std::string &images_dir,
                   const std::string &log_file) {
@@ -273,8 +264,7 @@ int run_criu_dump(pid_t pid, const std::string &images_dir,
       close(status_pipe[1]);
       signal(SIGCHLD, SIG_DFL);
       std::string pid_arg = std::to_string(static_cast<long long>(pid));
-      std::string vflag = criu_verbosity_flag();
-      execlp("criu", "criu", "dump", "--unprivileged", vflag.c_str(), "--tree",
+      execlp("criu", "criu", "dump", "--unprivileged", kCriuVerbosity, "--tree",
              pid_arg.c_str(), "--images-dir", images_dir.c_str(),
              "--leave-running", "--shell-job", "--tcp-close",
              "--file-locks", "--log-file", log_file.c_str(),
@@ -343,8 +333,7 @@ int run_criu_restore(const std::string &images_dir, const std::string &log_file,
   }
   if (child == 0) {
     signal(SIGCHLD, SIG_DFL);
-    std::string vflag = criu_verbosity_flag();
-    execlp("criu", "criu", "restore", "--unprivileged", vflag.c_str(),
+    execlp("criu", "criu", "restore", "--unprivileged", kCriuVerbosity,
            "--images-dir", images_dir.c_str(), "--restore-detached",
            "--shell-job", "--tcp-close", "--file-locks", "--inherit-fd",
            inherit_arg.c_str(), "--log-file", log_file.c_str(),

@@ -29,14 +29,8 @@ CUresult write_snapshot_id(conn_t *conn, const char *id) {
 }
 
 std::string configured_snapshot_id() {
-  {
-    std::lock_guard<std::mutex> lock(g_snapshot_id_mutex);
-    if (g_snapshot_id[0] != '\0') {
-      return std::string(g_snapshot_id);
-    }
-  }
-  const char *env_id = getenv("LUPINE_SNAPSHOT_ID");
-  return env_id != nullptr ? std::string(env_id) : std::string();
+  std::lock_guard<std::mutex> lock(g_snapshot_id_mutex);
+  return std::string(g_snapshot_id);
 }
 
 int send_all(lupine_socket_t connfd, const void *data, size_t size) {
