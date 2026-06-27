@@ -29,10 +29,6 @@ extern void client_handler(lupine_socket_t connfd);
 
 namespace {
 
-struct snapshot_result {
-  CUresult cuda_result = CUDA_ERROR_UNKNOWN;
-};
-
 static const char kBootstrapMagic[] = "LUPSNAP1";
 
 const char *snapshot_root() {
@@ -113,14 +109,7 @@ std::string criu_inherit_target(const std::string &target) {
 
 void redirect_stdio_to_devnull() {
 #ifndef _WIN32
-  const char *log_path = getenv("LUPINE_SNAPSHOT_STDIO_LOG");
-  int fd = -1;
-  if (log_path != nullptr && log_path[0] != '\0') {
-    fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
-  }
-  if (fd < 0) {
-    fd = open("/dev/null", O_RDWR | O_CLOEXEC);
-  }
+  int fd = open("/dev/null", O_RDWR | O_CLOEXEC);
   if (fd < 0) {
     return;
   }
@@ -128,21 +117,6 @@ void redirect_stdio_to_devnull() {
   dup2(fd, STDERR_FILENO);
   close(fd);
 #endif
-}
-
-static thread_local uint64_t g_tree_size = 0;
-
-int tree_size_cb(const char *, const struct stat *st, int type, struct FTW *) {
-  if (type == FTW_F) {
-    g_tree_size += static_cast<uint64_t>(st->st_size);
-  }
-  return 0;
-}
-
-uint64_t tree_size(const std::string &path) {
-  g_tree_size = 0;
-  nftw(path.c_str(), tree_size_cb, 32, FTW_PHYS);
-  return g_tree_size;
 }
 
 int remove_tree_cb(const char *path, const struct stat *, int, struct FTW *) {
@@ -180,9 +154,8 @@ bool write_text_file(const std::string &path, const std::string &text) {
     }
     off += static_cast<size_t>(wrote);
   }
-  if (ok && (getenv("LUPINE_SNAPSHOT_FSYNC") == nullptr ||
-             strcmp(getenv("LUPINE_SNAPSHOT_FSYNC"), "0") != 0)) {
-    ok = fsync(fd) == 0;
+  if (ok) {
+    ok = fsync(fd) == 0;  // the manifest is the "ready" marker; make it durable
   }
   close(fd);
   return ok;
@@ -405,45 +378,38 @@ int prepare_restore_socket_placeholder(const std::string &path) {
 }
 
 std::string staging_root_for(const std::string &root) {
-  const char *configured = getenv("LUPINE_SNAPSHOT_STAGING_DIR");
-  if (configured != nullptr && configured[0] != '\0') {
-    return configured;
-  }
   return join_path(root, ".staging");
 }
 
-std::string manifest_json(const std::string &id, uint64_t bytes,
+std::string manifest_json(const std::string &id,
                           const std::string &client_fd_target) {
   char buf[1024];
   snprintf(buf, sizeof(buf),
            "{\n"
            "  \"id\": \"%s\",\n"
-           "  \"state\": \"READY\",\n"
-           "  \"bytes\": %llu,\n"
            "  \"created_unix_seconds\": %lld,\n"
            "  \"pid\": %lld,\n"
            "  \"client_fd_target\": \"%s\"\n"
            "}\n",
-           id.c_str(), static_cast<unsigned long long>(bytes),
-           static_cast<long long>(time(nullptr)), static_cast<long long>(getpid()),
-           client_fd_target.c_str());
+           id.c_str(), static_cast<long long>(time(nullptr)),
+           static_cast<long long>(getpid()), client_fd_target.c_str());
   return std::string(buf);
 }
 
-snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
+CUresult save_snapshot_artifact(const char *id, int client_fd) {
   const char *root_env = snapshot_root();
   if (root_env == nullptr) {
-    return {CUDA_ERROR_NOT_SUPPORTED};
+    return CUDA_ERROR_NOT_SUPPORTED;
   }
   if (!lupine_snapshot_id_valid(id)) {
-    return {CUDA_ERROR_INVALID_VALUE};
+    return CUDA_ERROR_INVALID_VALUE;
   }
 
   std::string root(root_env);
   std::string objects = join_path(root, "objects");
   std::string staging_root = staging_root_for(root);
   if (!mkdir_p(objects) || !mkdir_p(staging_root)) {
-    return {CUDA_ERROR_OPERATING_SYSTEM};
+    return CUDA_ERROR_OPERATING_SYSTEM;
   }
 
   std::string snapshot_id = snapshot_id_dir(id);
@@ -455,7 +421,7 @@ snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
   remove_tree(staging);
   if (!mkdir_p(criu_dir) || !mkdir_p(logs_dir)) {
     remove_tree(staging);
-    return {CUDA_ERROR_OPERATING_SYSTEM};
+    return CUDA_ERROR_OPERATING_SYSTEM;
   }
 
   int restore_fd = -1;
@@ -466,13 +432,13 @@ snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
         join_path(staging, "client-socket-placeholder"));
     if (restore_fd < 0) {
       remove_tree(staging);
-      return {CUDA_ERROR_OPERATING_SYSTEM};
+      return CUDA_ERROR_OPERATING_SYSTEM;
     }
     restore_fd_target = fd_target(restore_fd);
     if (restore_fd_target.empty()) {
       close(restore_fd);
       remove_tree(staging);
-      return {CUDA_ERROR_OPERATING_SYSTEM};
+      return CUDA_ERROR_OPERATING_SYSTEM;
     }
     client_target = criu_inherit_target(restore_fd_target);
   }
@@ -493,20 +459,19 @@ snapshot_result save_snapshot_artifact(const char *id, int client_fd) {
     } else {
       LUPINE_LOG_ERROR("Keeping failed snapshot staging directory " << staging);
     }
-    return {result};
+    return result;
   }
 
-  uint64_t bytes = tree_size(staging);
   if (!publish_artifact(staging, final_dir)) {
     remove_tree(staging);
-    return {CUDA_ERROR_OPERATING_SYSTEM};
+    return CUDA_ERROR_OPERATING_SYSTEM;
   }
   if (!write_text_file(join_path(final_dir, "manifest.json"),
-                       manifest_json(snapshot_id, bytes, client_target))) {
+                       manifest_json(snapshot_id, client_target))) {
     remove_tree(final_dir);
-    return {CUDA_ERROR_OPERATING_SYSTEM};
+    return CUDA_ERROR_OPERATING_SYSTEM;
   }
-  return {CUDA_SUCCESS};
+  return CUDA_SUCCESS;
 }
 
 int recv_exact(lupine_socket_t connfd, void *data, size_t size) {
@@ -678,9 +643,8 @@ int handle_lupine_snapshot_save_and_exit(conn_t *conn) {
   }
   int request_id = rpc_read_end(conn);
 
-  snapshot_result saved =
+  CUresult result =
       save_snapshot_artifact(id.c_str(), static_cast<int>(conn->connfd));
-  CUresult result = saved.cuda_result;
   LUPINE_LOG_DEBUG("Snapshot save for " << id << " completed with CUDA result "
                                         << result);
   if (rpc_write_start_response(conn, request_id) < 0) {
