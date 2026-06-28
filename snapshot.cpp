@@ -84,10 +84,6 @@ std::string snapshot_id_dir(const char *id) {
 }
 
 std::string fd_target(int fd) {
-#ifdef _WIN32
-  (void)fd;
-  return "";
-#else
   char path[64];
   snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
   char buf[512];
@@ -97,7 +93,6 @@ std::string fd_target(int fd) {
   }
   buf[n] = '\0';
   return std::string(buf);
-#endif
 }
 
 std::string criu_inherit_target(const std::string &target) {
@@ -108,7 +103,6 @@ std::string criu_inherit_target(const std::string &target) {
 }
 
 void redirect_stdio_to_devnull() {
-#ifndef _WIN32
   int fd = open("/dev/null", O_RDWR | O_CLOEXEC);
   if (fd < 0) {
     return;
@@ -116,7 +110,6 @@ void redirect_stdio_to_devnull() {
   dup2(fd, STDOUT_FILENO);
   dup2(fd, STDERR_FILENO);
   close(fd);
-#endif
 }
 
 int remove_tree_cb(const char *path, const struct stat *, int, struct FTW *) {
@@ -132,11 +125,6 @@ bool remove_tree(const std::string &path) {
 }
 
 bool write_text_file(const std::string &path, const std::string &text) {
-#ifdef _WIN32
-  (void)path;
-  (void)text;
-  return false;
-#else
   int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
   if (fd < 0) {
     return false;
@@ -159,7 +147,6 @@ bool write_text_file(const std::string &path, const std::string &text) {
   }
   close(fd);
   return ok;
-#endif
 }
 
 bool manifest_exists(const std::string &artifact) {
@@ -174,11 +161,6 @@ bool publish_artifact(const std::string &staging, const std::string &final_dir) 
 }
 
 bool write_status(int fd, int result) {
-#ifdef _WIN32
-  (void)fd;
-  (void)result;
-  return false;
-#else
   const char *cursor = reinterpret_cast<const char *>(&result);
   size_t written = 0;
   while (written < sizeof(result)) {
@@ -192,7 +174,6 @@ bool write_status(int fd, int result) {
     written += static_cast<size_t>(n);
   }
   return true;
-#endif
 }
 
 // CRIU log verbosity: warnings + errors only. The verbose log is written while
@@ -201,12 +182,6 @@ static const char *kCriuVerbosity = "-v1";
 
 int run_criu_dump(pid_t pid, const std::string &images_dir,
                   const std::string &log_file) {
-#ifdef _WIN32
-  (void)pid;
-  (void)images_dir;
-  (void)log_file;
-  return -1;
-#else
   int status_pipe[2];
   if (pipe(status_pipe) != 0) {
     return -1;
@@ -281,19 +256,11 @@ int run_criu_dump(pid_t pid, const std::string &images_dir,
   }
   close(status_pipe[0]);
   return got == sizeof(result) ? result : -1;
-#endif
 }
 
 int run_criu_restore(const std::string &images_dir, const std::string &log_file,
                      lupine_socket_t connfd,
                      const std::string &inherited_target) {
-#ifdef _WIN32
-  (void)images_dir;
-  (void)log_file;
-  (void)connfd;
-  (void)inherited_target;
-  return -1;
-#else
   if (inherited_target.empty()) {
     return -1;
   }
@@ -328,7 +295,6 @@ int run_criu_restore(const std::string &images_dir, const std::string &log_file,
     return WEXITSTATUS(status);
   }
   return -1;
-#endif
 }
 
 CUresult cuda_checkpoint_current_process(const std::string &images_dir,
@@ -353,10 +319,6 @@ CUresult cuda_checkpoint_current_process(const std::string &images_dir,
 }
 
 int prepare_restore_socket_placeholder(const std::string &path) {
-#ifdef _WIN32
-  (void)path;
-  return -1;
-#else
   int source = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
   if (source < 0) {
     LUPINE_LOG_ERROR("Failed to create snapshot client socket placeholder "
@@ -374,7 +336,6 @@ int prepare_restore_socket_placeholder(const std::string &path) {
                      << ")");
   }
   return restore_fd;
-#endif
 }
 
 std::string staging_root_for(const std::string &root) {
@@ -491,10 +452,6 @@ int recv_exact(lupine_socket_t connfd, void *data, size_t size) {
 }
 
 int peek_bootstrap_magic(lupine_socket_t connfd) {
-#ifdef _WIN32
-  (void)connfd;
-  return 0;
-#else
   char magic[sizeof(kBootstrapMagic) - 1] = {};
   size_t want = sizeof(magic);
   for (;;) {
@@ -513,14 +470,9 @@ int peek_bootstrap_magic(lupine_socket_t connfd) {
     }
     return memcmp(magic, kBootstrapMagic, want) == 0 ? 1 : 0;
   }
-#endif
 }
 
 std::string read_manifest_client_fd_target(const std::string &manifest) {
-#ifdef _WIN32
-  (void)manifest;
-  return "";
-#else
   int fd = open(manifest.c_str(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     return "";
@@ -549,17 +501,12 @@ std::string read_manifest_client_fd_target(const std::string &manifest) {
     return "";
   }
   return text.substr(pos, end - pos);
-#endif
 }
 
 // The pid recorded in the manifest is the worker that produced the snapshot.
 // CRIU restores a process at its original pid, so that pid must be free before
 // restore. Returns 0 if the manifest has no pid.
 pid_t read_manifest_pid(const std::string &manifest) {
-#ifdef _WIN32
-  (void)manifest;
-  return 0;
-#else
   int fd = open(manifest.c_str(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     return 0;
@@ -583,7 +530,6 @@ pid_t read_manifest_pid(const std::string &manifest) {
     return 0;
   }
   return static_cast<pid_t>(strtoll(text.c_str() + pos + key.size(), nullptr, 10));
-#endif
 }
 
 // Wait for `pid` to exit. The snapshot is taken with CRIU `--leave-running`, so
@@ -591,7 +537,6 @@ pid_t read_manifest_pid(const std::string &manifest) {
 // reconnect can race its exit and CRIU restore then fails with "Can't fork:
 // File exists". Poll until the pid is gone (or a timeout elapses).
 void wait_for_pid_exit(pid_t pid, int timeout_ms) {
-#ifndef _WIN32
   if (pid <= 0) {
     return;
   }
@@ -604,10 +549,6 @@ void wait_for_pid_exit(pid_t pid, int timeout_ms) {
     nanosleep(&ts, nullptr);
     waited += 5;
   }
-#else
-  (void)pid;
-  (void)timeout_ms;
-#endif
 }
 
 int read_snapshot_id(conn_t *conn, std::string *id) {
@@ -661,14 +602,12 @@ int handle_lupine_snapshot_save_and_exit(conn_t *conn) {
   }
 
   conn->closed = 1;
-#ifndef _WIN32
   // The snapshot has been taken with CRIU `--leave-running`, so this worker is
   // still alive. It has served its purpose now; exit immediately (rather than
   // unwinding the dispatch loop lazily) so its pid is freed for the restore,
   // which CRIU recreates at this same pid. A FIN flushes the response first.
   shutdown(conn->connfd, SHUT_WR);
   _exit(0);
-#endif
   return 0;
 }
 
