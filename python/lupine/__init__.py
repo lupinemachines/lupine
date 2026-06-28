@@ -18,14 +18,6 @@ _loaded_libcuda: Any | None = None
 SNAPSHOT_TYPES = ("rw", "r", "w")
 
 
-def _require_snapshot_type(snapshot_type: str) -> str:
-    if snapshot_type not in SNAPSHOT_TYPES:
-        raise LupineError(
-            "snapshot_type must be one of 'rw', 'r', or 'w'"
-        )
-    return snapshot_type
-
-
 class LupineError(RuntimeError):
     """Raised when the LUPINE adapter cannot select a usable device."""
 
@@ -118,11 +110,6 @@ def _snapshot_lib() -> Any:
     return _loaded_libcuda
 
 
-def _snapshot_result(result: int, action: str) -> None:
-    if int(result) != 0:
-        raise LupineError(f"LUPINE snapshot {action} failed with CUDA error {int(result)}")
-
-
 def _clear_snapshot_load() -> None:
     lib = _snapshot_lib()
     func = getattr(lib, "lupine_snapshot_load", None)
@@ -130,7 +117,8 @@ def _clear_snapshot_load() -> None:
         raise LupineError("LUPINE client library does not expose snapshot load")
     func.argtypes = [ctypes.c_char_p]
     func.restype = ctypes.c_int
-    _snapshot_result(func(None), "clear load")
+    if int(func(None)) != 0:
+        raise LupineError("LUPINE snapshot clear load failed")
 
 
 def _disconnect() -> None:
@@ -152,19 +140,6 @@ def _disconnect() -> None:
     func()
 
 
-SNAPSHOT_ID_MAX_BYTES = 255
-
-
-def _require_snapshot_id(snapshot_id: str) -> str:
-    # Any non-empty string is allowed; the server hashes it into the on-disk
-    # directory name, so it never needs to be a path-safe value itself.
-    snapshot_id = str(snapshot_id)
-    encoded = snapshot_id.encode("utf-8")
-    if not encoded or len(encoded) > SNAPSHOT_ID_MAX_BYTES:
-        raise LupineError(
-            f"snapshot id must be 1-{SNAPSHOT_ID_MAX_BYTES} bytes (UTF-8)"
-        )
-    return snapshot_id
 
 
 def _snapshot_synchronize() -> None:
@@ -206,9 +181,8 @@ class Session:
     def __post_init__(self) -> None:
         if not self.servers:
             raise LupineError("at least one LUPINE host is required")
-        self.snapshot_type = _require_snapshot_type(self.snapshot_type)
-        if self.snapshot_id is not None:
-            self.snapshot_id = _require_snapshot_id(self.snapshot_id)
+        if self.snapshot_type not in SNAPSHOT_TYPES:
+            raise LupineError("snapshot_type must be one of 'rw', 'r', or 'w'")
 
     @property
     def _snapshot_reads(self) -> bool:
@@ -310,8 +284,8 @@ def connect(
     """
 
     servers = _normalize_hosts(host, port)
-    snapshot_type = _require_snapshot_type(snapshot_type)
-    snapshot_id = _require_snapshot_id(snapshot_id) if snapshot_id is not None else None
+    if snapshot_type not in SNAPSHOT_TYPES:
+        raise LupineError("snapshot_type must be one of 'rw', 'r', or 'w'")
 
     if not _has_native_cuda_backend():
         if sys.platform != "darwin":
@@ -400,25 +374,24 @@ def synchronize(index: int = 0) -> None:
 def load_snapshot(snapshot_id: str) -> None:
     """Load a server-side snapshot on the next LUPINE connection."""
 
-    snapshot_id = _require_snapshot_id(snapshot_id)
     lib = _snapshot_lib()
     func = lib.lupine_snapshot_load
     func.argtypes = [ctypes.c_char_p]
     func.restype = ctypes.c_int
-    _snapshot_result(func(snapshot_id.encode("ascii")), "load")
+    if int(func(snapshot_id.encode("utf-8"))) != 0:
+        raise LupineError(f"LUPINE snapshot load failed for {snapshot_id!r}")
 
 
 def save_snapshot_and_exit(snapshot_id: str) -> None:
     """Save this server-side session snapshot and close the server worker."""
 
-    snapshot_id = _require_snapshot_id(snapshot_id)
     _snapshot_synchronize()
     lib = _snapshot_lib()
     func = lib.lupine_snapshot_save_and_exit
     func.argtypes = [ctypes.c_char_p]
     func.restype = ctypes.c_int
-    result = func(snapshot_id.encode("ascii"))
-    _snapshot_result(result, "save")
+    if int(func(snapshot_id.encode("utf-8"))) != 0:
+        raise LupineError(f"LUPINE snapshot save failed for {snapshot_id!r}")
 
 
 def sidecar(

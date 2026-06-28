@@ -286,24 +286,16 @@ def test_save_snapshot_and_exit_calls_c_export(lupine_module, monkeypatch):
     assert lib.saved == snapshot_id
 
 
-def test_snapshot_id_allows_arbitrary_strings(lupine_module, monkeypatch):
-    # Any non-empty, bounded string is accepted; the server hashes it into the
-    # on-disk path, so values like "../bad" or "my model:v2" are fine.
+def test_snapshot_id_accepts_arbitrary_strings(lupine_module, monkeypatch):
+    # The server hashes the id into the on-disk path, so any string works:
+    # path-like, with spaces, or arbitrarily long.
     lupine, _ = lupine_module
     lib = FakeSnapshotLib()
     monkeypatch.setattr(lupine, "_snapshot_lib", lambda: lib)
 
-    for ok_id in ("../bad", "my model:v2", "x"):
+    for ok_id in ("../bad", "my model:v2", "x", "a" * 1000):
         lupine.load_snapshot(ok_id)
         assert lib.loaded[-1] == ok_id
-
-
-def test_snapshot_id_rejects_empty_and_too_long(lupine_module):
-    lupine, _ = lupine_module
-
-    for bad_id in ("", "a" * 256):
-        with pytest.raises(lupine.LupineError, match="snapshot id"):
-            lupine.load_snapshot(bad_id)
 
 
 def test_device_bounds_check(lupine_module):
