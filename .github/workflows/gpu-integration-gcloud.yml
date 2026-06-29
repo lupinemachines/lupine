@@ -258,6 +258,60 @@ jobs:
             done
           '
 
+      - name: Install CRIU and cuda-checkpoint on server VM
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=accept-new
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=8
+            "gha@$VM_IP"
+          )
+          "${ssh_base[@]}" 'bash -s' <<'PROVISION'
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          # GPU snapshot save/restore needs CRIU with the CUDA plugin plus NVIDIA's
+          # cuda-checkpoint helper. The plugin requires euid 0, so criu is made
+          # setuid-root and the lupine server itself keeps running unprivileged.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git pkg-config \
+            libprotobuf-dev libprotobuf-c-dev protobuf-c-compiler protobuf-compiler \
+            libnl-3-dev libnet-dev libcap-dev libbsd-dev \
+            python3 iproute2 ca-certificates curl
+
+          # cuda-checkpoint: prebuilt helper the CUDA plugin shells out to.
+          sudo curl -fsSL -o /usr/local/bin/cuda-checkpoint \
+            https://github.com/NVIDIA/cuda-checkpoint/raw/main/bin/x86_64_Linux/cuda-checkpoint
+          sudo chmod 0755 /usr/local/bin/cuda-checkpoint
+
+          # CRIU 4.2 from source: distro packages ship 3.x without the current
+          # CUDA plugin. install-criu puts criu in /usr/local/sbin; criu only
+          # searches /usr/lib/criu for plugins, so the .so is copied there.
+          src="$(mktemp -d)"
+          git clone --depth 1 --branch v4.2 \
+            https://github.com/checkpoint-restore/criu "$src"
+          make -C "$src" -j"$(nproc)"
+          sudo make -C "$src" install-criu
+          sudo mkdir -p /usr/lib/criu
+          sudo cp "$src/plugins/cuda/cuda_plugin.so" /usr/lib/criu/
+          rm -rf "$src"
+
+          # Put criu on PATH and grant the CUDA plugin euid 0 via setuid-root.
+          sudo ln -sfn /usr/local/sbin/criu /usr/local/bin/criu
+          sudo chown root:root /usr/local/sbin/criu
+          sudo chmod u+s /usr/local/sbin/criu
+
+          criu --version
+          test -x /usr/local/bin/cuda-checkpoint
+          PROVISION
+
       - name: Run ${{ matrix.name }} client inside L4 VM
         run: |
           set -euo pipefail
