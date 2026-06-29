@@ -34,6 +34,9 @@ TESTS=(
   autograd_step
   compile_elementwise
   microgpt_train
+  snapshot_write_read
+  snapshot_read_reuse
+  snapshot_rw_persist
 )
 
 if [[ $# -gt 0 ]]; then

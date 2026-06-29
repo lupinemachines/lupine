@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import math
+import os
+import secrets
+import sys
 
 import torch
 import torch.nn as nn
@@ -237,6 +240,68 @@ def test_microgpt_train():
     assert weight_delta > 0.0
 
 
+# --- snapshot save/restore (requires CRIU on the server; runs unprivileged via
+# a setuid-root criu, or with the server as root) -----------------------------
+
+def _snapshot_session(snapshot_id, snapshot_type):
+    # The lupine package lives under <repo>/python, not in the test venv.
+    py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python")
+    if py not in sys.path:
+        sys.path.insert(0, py)
+    import lupine
+
+    return lupine.connect(
+        host=os.environ["LUPINE_SERVER"],
+        snapshot_id=snapshot_id,
+        snapshot_type=snapshot_type,
+    )
+
+
+def test_snapshot_write_read():
+    # w creates a snapshot; a later r restores the same tensor at the same
+    # device pointer, with contents intact and the memory still writable.
+    sid = secrets.token_hex(16)
+    with _snapshot_session(sid, "w"):
+        t = torch.arange(4096, dtype=torch.float32, device="cuda")
+        torch.cuda.synchronize()
+        ptr = t.data_ptr()
+    with _snapshot_session(sid, "r"):
+        assert t.data_ptr() == ptr, "device pointer changed across restore"
+        assert torch.equal(t.cpu(), torch.arange(4096, dtype=torch.float32))
+        t[0] = 123.0
+        torch.cuda.synchronize()
+        assert t[0].item() == 123.0, "restored memory is not writable"
+
+
+def test_snapshot_read_reuse():
+    # r never saves: a mutation in one r session is gone after the next r
+    # restore, proving r is non-destructive and the snapshot is reusable.
+    sid = secrets.token_hex(16)
+    with _snapshot_session(sid, "w"):
+        t = torch.zeros(4096, dtype=torch.float32, device="cuda")
+        torch.cuda.synchronize()
+    with _snapshot_session(sid, "r"):
+        assert t[0].item() == 0.0
+        t[0] = 777.0
+        torch.cuda.synchronize()
+    with _snapshot_session(sid, "r"):
+        assert t[0].item() == 0.0, "read-only session persisted a change"
+
+
+def test_snapshot_rw_persist():
+    # rw restores and saves: a mutation under rw is visible to a later r.
+    sid = secrets.token_hex(16)
+    with _snapshot_session(sid, "w"):
+        t = torch.zeros(4096, dtype=torch.float32, device="cuda")
+        torch.cuda.synchronize()
+    with _snapshot_session(sid, "rw"):
+        assert t[0].item() == 0.0
+        t[0] = 555.0
+        torch.cuda.synchronize()
+    with _snapshot_session(sid, "r"):
+        assert t[0].item() == 555.0, "rw did not persist the mutation"
+
+
 TESTS = {
     "discover": test_discover,
     "tensor_ops": test_tensor_ops,
@@ -248,6 +313,9 @@ TESTS = {
     "autograd_step": test_autograd_step,
     "compile_elementwise": test_compile_elementwise,
     "microgpt_train": test_microgpt_train,
+    "snapshot_write_read": test_snapshot_write_read,
+    "snapshot_read_reuse": test_snapshot_read_reuse,
+    "snapshot_rw_persist": test_snapshot_rw_persist,
 }
 
 
