@@ -11,11 +11,12 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 DEFAULT_PORT = 14833
 _loaded_libcuda: Any | None = None
-SNAPSHOT_TYPES = ("rw", "r", "w")
+SnapshotType = Literal["rw", "r", "w"]
+SNAPSHOT_TYPES = get_args(SnapshotType)
 
 
 class LupineError(RuntimeError):
@@ -176,21 +177,13 @@ class Session:
     require_available: bool = False
     libcuda: str | os.PathLike[str] | None = None
     snapshot_id: str | None = None
-    snapshot_type: str = "rw"
+    snapshot_type: SnapshotType = "rw"
 
     def __post_init__(self) -> None:
         if not self.servers:
             raise LupineError("at least one LUPINE host is required")
         if self.snapshot_type not in SNAPSHOT_TYPES:
             raise LupineError("snapshot_type must be one of 'rw', 'r', or 'w'")
-
-    @property
-    def _snapshot_reads(self) -> bool:
-        return self.snapshot_id is not None and "r" in self.snapshot_type
-
-    @property
-    def _snapshot_writes(self) -> bool:
-        return self.snapshot_id is not None and "w" in self.snapshot_type
 
     def __enter__(self) -> "Session":
         self._previous_server = os.environ.get("LUPINE_SERVER")
@@ -207,13 +200,13 @@ class Session:
             _require_mutable_config()
             _set_server_env(self.servers)
         _load_libcuda(self.libcuda)
-        if self._snapshot_reads:
+        if self.snapshot_id is not None and "r" in self.snapshot_type:
             load_snapshot(self.snapshot_id)
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         try:
-            if self._snapshot_writes:
+            if self.snapshot_id is not None and "w" in self.snapshot_type:
                 save_snapshot_and_exit(self.snapshot_id)
         finally:
             # Scope the connection to the context: drop it so a later context
@@ -258,7 +251,7 @@ def connect(
     require_available: bool = False,
     libcuda: str | os.PathLike[str] | None = None,
     snapshot_id: str | None = None,
-    snapshot_type: str = "rw",
+    snapshot_type: SnapshotType = "rw",
 ) -> Any:
     """Create a LUPINE session for one or more remote GPU hosts.
 
