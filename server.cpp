@@ -10,11 +10,13 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <signal.h>
+#include <sys/personality.h>
 #include <unistd.h>
 #endif
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "gpu_snapshot.h"
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
@@ -40,6 +42,12 @@ lupine_manual_handlers() {
        {handle_manual_cuGetExportTableMetadata, "cuGetExportTable metadata"}},
       {LUPINE_RPC_cuPrivateGetModuleNode,
        {handle_manual_cuPrivateGetModuleNode, "private module node"}},
+      {RPC_cuMemAlloc_v2, {handle_manual_cuMemAlloc_v2, "cuMemAlloc_v2 (vmm)"}},
+      {RPC_cuMemFree_v2, {handle_manual_cuMemFree_v2, "cuMemFree_v2 (vmm)"}},
+      {LUPINE_RPC_gpu_snapshot_save,
+       {handle_gpu_snapshot_save, "gpu snapshot save"}},
+      {LUPINE_RPC_gpu_snapshot_restore,
+       {handle_gpu_snapshot_restore, "gpu snapshot restore"}},
       {RPC_cuModuleLoad, {handle_manual_cuModuleLoad, "cuModuleLoad"}},
       {RPC_cuModuleLoadData,
        {handle_manual_cuModuleLoadData, "cuModuleLoadData"}},
@@ -234,7 +242,19 @@ void client_handler(lupine_socket_t connfd) {
   lupine_socket_close(connfd);
 }
 
-int main() {
+int main(int argc, char **argv) {
+#ifndef _WIN32
+  // GPU snapshots reproduce device pointers by re-reserving the same VMM arena
+  // base in a fresh worker. That base is only stable across processes when the
+  // address space is not randomized, so disable ASLR and re-exec once.
+  if ((personality(0xffffffff) & ADDR_NO_RANDOMIZE) == 0) {
+    if (personality(ADDR_NO_RANDOMIZE) != -1) {
+      execv("/proc/self/exe", argv);
+    }
+    LUPINE_LOG_ERROR("Failed to disable ASLR; GPU snapshot restore may fail.");
+  }
+#endif
+  (void)argc;
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
   if (lupine_socket_init() < 0) {

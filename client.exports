@@ -2,6 +2,8 @@
   global:
     cu*;
     dlsym;
+    lupine_snapshot_save;
+    lupine_snapshot_load;
   local:
     *;
 };
