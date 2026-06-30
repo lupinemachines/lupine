@@ -1,0 +1,7 @@
+{
+  global:
+    lupine_test_rpc_open;
+    lupine_test_rpc_size;
+  local:
+    *;
+};

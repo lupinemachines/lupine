@@ -137,6 +137,7 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
     )
     target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
+
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
     add_test(

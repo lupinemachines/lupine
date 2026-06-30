@@ -23,6 +23,7 @@ LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 NVCC="${NVCC:-$CUDA_HOME/bin/nvcc}"
+CXX="${CXX:-g++}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-120}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
   owns_build_dir=0
@@ -33,6 +34,58 @@ fi
 
 for f in "$SERVER_LOCAL_BIN" "$LUPINE_LIB"; do
   [[ -e "$f" ]] || { echo "missing build artifact: $f (build lupine first)" >&2; exit 1; }
+done
+
+pass=0 fail=0
+
+shopt -s nullglob
+host_tests=("$repo_root"/test/test_*.cpp)
+for src in "${host_tests[@]}"; do
+  name="$(basename "$src" .cpp)"
+  exe="$BUILD_DIR/$name"
+  echo "=== building $name ==="
+  build_ok=1
+  if [[ "$name" == "test_client_connection_setup" ]]; then
+    test_lib="$BUILD_DIR/lib${name}_client.so"
+    if ! "$CXX" -std=c++17 -shared -fPIC \
+         -fsanitize=address -fno-omit-frame-pointer \
+         -DLUPINE_CONNECTION_SETUP_TEST \
+         -I"$repo_root" -I"$repo_root/codegen" -I"$CUDA_HOME/include" \
+         "$repo_root/h2.cpp" \
+         "$repo_root/rpc.cpp" \
+         "$repo_root/compress.cpp" \
+         "$repo_root/client.cpp" \
+         "$repo_root/client_routing.cpp" \
+         "$repo_root/codegen/gen_client.cpp" \
+         "$repo_root/third_party/lz4/lz4.c" \
+         -o "$test_lib" \
+         -lnghttp2 -ldl -pthread \
+         -Wl,--version-script="$repo_root/test/test_client_connection_setup.exports" 2>&1; then
+      build_ok=0
+    elif ! "$CXX" -std=c++17 -fsanitize=address -fno-omit-frame-pointer \
+         "$src" -o "$exe" \
+         -L"$BUILD_DIR" -l"${name}_client" -pthread \
+         -Wl,-rpath,"$BUILD_DIR" 2>&1; then
+      build_ok=0
+    fi
+  else
+    if ! "$CXX" -std=c++17 "$src" -o "$exe" -pthread 2>&1; then
+      build_ok=0
+    fi
+  fi
+  if [[ "$build_ok" != "1" ]]; then
+    echo "BUILD FAILED: $name" >&2
+    fail=$((fail + 1))
+    continue
+  fi
+  echo "=== running $name ==="
+  if timeout --kill-after=5s "$TEST_TIMEOUT" "$exe"; then
+    echo "PASS: $name"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: $name (exit $?)" >&2
+    fail=$((fail + 1))
+  fi
 done
 
 server_pid=""
@@ -51,8 +104,6 @@ server_pid="$(ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" \
   "LUPINE_PORT=$SERVER_PORT nohup '$SERVER_REMOTE_BIN' >/tmp/lupine-custom-server.log 2>&1 </dev/null & echo \$!")"
 sleep 1
 
-pass=0 fail=0
-shopt -s nullglob
 tests=("$repo_root"/test/test_*.cu)
 if [[ ${#tests[@]} -eq 0 ]]; then
   echo "no test/test_*.cu found" >&2
