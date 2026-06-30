@@ -32,6 +32,7 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "gpu_snapshot.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
@@ -720,6 +721,10 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }
 
+  if (result == CUDA_SUCCESS) {
+    lupine_gpu_track_module(module, kind, image.data(), image.size());
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -765,6 +770,10 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
                                nullptr, nullptr, 0);
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
+  }
+
+  if (result == CUDA_SUCCESS) {
+    lupine_gpu_track_library(library, kind, image.data(), image.size());
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1724,6 +1733,11 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+
+  // Translate handles the client cached before a snapshot to this worker's.
+  f = lupine_gpu_xlate_function(f);
+  ctx = lupine_gpu_xlate_context(ctx);
+  hStream = lupine_gpu_xlate_stream(hStream);
 
   if (ctx != nullptr) {
     CUcontext previous = nullptr;

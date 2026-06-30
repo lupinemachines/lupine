@@ -38,11 +38,38 @@ int lupine_gpu_owns(CUdeviceptr dptr);
 CUresult lupine_gpu_snapshot_save(const char *id);
 CUresult lupine_gpu_snapshot_restore(const char *id);
 
+// Object tracking. A fresh worker created on restore replays these so the
+// client's pre-snapshot opaque handles can be translated to live ones.
+void lupine_gpu_track_module(CUmodule m, unsigned int kind, const void *image,
+                             size_t size);
+void lupine_gpu_track_function(CUfunction fn, CUmodule m, const char *name);
+void lupine_gpu_track_library(CUlibrary lib, unsigned int kind,
+                              const void *image, size_t size);
+void lupine_gpu_track_kernel(CUkernel k, CUlibrary lib, const char *name);
+void lupine_gpu_track_kernel_function(CUfunction fn, CUkernel k);
+void lupine_gpu_track_stream(CUstream s, unsigned int flags);
+void lupine_gpu_track_primary_ctx(CUcontext ctx);
+
+// Translate a client (pre-snapshot) handle to the live one; identity if not
+// remapped (e.g. objects created after restore, or the default stream).
+CUfunction lupine_gpu_xlate_function(CUfunction fn);
+CUmodule lupine_gpu_xlate_module(CUmodule m);
+CUstream lupine_gpu_xlate_stream(CUstream s);
+CUcontext lupine_gpu_xlate_context(CUcontext ctx);
+
 // RPC handlers (registered as manual overrides in server.cpp).
 int handle_manual_cuMemAlloc_v2(conn_t *conn);
 int handle_manual_cuMemFree_v2(conn_t *conn);
 int handle_gpu_snapshot_save(conn_t *conn);
 int handle_gpu_snapshot_restore(conn_t *conn);
+
+// Overrides of codegen handlers that additionally track the created object so it
+// can be replayed/remapped on restore.
+int handle_manual_cuModuleGetFunction_tracked(conn_t *conn);
+int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn);
+int handle_manual_cuKernelGetFunction_tracked(conn_t *conn);
+int handle_manual_cuStreamCreate_tracked(conn_t *conn);
+int handle_manual_cuDevicePrimaryCtxRetain_tracked(conn_t *conn);
 
 #ifdef __cplusplus
 }

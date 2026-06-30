@@ -4,6 +4,7 @@
     dlsym;
     lupine_snapshot_save;
     lupine_snapshot_load;
+    lupine_snapshot_disconnect;
   local:
     *;
 };
