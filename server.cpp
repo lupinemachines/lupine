@@ -10,7 +10,6 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <signal.h>
-#include <sys/personality.h>
 #include <unistd.h>
 #endif
 
@@ -255,19 +254,12 @@ void client_handler(lupine_socket_t connfd) {
   lupine_socket_close(connfd);
 }
 
-int main(int argc, char **argv) {
-#ifndef _WIN32
+int main() {
   // GPU snapshots reproduce device pointers by re-reserving the same VMM arena
-  // base in a fresh worker. That base is only stable across processes when the
-  // address space is not randomized, so disable ASLR and re-exec once.
-  if ((personality(0xffffffff) & ADDR_NO_RANDOMIZE) == 0) {
-    if (personality(ADDR_NO_RANDOMIZE) != -1) {
-      execv("/proc/self/exe", argv);
-    }
-    LUPINE_LOG_ERROR("Failed to disable ASLR; GPU snapshot restore may fail.");
-  }
-#endif
-  (void)argc;
+  // base in a fresh worker. The arena is large (tens of GiB), so the driver
+  // reliably places it at a low GPU VA below where host ASLR maps libraries,
+  // heap and stack, making the base identical across processes without any
+  // ASLR tweaking.
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
   if (lupine_socket_init() < 0) {
