@@ -42,28 +42,24 @@ CUresult lupine_gpu_snapshot_restore(const char *id);
 // client's pre-snapshot opaque handles can be translated to live ones.
 void lupine_gpu_track_module(CUmodule m, unsigned int kind, const void *image,
                              size_t size);
+void lupine_gpu_track_library_module(CUmodule m, CUlibrary lib);
 void lupine_gpu_track_function(CUfunction fn, CUmodule m, const char *name);
 void lupine_gpu_track_library(CUlibrary lib, unsigned int kind,
                               const void *image, size_t size);
 void lupine_gpu_track_kernel(CUkernel k, CUlibrary lib, const char *name);
 void lupine_gpu_track_kernel_function(CUfunction fn, CUkernel k);
-// Device globals live in the library/module image (outside the VMM arena), so
-// their contents must be captured and restored after the image is replayed.
-void lupine_gpu_track_library_global(CUlibrary lib, const char *name);
-void lupine_gpu_track_module_global(CUmodule mod, const char *name);
-void lupine_gpu_track_stream(CUstream s, unsigned int flags);
-void lupine_gpu_track_event(CUevent e, unsigned int flags);
-void lupine_gpu_track_primary_ctx(CUcontext ctx);
 
 // Translate a client (pre-snapshot) handle to the live one; identity if not
-// remapped (e.g. objects created after restore, or the default stream).
+// remapped (e.g. objects created after restore).
 CUfunction lupine_gpu_xlate_function(CUfunction fn);
 CUmodule lupine_gpu_xlate_module(CUmodule m);
 CUlibrary lupine_gpu_xlate_library(CUlibrary lib);
 CUkernel lupine_gpu_xlate_kernel(CUkernel k);
+// Streams are intentionally not replayed. After restore, non-default streams are
+// treated as the default stream so cached pre-snapshot stream handles do not
+// poison launches and async copies.
 CUstream lupine_gpu_xlate_stream(CUstream s);
-CUevent lupine_gpu_xlate_event(CUevent e);
-CUcontext lupine_gpu_xlate_context(CUcontext ctx);
+int lupine_gpu_restored(void);
 
 // RPC handlers (registered as manual overrides in server.cpp).
 int handle_manual_cuMemAlloc_v2(conn_t *conn);
@@ -76,9 +72,6 @@ int handle_gpu_snapshot_restore(conn_t *conn);
 int handle_manual_cuModuleGetFunction_tracked(conn_t *conn);
 int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn);
 int handle_manual_cuKernelGetFunction_tracked(conn_t *conn);
-int handle_manual_cuStreamCreate_tracked(conn_t *conn);
-int handle_manual_cuEventCreate_tracked(conn_t *conn);
-int handle_manual_cuDevicePrimaryCtxRetain_tracked(conn_t *conn);
 
 #ifdef __cplusplus
 }

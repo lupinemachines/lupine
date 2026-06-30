@@ -685,6 +685,10 @@ int handle_manual_cuModuleLoad(conn_t *conn) {
   }
 
   result = cuModuleLoadData(&module, image.data());
+  if (result == CUDA_SUCCESS) {
+    lupine_gpu_track_module(module, LUPINE_MODULE_IMAGE_FATBIN_RAW, image.data(),
+                            image_size);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
@@ -1558,6 +1562,7 @@ int handle_manual_cuLibraryGetModule(conn_t *conn) {
   result = cuLibraryGetModule(&module, library);
   if (result == CUDA_SUCCESS) {
     lupine_module_libraries()[module] = library;
+    lupine_gpu_track_library_module(module, library);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1625,13 +1630,6 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
       }
     }
   }
-  if (result == CUDA_SUCCESS) {
-    auto library_it = lupine_module_libraries().find(module);
-    if (library_it != lupine_module_libraries().end())
-      lupine_gpu_track_library_global(library_it->second, name.data());
-    else
-      lupine_gpu_track_module_global(module, name.data());
-  }
   LUPINE_TRACE_LOG("LUPINE cuModuleGetGlobal name=" << name.data() << " result="
                                                     << static_cast<int>(result)
                                                     << " bytes=" << bytes);
@@ -1694,6 +1692,7 @@ int handle_manual_cuFuncGetParamLayout(conn_t *conn) {
     return -1;
   }
 
+  f = lupine_gpu_xlate_function(f);
   result = lupine_get_kernel_param_layout(f, &layout);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
@@ -1747,7 +1746,7 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
 
   // Translate handles the client cached before a snapshot to this worker's.
   f = lupine_gpu_xlate_function(f);
-  ctx = lupine_gpu_xlate_context(ctx);
+  if (lupine_gpu_restored()) ctx = nullptr;
   hStream = lupine_gpu_xlate_stream(hStream);
 
   if (ctx != nullptr) {

@@ -9,10 +9,9 @@
 //
 // Each wrapper calls the real driver function via the (name)(args)
 // parenthesization, which suppresses the function-like macro so there is no
-// recursion. Object *creators* (cuStreamCreate, cuModuleLoadData,
-// cuLibraryGetKernel, cuKernelGetFunction, cuDevicePrimaryCtxRetain) are NOT
-// wrapped -- they are tracked instead. cuLaunchKernel is handled in its manual
-// handler (it must translate before reading the kernel's param layout).
+// recursion. Module/library/function/kernel creators are tracked instead.
+// cuLaunchKernel is handled in its manual handler (it must translate before
+// reading the kernel's param layout).
 
 #include <cuda.h>
 
@@ -45,31 +44,6 @@ LUPINE_XLATE_INLINE CUresult lupine_x_cuStreamGetPriority(CUstream s, int *p) {
   return (cuStreamGetPriority)(lupine_gpu_xlate_stream(s), p);
 }
 #define cuStreamGetPriority lupine_x_cuStreamGetPriority
-
-LUPINE_XLATE_INLINE CUresult lupine_x_cuStreamWaitEvent(CUstream s, CUevent e,
-                                                        unsigned int fl) {
-  return (cuStreamWaitEvent)(lupine_gpu_xlate_stream(s),
-                             lupine_gpu_xlate_event(e), fl);
-}
-#define cuStreamWaitEvent lupine_x_cuStreamWaitEvent
-
-// --- event-consuming ------------------------------------------------------
-LUPINE_XLATE_INLINE CUresult lupine_x_cuEventQuery(CUevent e) {
-  return (cuEventQuery)(lupine_gpu_xlate_event(e));
-}
-#define cuEventQuery lupine_x_cuEventQuery
-
-LUPINE_XLATE_INLINE CUresult lupine_x_cuEventSynchronize(CUevent e) {
-  return (cuEventSynchronize)(lupine_gpu_xlate_event(e));
-}
-#define cuEventSynchronize lupine_x_cuEventSynchronize
-
-LUPINE_XLATE_INLINE CUresult lupine_x_cuEventElapsedTime(float *ms, CUevent a,
-                                                         CUevent b) {
-  return (cuEventElapsedTime)(ms, lupine_gpu_xlate_event(a),
-                              lupine_gpu_xlate_event(b));
-}
-#define cuEventElapsedTime lupine_x_cuEventElapsedTime
 
 LUPINE_XLATE_INLINE CUresult lupine_x_cuLaunchHostFunc(CUstream s, CUhostFn fn,
                                                        void *u) {
@@ -122,31 +96,6 @@ LUPINE_XLATE_INLINE CUresult lupine_x_cuMemsetD32Async(CUdeviceptr d,
   return (cuMemsetD32Async)(d, v, n, lupine_gpu_xlate_stream(st));
 }
 #define cuMemsetD32Async lupine_x_cuMemsetD32Async
-
-// --- event record (stream arg) --------------------------------------------
-LUPINE_XLATE_INLINE CUresult lupine_x_cuEventRecord(CUevent e, CUstream s) {
-  return (cuEventRecord)(lupine_gpu_xlate_event(e), lupine_gpu_xlate_stream(s));
-}
-#define cuEventRecord lupine_x_cuEventRecord
-
-LUPINE_XLATE_INLINE CUresult lupine_x_cuEventRecordWithFlags(CUevent e,
-                                                             CUstream s,
-                                                             unsigned int fl) {
-  return (cuEventRecordWithFlags)(lupine_gpu_xlate_event(e),
-                                  lupine_gpu_xlate_stream(s), fl);
-}
-#define cuEventRecordWithFlags lupine_x_cuEventRecordWithFlags
-
-// --- context-consuming ----------------------------------------------------
-LUPINE_XLATE_INLINE CUresult lupine_x_cuCtxSetCurrent(CUcontext c) {
-  return (cuCtxSetCurrent)(lupine_gpu_xlate_context(c));
-}
-#define cuCtxSetCurrent lupine_x_cuCtxSetCurrent
-
-LUPINE_XLATE_INLINE CUresult lupine_x_cuCtxPushCurrent_v2(CUcontext c) {
-  return (cuCtxPushCurrent_v2)(lupine_gpu_xlate_context(c));
-}
-#define cuCtxPushCurrent_v2 lupine_x_cuCtxPushCurrent_v2
 
 // --- function-consuming ---------------------------------------------------
 LUPINE_XLATE_INLINE CUresult lupine_x_cuFuncGetAttribute(
