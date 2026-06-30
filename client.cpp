@@ -56,6 +56,8 @@ pthread_mutex_t conn_mutex;
 conn_t conns[16];
 int nconns = 0;
 static bool lupine_rpc_shutting_down = false;
+static constexpr int LUPINE_MAX_CLIENT_CONNS =
+    static_cast<int>(sizeof(conns) / sizeof(conns[0]));
 
 const char *DEFAULT_PORT = "14833";
 
@@ -8684,7 +8686,7 @@ void rpc_close(conn_t *conn) {
 }
 
 static void lupine_rpc_shutdown() {
-  if (pthread_mutex_lock(&conn_mutex) < 0) {
+  if (pthread_mutex_lock(&conn_mutex) != 0) {
     return;
   }
   if (lupine_rpc_shutting_down) {
@@ -8844,25 +8846,39 @@ void *rpc_client_dispatch_thread(void *arg) {
 }
 
 int rpc_open() {
-  if (pthread_mutex_lock(&conn_mutex) < 0)
+  if (pthread_mutex_lock(&conn_mutex) != 0)
     return -1;
 
   if (nconns > 0) {
-    if (pthread_mutex_unlock(&conn_mutex) < 0)
+    if (pthread_mutex_unlock(&conn_mutex) != 0)
       return -1;
     return 0;
   }
 
   char *server_ips = getenv("LUPINE_SERVER");
   if (server_ips == NULL) {
-    if (pthread_mutex_unlock(&conn_mutex) < 0)
+    if (pthread_mutex_unlock(&conn_mutex) != 0)
       return -1;
     return -1;
   }
 
-  char *server_ip = strdup(server_ips);
+  char *server_ip_storage = strdup(server_ips);
+  if (server_ip_storage == nullptr) {
+    if (pthread_mutex_unlock(&conn_mutex) != 0)
+      return -1;
+    return -1;
+  }
+
+  char *server_ip = server_ip_storage;
   char *token;
   while ((token = strsep(&server_ip, ","))) {
+    if (token[0] == '\0') {
+      continue;
+    }
+    if (nconns >= LUPINE_MAX_CLIENT_CONNS) {
+      break;
+    }
+
     char *host;
     char *port;
 
@@ -8891,6 +8907,7 @@ int rpc_open() {
     int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (sockfd == -1) {
       printf("socket creation failed...\n");
+      freeaddrinfo(res);
       continue;
     }
 
@@ -8900,6 +8917,7 @@ int rpc_open() {
       LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
                                         << " failed: " << strerror(errno));
       close(sockfd);
+      freeaddrinfo(res);
       continue;
     }
 
@@ -8908,22 +8926,35 @@ int rpc_open() {
     conns[nconns].request_id = 0;
     conns[nconns].closed = 0;
     conns[nconns].local_request_parity = conns[nconns].request_id & 1;
-    if (pthread_mutex_init(&conns[nconns].read_mutex, NULL) < 0 ||
-        pthread_mutex_init(&conns[nconns].write_mutex, NULL) < 0 ||
-        pthread_mutex_init(&conns[nconns].call_mutex, NULL) < 0 ||
-        pthread_cond_init(&conns[nconns].read_cond, NULL) < 0 ||
+    if (pthread_mutex_init(&conns[nconns].read_mutex, NULL) != 0 ||
+        pthread_mutex_init(&conns[nconns].write_mutex, NULL) != 0 ||
+        pthread_mutex_init(&conns[nconns].call_mutex, NULL) != 0 ||
+        pthread_cond_init(&conns[nconns].read_cond, NULL) != 0 ||
         rpc_http2_client_init(&conns[nconns]) < 0) {
       close(sockfd);
+      freeaddrinfo(res);
+      free(server_ip_storage);
+      pthread_mutex_unlock(&conn_mutex);
       return -1;
     }
 
-    pthread_create(&conns[nconns].read_thread, NULL, rpc_client_dispatch_thread,
-                   (void *)&conns[nconns]);
+    if (pthread_create(&conns[nconns].read_thread, NULL,
+                       rpc_client_dispatch_thread,
+                       (void *)&conns[nconns]) != 0) {
+      close(sockfd);
+      freeaddrinfo(res);
+      free(server_ip_storage);
+      pthread_mutex_unlock(&conn_mutex);
+      return -1;
+    }
 
     nconns++;
+    freeaddrinfo(res);
   }
 
-  if (pthread_mutex_unlock(&conn_mutex) < 0)
+  free(server_ip_storage);
+
+  if (pthread_mutex_unlock(&conn_mutex) != 0)
     return -1;
   if (nconns == 0)
     return -1;
@@ -8937,6 +8968,11 @@ conn_t *rpc_client_get_connection(unsigned int index) {
 }
 
 int rpc_size() { return nconns; }
+
+#ifdef LUPINE_CONNECTION_SETUP_TEST
+extern "C" int lupine_test_rpc_open() { return rpc_open(); }
+extern "C" int lupine_test_rpc_size() { return rpc_size(); }
+#endif
 
 #ifdef cuGetProcAddress
 #undef cuGetProcAddress

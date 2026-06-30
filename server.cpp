@@ -187,10 +187,10 @@ void client_handler(lupine_socket_t connfd) {
   conn_t conn = {connfd, 1};
   conn.request_id = 1;
   conn.local_request_parity = conn.request_id & 1;
-  if (pthread_mutex_init(&conn.read_mutex, NULL) < 0 ||
-      pthread_mutex_init(&conn.write_mutex, NULL) < 0 ||
-      pthread_mutex_init(&conn.call_mutex, NULL) < 0 ||
-      pthread_cond_init(&conn.read_cond, NULL) < 0 ||
+  if (pthread_mutex_init(&conn.read_mutex, NULL) != 0 ||
+      pthread_mutex_init(&conn.write_mutex, NULL) != 0 ||
+      pthread_mutex_init(&conn.call_mutex, NULL) != 0 ||
+      pthread_cond_init(&conn.read_cond, NULL) != 0 ||
       rpc_http2_server_init(&conn) < 0) {
     LUPINE_LOG_ERROR("Error initializing mutex.");
     return;
@@ -227,8 +227,8 @@ void client_handler(lupine_socket_t connfd) {
     }
   }
 
-  if (pthread_mutex_destroy(&conn.read_mutex) < 0 ||
-      pthread_mutex_destroy(&conn.write_mutex) < 0)
+  if (pthread_mutex_destroy(&conn.read_mutex) != 0 ||
+      pthread_mutex_destroy(&conn.write_mutex) != 0)
     LUPINE_LOG_ERROR("Error destroying mutex.");
 
   lupine_socket_close(connfd);

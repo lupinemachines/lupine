@@ -6,7 +6,7 @@
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
 
-  if (pthread_mutex_lock(&conn->read_mutex) < 0)
+  if (pthread_mutex_lock(&conn->read_mutex) != 0)
     return NULL;
 
   while (!conn->closed) {
@@ -23,7 +23,7 @@ void *_rpc_read_id_dispatch(void *p) {
       pthread_cond_broadcast(&conn->read_cond);
       break;
     }
-    if (pthread_cond_broadcast(&conn->read_cond) < 0)
+    if (pthread_cond_broadcast(&conn->read_cond) != 0)
       break;
   }
   pthread_mutex_unlock(&conn->read_mutex);
@@ -41,11 +41,11 @@ void *_rpc_read_id_dispatch(void *p) {
 int rpc_dispatch(conn_t *conn, int parity) {
   if (conn->rpc_thread == 0 &&
       pthread_create(&conn->rpc_thread, nullptr, _rpc_read_id_dispatch,
-                     (void *)conn) < 0) {
+                     (void *)conn) != 0) {
     return -1;
   }
 
-  if (pthread_mutex_lock(&conn->read_mutex) < 0) {
+  if (pthread_mutex_lock(&conn->read_mutex) != 0) {
     return -1;
   }
 
@@ -74,12 +74,12 @@ int rpc_dispatch(conn_t *conn, int parity) {
 // it is not necessary to call rpc_read_start() if it is the first call in
 // the sequence because by convention, the handler owns the read lock on entry.
 int rpc_read_start(conn_t *conn, int write_id) {
-  if (pthread_mutex_lock(&conn->read_mutex) < 0)
+  if (pthread_mutex_lock(&conn->read_mutex) != 0)
     return -1;
 
   // wait for the active read id to be the request id we are waiting for
   while (!conn->closed && conn->read_id != write_id)
-    if (pthread_cond_wait(&conn->read_cond, &conn->read_mutex) < 0)
+    if (pthread_cond_wait(&conn->read_cond, &conn->read_mutex) != 0)
       return -1;
 
   if (conn->closed) {
@@ -113,10 +113,10 @@ int rpc_read_end(conn_t *conn) {
   bool completes_local_request =
       read_id >= 2 && (read_id % 2) == conn->local_request_parity;
   conn->read_id = 0;
-  if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
-      pthread_mutex_unlock(&conn->read_mutex) < 0)
+  if (pthread_cond_broadcast(&conn->read_cond) != 0 ||
+      pthread_mutex_unlock(&conn->read_mutex) != 0)
     return -1;
-  if (completes_local_request && pthread_mutex_unlock(&conn->call_mutex) < 0)
+  if (completes_local_request && pthread_mutex_unlock(&conn->call_mutex) != 0)
     return -1;
   return read_id;
 }
@@ -142,14 +142,14 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (conn->closed) {
     return -1;
   }
-  if (pthread_mutex_lock(&conn->call_mutex) < 0) {
+  if (pthread_mutex_lock(&conn->call_mutex) != 0) {
     return -1;
   }
   if (conn->closed) {
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
-  if (pthread_mutex_lock(&conn->write_mutex) < 0) {
+  if (pthread_mutex_lock(&conn->write_mutex) != 0) {
 #ifdef VERBOSE
     std::cout << "rpc_write_start failed due to rpc_open() < 0 || "
                  "conns[index].write_mutex lock"
@@ -174,7 +174,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
   if (conn->closed) {
     return -1;
   }
-  if (pthread_mutex_lock(&conn->write_mutex) < 0) {
+  if (pthread_mutex_lock(&conn->write_mutex) != 0) {
 #ifdef VERBOSE
     std::cout << "rpc_write_start failed due to rpc_open() < 0 || "
                  "conns[index].write_mutex lock"
