@@ -140,8 +140,12 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
     )
     target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
+    add_executable(socket_tuning_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/socket_tuning_test.cpp
+    )
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
+    add_test(NAME socket_tuning_test COMMAND socket_tuning_test)
     add_test(
         NAME nvml_ecc_exports
         COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"

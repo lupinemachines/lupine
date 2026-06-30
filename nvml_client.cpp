@@ -116,8 +116,7 @@ int open_connection() {
 
     int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (sockfd >= 0) {
-      int flag = 1;
-      setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+      lupine_socket_configure_stream(sockfd);
       if (connect(sockfd, res->ai_addr, res->ai_addrlen) == 0) {
         if (nconns >= static_cast<int>(sizeof(conns) / sizeof(conns[0]))) {
           close(sockfd);

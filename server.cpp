@@ -312,10 +312,7 @@ int main() {
       continue;
     }
 
-#ifndef _WIN32
-    int flag = 1;
-    setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-#endif
+    lupine_socket_configure_stream(connfd);
 
 #ifndef _WIN32
     // fork a process per connection so each client gets its own CUDA driver
