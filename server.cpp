@@ -56,6 +56,8 @@ lupine_manual_handlers() {
        {handle_manual_cuKernelGetFunction_tracked, "cuKernelGetFunction (tracked)"}},
       {RPC_cuStreamCreate,
        {handle_manual_cuStreamCreate_tracked, "cuStreamCreate (tracked)"}},
+      {RPC_cuEventCreate,
+       {handle_manual_cuEventCreate_tracked, "cuEventCreate (tracked)"}},
       {RPC_cuDevicePrimaryCtxRetain,
        {handle_manual_cuDevicePrimaryCtxRetain_tracked,
         "cuDevicePrimaryCtxRetain (tracked)"}},

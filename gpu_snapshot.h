@@ -48,6 +48,7 @@ void lupine_gpu_track_library(CUlibrary lib, unsigned int kind,
 void lupine_gpu_track_kernel(CUkernel k, CUlibrary lib, const char *name);
 void lupine_gpu_track_kernel_function(CUfunction fn, CUkernel k);
 void lupine_gpu_track_stream(CUstream s, unsigned int flags);
+void lupine_gpu_track_event(CUevent e, unsigned int flags);
 void lupine_gpu_track_primary_ctx(CUcontext ctx);
 
 // Translate a client (pre-snapshot) handle to the live one; identity if not
@@ -55,6 +56,7 @@ void lupine_gpu_track_primary_ctx(CUcontext ctx);
 CUfunction lupine_gpu_xlate_function(CUfunction fn);
 CUmodule lupine_gpu_xlate_module(CUmodule m);
 CUstream lupine_gpu_xlate_stream(CUstream s);
+CUevent lupine_gpu_xlate_event(CUevent e);
 CUcontext lupine_gpu_xlate_context(CUcontext ctx);
 
 // RPC handlers (registered as manual overrides in server.cpp).
@@ -69,6 +71,7 @@ int handle_manual_cuModuleGetFunction_tracked(conn_t *conn);
 int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn);
 int handle_manual_cuKernelGetFunction_tracked(conn_t *conn);
 int handle_manual_cuStreamCreate_tracked(conn_t *conn);
+int handle_manual_cuEventCreate_tracked(conn_t *conn);
 int handle_manual_cuDevicePrimaryCtxRetain_tracked(conn_t *conn);
 
 #ifdef __cplusplus

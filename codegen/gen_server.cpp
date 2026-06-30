@@ -14,6 +14,8 @@
 
 #include "gen_server.h"
 
+#include "../gpu_snapshot_xlate.h"
+
 #include <cstdio>
 
 #include "rpc.h"

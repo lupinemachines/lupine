@@ -56,12 +56,14 @@ std::map<CUlibrary, ModuleRec> g_libraries;
 std::map<CUkernel, std::pair<CUlibrary, std::string>> g_kernels;
 std::map<CUfunction, CUkernel> g_kernel_functions;
 std::map<CUstream, unsigned int> g_streams;
+std::map<CUevent, unsigned int> g_events;
 CUcontext g_primary_ctx = nullptr;
 std::map<CUmodule, CUmodule> g_module_remap;
 std::map<CUlibrary, CUlibrary> g_library_remap;
 std::map<CUkernel, CUkernel> g_kernel_remap;
 std::map<CUfunction, CUfunction> g_function_remap;
 std::map<CUstream, CUstream> g_stream_remap;
+std::map<CUevent, CUevent> g_event_remap;
 std::map<CUcontext, CUcontext> g_context_remap;
 
 // Mirror of manual_server.cpp's module-image kinds.
@@ -245,10 +247,10 @@ bool read_str(FILE *f, std::string &s) {
 bool save_objects(const std::string &dir) {
   fprintf(stderr,
           "gpu_snapshot save: modules=%zu funcs=%zu libs=%zu kernels=%zu "
-          "kfuncs=%zu streams=%zu ctx=%p\n",
+          "kfuncs=%zu streams=%zu events=%zu ctx=%p\n",
           g_modules.size(), g_functions.size(), g_libraries.size(),
           g_kernels.size(), g_kernel_functions.size(), g_streams.size(),
-          (void *)g_primary_ctx);
+          g_events.size(), (void *)g_primary_ctx);
   FILE *f = fopen(join(dir, "gpu.objects").c_str(), "wb");
   if (!f) return false;
   write_u64(f, g_modules.size());
@@ -282,6 +284,11 @@ bool save_objects(const std::string &dir) {
   }
   write_u64(f, g_streams.size());
   for (auto &kv : g_streams) {
+    write_u64(f, (uint64_t)kv.first);
+    write_u64(f, kv.second);
+  }
+  write_u64(f, g_events.size());
+  for (auto &kv : g_events) {
     write_u64(f, (uint64_t)kv.first);
     write_u64(f, kv.second);
   }
@@ -406,6 +413,19 @@ CUresult restore_objects(const std::string &dir) {
     if (rc != CUDA_SUCCESS) goto done;
     g_streams[s] = (unsigned)flags;
     g_stream_remap[(CUstream)old_s] = s;
+  }
+  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
+  for (uint64_t i = 0; i < n; i++) { // events
+    uint64_t old_e, flags;
+    if (!read_u64(f, &old_e) || !read_u64(f, &flags)) {
+      rc = CUDA_ERROR_UNKNOWN;
+      goto done;
+    }
+    CUevent e = nullptr;
+    rc = cuEventCreate(&e, (unsigned)flags);
+    if (rc != CUDA_SUCCESS) goto done;
+    g_events[e] = (unsigned)flags;
+    g_event_remap[(CUevent)old_e] = e;
   }
   {
     uint64_t old_ctx = 0;
@@ -825,6 +845,35 @@ int handle_manual_cuKernelGetFunction_tracked(conn_t *conn) {
   if (result == CUDA_SUCCESS) lupine_gpu_track_kernel_function(pFunc, kernel);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pFunc, sizeof(CUfunction)) < 0 ||
+      rpc_write(conn, &result, sizeof(CUresult)) < 0 || rpc_write_end(conn) < 0)
+    return -1;
+  return 0;
+}
+
+void lupine_gpu_track_event(CUevent e, unsigned int flags) {
+  if (!e) return;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_events[e] = flags;
+}
+
+CUevent lupine_gpu_xlate_event(CUevent e) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_event_remap.find(e);
+  return it == g_event_remap.end() ? e : it->second;
+}
+
+int handle_manual_cuEventCreate_tracked(conn_t *conn) {
+  CUevent phEvent;
+  unsigned int Flags;
+  if (rpc_read(conn, &phEvent, sizeof(CUevent)) < 0 ||
+      rpc_read(conn, &Flags, sizeof(unsigned int)) < 0)
+    return -1;
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) return -1;
+  CUresult result = cuEventCreate(&phEvent, Flags);
+  if (result == CUDA_SUCCESS) lupine_gpu_track_event(phEvent, Flags);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &phEvent, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &result, sizeof(CUresult)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;

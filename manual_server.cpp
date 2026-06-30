@@ -39,6 +39,10 @@
 #include "manual_server.h"
 #include "rpc.h"
 
+// Must come last: redefines handle-consuming cu* entry points to translate
+// client handles after a snapshot restore (see gpu_snapshot_xlate.h).
+#include "gpu_snapshot_xlate.h"
+
 #if CUDA_VERSION < 12020
 #ifdef CU_MEM_LOCATION_TYPE_HOST
 static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
@@ -1813,6 +1817,10 @@ int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+
+  // Translate handles the client cached before a snapshot to this worker's.
+  f = lupine_gpu_xlate_function(f);
+  hStream = lupine_gpu_xlate_stream(hStream);
 
   lupine_kernel_param_layout layout;
   result = lupine_get_kernel_param_layout(f, &layout);
