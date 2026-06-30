@@ -8887,15 +8887,13 @@ int rpc_open() {
       continue;
     }
 
-    int flag = 1;
     int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (sockfd == -1) {
       printf("socket creation failed...\n");
       continue;
     }
 
-    int opts = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
-                          sizeof(int));
+    lupine_socket_configure_stream(sockfd);
     if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
       LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
                                         << " failed: " << strerror(errno));

@@ -112,6 +112,17 @@ inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
 }
 
+inline int lupine_socket_configure_stream(lupine_socket_t socket) {
+  const char enable = 1;
+  if (setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable)) !=
+          0 ||
+      setsockopt(socket, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable)) !=
+          0) {
+    return -1;
+  }
+  return 0;
+}
+
 inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
                                   size_t size) {
   int chunk = static_cast<int>(std::min<size_t>(size, INT_MAX));
@@ -155,6 +166,8 @@ inline int lupine_fd_fileno(FILE *file) { return _fileno(file); }
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -171,6 +184,30 @@ inline int lupine_socket_close(lupine_socket_t socket) { return close(socket); }
 inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   const int enable = 1;
   return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+}
+inline int lupine_socket_configure_stream(lupine_socket_t socket) {
+  const int enable = 1;
+  if (setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable)) !=
+          0 ||
+      setsockopt(socket, SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable)) !=
+          0) {
+    return -1;
+  }
+
+#ifdef TCP_KEEPIDLE
+  const int keepidle = 60;
+  setsockopt(socket, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+#endif
+#ifdef TCP_KEEPINTVL
+  const int keepintvl = 10;
+  setsockopt(socket, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl,
+             sizeof(keepintvl));
+#endif
+#ifdef TCP_KEEPCNT
+  const int keepcnt = 12;
+  setsockopt(socket, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#endif
+  return 0;
 }
 inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
                                   size_t size) {
