@@ -1625,6 +1625,13 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
       }
     }
   }
+  if (result == CUDA_SUCCESS) {
+    auto library_it = lupine_module_libraries().find(module);
+    if (library_it != lupine_module_libraries().end())
+      lupine_gpu_track_library_global(library_it->second, name.data());
+    else
+      lupine_gpu_track_module_global(module, name.data());
+  }
   LUPINE_TRACE_LOG("LUPINE cuModuleGetGlobal name=" << name.data() << " result="
                                                     << static_cast<int>(result)
                                                     << " bytes=" << bytes);

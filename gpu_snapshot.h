@@ -47,6 +47,10 @@ void lupine_gpu_track_library(CUlibrary lib, unsigned int kind,
                               const void *image, size_t size);
 void lupine_gpu_track_kernel(CUkernel k, CUlibrary lib, const char *name);
 void lupine_gpu_track_kernel_function(CUfunction fn, CUkernel k);
+// Device globals live in the library/module image (outside the VMM arena), so
+// their contents must be captured and restored after the image is replayed.
+void lupine_gpu_track_library_global(CUlibrary lib, const char *name);
+void lupine_gpu_track_module_global(CUmodule mod, const char *name);
 void lupine_gpu_track_stream(CUstream s, unsigned int flags);
 void lupine_gpu_track_event(CUevent e, unsigned int flags);
 void lupine_gpu_track_primary_ctx(CUcontext ctx);
@@ -55,6 +59,8 @@ void lupine_gpu_track_primary_ctx(CUcontext ctx);
 // remapped (e.g. objects created after restore, or the default stream).
 CUfunction lupine_gpu_xlate_function(CUfunction fn);
 CUmodule lupine_gpu_xlate_module(CUmodule m);
+CUlibrary lupine_gpu_xlate_library(CUlibrary lib);
+CUkernel lupine_gpu_xlate_kernel(CUkernel k);
 CUstream lupine_gpu_xlate_stream(CUstream s);
 CUevent lupine_gpu_xlate_event(CUevent e);
 CUcontext lupine_gpu_xlate_context(CUcontext ctx);

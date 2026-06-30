@@ -161,4 +161,37 @@ LUPINE_XLATE_INLINE CUresult lupine_x_cuFuncSetAttribute(
 }
 #define cuFuncSetAttribute lupine_x_cuFuncSetAttribute
 
+// --- library/module-consuming getters (client handle may be pre-snapshot) ---
+LUPINE_XLATE_INLINE CUresult lupine_x_cuLibraryGetModule(CUmodule *m,
+                                                         CUlibrary lib) {
+  return (cuLibraryGetModule)(m, lupine_gpu_xlate_library(lib));
+}
+#define cuLibraryGetModule lupine_x_cuLibraryGetModule
+
+LUPINE_XLATE_INLINE CUresult lupine_x_cuLibraryUnload(CUlibrary lib) {
+  return (cuLibraryUnload)(lupine_gpu_xlate_library(lib));
+}
+#define cuLibraryUnload lupine_x_cuLibraryUnload
+
+LUPINE_XLATE_INLINE CUresult lupine_x_cuLibraryGetManaged(CUdeviceptr *d,
+                                                          size_t *b,
+                                                          CUlibrary lib,
+                                                          const char *n) {
+  return (cuLibraryGetManaged)(d, b, lupine_gpu_xlate_library(lib), n);
+}
+#define cuLibraryGetManaged lupine_x_cuLibraryGetManaged
+
+LUPINE_XLATE_INLINE CUresult lupine_x_cuModuleUnload(CUmodule m) {
+  return (cuModuleUnload)(lupine_gpu_xlate_module(m));
+}
+#define cuModuleUnload lupine_x_cuModuleUnload
+
+LUPINE_XLATE_INLINE CUresult lupine_x_cuModuleGetGlobal_v2(CUdeviceptr *d,
+                                                           size_t *b,
+                                                           CUmodule m,
+                                                           const char *n) {
+  return (cuModuleGetGlobal_v2)(d, b, lupine_gpu_xlate_module(m), n);
+}
+#define cuModuleGetGlobal_v2 lupine_x_cuModuleGetGlobal_v2
+
 #endif // LUPINE_GPU_SNAPSHOT_XLATE_H

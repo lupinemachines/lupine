@@ -6,6 +6,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,8 @@ std::map<CUfunction, std::pair<CUmodule, std::string>> g_functions;
 std::map<CUlibrary, ModuleRec> g_libraries;
 std::map<CUkernel, std::pair<CUlibrary, std::string>> g_kernels;
 std::map<CUfunction, CUkernel> g_kernel_functions;
+std::map<CUlibrary, std::set<std::string>> g_library_globals;
+std::map<CUmodule, std::set<std::string>> g_module_globals;
 std::map<CUstream, unsigned int> g_streams;
 std::map<CUevent, unsigned int> g_events;
 CUcontext g_primary_ctx = nullptr;
@@ -245,12 +248,6 @@ bool read_str(FILE *f, std::string &s) {
 // ordered so restore can replay dependencies first (module before its
 // functions; library before kernels before kernel-functions).
 bool save_objects(const std::string &dir) {
-  fprintf(stderr,
-          "gpu_snapshot save: modules=%zu funcs=%zu libs=%zu kernels=%zu "
-          "kfuncs=%zu streams=%zu events=%zu ctx=%p\n",
-          g_modules.size(), g_functions.size(), g_libraries.size(),
-          g_kernels.size(), g_kernel_functions.size(), g_streams.size(),
-          g_events.size(), (void *)g_primary_ctx);
   FILE *f = fopen(join(dir, "gpu.objects").c_str(), "wb");
   if (!f) return false;
   write_u64(f, g_modules.size());
@@ -281,6 +278,49 @@ bool save_objects(const std::string &dir) {
   for (auto &kv : g_kernel_functions) {
     write_u64(f, (uint64_t)kv.first);
     write_u64(f, (uint64_t)kv.second);
+  }
+  // Capture device-global contents (they live in the library/module image,
+  // outside the VMM arena, so the memory snapshot doesn't cover them).
+  struct GlobalRec {
+    uint64_t owner;
+    std::string name;
+    std::vector<unsigned char> data;
+  };
+  std::vector<GlobalRec> libg, modg;
+  for (auto &kv : g_library_globals)
+    for (const auto &name : kv.second) {
+      CUdeviceptr d;
+      size_t sz;
+      if (cuLibraryGetGlobal(&d, &sz, kv.first, name.c_str()) == CUDA_SUCCESS &&
+          sz) {
+        std::vector<unsigned char> buf(sz);
+        if (cuMemcpyDtoH(buf.data(), d, sz) == CUDA_SUCCESS)
+          libg.push_back({(uint64_t)kv.first, name, std::move(buf)});
+      }
+    }
+  for (auto &kv : g_module_globals)
+    for (const auto &name : kv.second) {
+      CUdeviceptr d;
+      size_t sz;
+      if (cuModuleGetGlobal_v2(&d, &sz, kv.first, name.c_str()) ==
+              CUDA_SUCCESS &&
+          sz) {
+        std::vector<unsigned char> buf(sz);
+        if (cuMemcpyDtoH(buf.data(), d, sz) == CUDA_SUCCESS)
+          modg.push_back({(uint64_t)kv.first, name, std::move(buf)});
+      }
+    }
+  write_u64(f, libg.size());
+  for (auto &e : libg) {
+    write_u64(f, e.owner);
+    write_str(f, e.name);
+    write_blob(f, e.data);
+  }
+  write_u64(f, modg.size());
+  for (auto &e : modg) {
+    write_u64(f, e.owner);
+    write_str(f, e.name);
+    write_blob(f, e.data);
   }
   write_u64(f, g_streams.size());
   for (auto &kv : g_streams) {
@@ -400,6 +440,41 @@ CUresult restore_objects(const std::string &dir) {
     if (rc != CUDA_SUCCESS) goto done;
     g_kernel_functions[fn] = it->second;
     g_function_remap[(CUfunction)old_fn] = fn;
+  }
+  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
+  for (uint64_t i = 0; i < n; i++) { // library globals
+    uint64_t owner;
+    std::string name;
+    std::vector<unsigned char> data;
+    if (!read_u64(f, &owner) || !read_str(f, name) || !read_blob(f, data)) {
+      rc = CUDA_ERROR_UNKNOWN;
+      goto done;
+    }
+    auto it = g_library_remap.find((CUlibrary)owner);
+    if (it == g_library_remap.end()) { rc = CUDA_ERROR_UNKNOWN; goto done; }
+    CUdeviceptr d = 0;
+    size_t sz = 0;
+    if (cuLibraryGetGlobal(&d, &sz, it->second, name.c_str()) == CUDA_SUCCESS &&
+        d && !data.empty())
+      cuMemcpyHtoD(d, data.data(), data.size() < sz ? data.size() : sz);
+  }
+  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
+  for (uint64_t i = 0; i < n; i++) { // module globals
+    uint64_t owner;
+    std::string name;
+    std::vector<unsigned char> data;
+    if (!read_u64(f, &owner) || !read_str(f, name) || !read_blob(f, data)) {
+      rc = CUDA_ERROR_UNKNOWN;
+      goto done;
+    }
+    auto it = g_module_remap.find((CUmodule)owner);
+    if (it == g_module_remap.end()) { rc = CUDA_ERROR_UNKNOWN; goto done; }
+    CUdeviceptr d = 0;
+    size_t sz = 0;
+    if (cuModuleGetGlobal_v2(&d, &sz, it->second, name.c_str()) ==
+            CUDA_SUCCESS &&
+        d && !data.empty())
+      cuMemcpyHtoD(d, data.data(), data.size() < sz ? data.size() : sz);
   }
   if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
   for (uint64_t i = 0; i < n; i++) { // streams
@@ -727,6 +802,18 @@ CUmodule lupine_gpu_xlate_module(CUmodule m) {
   return it == g_module_remap.end() ? m : it->second;
 }
 
+CUlibrary lupine_gpu_xlate_library(CUlibrary lib) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_library_remap.find(lib);
+  return it == g_library_remap.end() ? lib : it->second;
+}
+
+CUkernel lupine_gpu_xlate_kernel(CUkernel k) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_kernel_remap.find(k);
+  return it == g_kernel_remap.end() ? k : it->second;
+}
+
 CUstream lupine_gpu_xlate_stream(CUstream s) {
   std::lock_guard<std::mutex> lock(g_mutex);
   auto it = g_stream_remap.find(s);
@@ -749,6 +836,7 @@ int handle_manual_cuModuleGetFunction_tracked(conn_t *conn) {
   if (name_len && rpc_read(conn, name.data(), name_len) < 0) return -1;
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
+  hmod = lupine_gpu_xlate_module(hmod); // client handle may be pre-snapshot
   CUfunction hfunc = nullptr;
   CUresult result = cuModuleGetFunction(&hfunc, hmod, name.data());
   if (result == CUDA_SUCCESS) lupine_gpu_track_function(hfunc, hmod, name.data());
@@ -824,6 +912,7 @@ int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn) {
   if (name_len && rpc_read(conn, name.data(), name_len) < 0) return -1;
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
+  library = lupine_gpu_xlate_library(library); // client handle may be pre-snapshot
   CUkernel pKernel = nullptr;
   CUresult result = cuLibraryGetKernel(&pKernel, library, name.data());
   if (result == CUDA_SUCCESS)
@@ -840,6 +929,7 @@ int handle_manual_cuKernelGetFunction_tracked(conn_t *conn) {
   if (rpc_read(conn, &kernel, sizeof(CUkernel)) < 0) return -1;
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
+  kernel = lupine_gpu_xlate_kernel(kernel); // client handle may be pre-snapshot
   CUfunction pFunc = nullptr;
   CUresult result = cuKernelGetFunction(&pFunc, kernel);
   if (result == CUDA_SUCCESS) lupine_gpu_track_kernel_function(pFunc, kernel);
@@ -877,4 +967,16 @@ int handle_manual_cuEventCreate_tracked(conn_t *conn) {
       rpc_write(conn, &result, sizeof(CUresult)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;
+}
+
+void lupine_gpu_track_library_global(CUlibrary lib, const char *name) {
+  if (!lib || !name) return;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_library_globals[lib].insert(name);
+}
+
+void lupine_gpu_track_module_global(CUmodule mod, const char *name) {
+  if (!mod || !name) return;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_module_globals[mod].insert(name);
 }
