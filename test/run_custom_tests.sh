@@ -64,7 +64,7 @@ for src in "${tests[@]}"; do
   exe="$BUILD_DIR/$name"
   echo "=== building $name ==="
   if ! "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$src" -o "$exe" \
-       -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs" 2>&1; then
+       -lcuda -lcublas -ldl -L"$CUDA_HOME/lib64/stubs" 2>&1; then
     echo "BUILD FAILED: $name" >&2
     fail=$((fail + 1))
     continue

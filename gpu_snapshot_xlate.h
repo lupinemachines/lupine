@@ -117,6 +117,14 @@ LUPINE_XLATE_INLINE CUresult lupine_x_cuLibraryGetModule(CUmodule *m,
 }
 #define cuLibraryGetModule lupine_x_cuLibraryGetModule
 
+LUPINE_XLATE_INLINE CUresult lupine_x_cuLibraryGetGlobal(CUdeviceptr *d,
+                                                         size_t *b,
+                                                         CUlibrary lib,
+                                                         const char *n) {
+  return (cuLibraryGetGlobal)(d, b, lupine_gpu_xlate_library(lib), n);
+}
+#define cuLibraryGetGlobal lupine_x_cuLibraryGetGlobal
+
 LUPINE_XLATE_INLINE CUresult lupine_x_cuLibraryUnload(CUlibrary lib) {
   return (cuLibraryUnload)(lupine_gpu_xlate_library(lib));
 }

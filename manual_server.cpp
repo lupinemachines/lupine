@@ -3203,6 +3203,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(stream)) < 0) {
     return -1;
   }
+  stream = lupine_gpu_xlate_stream(stream);
 
   int framed = lupine_payload_framed(conn, byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
@@ -3309,6 +3310,7 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+  stream = lupine_gpu_xlate_stream(stream);
 
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (stream != nullptr) {

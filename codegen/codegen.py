@@ -2065,6 +2065,7 @@ def main():
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "gen_server.h"\n\n'
+            '#include "../gpu_snapshot_xlate.h"\n\n'
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'

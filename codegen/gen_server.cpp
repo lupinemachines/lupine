@@ -1623,7 +1623,6 @@ int handle_cuLibraryGetGlobal(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  library = lupine_gpu_xlate_library(library);
   lupine_intercept_result = cuLibraryGetGlobal(&dptr, &bytes, library, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||

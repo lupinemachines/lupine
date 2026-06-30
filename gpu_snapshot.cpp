@@ -449,6 +449,9 @@ int lupine_gpu_owns(CUdeviceptr dptr) {
 
 CUresult lupine_gpu_snapshot_save(const char *id) {
   std::lock_guard<std::mutex> lock(g_mutex);
+  CUresult result = cuCtxSynchronize();
+  if (result != CUDA_SUCCESS) return result;
+
   std::string dir = snapshot_dir(id);
   if (dir.empty()) return CUDA_ERROR_UNKNOWN;
   FILE *mf = fopen(join(dir, "gpu.manifest").c_str(), "wb");
@@ -466,7 +469,6 @@ CUresult lupine_gpu_snapshot_save(const char *id) {
   hdr.arena_base = g_arena_base;
   hdr.granularity = g_granularity;
   hdr.count = g_allocs.size();
-  CUresult result = CUDA_SUCCESS;
   if (fwrite(&hdr, sizeof(hdr), 1, mf) != 1) result = CUDA_ERROR_UNKNOWN;
 
   std::vector<unsigned char> staging;
