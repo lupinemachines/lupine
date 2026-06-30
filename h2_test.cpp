@@ -35,13 +35,28 @@ void require(bool condition, const char *message) {
   }
 }
 
+void init_conn(conn_t *conn, lupine_socket_t fd, int request_id) {
+  *conn = {};
+  conn->connfd = fd;
+  conn->request_id = request_id;
+  conn->local_request_parity = conn->request_id & 1;
+  require(pthread_mutex_init(&conn->read_mutex, nullptr) == 0,
+          "read mutex init failed");
+  require(pthread_mutex_init(&conn->write_mutex, nullptr) == 0,
+          "write mutex init failed");
+  require(pthread_mutex_init(&conn->call_mutex, nullptr) == 0,
+          "call mutex init failed");
+  require(pthread_cond_init(&conn->read_cond, nullptr) == 0,
+          "read cond init failed");
+}
+
 h2_pair make_pair() {
   int fds[2] = {-1, -1};
   require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
 
   h2_pair pair;
-  pair.client.connfd = fds[0];
-  pair.server.connfd = fds[1];
+  init_conn(&pair.client, fds[0], 0);
+  init_conn(&pair.server, fds[1], 1);
   require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
   require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
   return pair;
@@ -188,6 +203,70 @@ void test_framed_payload_round_trip() {
   require(received_suffix == suffix, "framed suffix mismatch");
 }
 
+void test_truncated_rpc_response_releases_locks() {
+  h2_pair pair = make_pair();
+  constexpr int op = 12345;
+  int client_dispatch_result = 0;
+
+  std::thread client_dispatch([&] {
+    while (!pair.client.closed) {
+      int dispatch_op = rpc_dispatch(&pair.client, 1);
+      if (dispatch_op < 0 || pair.client.closed) {
+        break;
+      }
+      if (rpc_read_end(&pair.client) < 0) {
+        client_dispatch_result = -1;
+        break;
+      }
+    }
+  });
+
+  std::thread server([&] {
+    int dispatch_op = rpc_dispatch(&pair.server, 0);
+    require(dispatch_op == op, "server received wrong rpc op");
+    int request_id = rpc_read_end(&pair.server);
+    require(request_id > 0, "server request read_end failed");
+
+    char partial_response = 0x5a;
+    require(rpc_write_start_response(&pair.server, request_id) == 0,
+            "server response start failed");
+    require(rpc_write(&pair.server, &partial_response,
+                      sizeof(partial_response)) == 0,
+            "server truncated response write failed");
+    require(rpc_write_end(&pair.server) == request_id,
+            "server truncated response flush failed");
+    shutdown(pair.server.connfd, SHUT_RDWR);
+    close(pair.server.connfd);
+    pair.server.connfd = -1;
+  });
+
+  require(rpc_write_start_request(&pair.client, op) == 0,
+          "client request start failed");
+  require(rpc_wait_for_response(&pair.client) == 0,
+          "client did not receive response header");
+
+  int response = 0;
+  require(rpc_read(&pair.client, &response, sizeof(response)) < 0,
+          "truncated response read unexpectedly succeeded");
+  require(pair.client.closed, "client connection was not marked closed");
+  require(pthread_mutex_trylock(&pair.client.call_mutex) == 0,
+          "call mutex left locked after truncated response");
+  pthread_mutex_unlock(&pair.client.call_mutex);
+  require(rpc_write_start_request(&pair.client, op + 1) < 0,
+          "new rpc request did not fail on closed connection");
+
+  server.join();
+  client_dispatch.join();
+  if (pair.client.rpc_thread != 0) {
+    pthread_join(pair.client.rpc_thread, nullptr);
+    pair.client.rpc_thread = 0;
+  }
+  require(pthread_mutex_trylock(&pair.client.read_mutex) == 0,
+          "read mutex left locked after truncated response");
+  pthread_mutex_unlock(&pair.client.read_mutex);
+  require(client_dispatch_result == 0, "client dispatch failed unexpectedly");
+}
+
 } // namespace
 
 int main() {
@@ -196,6 +275,7 @@ int main() {
   test_fragmented_iovec();
   test_large_payload();
   test_framed_payload_round_trip();
+  test_truncated_rpc_response_releases_locks();
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }
