@@ -1,5 +1,6 @@
 #include "rpc.h"
 #include <algorithm>
+#include <climits>
 #include <iostream>
 #include <string.h>
 
@@ -159,7 +160,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     return -1;
   }
 
-  conn->write_iov_count = 2;               // skip 2 for the header
+  conn->write_queue.assign(2, {}); // skip 2 for the header
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   conn->write_id = conn->request_id;
   conn->write_op = op;
@@ -183,15 +184,18 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
     return -1;
   }
 
-  conn->write_iov_count = 1; // skip 1 for the header
+  conn->write_queue.assign(1, {}); // skip 1 for the header
   conn->write_id = read_id;
   conn->write_op = -1;
   return 0;
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
-  conn->write_iov_framed[conn->write_iov_count] = 0;
-  conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
+  try {
+    conn->write_queue.push_back({{(void *)data, size}, 0});
+  } catch (...) {
+    return -1;
+  }
   return 0;
 }
 
@@ -250,11 +254,6 @@ int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,
     return -1;
   }
 
-  if (static_cast<size_t>(conn->write_iov_count) + 2 + *num_options >
-      sizeof(conn->write_iov) / sizeof(conn->write_iov[0])) {
-    return -1;
-  }
-
   raw_values->resize(*num_options);
   for (unsigned int i = 0; i < *num_options; ++i) {
     (*raw_values)[i] = reinterpret_cast<uintptr_t>(option_values[i]);
@@ -303,8 +302,11 @@ int rpc_read_jit_options(conn_t *conn, std::vector<CUjit_option> *options,
 // buffer must stay valid until rpc_write_end() returns, exactly like
 // rpc_write(). See compress.cpp for the framing format.
 int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  conn->write_iov_framed[conn->write_iov_count] = 1;
-  conn->write_iov[conn->write_iov_count++] = {(void *)data, size};
+  try {
+    conn->write_queue.push_back({{(void *)data, size}, 1});
+  } catch (...) {
+    return -1;
+  }
   return 0;
 }
 
@@ -318,20 +320,22 @@ int rpc_write_end(conn_t *conn) {
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
-  conn->write_iov[0] = {&conn->write_id, sizeof(int)};
-  conn->write_iov_framed[0] = 0;
+  if (conn->write_queue.empty()) {
+    pthread_mutex_unlock(&conn->write_mutex);
+    return -1;
+  }
+  conn->write_queue[0] = {{&conn->write_id, sizeof(int)}, 0};
   if (conn->write_op != -1) {
-    conn->write_iov[1] = {&conn->write_op, sizeof(unsigned int)};
-    conn->write_iov_framed[1] = 0;
+    conn->write_queue[1] = {{&conn->write_op, sizeof(unsigned int)}, 0};
   }
   int write_id = conn->write_id;
-  int iov_count = conn->write_iov_count;
-  struct iovec iov[128];
-  unsigned char framed[128];
-  memcpy(iov, conn->write_iov, sizeof(struct iovec) * iov_count);
-  memcpy(framed, conn->write_iov_framed, iov_count);
+  if (conn->write_queue.size() > static_cast<size_t>(INT_MAX)) {
+    pthread_mutex_unlock(&conn->write_mutex);
+    return -1;
+  }
+  int iov_count = static_cast<int>(conn->write_queue.size());
 
-  int result = rpc_http2_writev(conn, iov, framed, iov_count);
+  int result = rpc_http2_writev(conn, conn->write_queue.data(), iov_count);
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
 }

@@ -48,13 +48,13 @@ h2_pair make_pair() {
 }
 
 void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
-  std::vector<struct iovec> iov;
-  iov.reserve(chunks.size());
+  std::vector<rpc_write_entry> entries;
+  entries.reserve(chunks.size());
   for (const std::string &chunk : chunks) {
-    iov.push_back({const_cast<char *>(chunk.data()), chunk.size()});
+    entries.push_back({{const_cast<char *>(chunk.data()), chunk.size()}, 0});
   }
-  require(rpc_http2_writev(conn, iov.data(), nullptr,
-                           static_cast<int>(iov.size())) == 0,
+  require(rpc_http2_writev(conn, entries.data(),
+                           static_cast<int>(entries.size())) == 0,
           "h2 write failed");
 }
 
@@ -174,13 +174,12 @@ void test_framed_payload_round_trip() {
     received_suffix = read_string(&pair.server, suffix.size());
   });
 
-  struct iovec iov[3] = {
-      {const_cast<char *>(prefix.data()), prefix.size()},
-      {payload.data(), payload.size()},
-      {const_cast<char *>(suffix.data()), suffix.size()},
+  rpc_write_entry entries[3] = {
+      {{const_cast<char *>(prefix.data()), prefix.size()}, 0},
+      {{payload.data(), payload.size()}, 1},
+      {{const_cast<char *>(suffix.data()), suffix.size()}, 0},
   };
-  unsigned char framed[3] = {0, 1, 0};
-  require(rpc_http2_writev(&pair.client, iov, framed, 3) == 0,
+  require(rpc_http2_writev(&pair.client, entries, 3) == 0,
           "framed write failed");
   reader.join();
   require(received_prefix == prefix, "framed prefix mismatch");
@@ -188,9 +187,58 @@ void test_framed_payload_round_trip() {
   require(received_suffix == suffix, "framed suffix mismatch");
 }
 
+void test_rpc_write_iov_grows() {
+  int value = 7;
+
+  conn_t zero_length = {};
+  require(rpc_write(&zero_length, &value, 0) == 0,
+          "zero-length rpc_write failed");
+  require(zero_length.write_queue.size() == 1,
+          "zero-length rpc_write did not consume one queue entry");
+  require(zero_length.write_queue[0].iov.iov_len == 0,
+          "zero-length rpc_write changed length");
+
+  h2_pair pair = make_pair();
+  require(pthread_mutex_init(&pair.client.write_mutex, nullptr) == 0,
+          "client write mutex init failed");
+
+  constexpr int kCount = 300;
+  std::vector<int> values(kCount);
+  for (int i = 0; i < kCount; ++i) {
+    values[i] = i;
+  }
+
+  std::vector<int> received(kCount, -1);
+  std::thread reader([&] {
+    int request_id = 0;
+    require(rpc_read(&pair.server, &request_id, sizeof(request_id)) ==
+                static_cast<int>(sizeof(request_id)),
+            "large iovec request id read failed");
+    require(request_id == 17, "large iovec request id mismatch");
+    for (int i = 0; i < kCount; ++i) {
+      require(rpc_read(&pair.server, &received[i], sizeof(received[i])) ==
+                  static_cast<int>(sizeof(received[i])),
+              "large iovec payload read failed");
+    }
+  });
+
+  require(rpc_write_start_response(&pair.client, 17) == 0,
+          "large iovec response start failed");
+  for (int i = 0; i < kCount; ++i) {
+    require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
+            "large iovec rpc_write failed");
+  }
+  require(pair.client.write_queue.size() == static_cast<size_t>(kCount + 1),
+          "large iovec count mismatch");
+  require(rpc_write_end(&pair.client) == 17, "large iovec write_end failed");
+  reader.join();
+  require(received == values, "large iovec payload mismatch");
+}
+
 } // namespace
 
 int main() {
+  test_rpc_write_iov_grows();
   test_client_to_server();
   test_server_to_client_after_request_headers();
   test_fragmented_iovec();

@@ -11,6 +11,14 @@
 // (h2.cpp) and decoded by the rpc_read_payload helpers (compress.cpp).
 #define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
 
+struct rpc_write_entry {
+  struct iovec iov;
+  // 0 = plain bytes, 1 = framed with per-block LZ4 attempts, 2 = framed but
+  // every block is stored raw (the source is already compressed, so the LZ4
+  // attempt would only waste CPU; the wire format is unchanged).
+  unsigned char framed;
+};
+
 typedef struct {
   lupine_socket_t connfd;
 
@@ -23,14 +31,9 @@ typedef struct {
   pthread_t rpc_thread;
   pthread_mutex_t read_mutex, write_mutex, call_mutex;
   pthread_cond_t read_cond;
-  struct iovec write_iov[128];
-  // write_iov_framed[i] marks write_iov[i] as a payload the transport
-  // LZ4-frames lazily as it streams to the socket (see compress.cpp).
-  // 0 = plain bytes, 1 = framed with per-block LZ4 attempts, 2 = framed but
-  // every block is stored raw (the source is already compressed, so the LZ4
-  // attempt would only waste CPU; the wire format is unchanged).
-  unsigned char write_iov_framed[128];
-  int write_iov_count;
+  // Queued write entries. Framed entries are LZ4-framed lazily as they stream
+  // to the socket (see compress.cpp).
+  std::vector<rpc_write_entry> write_queue;
   int local_request_parity;
   int logical_index;
   int closed;
@@ -68,8 +71,8 @@ extern int rpc_read_jit_options(conn_t *conn,
                                 std::vector<uintptr_t> *raw_values);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
-extern int rpc_http2_writev(conn_t *conn, struct iovec *iov,
-                            const unsigned char *framed, int iov_count);
+extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
+                            int entry_count);
 extern int rpc_http2_client_init(conn_t *conn);
 extern int rpc_http2_server_init(conn_t *conn);
 extern int rpc_http2_compress_lz4(conn_t *conn);
