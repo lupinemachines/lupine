@@ -29,6 +29,8 @@ int handle_manual_cuMemcpy3D_v2(conn_t *conn);
 int handle_manual_cuMemcpy2D_v2(conn_t *conn);
 int handle_manual_cuMemcpy2DUnaligned_v2(conn_t *conn);
 int handle_manual_cuMemcpy2DAsync_v2(conn_t *conn);
+int handle_manual_cuMemcpyDtoH_v2(conn_t *conn);
+int handle_manual_cuMemcpyAtoH_v2(conn_t *conn);
 int handle_manual_cuGraphAddMemAllocNode(conn_t *conn);
 int handle_manual_cuGraphAddMemFreeNode(conn_t *conn);
 int handle_manual_cuDeviceGetGraphMemAttribute(conn_t *conn);

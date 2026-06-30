@@ -2228,38 +2228,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuMemcpyDtoH_v2(conn_t *conn) {
-  CUdeviceptr srcDevice;
-  size_t ByteCount;
-  void *dstHost;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  dstHost = (void *)malloc(ByteCount);
-  if (false)
-    goto ERROR_1;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_1;
-  lupine_intercept_result = cuMemcpyDtoH_v2(
-      (ByteCount == 0 ? nullptr : dstHost), srcDevice, ByteCount);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      (ByteCount != 0 && rpc_write_payload(conn, dstHost, ByteCount) < 0) ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_1;
-
-  return 0;
-ERROR_1:
-  free((void *)dstHost);
-ERROR_0:
-  return -1;
-}
-
 int handle_cuMemcpyDtoD_v2(conn_t *conn) {
   CUdeviceptr dstDevice;
   CUdeviceptr srcDevice;
@@ -2340,40 +2308,6 @@ int handle_cuMemcpyAtoD_v2(conn_t *conn) {
     goto ERROR_0;
 
   return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuMemcpyAtoH_v2(conn_t *conn) {
-  CUarray srcArray;
-  size_t srcOffset;
-  size_t ByteCount;
-  void *dstHost;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &srcArray, sizeof(CUarray)) < 0 ||
-      rpc_read(conn, &srcOffset, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  dstHost = (void *)malloc(ByteCount);
-  if (false)
-    goto ERROR_1;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_1;
-  lupine_intercept_result = cuMemcpyAtoH_v2(
-      (ByteCount == 0 ? nullptr : dstHost), srcArray, srcOffset, ByteCount);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      (ByteCount != 0 && rpc_write(conn, dstHost, ByteCount) < 0) ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_1;
-
-  return 0;
-ERROR_1:
-  free((void *)dstHost);
 ERROR_0:
   return -1;
 }
@@ -8564,11 +8498,9 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuMemcpy, handle_cuMemcpy},
     {RPC_cuMemcpyPeer, handle_cuMemcpyPeer},
     {RPC_cuMemcpyHtoD_v2, handle_cuMemcpyHtoD_v2},
-    {RPC_cuMemcpyDtoH_v2, handle_cuMemcpyDtoH_v2},
     {RPC_cuMemcpyDtoD_v2, handle_cuMemcpyDtoD_v2},
     {RPC_cuMemcpyDtoA_v2, handle_cuMemcpyDtoA_v2},
     {RPC_cuMemcpyAtoD_v2, handle_cuMemcpyAtoD_v2},
-    {RPC_cuMemcpyAtoH_v2, handle_cuMemcpyAtoH_v2},
     {RPC_cuMemcpyAtoA_v2, handle_cuMemcpyAtoA_v2},
     {RPC_cuMemcpyPeerAsync, handle_cuMemcpyPeerAsync},
     {RPC_cuMemcpyDtoDAsync_v2, handle_cuMemcpyDtoDAsync_v2},

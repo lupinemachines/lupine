@@ -2629,6 +2629,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
 CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                          size_t ByteCount);
 /**
+ * @disabled - manual client/server chunk large host-copy responses
  * @routingkey DEVICEPTR srcDevice
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
@@ -2673,6 +2674,7 @@ CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
 CUresult cuMemcpyHtoA_v2(CUarray dstArray, size_t dstOffset,
                          const void *srcHost, size_t ByteCount);
 /**
+ * @disabled - manual client/server chunk large host-copy responses
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
  * @param ByteCount SEND_ONLY

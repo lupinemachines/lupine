@@ -67,6 +67,8 @@ lupine_manual_handlers() {
        {handle_manual_cuMemcpy2DUnaligned_v2, "cuMemcpy2DUnaligned_v2"}},
       {RPC_cuMemcpy2DAsync_v2,
        {handle_manual_cuMemcpy2DAsync_v2, "cuMemcpy2DAsync_v2"}},
+      {RPC_cuMemcpyDtoH_v2, {handle_manual_cuMemcpyDtoH_v2, "cuMemcpyDtoH_v2"}},
+      {RPC_cuMemcpyAtoH_v2, {handle_manual_cuMemcpyAtoH_v2, "cuMemcpyAtoH_v2"}},
       {RPC_cuDeviceGetGraphMemAttribute,
        {handle_manual_cuDeviceGetGraphMemAttribute,
         "cuDeviceGetGraphMemAttribute"}},

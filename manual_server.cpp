@@ -992,14 +992,13 @@ int handle_manual_cuMemPrefetchAsync(conn_t *conn) {
 #if CUDA_VERSION >= 12020
   result = cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream);
 #else
-  if (flags != 0 ||
-      (location.type != CU_MEM_LOCATION_TYPE_DEVICE &&
-       location.type != LUPINE_CU_MEM_LOCATION_TYPE_HOST)) {
+  if (flags != 0 || (location.type != CU_MEM_LOCATION_TYPE_DEVICE &&
+                     location.type != LUPINE_CU_MEM_LOCATION_TYPE_HOST)) {
     result = CUDA_ERROR_INVALID_VALUE;
   } else {
-    CUdevice dstDevice =
-        location.type == CU_MEM_LOCATION_TYPE_DEVICE ? location.id
-                                                     : CU_DEVICE_CPU;
+    CUdevice dstDevice = location.type == CU_MEM_LOCATION_TYPE_DEVICE
+                             ? location.id
+                             : CU_DEVICE_CPU;
     result = cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
   }
 #endif
@@ -3259,6 +3258,116 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
+  return 0;
+}
+
+int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
+  CUdeviceptr srcDevice = 0;
+  size_t byteCount = 0;
+  int request_id = 0;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  std::vector<unsigned char> dstHost;
+
+  if (rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
+    return -1;
+  }
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  size_t staging_size =
+      std::min(byteCount, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+  if (staging_size != 0) {
+    try {
+      dstHost.resize(staging_size);
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+      if (rpc_write_start_response(conn, request_id) < 0 ||
+          rpc_write(conn, &result, sizeof(result)) < 0 ||
+          rpc_write_end(conn) < 0) {
+        return -1;
+      }
+      return 0;
+    }
+  }
+
+  size_t offset = 0;
+  do {
+    size_t chunk = std::min(byteCount - offset, staging_size);
+    void *chunk_dst = chunk == 0 ? nullptr : dstHost.data();
+    result = cuMemcpyDtoH_v2(chunk_dst, srcDevice + offset, chunk);
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS && chunk != 0 &&
+         rpc_write_payload(conn, dstHost.data(), chunk) < 0) ||
+        rpc_write_end(conn) < 0) {
+      return -1;
+    }
+    if (result != CUDA_SUCCESS) {
+      return 0;
+    }
+    offset += chunk;
+  } while (offset < byteCount);
+
+  return 0;
+}
+
+int handle_manual_cuMemcpyAtoH_v2(conn_t *conn) {
+  CUarray srcArray = nullptr;
+  size_t srcOffset = 0;
+  size_t byteCount = 0;
+  int request_id = 0;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  std::vector<unsigned char> dstHost;
+
+  if (rpc_read(conn, &srcArray, sizeof(srcArray)) < 0 ||
+      rpc_read(conn, &srcOffset, sizeof(srcOffset)) < 0 ||
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
+    return -1;
+  }
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  size_t staging_size =
+      std::min(byteCount, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+  if (staging_size != 0) {
+    try {
+      dstHost.resize(staging_size);
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+      if (rpc_write_start_response(conn, request_id) < 0 ||
+          rpc_write(conn, &result, sizeof(result)) < 0 ||
+          rpc_write_end(conn) < 0) {
+        return -1;
+      }
+      return 0;
+    }
+  }
+
+  size_t offset = 0;
+  do {
+    size_t chunk = std::min(byteCount - offset, staging_size);
+    void *chunk_dst = chunk == 0 ? nullptr : dstHost.data();
+    result = cuMemcpyAtoH_v2(chunk_dst, srcArray, srcOffset + offset, chunk);
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS && chunk != 0 &&
+         rpc_write(conn, dstHost.data(), chunk) < 0) ||
+        rpc_write_end(conn) < 0) {
+      return -1;
+    }
+    if (result != CUDA_SUCCESS) {
+      return 0;
+    }
+    offset += chunk;
+  } while (offset < byteCount);
+
   return 0;
 }
 
