@@ -3,6 +3,37 @@
 #include <iostream>
 #include <string.h>
 
+namespace {
+
+bool rpc_completes_local_request(conn_t *conn, int read_id) {
+  return read_id >= 2 && (read_id % 2) == conn->local_request_parity;
+}
+
+int rpc_finish_active_read(conn_t *conn, int read_id, bool close_connection) {
+  bool completes_local_request = rpc_completes_local_request(conn, read_id);
+  if (close_connection) {
+    conn->closed = 1;
+  }
+  conn->read_id = 0;
+  int result = read_id;
+  if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
+      pthread_mutex_unlock(&conn->read_mutex) < 0) {
+    result = -1;
+  }
+  if (completes_local_request && pthread_mutex_unlock(&conn->call_mutex) < 0) {
+    result = -1;
+  }
+  return result;
+}
+
+void rpc_fail_active_read(conn_t *conn, int active_read_id) {
+  if (active_read_id >= 2 && conn->read_id == active_read_id) {
+    (void)rpc_finish_active_read(conn, active_read_id, true);
+  }
+}
+
+} // namespace
+
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
 
@@ -60,7 +91,6 @@ int rpc_dispatch(conn_t *conn, int parity) {
   }
 
   if (rpc_read(conn, &op, sizeof(int)) < 0) {
-    pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
 
@@ -79,8 +109,10 @@ int rpc_read_start(conn_t *conn, int write_id) {
 
   // wait for the active read id to be the request id we are waiting for
   while (!conn->closed && conn->read_id != write_id)
-    if (pthread_cond_wait(&conn->read_cond, &conn->read_mutex) < 0)
+    if (pthread_cond_wait(&conn->read_cond, &conn->read_mutex) < 0) {
+      pthread_mutex_unlock(&conn->read_mutex);
       return -1;
+    }
 
   if (conn->closed) {
     pthread_mutex_unlock(&conn->read_mutex);
@@ -91,7 +123,12 @@ int rpc_read_start(conn_t *conn, int write_id) {
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {
-  return rpc_http2_read(conn, data, size);
+  int active_read_id = conn->read_id;
+  int result = rpc_http2_read(conn, data, size);
+  if (result < 0) {
+    rpc_fail_active_read(conn, active_read_id);
+  }
+  return result;
 }
 
 int rpc_drain(conn_t *conn, size_t size) {
@@ -110,15 +147,10 @@ int rpc_drain(conn_t *conn, size_t size) {
 // rpc_read_end releases the response lock on the given connection.
 int rpc_read_end(conn_t *conn) {
   int read_id = conn->read_id;
-  bool completes_local_request =
-      read_id >= 2 && (read_id % 2) == conn->local_request_parity;
-  conn->read_id = 0;
-  if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
-      pthread_mutex_unlock(&conn->read_mutex) < 0)
+  if (read_id == 0) {
     return -1;
-  if (completes_local_request && pthread_mutex_unlock(&conn->call_mutex) < 0)
-    return -1;
-  return read_id;
+  }
+  return rpc_finish_active_read(conn, read_id, false);
 }
 
 // rpc_wait_for_response is a convenience function that sends the current
