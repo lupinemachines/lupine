@@ -39,10 +39,6 @@
 #include "manual_server.h"
 #include "rpc.h"
 
-// Must come last: redefines handle-consuming cu* entry points to translate
-// client handles after a snapshot restore (see gpu_snapshot_xlate.h).
-#include "gpu_snapshot_xlate.h"
-
 #if CUDA_VERSION < 12020
 #ifdef CU_MEM_LOCATION_TYPE_HOST
 static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
@@ -1559,6 +1555,7 @@ int handle_manual_cuLibraryGetModule(conn_t *conn) {
     return -1;
   }
 
+  library = lupine_gpu_translate_library(library);
   result = cuLibraryGetModule(&module, library);
   if (result == CUDA_SUCCESS) {
     lupine_module_libraries()[module] = library;
@@ -1615,6 +1612,7 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
     return -1;
   }
 
+  module = lupine_gpu_translate_module(module);
   result = cuModuleGetGlobal_v2(&dptr, &bytes, module, name.data());
   if (result != CUDA_SUCCESS) {
     auto library_it = lupine_module_libraries().find(module);
@@ -1692,7 +1690,7 @@ int handle_manual_cuFuncGetParamLayout(conn_t *conn) {
     return -1;
   }
 
-  f = lupine_gpu_xlate_function(f);
+  f = lupine_gpu_translate_function(f);
   result = lupine_get_kernel_param_layout(f, &layout);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
@@ -1745,9 +1743,9 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
   }
 
   // Translate handles the client cached before a snapshot to this worker's.
-  f = lupine_gpu_xlate_function(f);
-  ctx = lupine_gpu_xlate_context(ctx);
-  hStream = lupine_gpu_xlate_stream(hStream);
+  f = lupine_gpu_translate_function(f);
+  ctx = lupine_gpu_translate_context(ctx);
+  hStream = lupine_gpu_translate_stream(hStream);
 
   if (ctx != nullptr) {
     CUcontext previous = nullptr;
@@ -1825,8 +1823,8 @@ int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {
   }
 
   // Translate handles the client cached before a snapshot to this worker's.
-  f = lupine_gpu_xlate_function(f);
-  hStream = lupine_gpu_xlate_stream(hStream);
+  f = lupine_gpu_translate_function(f);
+  hStream = lupine_gpu_translate_stream(hStream);
 
   lupine_kernel_param_layout layout;
   result = lupine_get_kernel_param_layout(f, &layout);
@@ -2220,7 +2218,7 @@ int handle_manual_cuGraphAddMemcpyNode(conn_t *conn) {
     return -1;
   }
 
-  ctx = lupine_gpu_xlate_context(ctx);
+  ctx = lupine_gpu_translate_context(ctx);
   result = cuGraphAddMemcpyNode(&graphNode, hGraph,
                                 deps.empty() ? nullptr : deps.data(),
                                 deps.size(), &copyParams, ctx);
@@ -2251,7 +2249,7 @@ int handle_manual_cuGraphAddMemsetNode(conn_t *conn) {
     return -1;
   }
 
-  ctx = lupine_gpu_xlate_context(ctx);
+  ctx = lupine_gpu_translate_context(ctx);
   result = cuGraphAddMemsetNode(&graphNode, hGraph,
                                 deps.empty() ? nullptr : deps.data(),
                                 deps.size(), &memsetParams, ctx);
@@ -2318,7 +2316,7 @@ int handle_manual_cuGraphConditionalHandleCreate(conn_t *conn) {
     return -1;
   }
 
-  ctx = lupine_gpu_xlate_context(ctx);
+  ctx = lupine_gpu_translate_context(ctx);
   result = cuGraphConditionalHandleCreate(&handle, hGraph, ctx,
                                           defaultLaunchValue, flags);
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3206,7 +3204,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(stream)) < 0) {
     return -1;
   }
-  stream = lupine_gpu_xlate_stream(stream);
+  stream = lupine_gpu_translate_stream(stream);
 
   int framed = lupine_payload_framed(conn, byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
@@ -3313,7 +3311,7 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  stream = lupine_gpu_xlate_stream(stream);
+  stream = lupine_gpu_translate_stream(stream);
 
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (stream != nullptr) {
@@ -3417,6 +3415,7 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+  stream = lupine_gpu_translate_stream(stream);
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuStreamSynchronize(stream);
@@ -3467,6 +3466,7 @@ int handle_manual_cuGraphLaunch(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+  stream = lupine_gpu_translate_stream(stream);
   CUresult result = cuGraphLaunch(exec, stream);
   auto exec_it = lupine_graph_exec_resource_map().find(exec);
   if (result == CUDA_SUCCESS &&

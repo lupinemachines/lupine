@@ -174,6 +174,15 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuStreamGetCaptureInfo_v3",
 ]
 
+SERVER_HANDLE_TRANSLATORS = {
+    "CUcontext": "lupine_gpu_translate_context",
+    "CUfunction": "lupine_gpu_translate_function",
+    "CUkernel": "lupine_gpu_translate_kernel",
+    "CUlibrary": "lupine_gpu_translate_library",
+    "CUmodule": "lupine_gpu_translate_module",
+    "CUstream": "lupine_gpu_translate_stream",
+}
+
 
 def rpc_id(name: str) -> int:
     return zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
@@ -1519,6 +1528,18 @@ def server_call_name(function_name: str) -> str:
     return function_name
 
 
+def server_parameter_reference(op) -> str:
+    ref = op.server_reference
+    if not getattr(op, "send", False):
+        return ref
+
+    type_name = op.parameter.type.format().replace("const ", "").strip()
+    translator = SERVER_HANDLE_TRANSLATORS.get(type_name)
+    if translator is None:
+        return ref
+    return f"{translator}({ref})"
+
+
 # List of possible directories to search for header files
 COMMON_INCLUDE_DIRS = [
     "./",
@@ -2065,7 +2086,7 @@ def main():
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "gen_server.h"\n\n'
-            '#include "../gpu_snapshot_xlate.h"\n\n'
+            '#include "../gpu_snapshot.h"\n\n'
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
@@ -2124,7 +2145,7 @@ def main():
             for param in function.parameters:
                 for op in operations:
                     if op.parameter.name == param.name:
-                        params.append(op.server_reference)
+                        params.append(server_parameter_reference(op))
 
             if function.return_type.format() != "void":
                 f.write(

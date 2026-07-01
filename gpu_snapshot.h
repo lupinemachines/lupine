@@ -53,15 +53,15 @@ void lupine_gpu_track_kernel_function(CUfunction fn, CUkernel k);
 
 // Translate a client (pre-snapshot) handle to the live one; identity if not
 // remapped (e.g. objects created after restore).
-CUfunction lupine_gpu_xlate_function(CUfunction fn);
-CUmodule lupine_gpu_xlate_module(CUmodule m);
-CUlibrary lupine_gpu_xlate_library(CUlibrary lib);
-CUkernel lupine_gpu_xlate_kernel(CUkernel k);
-CUcontext lupine_gpu_xlate_context(CUcontext ctx);
+CUfunction lupine_gpu_translate_function(CUfunction fn);
+CUmodule lupine_gpu_translate_module(CUmodule m);
+CUlibrary lupine_gpu_translate_library(CUlibrary lib);
+CUkernel lupine_gpu_translate_kernel(CUkernel k);
+CUcontext lupine_gpu_translate_context(CUcontext ctx);
 // Streams are intentionally not replayed. After restore, non-default streams
 // are lazily replaced so cached pre-snapshot stream handles do not poison
 // launches and async copies.
-CUstream lupine_gpu_xlate_stream(CUstream s);
+CUstream lupine_gpu_translate_stream(CUstream s);
 int lupine_gpu_restored(void);
 
 // RPC handlers (registered as manual overrides in server.cpp).

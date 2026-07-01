@@ -1,96 +1,7 @@
 #include "rpc.h"
 #include <algorithm>
-#include <chrono>
-#include <cstdlib>
 #include <iostream>
-#include <mutex>
-#include <unordered_map>
-#include <vector>
 #include <string.h>
-
-namespace {
-struct rpc_profile_stat {
-  uint64_t count = 0;
-  uint64_t bytes = 0;
-  uint64_t wait_ns = 0;
-};
-
-std::mutex &rpc_profile_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-std::unordered_map<int, rpc_profile_stat> &rpc_profile_stats() {
-  static auto *stats = new std::unordered_map<int, rpc_profile_stat>();
-  return *stats;
-}
-
-bool rpc_profile_enabled() {
-  static bool enabled = [] {
-    const char *value = getenv("LUPINE_RPC_PROFILE");
-    return value != nullptr && value[0] != '\0' && strcmp(value, "0") != 0;
-  }();
-  return enabled;
-}
-
-void rpc_profile_dump() {
-  if (!rpc_profile_enabled()) {
-    return;
-  }
-  std::vector<std::pair<int, rpc_profile_stat>> rows;
-  {
-    std::lock_guard<std::mutex> lock(rpc_profile_mutex());
-    rows.assign(rpc_profile_stats().begin(), rpc_profile_stats().end());
-  }
-  std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) {
-    return a.second.wait_ns > b.second.wait_ns;
-  });
-  std::cerr << "LUPINE_RPC_PROFILE_BEGIN\n";
-  for (const auto &row : rows) {
-    int op = row.first;
-    const rpc_profile_stat &stat = row.second;
-    double wait_ms = static_cast<double>(stat.wait_ns) / 1.0e6;
-    double avg_wait_us =
-        stat.count == 0 ? 0.0 : static_cast<double>(stat.wait_ns) / stat.count / 1.0e3;
-    std::cerr << "LUPINE_RPC_PROFILE op=" << op << " count=" << stat.count
-              << " bytes=" << stat.bytes << " wait_ms=" << wait_ms
-              << " avg_wait_us=" << avg_wait_us << "\n";
-  }
-  std::cerr << "LUPINE_RPC_PROFILE_END\n";
-}
-
-void rpc_profile_add(int op, uint64_t bytes, uint64_t wait_ns) {
-  if (!rpc_profile_enabled() || op < 0) {
-    return;
-  }
-  static std::once_flag once;
-  std::call_once(once, [] { atexit(rpc_profile_dump); });
-  std::lock_guard<std::mutex> lock(rpc_profile_mutex());
-  auto &stat = rpc_profile_stats()[op];
-  stat.count += 1;
-  stat.bytes += bytes;
-  stat.wait_ns += wait_ns;
-}
-
-uint64_t rpc_pending_write_bytes(conn_t *conn) {
-  uint64_t bytes = sizeof(int);
-  if (conn->write_op != -1) {
-    bytes += sizeof(unsigned int);
-  }
-  for (int i = conn->write_op == -1 ? 1 : 2; i < conn->write_iov_count; ++i) {
-    bytes += conn->write_iov[i].iov_len;
-  }
-  return bytes;
-}
-} // namespace
-
-extern "C" void lupine_rpc_profile_reset() {
-  if (!rpc_profile_enabled()) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(rpc_profile_mutex());
-  rpc_profile_stats().clear();
-}
 
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
@@ -214,18 +125,11 @@ int rpc_read_end(conn_t *conn) {
 // request and then waits for the corresponding response. this pattern is
 // so common that having this function keeps the codegen much cleaner.
 int rpc_wait_for_response(conn_t *conn) {
-  int op = conn->write_op;
-  uint64_t bytes = rpc_pending_write_bytes(conn);
-  auto start = std::chrono::steady_clock::now();
   int write_id = rpc_write_end(conn);
   if (write_id < 0 || rpc_read_start(conn, write_id) < 0) {
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
-  auto end = std::chrono::steady_clock::now();
-  rpc_profile_add(
-      op, bytes,
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
   return 0;
 }
 

@@ -5,7 +5,6 @@
     lupine_snapshot_save;
     lupine_snapshot_load;
     lupine_snapshot_disconnect;
-    lupine_rpc_profile_reset;
   local:
     *;
 };

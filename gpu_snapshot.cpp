@@ -76,7 +76,7 @@ ModuleRec make_module_rec(unsigned int kind, const void *image, size_t size) {
 }
 
 template <typename Handle>
-Handle xlate_handle(const std::map<Handle, Handle> &remap, Handle handle) {
+Handle translate_handle(const std::map<Handle, Handle> &remap, Handle handle) {
   auto it = remap.find(handle);
   return it == remap.end() ? handle : it->second;
 }
@@ -722,7 +722,7 @@ void lupine_gpu_track_kernel_function(CUfunction fn, CUkernel k) {
   g_kernel_functions[fn] = k;
 }
 
-CUfunction lupine_gpu_xlate_function(CUfunction fn) {
+CUfunction lupine_gpu_translate_function(CUfunction fn) {
   std::lock_guard<std::mutex> lock(g_mutex);
   auto it = g_function_remap.find(fn);
   if (it != g_function_remap.end()) return it->second;
@@ -731,22 +731,22 @@ CUfunction lupine_gpu_xlate_function(CUfunction fn) {
   return fn;
 }
 
-CUmodule lupine_gpu_xlate_module(CUmodule m) {
+CUmodule lupine_gpu_translate_module(CUmodule m) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  return xlate_handle(g_module_remap, m);
+  return translate_handle(g_module_remap, m);
 }
 
-CUlibrary lupine_gpu_xlate_library(CUlibrary lib) {
+CUlibrary lupine_gpu_translate_library(CUlibrary lib) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  return xlate_handle(g_library_remap, lib);
+  return translate_handle(g_library_remap, lib);
 }
 
-CUkernel lupine_gpu_xlate_kernel(CUkernel k) {
+CUkernel lupine_gpu_translate_kernel(CUkernel k) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  return xlate_handle(g_kernel_remap, k);
+  return translate_handle(g_kernel_remap, k);
 }
 
-CUcontext lupine_gpu_xlate_context(CUcontext ctx) {
+CUcontext lupine_gpu_translate_context(CUcontext ctx) {
   if (ctx == nullptr) return nullptr;
   std::lock_guard<std::mutex> lock(g_mutex);
   if (!g_restored) return ctx;
@@ -754,7 +754,7 @@ CUcontext lupine_gpu_xlate_context(CUcontext ctx) {
   return cuCtxGetCurrent(&current) == CUDA_SUCCESS ? current : nullptr;
 }
 
-CUstream lupine_gpu_xlate_stream(CUstream s) {
+CUstream lupine_gpu_translate_stream(CUstream s) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (!g_restored || s == nullptr) return s;
   auto it = g_stream_remap.find(s);
@@ -783,7 +783,7 @@ int handle_manual_cuModuleGetFunction_tracked(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
 
-  hmod = lupine_gpu_xlate_module(hmod);
+  hmod = lupine_gpu_translate_module(hmod);
   CUfunction hfunc = nullptr;
   CUresult result = cuModuleGetFunction(&hfunc, hmod, name.data());
   if (result == CUDA_SUCCESS) lupine_gpu_track_function(hfunc, hmod, name.data());
@@ -806,7 +806,7 @@ int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
 
-  library = lupine_gpu_xlate_library(library);
+  library = lupine_gpu_translate_library(library);
   CUkernel kernel = nullptr;
   CUresult result = cuLibraryGetKernel(&kernel, library, name.data());
   if (result == CUDA_SUCCESS) lupine_gpu_track_kernel(kernel, library, name.data());
@@ -824,7 +824,7 @@ int handle_manual_cuKernelGetFunction_tracked(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
 
-  kernel = lupine_gpu_xlate_kernel(kernel);
+  kernel = lupine_gpu_translate_kernel(kernel);
   CUfunction fn = nullptr;
   CUresult result = cuKernelGetFunction(&fn, kernel);
   if (result == CUDA_SUCCESS) lupine_gpu_track_kernel_function(fn, kernel);
