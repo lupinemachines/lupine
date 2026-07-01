@@ -18,7 +18,8 @@
 // Opaque module/library/function/kernel handles still get new values in a fresh
 // worker before payload restore. The server records enough object creation
 // inputs to recreate that shape and translate old client handles to live ones.
-// Streams are intentionally normalized to the default stream after restore.
+// Streams are not replayed; stale non-default stream handles are lazily mapped
+// to fresh streams after restore.
 
 // Custom RPC op ids (kept out of the codegen range).
 static const int LUPINE_RPC_gpu_snapshot_save = 1000201;
@@ -32,10 +33,10 @@ extern "C" {
 // pass through to CUDA; snapshotting no longer owns server allocation layout.
 CUresult lupine_gpu_alloc(CUdeviceptr *dptr, size_t bytesize);
 CUresult lupine_gpu_free(CUdeviceptr dptr);
-// True when dptr was handed out by lupine_gpu_alloc.
+// Retained for old VMM callers; always false now that allocation is pass-through.
 int lupine_gpu_owns(CUdeviceptr dptr);
 
-// Serialize / restore live device allocations for snapshot `id`.
+// Serialize / restore CUDA's checkpoint payload for snapshot `id`.
 CUresult lupine_gpu_snapshot_save(const char *id);
 CUresult lupine_gpu_snapshot_restore(const char *id);
 

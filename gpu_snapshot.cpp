@@ -63,9 +63,7 @@ struct Map {
   char path[kMaxMapPath] = {};
 };
 
-struct Maps {
-  std::vector<Map> items;
-};
+using MapList = std::vector<Map>;
 
 ModuleRec make_module_rec(unsigned int kind, const void *image, size_t size) {
   ModuleRec rec;
@@ -334,7 +332,7 @@ done:
 }
 
 #ifdef _WIN32
-Maps read_private_anon_maps() { return Maps{}; }
+MapList read_private_anon_maps() { return {}; }
 int open_self_mem(int) { return -1; }
 #else
 bool is_private_anon_rw(const Map &map) {
@@ -342,11 +340,11 @@ bool is_private_anon_rw(const Map &map) {
          map.perms[2] == '-' && map.perms[3] == 'p' && map.path[0] == '\0';
 }
 
-Maps read_private_anon_maps() {
+MapList read_private_anon_maps() {
   FILE *f = fopen("/proc/self/maps", "r");
-  if (!f) return Maps{};
+  if (!f) return {};
 
-  Maps maps;
+  MapList maps;
   char line[1024];
   while (fgets(line, sizeof(line), f)) {
     Map map;
@@ -363,7 +361,7 @@ Maps read_private_anon_maps() {
       while (*p == ' ') p++;
       snprintf(map.path, sizeof(map.path), "%s", p);
     }
-    if (is_private_anon_rw(map)) maps.items.push_back(map);
+    if (is_private_anon_rw(map)) maps.push_back(map);
   }
   fclose(f);
   return maps;
@@ -377,17 +375,17 @@ bool same_map(const Map &a, const Map &b) {
          strcmp(a.perms, b.perms) == 0 && strcmp(a.path, b.path) == 0;
 }
 
-bool contains_map(const Maps &maps, const Map &needle) {
-  for (const Map &map : maps.items) {
+bool contains_map(const MapList &maps, const Map &needle) {
+  for (const Map &map : maps) {
     if (same_map(map, needle)) return true;
   }
   return false;
 }
 
-bool find_payload_map(const Maps &before, const Maps &after,
+bool find_payload_map(const MapList &before, const MapList &after,
                       size_t expected_size, Map *out) {
   Map best;
-  for (const Map &map : after.items) {
+  for (const Map &map : after) {
     size_t size = map.end - map.start;
     if (contains_map(before, map)) continue;
     if (expected_size != 0 && size != expected_size) continue;
@@ -398,8 +396,8 @@ bool find_payload_map(const Maps &before, const Maps &after,
   return true;
 }
 
-void log_new_payload_candidates(const Maps &before, const Maps &after) {
-  for (const Map &map : after.items) {
+void log_new_payload_candidates(const MapList &before, const MapList &after) {
+  for (const Map &map : after) {
     if (contains_map(before, map)) continue;
     LUPINE_LOG_ERROR("gpu_snapshot: new anon map candidate "
                      << (void *)map.start << "-" << (void *)map.end
@@ -433,20 +431,26 @@ bool write_exact(int fd, const void *buf, size_t size, off_t offset) {
   return true;
 }
 
+CUresult unlock_self() {
+  CUcheckpointUnlockArgs unlock_args = {};
+  return cuCheckpointProcessUnlock(getpid(), &unlock_args);
+}
+
 CUresult checkpoint_self() {
   CUcheckpointLockArgs lock_args = {};
   CUcheckpointCheckpointArgs checkpoint_args = {};
   CUresult result = cuCheckpointProcessLock(getpid(), &lock_args);
   if (result != CUDA_SUCCESS) return result;
-  return cuCheckpointProcessCheckpoint(getpid(), &checkpoint_args);
+  result = cuCheckpointProcessCheckpoint(getpid(), &checkpoint_args);
+  if (result != CUDA_SUCCESS) unlock_self();
+  return result;
 }
 
 CUresult restore_self() {
   CUcheckpointRestoreArgs restore_args = {};
-  CUcheckpointUnlockArgs unlock_args = {};
   CUresult result = cuCheckpointProcessRestore(getpid(), &restore_args);
   if (result != CUDA_SUCCESS) return result;
-  return cuCheckpointProcessUnlock(getpid(), &unlock_args);
+  return unlock_self();
 }
 
 CUresult ensure_context() {
@@ -465,45 +469,61 @@ CUresult ensure_context() {
   return cuCtxSetCurrent(ctx);
 }
 
-CUresult write_payload_file(const std::string &path, const void *payload,
-                            size_t size) {
-  FILE *f = fopen(path.c_str(), "wb");
-  if (!f) return CUDA_ERROR_UNKNOWN;
+bool write_payload_header(FILE *f, uint64_t size) {
   PayloadHeader header = {};
   memcpy(header.magic, kPayloadMagic, sizeof(header.magic));
   header.size = size;
-  bool ok = fwrite(&header, sizeof(header), 1, f) == 1 &&
-            (size == 0 || fwrite(payload, 1, size, f) == size);
+  return fwrite(&header, sizeof(header), 1, f) == 1;
+}
+
+bool read_payload_header(FILE *f, uint64_t *size) {
+  PayloadHeader header = {};
+  bool ok = fread(&header, sizeof(header), 1, f) == 1 &&
+            memcmp(header.magic, kPayloadMagic, sizeof(header.magic)) == 0;
+  if (ok) *size = header.size;
+  return ok;
+}
+
+CUresult read_payload_size(const std::string &path, uint64_t *size) {
+  FILE *f = fopen(path.c_str(), "rb");
+  if (!f) return CUDA_ERROR_UNKNOWN;
+  bool ok = read_payload_header(f, size);
   fclose(f);
   return ok ? CUDA_SUCCESS : CUDA_ERROR_UNKNOWN;
 }
 
-CUresult read_payload_header(const std::string &path, uint64_t *size) {
-  FILE *f = fopen(path.c_str(), "rb");
-  if (!f) return CUDA_ERROR_UNKNOWN;
-  PayloadHeader header = {};
-  bool ok = fread(&header, sizeof(header), 1, f) == 1 &&
-            memcmp(header.magic, kPayloadMagic, sizeof(header.magic)) == 0;
+bool copy_mem_to_payload_file(const std::string &path, int mem, uintptr_t addr,
+                              size_t size) {
+  FILE *f = fopen(path.c_str(), "wb");
+  if (!f) return false;
+
+  bool ok = write_payload_header(f, size);
+  std::vector<unsigned char> chunk(1 << 20);
+  size_t copied = 0;
+  while (ok && copied < size) {
+    size_t want = std::min(chunk.size(), size - copied);
+    ok = read_exact(mem, chunk.data(), want, static_cast<off_t>(addr + copied)) &&
+         fwrite(chunk.data(), 1, want, f) == want;
+    if (ok) copied += want;
+  }
   fclose(f);
-  if (ok) *size = header.size;
-  return ok ? CUDA_SUCCESS : CUDA_ERROR_UNKNOWN;
+  return ok;
 }
 
 bool copy_payload_file_to_mem(const std::string &path, int mem, uintptr_t addr,
                               size_t size) {
   FILE *f = fopen(path.c_str(), "rb");
   if (!f) return false;
-  PayloadHeader header = {};
-  bool ok = fread(&header, sizeof(header), 1, f) == 1 &&
-            memcmp(header.magic, kPayloadMagic, sizeof(header.magic)) == 0 &&
-            header.size == size;
+
+  uint64_t payload_size = 0;
+  bool ok = read_payload_header(f, &payload_size) && payload_size == size;
   std::vector<unsigned char> chunk(1 << 20);
   size_t copied = 0;
   while (ok && copied < size) {
     size_t want = std::min(chunk.size(), size - copied);
     ok = fread(chunk.data(), 1, want, f) == want &&
          write_exact(mem, chunk.data(), want, static_cast<off_t>(addr + copied));
-    copied += want;
+    if (ok) copied += want;
   }
   fclose(f);
   return ok;
@@ -533,13 +553,13 @@ CUresult lupine_gpu_snapshot_save(const char *id) {
   int mem = open_self_mem(O_RDONLY);
   if (mem < 0) return CUDA_ERROR_UNKNOWN;
 
-  Maps before = read_private_anon_maps();
+  MapList before = read_private_anon_maps();
   result = checkpoint_self();
   if (result != CUDA_SUCCESS) {
     close(mem);
     return result;
   }
-  Maps after = read_private_anon_maps();
+  MapList after = read_private_anon_maps();
 
   Map payload;
   if (!find_payload_map(before, after, 0, &payload)) {
@@ -549,17 +569,11 @@ CUresult lupine_gpu_snapshot_save(const char *id) {
   }
 
   size_t payload_size = payload.end - payload.start;
-  std::vector<unsigned char> bytes(payload_size);
-  if (!read_exact(mem, bytes.data(), payload_size,
-                  static_cast<off_t>(payload.start))) {
-    close(mem);
-    restore_self();
-    return CUDA_ERROR_UNKNOWN;
-  }
+  result = copy_mem_to_payload_file(join(dir, "gpu.payload"), mem,
+                                    payload.start, payload_size)
+               ? CUDA_SUCCESS
+               : CUDA_ERROR_UNKNOWN;
   close(mem);
-
-  result = write_payload_file(join(dir, "gpu.payload"), bytes.data(),
-                              bytes.size());
   CUresult resume = restore_self();
   return result != CUDA_SUCCESS ? result : resume;
 }
@@ -576,24 +590,24 @@ CUresult lupine_gpu_snapshot_restore(const char *id) {
 
   std::string payload_path = join(dir, "gpu.payload");
   uint64_t payload_size = 0;
-  result = read_payload_header(payload_path, &payload_size);
+  result = read_payload_size(payload_path, &payload_size);
   if (result != CUDA_SUCCESS) return result;
 
   int mem = open_self_mem(O_RDWR);
   if (mem < 0) return CUDA_ERROR_UNKNOWN;
 
-  Maps before = read_private_anon_maps();
+  MapList before = read_private_anon_maps();
   result = checkpoint_self();
   if (result != CUDA_SUCCESS) {
     close(mem);
     return result;
   }
-  Maps after = read_private_anon_maps();
+  MapList after = read_private_anon_maps();
 
   Map payload;
-  if (!find_payload_map(before, after, static_cast<size_t>(payload_size), &payload)) {
-    LUPINE_LOG_ERROR("gpu_snapshot: expected payload size="
-                     << payload_size);
+  if (!find_payload_map(before, after, static_cast<size_t>(payload_size),
+                        &payload)) {
+    LUPINE_LOG_ERROR("gpu_snapshot: expected payload size=" << payload_size);
     log_new_payload_candidates(before, after);
     close(mem);
     restore_self();
