@@ -552,21 +552,6 @@ static std::vector<lupine_server_endpoint> &lupine_server_endpoints() {
   return *endpoints;
 }
 
-static std::mutex &lupine_thread_conn_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-static std::vector<conn_t *> &lupine_thread_conn_registry() {
-  static auto *registry = new std::vector<conn_t *>();
-  return *registry;
-}
-
-static std::atomic<unsigned long long> lupine_rpc_generation{1};
-static thread_local unsigned long long lupine_thread_rpc_generation = 0;
-static thread_local auto *lupine_thread_conns =
-    new std::vector<conn_t *>();
-
 static int lupine_connect_endpoint(conn_t *conn,
                                    const lupine_server_endpoint &endpoint,
                                    unsigned int logical_index) {
@@ -648,47 +633,11 @@ static conn_t *lupine_thread_conn_by_index(unsigned int index) {
   if (rpc_open() < 0 || index >= static_cast<unsigned int>(nconns)) {
     return nullptr;
   }
-
-  unsigned long long generation =
-      lupine_rpc_generation.load(std::memory_order_acquire);
-  if (lupine_thread_rpc_generation != generation) {
-    lupine_thread_conns->clear();
-    lupine_thread_rpc_generation = generation;
-  }
-  if (lupine_thread_conns->size() <= index) {
-    lupine_thread_conns->resize(index + 1, nullptr);
-  }
-  if ((*lupine_thread_conns)[index] != nullptr) {
-    return (*lupine_thread_conns)[index];
-  }
-
-  // CUDA current context is thread-local. Mirror that on the server by giving
-  // each client host thread its own server handler thread for the same endpoint.
-  conn_t *conn = new conn_t();
-  {
-    std::lock_guard<std::mutex> lock(lupine_thread_conn_mutex());
-    if (index >= lupine_server_endpoints().size() ||
-        lupine_connect_endpoint(conn, lupine_server_endpoints()[index],
-                                index) < 0) {
-      delete conn;
-      return nullptr;
-    }
-    lupine_thread_conn_registry().push_back(conn);
-  }
-  if (lupine_remote_cuInit(conn, 0) != CUDA_SUCCESS) {
-    rpc_close(conn);
-    lupine_join_connection_threads(conn);
-    {
-      std::lock_guard<std::mutex> lock(lupine_thread_conn_mutex());
-      auto &registry = lupine_thread_conn_registry();
-      registry.erase(std::remove(registry.begin(), registry.end(), conn),
-                     registry.end());
-    }
-    delete conn;
-    return nullptr;
-  }
-  (*lupine_thread_conns)[index] = conn;
-  return conn;
+  // The Linux server forks one child process per accepted connection. CUDA
+  // object handles, including primary-context handles used by libcudart, are
+  // only valid inside that child process. Keep all client host threads on the
+  // same connection and mirror thread-local current context with cuCtxSetCurrent.
+  return &conns[index];
 }
 
 static bool lupine_env_enabled(const char *name) {
@@ -3196,28 +3145,79 @@ extern "C" lupine_route lupine_route_for_current_context() {
   return lupine_route_for_context(lupine_current_context);
 }
 
+static CUresult lupine_set_current_context_on_route(lupine_route route,
+                                                    CUcontext ctx) {
+  if (route.kind == LUPINE_ROUTE_INVALID) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUcontext);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuCtxSetCurrent");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(ctx);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+      rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
+  if (ctx == nullptr) {
+    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+  }
+
+  lupine_owner owner;
+  {
+    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+    auto it = lupine_context_owners().find(ctx);
+    if (it == lupine_context_owners().end()) {
+      return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+    }
+    owner = it->second;
+  }
+
+  lupine_route route = lupine_route_for_owner(owner);
+  if (route.kind == LUPINE_ROUTE_INVALID) {
+    return route;
+  }
+
+  CUresult result = lupine_set_current_context_on_route(route, ctx);
+  if (result != CUDA_SUCCESS) {
+    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+  }
+  lupine_current_context = ctx;
+  lupine_invalidate_current_context_cache();
+  return route;
+}
+
 extern "C" lupine_route lupine_route_for_default() {
   if (lupine_current_context != nullptr) {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_context_owners().find(lupine_current_context);
-    if (it != lupine_context_owners().end()) {
-      return lupine_route_for_owner(it->second);
+    lupine_route route =
+        lupine_route_for_default_context_hint(lupine_current_context);
+    if (route.kind != LUPINE_ROUTE_INVALID) {
+      return route;
     }
   }
   if (lupine_default_context_hint != nullptr) {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_context_owners().find(lupine_default_context_hint);
-    if (it != lupine_context_owners().end()) {
-      return lupine_route_for_owner(it->second);
+    lupine_route route =
+        lupine_route_for_default_context_hint(lupine_default_context_hint);
+    if (route.kind != LUPINE_ROUTE_INVALID) {
+      return route;
     }
   }
   CUcontext global_hint =
       lupine_global_default_context_hint.load(std::memory_order_relaxed);
   if (global_hint != nullptr) {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_context_owners().find(global_hint);
-    if (it != lupine_context_owners().end()) {
-      return lupine_route_for_owner(it->second);
+    lupine_route route = lupine_route_for_default_context_hint(global_hint);
+    if (route.kind != LUPINE_ROUTE_INVALID) {
+      return route;
     }
   }
   conn_t *conn = lupine_thread_conn_by_index(0);
@@ -3236,25 +3236,7 @@ extern "C" conn_t *lupine_rpc_conn_for_current_context() {
 static CUresult lupine_set_remote_current_context(CUcontext ctx) {
   lupine_route route =
       lupine_route_for_context(ctx != nullptr ? ctx : lupine_current_context);
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUcontext);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuCtxSetCurrent");
-    if (real == nullptr) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    return real(ctx);
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
-      rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
+  return lupine_set_current_context_on_route(route, ctx);
 }
 
 extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
@@ -8068,10 +8050,21 @@ static CUresult lupine_normalize_context(CUcontext *ctx) {
   return cuCtxGetCurrent(ctx);
 }
 
+static CUresult lupine_activate_context_local_storage_context(CUcontext ctx) {
+  CUresult result = lupine_cuCtxSetCurrent_virtual(ctx);
+  LUPINE_TRACE_LOG("LUPINE context storage activate ctx="
+                   << ctx << " result=" << static_cast<int>(result));
+  return result;
+}
+
 extern "C" CUresult
 lupine_context_local_storage_put(CUcontext ctx, void *key, void *value,
                                  lupine_context_storage_dtor_t dtor) {
   CUresult result = lupine_normalize_context(&ctx);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = lupine_activate_context_local_storage_context(ctx);
   if (result != CUDA_SUCCESS) {
     return result;
   }
@@ -8132,7 +8125,7 @@ extern "C" CUresult lupine_context_local_storage_get(void **value,
   *value = value_it->second.value;
   LUPINE_TRACE_LOG("LUPINE context storage get ctx=" << ctx << " key=" << key
                                                      << " value=" << *value);
-  return CUDA_SUCCESS;
+  return lupine_activate_context_local_storage_context(ctx);
 }
 
 extern "C" CUresult lupine_ctx_create_bypass(CUcontext *, unsigned int,
@@ -8968,22 +8961,8 @@ static void lupine_rpc_shutdown() {
   }
   pthread_mutex_unlock(&conn_mutex);
 
-  std::vector<conn_t *> thread_conns;
-  {
-    std::lock_guard<std::mutex> lock(lupine_thread_conn_mutex());
-    thread_conns.swap(lupine_thread_conn_registry());
-    lupine_rpc_generation.fetch_add(1, std::memory_order_acq_rel);
-  }
-  for (conn_t *conn : thread_conns) {
-    rpc_close(conn);
-  }
-
   for (int i = 0; i < count; ++i) {
     lupine_join_connection_threads(&conns[i]);
-  }
-  for (conn_t *conn : thread_conns) {
-    lupine_join_connection_threads(conn);
-    delete conn;
   }
 
   if (pthread_mutex_lock(&conn_mutex) == 0) {
