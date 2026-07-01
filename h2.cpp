@@ -526,22 +526,23 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
   return static_cast<int>(size);
 }
 
-int rpc_http2_writev(conn_t *conn, struct iovec *iov,
-                     const unsigned char *framed, int iov_count) {
+int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
+                     int entry_count) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   h2_write_source source;
-  source.cursors.reserve(iov_count);
-  for (int i = 0; i < iov_count; ++i) {
-    if (iov[i].iov_len == 0) {
+  source.cursors.reserve(entry_count);
+  for (int i = 0; i < entry_count; ++i) {
+    const rpc_write_entry &entry = entries[i];
+    if (entry.iov.iov_len == 0) {
       continue;
     }
     h2_write_cursor cursor;
-    if (framed != nullptr && framed[i]) {
-      cursor.src = static_cast<const char *>(iov[i].iov_base);
-      cursor.src_len = iov[i].iov_len;
+    if (entry.framed) {
+      cursor.src = static_cast<const char *>(entry.iov.iov_base);
+      cursor.src_len = entry.iov.iov_len;
     } else {
-      cursor.base = static_cast<const unsigned char *>(iov[i].iov_base);
-      cursor.len = iov[i].iov_len;
+      cursor.base = static_cast<const unsigned char *>(entry.iov.iov_base);
+      cursor.len = entry.iov.iov_len;
     }
     source.cursors.push_back(cursor);
   }

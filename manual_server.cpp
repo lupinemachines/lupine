@@ -653,12 +653,6 @@ static void *lupine_alloc_capture_scratch(
   return ptr;
 }
 
-int rpc_write(const void *conn, const void *data, const size_t size) {
-  ((conn_t *)conn)->write_iov[((conn_t *)conn)->write_iov_count++] = {
-      (void *)data, size};
-  return 0;
-}
-
 int handle_manual_cuModuleLoad(conn_t *conn) {
   CUmodule module = nullptr;
   size_t image_size = 0;
