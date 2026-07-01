@@ -31,9 +31,12 @@ typedef struct {
   pthread_t rpc_thread;
   pthread_mutex_t read_mutex, write_mutex, call_mutex;
   pthread_cond_t read_cond;
-  // Queued write entries. Framed entries are LZ4-framed lazily as they stream
-  // to the socket (see compress.cpp).
-  std::vector<rpc_write_entry> write_queue;
+  // Explicitly managed so conn_t remains trivially destructible. libcudart can
+  // call back into the shim during process teardown, after C++ globals have
+  // begun finalizing.
+  rpc_write_entry *write_queue;
+  int write_queue_count;
+  int write_queue_capacity;
   int local_request_parity;
   int logical_index;
   int closed;
@@ -53,6 +56,7 @@ extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
+extern void rpc_write_queue_free(conn_t *conn);
 
 extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                          const size_t *sizes,

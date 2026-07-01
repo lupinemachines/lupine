@@ -25,6 +25,8 @@ struct h2_pair {
     if (server.connfd >= 0) {
       close(server.connfd);
     }
+    rpc_write_queue_free(&client);
+    rpc_write_queue_free(&server);
   }
 };
 
@@ -187,16 +189,17 @@ void test_framed_payload_round_trip() {
   require(received_suffix == suffix, "framed suffix mismatch");
 }
 
-void test_rpc_write_iov_grows() {
+void test_rpc_write_queue_grows() {
   int value = 7;
 
   conn_t zero_length = {};
   require(rpc_write(&zero_length, &value, 0) == 0,
           "zero-length rpc_write failed");
-  require(zero_length.write_queue.size() == 1,
+  require(zero_length.write_queue_count == 1,
           "zero-length rpc_write did not consume one queue entry");
   require(zero_length.write_queue[0].iov.iov_len == 0,
           "zero-length rpc_write changed length");
+  rpc_write_queue_free(&zero_length);
 
   h2_pair pair = make_pair();
   require(pthread_mutex_init(&pair.client.write_mutex, nullptr) == 0,
@@ -213,32 +216,32 @@ void test_rpc_write_iov_grows() {
     int request_id = 0;
     require(rpc_read(&pair.server, &request_id, sizeof(request_id)) ==
                 static_cast<int>(sizeof(request_id)),
-            "large iovec request id read failed");
-    require(request_id == 17, "large iovec request id mismatch");
+            "large queue request id read failed");
+    require(request_id == 17, "large queue request id mismatch");
     for (int i = 0; i < kCount; ++i) {
       require(rpc_read(&pair.server, &received[i], sizeof(received[i])) ==
                   static_cast<int>(sizeof(received[i])),
-              "large iovec payload read failed");
+              "large queue payload read failed");
     }
   });
 
   require(rpc_write_start_response(&pair.client, 17) == 0,
-          "large iovec response start failed");
+          "large queue response start failed");
   for (int i = 0; i < kCount; ++i) {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
-            "large iovec rpc_write failed");
+            "large queue rpc_write failed");
   }
-  require(pair.client.write_queue.size() == static_cast<size_t>(kCount + 1),
-          "large iovec count mismatch");
-  require(rpc_write_end(&pair.client) == 17, "large iovec write_end failed");
+  require(pair.client.write_queue_count == kCount + 1,
+          "large queue count mismatch");
+  require(rpc_write_end(&pair.client) == 17, "large queue write_end failed");
   reader.join();
-  require(received == values, "large iovec payload mismatch");
+  require(received == values, "large queue payload mismatch");
 }
 
 } // namespace
 
 int main() {
-  test_rpc_write_iov_grows();
+  test_rpc_write_queue_grows();
   test_client_to_server();
   test_server_to_client_after_request_headers();
   test_fragmented_iovec();

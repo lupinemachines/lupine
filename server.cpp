@@ -231,6 +231,7 @@ void client_handler(lupine_socket_t connfd) {
       pthread_mutex_destroy(&conn.write_mutex) < 0)
     LUPINE_LOG_ERROR("Error destroying mutex.");
 
+  rpc_write_queue_free(&conn);
   lupine_socket_close(connfd);
 }
 

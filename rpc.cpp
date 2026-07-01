@@ -1,8 +1,69 @@
 #include "rpc.h"
 #include <algorithm>
 #include <climits>
+#include <cstdlib>
 #include <iostream>
 #include <string.h>
+
+static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
+  if (conn == nullptr || capacity < 0) {
+    return -1;
+  }
+  if (capacity <= conn->write_queue_capacity) {
+    return 0;
+  }
+
+  int new_capacity =
+      conn->write_queue_capacity > 0 ? conn->write_queue_capacity : 16;
+  while (new_capacity < capacity) {
+    if (new_capacity > INT_MAX / 2) {
+      new_capacity = capacity;
+      break;
+    }
+    new_capacity *= 2;
+  }
+
+  void *next = realloc(conn->write_queue,
+                       static_cast<size_t>(new_capacity) *
+                           sizeof(conn->write_queue[0]));
+  if (next == nullptr) {
+    return -1;
+  }
+  conn->write_queue = static_cast<rpc_write_entry *>(next);
+  conn->write_queue_capacity = new_capacity;
+  return 0;
+}
+
+static int rpc_write_queue_reset(conn_t *conn, int count) {
+  if (rpc_write_queue_reserve(conn, count) < 0) {
+    return -1;
+  }
+  conn->write_queue_count = count;
+  for (int i = 0; i < count; ++i) {
+    conn->write_queue[i] = {};
+  }
+  return 0;
+}
+
+static int rpc_write_queue_push(conn_t *conn, const void *data, size_t size,
+                                unsigned char framed) {
+  if (conn == nullptr || conn->write_queue_count == INT_MAX ||
+      rpc_write_queue_reserve(conn, conn->write_queue_count + 1) < 0) {
+    return -1;
+  }
+  conn->write_queue[conn->write_queue_count++] = {{(void *)data, size}, framed};
+  return 0;
+}
+
+void rpc_write_queue_free(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+  free(conn->write_queue);
+  conn->write_queue = nullptr;
+  conn->write_queue_count = 0;
+  conn->write_queue_capacity = 0;
+}
 
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
@@ -160,7 +221,11 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     return -1;
   }
 
-  conn->write_queue.assign(2, {}); // skip 2 for the header
+  if (rpc_write_queue_reset(conn, 2) < 0) { // skip 2 for the header
+    pthread_mutex_unlock(&conn->write_mutex);
+    pthread_mutex_unlock(&conn->call_mutex);
+    return -1;
+  }
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   conn->write_id = conn->request_id;
   conn->write_op = op;
@@ -184,19 +249,17 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
     return -1;
   }
 
-  conn->write_queue.assign(1, {}); // skip 1 for the header
+  if (rpc_write_queue_reset(conn, 1) < 0) { // skip 1 for the header
+    pthread_mutex_unlock(&conn->write_mutex);
+    return -1;
+  }
   conn->write_id = read_id;
   conn->write_op = -1;
   return 0;
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
-  try {
-    conn->write_queue.push_back({{(void *)data, size}, 0});
-  } catch (...) {
-    return -1;
-  }
-  return 0;
+  return rpc_write_queue_push(conn, data, size, 0);
 }
 
 int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
@@ -302,12 +365,7 @@ int rpc_read_jit_options(conn_t *conn, std::vector<CUjit_option> *options,
 // buffer must stay valid until rpc_write_end() returns, exactly like
 // rpc_write(). See compress.cpp for the framing format.
 int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  try {
-    conn->write_queue.push_back({{(void *)data, size}, 1});
-  } catch (...) {
-    return -1;
-  }
-  return 0;
+  return rpc_write_queue_push(conn, data, size, 1);
 }
 
 // rpc_write_end finalizes the current request builder on the given connection
@@ -320,22 +378,21 @@ int rpc_write_end(conn_t *conn) {
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
-  if (conn->write_queue.empty()) {
+  if (conn->write_queue_count <= 0) {
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
   conn->write_queue[0] = {{&conn->write_id, sizeof(int)}, 0};
   if (conn->write_op != -1) {
+    if (conn->write_queue_count <= 1) {
+      pthread_mutex_unlock(&conn->write_mutex);
+      return -1;
+    }
     conn->write_queue[1] = {{&conn->write_op, sizeof(unsigned int)}, 0};
   }
   int write_id = conn->write_id;
-  if (conn->write_queue.size() > static_cast<size_t>(INT_MAX)) {
-    pthread_mutex_unlock(&conn->write_mutex);
-    return -1;
-  }
-  int iov_count = static_cast<int>(conn->write_queue.size());
-
-  int result = rpc_http2_writev(conn, conn->write_queue.data(), iov_count);
+  int result = rpc_http2_writev(conn, conn->write_queue,
+                                conn->write_queue_count);
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
 }

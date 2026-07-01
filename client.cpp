@@ -581,6 +581,7 @@ static int lupine_connect_endpoint(conn_t *conn,
     goto error;
   }
 
+  rpc_write_queue_free(conn);
   *conn = {};
   conn->connfd = sockfd;
   conn->request_id = 0;
@@ -8828,6 +8829,7 @@ static void lupine_rpc_shutdown() {
 
   for (int i = 0; i < count; ++i) {
     lupine_join_connection_threads(&conns[i]);
+    rpc_write_queue_free(&conns[i]);
   }
 
   if (pthread_mutex_lock(&conn_mutex) == 0) {
