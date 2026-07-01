@@ -62,6 +62,14 @@ const char *DEFAULT_PORT = "14833";
 std::map<void *, void *> host_funcs;
 
 void add_host_node(void *fn, void *udata);
+void *rpc_client_dispatch_thread(void *arg);
+
+struct lupine_server_endpoint {
+  std::string host;
+  std::string port;
+};
+
+static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags);
 
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
@@ -539,23 +547,148 @@ extern "C" void lupine_remember_loaded_module_for_rpc(CUmodule module) {
   lupine_remember_loaded_module(module);
 }
 
-static int lupine_conn_index(conn_t *conn) {
+static std::vector<lupine_server_endpoint> &lupine_server_endpoints() {
+  static auto *endpoints = new std::vector<lupine_server_endpoint>();
+  return *endpoints;
+}
+
+static std::mutex &lupine_thread_conn_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static std::vector<conn_t *> &lupine_thread_conn_registry() {
+  static auto *registry = new std::vector<conn_t *>();
+  return *registry;
+}
+
+static std::atomic<unsigned long long> lupine_rpc_generation{1};
+static thread_local unsigned long long lupine_thread_rpc_generation = 0;
+static thread_local auto *lupine_thread_conns =
+    new std::vector<conn_t *>();
+
+static int lupine_connect_endpoint(conn_t *conn,
+                                   const lupine_server_endpoint &endpoint,
+                                   unsigned int logical_index) {
   if (conn == nullptr) {
     return -1;
   }
-  for (int i = 0; i < nconns; ++i) {
-    if (&conns[i] == conn) {
-      return i;
-    }
+
+  addrinfo hints, *res = nullptr;
+  int sockfd = -1;
+  int flag = 1;
+  int gai_status = 0;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  if ((gai_status = getaddrinfo(endpoint.host.c_str(), endpoint.port.c_str(),
+                                &hints, &res)) != 0 ||
+      (sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) <
+          0 ||
+      setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
+                 sizeof(flag)) < 0 ||
+      connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
+    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
+                                      << endpoint.port << " failed: "
+                                      << (gai_status != 0
+                                              ? gai_strerror(gai_status)
+                                              : strerror(errno)));
+    goto error;
+  }
+
+  *conn = {};
+  conn->connfd = sockfd;
+  conn->request_id = 0;
+  conn->closed = 0;
+  conn->local_request_parity = conn->request_id & 1;
+  conn->logical_index = static_cast<int>(logical_index);
+  if (pthread_mutex_init(&conn->read_mutex, NULL) != 0 ||
+      pthread_mutex_init(&conn->write_mutex, NULL) != 0 ||
+      pthread_mutex_init(&conn->call_mutex, NULL) != 0 ||
+      pthread_cond_init(&conn->read_cond, NULL) != 0 ||
+      rpc_http2_client_init(conn) < 0 ||
+      pthread_create(&conn->read_thread, NULL, rpc_client_dispatch_thread,
+                     (void *)conn) != 0) {
+    goto error;
+  }
+
+  freeaddrinfo(res);
+  return 0;
+
+error:
+  if (res != nullptr) {
+    freeaddrinfo(res);
+  }
+  if (sockfd != -1) {
+    close(sockfd);
   }
   return -1;
 }
 
-static conn_t *lupine_conn_by_index(unsigned int index) {
+static int lupine_conn_index(conn_t *conn) {
+  if (conn == nullptr) {
+    return -1;
+  }
+  int index = conn->logical_index;
+  return index >= 0 && index < nconns ? index : -1;
+}
+
+static void lupine_join_connection_threads(conn_t *conn) {
+  if (conn->read_thread != 0) {
+    pthread_join(conn->read_thread, nullptr);
+    conn->read_thread = 0;
+  }
+  if (conn->rpc_thread != 0) {
+    pthread_join(conn->rpc_thread, nullptr);
+    conn->rpc_thread = 0;
+  }
+}
+
+static conn_t *lupine_thread_conn_by_index(unsigned int index) {
   if (rpc_open() < 0 || index >= static_cast<unsigned int>(nconns)) {
     return nullptr;
   }
-  return &conns[index];
+
+  unsigned long long generation =
+      lupine_rpc_generation.load(std::memory_order_acquire);
+  if (lupine_thread_rpc_generation != generation) {
+    lupine_thread_conns->clear();
+    lupine_thread_rpc_generation = generation;
+  }
+  if (lupine_thread_conns->size() <= index) {
+    lupine_thread_conns->resize(index + 1, nullptr);
+  }
+  if ((*lupine_thread_conns)[index] != nullptr) {
+    return (*lupine_thread_conns)[index];
+  }
+
+  // CUDA current context is thread-local. Mirror that on the server by giving
+  // each client host thread its own server handler thread for the same endpoint.
+  conn_t *conn = new conn_t();
+  {
+    std::lock_guard<std::mutex> lock(lupine_thread_conn_mutex());
+    if (index >= lupine_server_endpoints().size() ||
+        lupine_connect_endpoint(conn, lupine_server_endpoints()[index],
+                                index) < 0) {
+      delete conn;
+      return nullptr;
+    }
+    lupine_thread_conn_registry().push_back(conn);
+  }
+  if (lupine_remote_cuInit(conn, 0) != CUDA_SUCCESS) {
+    rpc_close(conn);
+    lupine_join_connection_threads(conn);
+    {
+      std::lock_guard<std::mutex> lock(lupine_thread_conn_mutex());
+      auto &registry = lupine_thread_conn_registry();
+      registry.erase(std::remove(registry.begin(), registry.end(), conn),
+                     registry.end());
+    }
+    delete conn;
+    return nullptr;
+  }
+  (*lupine_thread_conns)[index] = conn;
+  return conn;
 }
 
 static bool lupine_env_enabled(const char *name) {
@@ -616,7 +749,8 @@ static lupine_route lupine_route_for_owner(const lupine_owner &owner) {
   if (owner.local) {
     return lupine_local_route();
   }
-  return lupine_remote_route_for_conn(lupine_conn_by_index(owner.conn_index));
+  return lupine_remote_route_for_conn(
+      lupine_thread_conn_by_index(owner.conn_index));
 }
 
 static int lupine_route_identity(lupine_route route) {
@@ -648,7 +782,7 @@ static lupine_route lupine_route_from_identity(int route_id) {
   }
   if (route_id >= 0) {
     return lupine_remote_route_for_conn(
-        lupine_conn_by_index(static_cast<unsigned int>(route_id)));
+        lupine_thread_conn_by_index(static_cast<unsigned int>(route_id)));
   }
   return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
 }
@@ -855,7 +989,7 @@ extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device) {
     return nullptr;
   }
   *device = mapped.remote_device;
-  return lupine_conn_by_index(mapped.conn_index);
+  return lupine_thread_conn_by_index(mapped.conn_index);
 }
 
 extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
@@ -875,7 +1009,8 @@ extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
     return lupine_local_route();
   }
   *device = mapped.remote_device;
-  return lupine_remote_route_for_conn(lupine_conn_by_index(mapped.conn_index));
+  return lupine_remote_route_for_conn(
+      lupine_thread_conn_by_index(mapped.conn_index));
 }
 
 extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
@@ -3085,7 +3220,7 @@ extern "C" lupine_route lupine_route_for_default() {
       return lupine_route_for_owner(it->second);
     }
   }
-  conn_t *conn = lupine_conn_by_index(0);
+  conn_t *conn = lupine_thread_conn_by_index(0);
   if (conn != nullptr) {
     return lupine_remote_route_for_conn(conn);
   }
@@ -8833,19 +8968,27 @@ static void lupine_rpc_shutdown() {
   }
   pthread_mutex_unlock(&conn_mutex);
 
+  std::vector<conn_t *> thread_conns;
+  {
+    std::lock_guard<std::mutex> lock(lupine_thread_conn_mutex());
+    thread_conns.swap(lupine_thread_conn_registry());
+    lupine_rpc_generation.fetch_add(1, std::memory_order_acq_rel);
+  }
+  for (conn_t *conn : thread_conns) {
+    rpc_close(conn);
+  }
+
   for (int i = 0; i < count; ++i) {
-    if (conns[i].read_thread != 0) {
-      pthread_join(conns[i].read_thread, nullptr);
-      conns[i].read_thread = 0;
-    }
-    if (conns[i].rpc_thread != 0) {
-      pthread_join(conns[i].rpc_thread, nullptr);
-      conns[i].rpc_thread = 0;
-    }
+    lupine_join_connection_threads(&conns[i]);
+  }
+  for (conn_t *conn : thread_conns) {
+    lupine_join_connection_threads(conn);
+    delete conn;
   }
 
   if (pthread_mutex_lock(&conn_mutex) == 0) {
     nconns = 0;
+    lupine_server_endpoints().clear();
     lupine_rpc_shutting_down = false;
     pthread_mutex_unlock(&conn_mutex);
   }
@@ -8995,9 +9138,17 @@ int rpc_open() {
     return -1;
   }
 
+  lupine_server_endpoints().clear();
+
   char *server_ip = strdup(server_ips);
+  char *server_ip_cursor = server_ip;
   char *token;
-  while ((token = strsep(&server_ip, ","))) {
+  while ((token = strsep(&server_ip_cursor, ","))) {
+    if (nconns >= static_cast<int>(sizeof(conns) / sizeof(conns[0]))) {
+      LUPINE_LOG_ERROR("Too many LUPINE_SERVER entries; ignoring the rest");
+      break;
+    }
+
     char *host;
     char *port;
 
@@ -9012,51 +9163,15 @@ int rpc_open() {
       port = colon + 1;
     }
 
-    addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, port, &hints, &res) != 0) {
-      std::cout << "getaddrinfo of " << host << " port " << port << " failed"
-                << std::endl;
+    lupine_server_endpoint endpoint{host, port};
+    if (lupine_connect_endpoint(&conns[nconns], endpoint,
+                                static_cast<unsigned int>(nconns)) < 0) {
       continue;
     }
-
-    int flag = 1;
-    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sockfd == -1) {
-      printf("socket creation failed...\n");
-      continue;
-    }
-
-    int opts = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
-                          sizeof(int));
-    if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-      LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
-                                        << " failed: " << strerror(errno));
-      close(sockfd);
-      continue;
-    }
-
-    conns[nconns] = {};
-    conns[nconns].connfd = sockfd;
-    conns[nconns].request_id = 0;
-    conns[nconns].closed = 0;
-    conns[nconns].local_request_parity = conns[nconns].request_id & 1;
-    if (pthread_mutex_init(&conns[nconns].read_mutex, NULL) < 0 ||
-        pthread_mutex_init(&conns[nconns].write_mutex, NULL) < 0 ||
-        pthread_mutex_init(&conns[nconns].call_mutex, NULL) < 0 ||
-        pthread_cond_init(&conns[nconns].read_cond, NULL) < 0 ||
-        rpc_http2_client_init(&conns[nconns]) < 0) {
-      close(sockfd);
-      return -1;
-    }
-
-    pthread_create(&conns[nconns].read_thread, NULL, rpc_client_dispatch_thread,
-                   (void *)&conns[nconns]);
-
+    lupine_server_endpoints().push_back(endpoint);
     nconns++;
   }
+  free(server_ip);
 
   if (pthread_mutex_unlock(&conn_mutex) < 0)
     return -1;
@@ -9066,9 +9181,7 @@ int rpc_open() {
 }
 
 conn_t *rpc_client_get_connection(unsigned int index) {
-  if (rpc_open() < 0)
-    return nullptr;
-  return &conns[index];
+  return lupine_thread_conn_by_index(index);
 }
 
 int rpc_size() { return nconns; }
