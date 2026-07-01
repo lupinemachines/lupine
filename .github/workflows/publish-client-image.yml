@@ -93,7 +93,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and publish client image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -109,7 +109,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build and publish slim client tag
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
