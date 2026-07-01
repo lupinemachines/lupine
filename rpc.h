@@ -32,6 +32,7 @@ typedef struct {
   unsigned char write_iov_framed[128];
   int write_iov_count;
   int local_request_parity;
+  int logical_index;
   int closed;
   void *http2;
 } conn_t;
