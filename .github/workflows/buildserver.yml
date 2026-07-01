@@ -1,0 +1,83 @@
+name: publish a docker image
+
+on:
+  push:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - cuda_version: "12.6.2"
+            ubuntu_version: "24.04"
+            dockerfile: "Dockerfile.client"
+            image_suffix: "-client"
+          - cuda_version: "12.6.2"
+            ubuntu_version: "24.04"
+            dockerfile: "Dockerfile.server"
+            image_suffix: "-server"
+          - cuda_version: "12.5.1"
+            ubuntu_version: "22.04"
+            dockerfile: "Dockerfile.client"
+            image_suffix: "-client"
+          - cuda_version: "12.5.1"
+            ubuntu_version: "22.04"
+            dockerfile: "Dockerfile.server"
+            image_suffix: "-server"
+          - cuda_version: "12.4.1"
+            ubuntu_version: "22.04"
+            dockerfile: "Dockerfile.client"
+            image_suffix: "-client"
+          - cuda_version: "12.4.1"
+            ubuntu_version: "22.04"
+            dockerfile: "Dockerfile.server"
+            image_suffix: "-server"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.image_suffix }}
+          tags: |
+            type=ref,event=branch,suffix=-cuda${{ matrix.cuda_version }}
+            type=ref,event=pr,suffix=-cuda${{ matrix.cuda_version }}
+            type=semver,pattern={{version}},suffix=-cuda${{ matrix.cuda_version }}
+            type=semver,pattern={{major}}.{{minor}},suffix=-cuda${{ matrix.cuda_version }}
+            type=sha,suffix=-cuda${{ matrix.cuda_version }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          platforms: linux/amd64,linux/arm64/v8
+          context: .
+          build-args: |
+            CUDA_VERSION=${{ matrix.cuda_version }}
+            UBUNTU_VERSION=${{ matrix.ubuntu_version }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          file: ${{ matrix.dockerfile }}
