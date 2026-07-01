@@ -1,7 +1,7 @@
 // Client-side snapshot API: send the save/restore ops as ordinary RPCs over the
-// existing connection. No pre-HTTP2 bootstrap, no CRIU. lupine_snapshot_load()
-// must be called right after connecting (before allocations) so the server
-// worker restores the VMM arena before it is used.
+// existing connection. No pre-HTTP2 bootstrap, no CRIU, no cuda-checkpoint
+// process wrapper. lupine_snapshot_load() should be called right after
+// reconnecting so the fresh server worker restores CUDA before later work.
 #include <cstdint>
 #include <cstring>
 
@@ -26,6 +26,18 @@ CUresult send_snapshot_rpc(int op, const char *id) {
   return result;
 }
 
+CUresult prepare_restore_worker() {
+  CUresult result = cuInit(0);
+  if (result != CUDA_SUCCESS) return result;
+  CUdevice dev = 0;
+  result = cuDeviceGet(&dev, 0);
+  if (result != CUDA_SUCCESS) return result;
+  CUcontext ctx = nullptr;
+  result = cuDevicePrimaryCtxRetain(&ctx, dev);
+  if (result != CUDA_SUCCESS) return result;
+  return cuCtxSetCurrent(ctx);
+}
+
 } // namespace
 
 extern "C" CUresult lupine_snapshot_save(const char *id) {
@@ -33,5 +45,7 @@ extern "C" CUresult lupine_snapshot_save(const char *id) {
 }
 
 extern "C" CUresult lupine_snapshot_load(const char *id) {
+  CUresult result = prepare_restore_worker();
+  if (result != CUDA_SUCCESS) return result;
   return send_snapshot_rpc(LUPINE_RPC_gpu_snapshot_restore, id);
 }

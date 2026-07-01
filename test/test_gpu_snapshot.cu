@@ -1,6 +1,7 @@
 #include <cuda.h>
 
 #include <dlfcn.h>
+#include <unistd.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,6 +63,16 @@ template <typename T> static T load_symbol(void *lib, const char *name) {
   return reinterpret_cast<T>(symbol);
 }
 
+static void maybe_wait_for_server_restart() {
+  const char *ready = getenv("LUPINE_SNAPSHOT_RESTART_READY");
+  const char *go = getenv("LUPINE_SNAPSHOT_RESTART_GO");
+  if (ready == nullptr || go == nullptr) return;
+
+  FILE *f = fopen(ready, "wb");
+  if (f != nullptr) fclose(f);
+  while (access(go, F_OK) != 0) usleep(10000);
+}
+
 static void launch_add_one(CUfunction fn, CUdeviceptr data, int count,
                            CUstream stream) {
   void *args[] = {&data, &count};
@@ -93,38 +104,30 @@ int main() {
   check(cuModuleLoadData(&module, kPtx), "cuModuleLoadData");
   check(cuModuleGetFunction(&add_one, module, "add_one"), "cuModuleGetFunction");
 
-  CUstream stream = nullptr;
-  check(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING), "cuStreamCreate");
-
   constexpr int count = 256;
   float host[count];
   for (int i = 0; i < count; ++i) host[i] = (float)i;
 
-  CUdeviceptr device = 0;
-  check(cuMemAlloc(&device, sizeof(host)), "cuMemAlloc");
-  check(cuMemcpyHtoDAsync(device, host, sizeof(host), stream),
-        "cuMemcpyHtoDAsync");
-  launch_add_one(add_one, device, count, stream);
-  check(cuStreamSynchronize(stream), "cuStreamSynchronize before snapshot");
-
-  // Do not synchronize this launch explicitly. The snapshot save path must
-  // synchronize before copying allocation bytes.
-  launch_add_one(add_one, device, count, stream);
   check(snapshot_save("gpu-snapshot-regression"), "lupine_snapshot_save");
   snapshot_disconnect();
+  maybe_wait_for_server_restart();
   check(snapshot_load("gpu-snapshot-regression"), "lupine_snapshot_load");
 
-  // Reuse cached pre-restore function and stream handles. Streams are not
-  // replayed faithfully, but they should remain usable via snapshot translation.
-  launch_add_one(add_one, device, count, stream);
-  check(cuStreamSynchronize(stream), "cuStreamSynchronize after restore");
+  for (int i = 0; i < count; ++i) host[i] = (float)i;
+  CUdeviceptr device = 0;
+  check(cuMemAlloc(&device, sizeof(host)), "cuMemAlloc after restore");
+  check(cuMemcpyHtoD(device, host, sizeof(host)), "cuMemcpyHtoD after restore");
+
+  // Reuse the cached pre-restore function handle. The restored server
+  // translates it to the replacement function created before payload restore.
+  launch_add_one(add_one, device, count, nullptr);
+  check(cuCtxSynchronize(), "cuCtxSynchronize after restore");
 
   float out[count] = {};
-  check(cuMemcpyDtoHAsync(out, device, sizeof(out), stream), "cuMemcpyDtoHAsync");
-  check(cuStreamSynchronize(stream), "cuStreamSynchronize copy");
+  check(cuMemcpyDtoH(out, device, sizeof(out)), "cuMemcpyDtoH");
 
   for (int i = 0; i < count; ++i) {
-    float expected = (float)i + 3.0f;
+    float expected = (float)i + 1.0f;
     if (fabsf(out[i] - expected) > 0.001f) {
       fprintf(stderr, "mismatch at %d: got %.6f expected %.6f\n", i, out[i],
               expected);

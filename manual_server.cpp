@@ -1746,7 +1746,7 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
 
   // Translate handles the client cached before a snapshot to this worker's.
   f = lupine_gpu_xlate_function(f);
-  if (lupine_gpu_restored()) ctx = nullptr;
+  ctx = lupine_gpu_xlate_context(ctx);
   hStream = lupine_gpu_xlate_stream(hStream);
 
   if (ctx != nullptr) {
@@ -2220,6 +2220,7 @@ int handle_manual_cuGraphAddMemcpyNode(conn_t *conn) {
     return -1;
   }
 
+  ctx = lupine_gpu_xlate_context(ctx);
   result = cuGraphAddMemcpyNode(&graphNode, hGraph,
                                 deps.empty() ? nullptr : deps.data(),
                                 deps.size(), &copyParams, ctx);
@@ -2250,6 +2251,7 @@ int handle_manual_cuGraphAddMemsetNode(conn_t *conn) {
     return -1;
   }
 
+  ctx = lupine_gpu_xlate_context(ctx);
   result = cuGraphAddMemsetNode(&graphNode, hGraph,
                                 deps.empty() ? nullptr : deps.data(),
                                 deps.size(), &memsetParams, ctx);
@@ -2316,6 +2318,7 @@ int handle_manual_cuGraphConditionalHandleCreate(conn_t *conn) {
     return -1;
   }
 
+  ctx = lupine_gpu_xlate_context(ctx);
   result = cuGraphConditionalHandleCreate(&handle, hGraph, ctx,
                                           defaultLaunchValue, flags);
   if (rpc_write_start_response(conn, request_id) < 0 ||

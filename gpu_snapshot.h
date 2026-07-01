@@ -6,19 +6,19 @@
 
 #include "rpc.h"
 
-// GPU-state snapshots without CRIU or cuda-checkpoint.
+// GPU-state snapshots for Lupine's reconnect-to-a-fresh-worker path.
 //
-// Device allocations are served from a single VMM virtual-address arena
-// (cuMemAddressReserve + cuMemCreate + cuMemMap). Because the server runs with
-// ASLR disabled, the driver picks the same arena base in every worker process,
-// so a CUdeviceptr handed to the client is a stable offset that can be
-// reproduced on restore. A snapshot records the arena base + each live
-// allocation's (offset, size, contents); restore re-reserves the SAME base in a
-// fresh worker and copies the bytes back, reproducing every device pointer.
+// The server asks CUDA to checkpoint itself, copies the driver-created host
+// checkpoint payload mapping to disk, then immediately restores/unlocks itself.
+// A fresh worker replays the tracked module/library/function shape, checkpoints
+// itself, overlays the saved payload into its own CUDA checkpoint payload
+// mapping, and restores/unlocks. This avoids CRIU, cuda-checkpoint, manual
+// allocation manifests, and stable server-side GPU pointer assumptions.
 //
-// Opaque handles (CUstream/CUmodule/...) get new values in a fresh worker, but
-// the client never dereferences them -- it only passes them back through RPCs --
-// so the server remaps them (added in a later phase).
+// Opaque module/library/function/kernel handles still get new values in a fresh
+// worker before payload restore. The server records enough object creation
+// inputs to recreate that shape and translate old client handles to live ones.
+// Streams are intentionally normalized to the default stream after restore.
 
 // Custom RPC op ids (kept out of the codegen range).
 static const int LUPINE_RPC_gpu_snapshot_save = 1000201;
@@ -28,7 +28,8 @@ static const int LUPINE_RPC_gpu_snapshot_restore = 1000202;
 extern "C" {
 #endif
 
-// VMM-backed replacements for cuMemAlloc_v2 / cuMemFree_v2.
+// Allocation hooks are retained for ABI/routing compatibility. They currently
+// pass through to CUDA; snapshotting no longer owns server allocation layout.
 CUresult lupine_gpu_alloc(CUdeviceptr *dptr, size_t bytesize);
 CUresult lupine_gpu_free(CUdeviceptr dptr);
 // True when dptr was handed out by lupine_gpu_alloc.
@@ -55,9 +56,10 @@ CUfunction lupine_gpu_xlate_function(CUfunction fn);
 CUmodule lupine_gpu_xlate_module(CUmodule m);
 CUlibrary lupine_gpu_xlate_library(CUlibrary lib);
 CUkernel lupine_gpu_xlate_kernel(CUkernel k);
-// Streams are intentionally not replayed. After restore, non-default streams are
-// treated as the default stream so cached pre-snapshot stream handles do not
-// poison launches and async copies.
+CUcontext lupine_gpu_xlate_context(CUcontext ctx);
+// Streams are intentionally not replayed. After restore, non-default streams
+// are lazily replaced so cached pre-snapshot stream handles do not poison
+// launches and async copies.
 CUstream lupine_gpu_xlate_stream(CUstream s);
 int lupine_gpu_restored(void);
 
@@ -67,8 +69,8 @@ int handle_manual_cuMemFree_v2(conn_t *conn);
 int handle_gpu_snapshot_save(conn_t *conn);
 int handle_gpu_snapshot_restore(conn_t *conn);
 
-// Overrides of codegen handlers that additionally track the created object so it
-// can be replayed/remapped on restore.
+// Overrides of codegen handlers that additionally track the created object so
+// it can be replayed/remapped on restore.
 int handle_manual_cuModuleGetFunction_tracked(conn_t *conn);
 int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn);
 int handle_manual_cuKernelGetFunction_tracked(conn_t *conn);

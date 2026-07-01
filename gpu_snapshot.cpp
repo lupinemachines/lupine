@@ -1,5 +1,7 @@
 #include "gpu_snapshot.h"
 
+#include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,12 +11,11 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#include <direct.h>
-#define LUPINE_MKDIR(p) _mkdir(p)
-#else
+#ifndef _WIN32
+#include <fcntl.h>
 #include <sys/stat.h>
-#define LUPINE_MKDIR(p) mkdir((p), 0777)
+#include <sys/types.h>
+#include <unistd.h>
 #endif
 
 #include "lupine_fatbin.h"
@@ -22,161 +23,97 @@
 
 namespace {
 
-struct Allocation {
-  size_t size;    // bytes the client asked for
-  size_t rounded; // bytes actually mapped (granularity-aligned)
-  CUmemGenericAllocationHandle handle;
-};
+constexpr char kPayloadMagic[8] = {'L', 'U', 'P', 'C', 'K', 'P', 'T', '1'};
+constexpr size_t kMaxMapPath = 256;
 
-// One VMM virtual-address arena per worker. Device pointers are offsets into
-// g_arena_base; with ASLR disabled the driver picks the same base in every
-// worker, so the layout is reproducible by re-reserving that base on restore.
 std::mutex g_mutex;
-bool g_inited = false;
-CUdeviceptr g_arena_base = 0;
-size_t g_arena_size = 0;
-size_t g_granularity = 0;
-int g_device = 0;
-size_t g_bump = 0; // next never-used offset
-std::map<CUdeviceptr, Allocation> g_allocs;
-std::map<size_t, size_t> g_free; // freed (offset -> rounded size) for reuse
+bool g_restored = false;
 
-// --- module/function replay + remap ----------------------------------------
-// A fresh worker created on restore has new module/library/function/kernel
-// handles. Record enough information to replay those objects and translate the
-// client's original handles to the live ones.
 struct ModuleRec {
   unsigned int kind;
   std::vector<unsigned char> image;
 };
+
 std::map<CUmodule, ModuleRec> g_modules;
 std::map<CUmodule, CUlibrary> g_library_modules;
 std::map<CUfunction, std::pair<CUmodule, std::string>> g_functions;
 std::map<CUlibrary, ModuleRec> g_libraries;
 std::map<CUkernel, std::pair<CUlibrary, std::string>> g_kernels;
 std::map<CUfunction, CUkernel> g_kernel_functions;
-bool g_restored = false;
+
 std::map<CUmodule, CUmodule> g_module_remap;
 std::map<CUlibrary, CUlibrary> g_library_remap;
 std::map<CUkernel, CUkernel> g_kernel_remap;
 std::map<CUfunction, CUfunction> g_function_remap;
+std::map<CUstream, CUstream> g_stream_remap;
 
-// Mirror of manual_server.cpp's module-image kinds.
-constexpr unsigned int K_FATBINC_V1 = 1, K_FATBIN_RAW = 2, K_FATBINC_V2 = 3;
+constexpr unsigned int K_FATBINC_V1 = 1;
+constexpr unsigned int K_FATBIN_RAW = 2;
+constexpr unsigned int K_FATBINC_V2 = 3;
 
-size_t round_up(size_t x, size_t g) {
-  if (g == 0) return x;
-  return ((x + g - 1) / g) * g;
+struct PayloadHeader {
+  char magic[8];
+  uint64_t size;
+};
+
+struct Map {
+  uintptr_t start = 0;
+  uintptr_t end = 0;
+  char perms[5] = {};
+  char path[kMaxMapPath] = {};
+};
+
+struct Maps {
+  std::vector<Map> items;
+};
+
+ModuleRec make_module_rec(unsigned int kind, const void *image, size_t size) {
+  ModuleRec rec;
+  rec.kind = kind;
+  if (image != nullptr && size != 0) {
+    const auto *bytes = static_cast<const unsigned char *>(image);
+    rec.image.assign(bytes, bytes + size);
+  }
+  return rec;
 }
 
-size_t default_arena_bytes() {
-  if (const char *env = getenv("LUPINE_GPU_ARENA_BYTES")) {
-    unsigned long long v = strtoull(env, nullptr, 0);
-    if (v > 0) return (size_t)v;
-  }
-  return (size_t)64 << 30; // 64 GiB of VA (cheap; backed physically on demand)
-}
-
-void fill_prop(CUmemAllocationProp *prop) {
-  memset(prop, 0, sizeof(*prop));
-  prop->type = CU_MEM_ALLOCATION_TYPE_PINNED;
-  prop->location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  prop->location.id = g_device;
-}
-
-// Reserve the arena. fixed_base != 0 requests that exact base (restore).
-CUresult reserve_arena(CUdeviceptr fixed_base) {
-  if (cuCtxGetDevice(&g_device) != CUDA_SUCCESS) g_device = 0;
-  CUmemAllocationProp prop;
-  fill_prop(&prop);
-  size_t gran = 0;
-  CUresult r = cuMemGetAllocationGranularity(
-      &gran, &prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED);
-  if (r != CUDA_SUCCESS) return r;
-  g_granularity = gran;
-  g_arena_size = round_up(default_arena_bytes(), gran);
-
-  CUdeviceptr base = 0;
-  r = cuMemAddressReserve(&base, g_arena_size, gran, fixed_base, 0);
-  if (r != CUDA_SUCCESS) return r;
-  if (fixed_base != 0 && base != fixed_base) {
-    LUPINE_LOG_ERROR("gpu_snapshot: arena base moved on restore (wanted "
-                     << (void *)fixed_base << " got " << (void *)base
-                     << "); is ASLR disabled?");
-    cuMemAddressFree(base, g_arena_size);
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  g_arena_base = base;
-  g_bump = 0;
-  g_inited = true;
-  return CUDA_SUCCESS;
-}
-
-// Map physical memory at [base+offset, +rounded) with device RW access.
-CUresult map_block(size_t offset, size_t rounded,
-                   CUmemGenericAllocationHandle *out) {
-  CUmemAllocationProp prop;
-  fill_prop(&prop);
-  CUmemGenericAllocationHandle handle = 0;
-  CUresult r = cuMemCreate(&handle, rounded, &prop, 0);
-  if (r != CUDA_SUCCESS) return r;
-  CUdeviceptr addr = g_arena_base + offset;
-  r = cuMemMap(addr, rounded, 0, handle, 0);
-  if (r != CUDA_SUCCESS) {
-    cuMemRelease(handle);
-    return r;
-  }
-  CUmemAccessDesc access;
-  memset(&access, 0, sizeof(access));
-  access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  access.location.id = g_device;
-  access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  r = cuMemSetAccess(addr, rounded, &access, 1);
-  if (r != CUDA_SUCCESS) {
-    cuMemUnmap(addr, rounded);
-    cuMemRelease(handle);
-    return r;
-  }
-  *out = handle;
-  return CUDA_SUCCESS;
-}
-
-// Pick an offset for a rounded-byte block: reuse a freed block or bump.
-bool take_offset(size_t rounded, size_t *offset) {
-  for (auto it = g_free.begin(); it != g_free.end(); ++it) {
-    if (it->second >= rounded) {
-      *offset = it->first;
-      if (it->second > rounded)
-        g_free.emplace(it->first + rounded, it->second - rounded);
-      g_free.erase(it);
-      return true;
-    }
-  }
-  if (g_bump + rounded > g_arena_size) return false;
-  *offset = g_bump;
-  g_bump += rounded;
-  return true;
+template <typename Handle>
+Handle xlate_handle(const std::map<Handle, Handle> &remap, Handle handle) {
+  auto it = remap.find(handle);
+  return it == remap.end() ? handle : it->second;
 }
 
 uint64_t fnv1a(const char *s) {
   uint64_t h = 1469598103934665603ULL;
   for (; *s; ++s) {
-    h ^= (unsigned char)*s;
+    h ^= static_cast<unsigned char>(*s);
     h *= 1099511628211ULL;
   }
   return h;
 }
 
-// base dir + hashed id, created if needed. Returns "" on failure.
+bool mkdir_if_needed(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return false;
+#else
+  return mkdir(path.c_str(), 0777) == 0 || errno == EEXIST;
+#endif
+}
+
 std::string snapshot_dir(const char *id) {
   const char *base = getenv("LUPINE_SNAPSHOT_DIR");
   std::string dir = base && base[0] ? base : "/tmp/lupine-snapshots";
-  LUPINE_MKDIR(dir.c_str());
+  if (!mkdir_if_needed(dir)) {
+    LUPINE_LOG_ERROR("gpu_snapshot: cannot create " << dir);
+    return "";
+  }
+
   char hex[17];
   snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)fnv1a(id));
   dir += "/";
   dir += hex;
-  if (LUPINE_MKDIR(dir.c_str()) != 0 && errno != EEXIST) {
+  if (!mkdir_if_needed(dir)) {
     LUPINE_LOG_ERROR("gpu_snapshot: cannot create " << dir);
     return "";
   }
@@ -184,25 +121,11 @@ std::string snapshot_dir(const char *id) {
 }
 
 std::string join(const std::string &dir, const char *name) {
-  std::string s = dir;
-  if (!s.empty() && s.back() != '/') s.push_back('/');
-  return s + name;
+  std::string out = dir;
+  if (!out.empty() && out.back() != '/') out.push_back('/');
+  return out + name;
 }
 
-struct ManifestHeader {
-  char magic[8]; // "LUPGPU01"
-  uint64_t arena_base;
-  uint64_t granularity;
-  uint64_t count;
-};
-
-struct ManifestEntry {
-  uint64_t offset; // addr - arena_base
-  uint64_t size;   // requested bytes (also bytes stored in gpu.mem)
-  uint64_t rounded;
-};
-
-// Read a length-prefixed snapshot id off the wire into id[<=cap].
 int read_id(conn_t *conn, char *id, size_t cap) {
   uint32_t len = 0;
   if (rpc_read(conn, &len, sizeof(len)) < 0) return -1;
@@ -213,69 +136,79 @@ int read_id(conn_t *conn, char *id, size_t cap) {
 }
 
 void write_u64(FILE *f, uint64_t v) { fwrite(&v, sizeof(v), 1, f); }
-bool read_u64(FILE *f, uint64_t *v) { return fread(v, sizeof(*v), 1, f) == 1; }
 
-void write_blob(FILE *f, const std::vector<unsigned char> &b) {
-  write_u64(f, b.size());
-  if (!b.empty()) fwrite(b.data(), 1, b.size(), f);
+bool read_u64(FILE *f, uint64_t *v) {
+  return fread(v, sizeof(*v), 1, f) == 1;
 }
+
+void write_blob(FILE *f, const std::vector<unsigned char> &blob) {
+  write_u64(f, blob.size());
+  if (!blob.empty()) fwrite(blob.data(), 1, blob.size(), f);
+}
+
+bool read_blob(FILE *f, std::vector<unsigned char> &blob) {
+  uint64_t size = 0;
+  if (!read_u64(f, &size)) return false;
+  blob.resize(size);
+  return size == 0 || fread(blob.data(), 1, size, f) == size;
+}
+
 void write_str(FILE *f, const std::string &s) {
   write_u64(f, s.size());
   if (!s.empty()) fwrite(s.data(), 1, s.size(), f);
 }
-bool read_blob(FILE *f, std::vector<unsigned char> &b) {
-  uint64_t n;
-  if (!read_u64(f, &n)) return false;
-  b.resize(n);
-  return n == 0 || fread(b.data(), 1, n, f) == n;
-}
+
 bool read_str(FILE *f, std::string &s) {
-  uint64_t n;
-  if (!read_u64(f, &n)) return false;
-  s.assign(n, '\0');
-  return n == 0 || fread(&s[0], 1, n, f) == n;
+  uint64_t size = 0;
+  if (!read_u64(f, &size)) return false;
+  s.assign(size, '\0');
+  return size == 0 || fread(&s[0], 1, size, f) == size;
 }
 
-// Serialize the tracked objects. Called while holding g_mutex. Sections are
-// ordered so restore can replay dependencies first (module before its
-// functions; library before kernels before kernel-functions).
 bool save_objects(const std::string &dir) {
   FILE *f = fopen(join(dir, "gpu.objects").c_str(), "wb");
   if (!f) return false;
+
   write_u64(f, g_modules.size());
   for (auto &kv : g_modules) {
-    write_u64(f, (uint64_t)kv.first);
+    write_u64(f, reinterpret_cast<uint64_t>(kv.first));
     write_u64(f, kv.second.kind);
     write_blob(f, kv.second.image);
   }
+
   write_u64(f, g_libraries.size());
   for (auto &kv : g_libraries) {
-    write_u64(f, (uint64_t)kv.first);
+    write_u64(f, reinterpret_cast<uint64_t>(kv.first));
     write_u64(f, kv.second.kind);
     write_blob(f, kv.second.image);
   }
+
   write_u64(f, g_library_modules.size());
   for (auto &kv : g_library_modules) {
-    write_u64(f, (uint64_t)kv.first);
-    write_u64(f, (uint64_t)kv.second);
+    write_u64(f, reinterpret_cast<uint64_t>(kv.first));
+    write_u64(f, reinterpret_cast<uint64_t>(kv.second));
   }
+
   write_u64(f, g_functions.size());
   for (auto &kv : g_functions) {
-    write_u64(f, (uint64_t)kv.first);
-    write_u64(f, (uint64_t)kv.second.first);
+    write_u64(f, reinterpret_cast<uint64_t>(kv.first));
+    write_u64(f, reinterpret_cast<uint64_t>(kv.second.first));
     write_str(f, kv.second.second);
   }
+
   write_u64(f, g_kernels.size());
   for (auto &kv : g_kernels) {
-    write_u64(f, (uint64_t)kv.first);
-    write_u64(f, (uint64_t)kv.second.first);
+    write_u64(f, reinterpret_cast<uint64_t>(kv.first));
+    write_u64(f, reinterpret_cast<uint64_t>(kv.second.first));
     write_str(f, kv.second.second);
   }
+
   write_u64(f, g_kernel_functions.size());
   for (auto &kv : g_kernel_functions) {
-    write_u64(f, (uint64_t)kv.first);
-    write_u64(f, (uint64_t)kv.second);
+    write_u64(f, reinterpret_cast<uint64_t>(kv.first));
+    write_u64(f, reinterpret_cast<uint64_t>(kv.second));
   }
+
   fclose(f);
   return true;
 }
@@ -284,17 +217,15 @@ CUresult load_module_image(unsigned int kind, const unsigned char *image,
                            CUmodule *out) {
   if (kind == K_FATBINC_V1 || kind == K_FATBINC_V2)
     return cuModuleLoadFatBinary(out, image);
-  if (kind == K_FATBIN_RAW)
-    return cuModuleLoadData(out, image);
+  if (kind == K_FATBIN_RAW) return cuModuleLoadData(out, image);
   return CUDA_ERROR_NOT_SUPPORTED;
 }
 
 CUresult load_library_image(unsigned int kind, const unsigned char *image,
                             CUlibrary *out) {
   if (kind == K_FATBINC_V1 || kind == K_FATBINC_V2) {
-    lupine_fatbin_wrapper wrapper = {LUPINE_FATBINC_MAGIC,
-                                     kind == K_FATBINC_V2 ? 2U : 1U, image,
-                                     nullptr};
+    lupine_fatbin_wrapper wrapper = {
+        LUPINE_FATBINC_MAGIC, kind == K_FATBINC_V2 ? 2U : 1U, image, nullptr};
     return cuLibraryLoadData(out, &wrapper, nullptr, nullptr, 0, nullptr,
                              nullptr, 0);
   }
@@ -304,315 +235,413 @@ CUresult load_library_image(unsigned int kind, const unsigned char *image,
   return CUDA_ERROR_NOT_SUPPORTED;
 }
 
-// Replay tracked objects and build the old->new remaps. Called while holding
-// g_mutex, after device memory + a current context are restored.
-CUresult restore_objects(const std::string &dir) {
+CUresult replay_objects(const std::string &dir) {
   FILE *f = fopen(join(dir, "gpu.objects").c_str(), "rb");
-  if (!f) return CUDA_SUCCESS; // pure-driver snapshot has no objects
+  if (!f) return CUDA_SUCCESS;
+
   uint64_t n = 0;
   CUresult rc = CUDA_ERROR_UNKNOWN;
   if (!read_u64(f, &n)) goto done;
-  for (uint64_t i = 0; i < n; i++) { // modules
-    uint64_t old_h, kind;
+  for (uint64_t i = 0; i < n; i++) {
+    uint64_t old_h = 0, kind = 0;
     std::vector<unsigned char> image;
     if (!read_u64(f, &old_h) || !read_u64(f, &kind) || !read_blob(f, image))
       goto done;
-    CUmodule m = nullptr;
-    rc = load_module_image((unsigned)kind, image.data(), &m);
+    CUmodule module = nullptr;
+    rc = load_module_image(static_cast<unsigned int>(kind), image.data(),
+                           &module);
     if (rc != CUDA_SUCCESS) goto done;
-    g_modules[m] = ModuleRec{(unsigned)kind, std::move(image)};
-    g_module_remap[(CUmodule)old_h] = m;
+    g_modules[module] = ModuleRec{static_cast<unsigned int>(kind),
+                                  std::move(image)};
+    g_module_remap[reinterpret_cast<CUmodule>(old_h)] = module;
   }
-  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
-  for (uint64_t i = 0; i < n; i++) { // libraries
-    uint64_t old_h, kind;
+
+  if (!read_u64(f, &n)) goto done;
+  for (uint64_t i = 0; i < n; i++) {
+    uint64_t old_h = 0, kind = 0;
     std::vector<unsigned char> image;
-    if (!read_u64(f, &old_h) || !read_u64(f, &kind) || !read_blob(f, image)) {
-      rc = CUDA_ERROR_UNKNOWN;
+    if (!read_u64(f, &old_h) || !read_u64(f, &kind) || !read_blob(f, image))
       goto done;
-    }
-    CUlibrary lib = nullptr;
-    rc = load_library_image((unsigned)kind, image.data(), &lib);
+    CUlibrary library = nullptr;
+    rc = load_library_image(static_cast<unsigned int>(kind), image.data(),
+                            &library);
     if (rc != CUDA_SUCCESS) goto done;
-    g_libraries[lib] = ModuleRec{(unsigned)kind, std::move(image)};
-    g_library_remap[(CUlibrary)old_h] = lib;
+    g_libraries[library] = ModuleRec{static_cast<unsigned int>(kind),
+                                     std::move(image)};
+    g_library_remap[reinterpret_cast<CUlibrary>(old_h)] = library;
   }
-  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
-  for (uint64_t i = 0; i < n; i++) { // modules exposed by libraries
-    uint64_t old_mod, old_lib;
-    if (!read_u64(f, &old_mod) || !read_u64(f, &old_lib)) {
-      rc = CUDA_ERROR_UNKNOWN;
-      goto done;
-    }
-    auto it = g_library_remap.find((CUlibrary)old_lib);
-    if (it == g_library_remap.end()) { rc = CUDA_ERROR_UNKNOWN; goto done; }
-    CUmodule mod = nullptr;
-    rc = cuLibraryGetModule(&mod, it->second);
+
+  if (!read_u64(f, &n)) goto done;
+  for (uint64_t i = 0; i < n; i++) {
+    uint64_t old_mod = 0, old_lib = 0;
+    if (!read_u64(f, &old_mod) || !read_u64(f, &old_lib)) goto done;
+    auto it = g_library_remap.find(reinterpret_cast<CUlibrary>(old_lib));
+    if (it == g_library_remap.end()) goto done;
+    CUmodule module = nullptr;
+    rc = cuLibraryGetModule(&module, it->second);
     if (rc != CUDA_SUCCESS) goto done;
-    g_library_modules[mod] = it->second;
-    g_module_remap[(CUmodule)old_mod] = mod;
+    g_library_modules[module] = it->second;
+    g_module_remap[reinterpret_cast<CUmodule>(old_mod)] = module;
   }
-  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
-  for (uint64_t i = 0; i < n; i++) { // module functions
-    uint64_t old_fn, old_mod;
+
+  if (!read_u64(f, &n)) goto done;
+  for (uint64_t i = 0; i < n; i++) {
+    uint64_t old_fn = 0, old_mod = 0;
     std::string name;
-    if (!read_u64(f, &old_fn) || !read_u64(f, &old_mod) || !read_str(f, name)) {
-      rc = CUDA_ERROR_UNKNOWN;
+    if (!read_u64(f, &old_fn) || !read_u64(f, &old_mod) || !read_str(f, name))
       goto done;
-    }
-    auto it = g_module_remap.find((CUmodule)old_mod);
-    if (it == g_module_remap.end()) { rc = CUDA_ERROR_UNKNOWN; goto done; }
+    auto it = g_module_remap.find(reinterpret_cast<CUmodule>(old_mod));
+    if (it == g_module_remap.end()) goto done;
     CUfunction fn = nullptr;
     rc = cuModuleGetFunction(&fn, it->second, name.c_str());
     if (rc != CUDA_SUCCESS) goto done;
     g_functions[fn] = {it->second, name};
-    g_function_remap[(CUfunction)old_fn] = fn;
+    g_function_remap[reinterpret_cast<CUfunction>(old_fn)] = fn;
   }
-  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
-  for (uint64_t i = 0; i < n; i++) { // kernels
-    uint64_t old_k, old_lib;
+
+  if (!read_u64(f, &n)) goto done;
+  for (uint64_t i = 0; i < n; i++) {
+    uint64_t old_k = 0, old_lib = 0;
     std::string name;
-    if (!read_u64(f, &old_k) || !read_u64(f, &old_lib) || !read_str(f, name)) {
-      rc = CUDA_ERROR_UNKNOWN;
+    if (!read_u64(f, &old_k) || !read_u64(f, &old_lib) || !read_str(f, name))
       goto done;
-    }
-    auto it = g_library_remap.find((CUlibrary)old_lib);
-    if (it == g_library_remap.end()) { rc = CUDA_ERROR_UNKNOWN; goto done; }
-    CUkernel k = nullptr;
-    rc = cuLibraryGetKernel(&k, it->second, name.c_str());
+    auto it = g_library_remap.find(reinterpret_cast<CUlibrary>(old_lib));
+    if (it == g_library_remap.end()) goto done;
+    CUkernel kernel = nullptr;
+    rc = cuLibraryGetKernel(&kernel, it->second, name.c_str());
     if (rc != CUDA_SUCCESS) goto done;
-    g_kernels[k] = {it->second, name};
-    g_kernel_remap[(CUkernel)old_k] = k;
+    g_kernels[kernel] = {it->second, name};
+    g_kernel_remap[reinterpret_cast<CUkernel>(old_k)] = kernel;
   }
-  if (!read_u64(f, &n)) { rc = CUDA_ERROR_UNKNOWN; goto done; }
-  for (uint64_t i = 0; i < n; i++) { // kernel functions
-    uint64_t old_fn, old_k;
-    if (!read_u64(f, &old_fn) || !read_u64(f, &old_k)) {
-      rc = CUDA_ERROR_UNKNOWN;
-      goto done;
-    }
-    auto it = g_kernel_remap.find((CUkernel)old_k);
-    if (it == g_kernel_remap.end()) { rc = CUDA_ERROR_UNKNOWN; goto done; }
+
+  if (!read_u64(f, &n)) goto done;
+  for (uint64_t i = 0; i < n; i++) {
+    uint64_t old_fn = 0, old_k = 0;
+    if (!read_u64(f, &old_fn) || !read_u64(f, &old_k)) goto done;
+    auto it = g_kernel_remap.find(reinterpret_cast<CUkernel>(old_k));
+    if (it == g_kernel_remap.end()) goto done;
     CUfunction fn = nullptr;
     rc = cuKernelGetFunction(&fn, it->second);
     if (rc != CUDA_SUCCESS) goto done;
     g_kernel_functions[fn] = it->second;
-    g_function_remap[(CUfunction)old_fn] = fn;
+    g_function_remap[reinterpret_cast<CUfunction>(old_fn)] = fn;
   }
+
   rc = CUDA_SUCCESS;
 done:
   fclose(f);
   return rc;
 }
 
+#ifdef _WIN32
+Maps read_private_anon_maps() { return Maps{}; }
+int open_self_mem(int) { return -1; }
+#else
+bool is_private_anon_rw(const Map &map) {
+  return map.perms[0] == 'r' && map.perms[1] == 'w' &&
+         map.perms[2] == '-' && map.perms[3] == 'p' && map.path[0] == '\0';
+}
+
+Maps read_private_anon_maps() {
+  FILE *f = fopen("/proc/self/maps", "r");
+  if (!f) return Maps{};
+
+  Maps maps;
+  char line[1024];
+  while (fgets(line, sizeof(line), f)) {
+    Map map;
+    unsigned long start = 0, end = 0, offset = 0, inode = 0;
+    char dev[64] = {};
+    char path[kMaxMapPath] = {};
+    int fields = sscanf(line, "%lx-%lx %4s %lx %63s %lu %255[^\n]", &start,
+                        &end, map.perms, &offset, dev, &inode, path);
+    if (fields < 6) continue;
+    map.start = static_cast<uintptr_t>(start);
+    map.end = static_cast<uintptr_t>(end);
+    if (fields == 7) {
+      char *p = path;
+      while (*p == ' ') p++;
+      snprintf(map.path, sizeof(map.path), "%s", p);
+    }
+    if (is_private_anon_rw(map)) maps.items.push_back(map);
+  }
+  fclose(f);
+  return maps;
+}
+
+int open_self_mem(int flags) { return open("/proc/self/mem", flags); }
+#endif
+
+bool same_map(const Map &a, const Map &b) {
+  return a.start == b.start && a.end == b.end &&
+         strcmp(a.perms, b.perms) == 0 && strcmp(a.path, b.path) == 0;
+}
+
+bool contains_map(const Maps &maps, const Map &needle) {
+  for (const Map &map : maps.items) {
+    if (same_map(map, needle)) return true;
+  }
+  return false;
+}
+
+bool find_payload_map(const Maps &before, const Maps &after,
+                      size_t expected_size, Map *out) {
+  Map best;
+  for (const Map &map : after.items) {
+    size_t size = map.end - map.start;
+    if (contains_map(before, map)) continue;
+    if (expected_size != 0 && size != expected_size) continue;
+    if (best.start == 0 || size > best.end - best.start) best = map;
+  }
+  if (best.start == 0) return false;
+  *out = best;
+  return true;
+}
+
+void log_new_payload_candidates(const Maps &before, const Maps &after) {
+  for (const Map &map : after.items) {
+    if (contains_map(before, map)) continue;
+    LUPINE_LOG_ERROR("gpu_snapshot: new anon map candidate "
+                     << (void *)map.start << "-" << (void *)map.end
+                     << " size=" << (map.end - map.start));
+  }
+}
+
+bool read_exact(int fd, void *buf, size_t size, off_t offset) {
+  char *p = static_cast<char *>(buf);
+  while (size != 0) {
+    ssize_t n = pread(fd, p, size, offset);
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) return false;
+    p += n;
+    offset += n;
+    size -= static_cast<size_t>(n);
+  }
+  return true;
+}
+
+bool write_exact(int fd, const void *buf, size_t size, off_t offset) {
+  const char *p = static_cast<const char *>(buf);
+  while (size != 0) {
+    ssize_t n = pwrite(fd, p, size, offset);
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) return false;
+    p += n;
+    offset += n;
+    size -= static_cast<size_t>(n);
+  }
+  return true;
+}
+
+CUresult checkpoint_self() {
+  CUcheckpointLockArgs lock_args = {};
+  CUcheckpointCheckpointArgs checkpoint_args = {};
+  CUresult result = cuCheckpointProcessLock(getpid(), &lock_args);
+  if (result != CUDA_SUCCESS) return result;
+  return cuCheckpointProcessCheckpoint(getpid(), &checkpoint_args);
+}
+
+CUresult restore_self() {
+  CUcheckpointRestoreArgs restore_args = {};
+  CUcheckpointUnlockArgs unlock_args = {};
+  CUresult result = cuCheckpointProcessRestore(getpid(), &restore_args);
+  if (result != CUDA_SUCCESS) return result;
+  return cuCheckpointProcessUnlock(getpid(), &unlock_args);
+}
+
+CUresult ensure_context() {
+  CUcontext cur = nullptr;
+  CUresult result = cuCtxGetCurrent(&cur);
+  if (result == CUDA_SUCCESS && cur != nullptr) return CUDA_SUCCESS;
+
+  result = cuInit(0);
+  if (result != CUDA_SUCCESS) return result;
+  CUdevice dev = 0;
+  result = cuDeviceGet(&dev, 0);
+  if (result != CUDA_SUCCESS) return result;
+  CUcontext ctx = nullptr;
+  result = cuDevicePrimaryCtxRetain(&ctx, dev);
+  if (result != CUDA_SUCCESS) return result;
+  return cuCtxSetCurrent(ctx);
+}
+
+CUresult write_payload_file(const std::string &path, const void *payload,
+                            size_t size) {
+  FILE *f = fopen(path.c_str(), "wb");
+  if (!f) return CUDA_ERROR_UNKNOWN;
+  PayloadHeader header = {};
+  memcpy(header.magic, kPayloadMagic, sizeof(header.magic));
+  header.size = size;
+  bool ok = fwrite(&header, sizeof(header), 1, f) == 1 &&
+            (size == 0 || fwrite(payload, 1, size, f) == size);
+  fclose(f);
+  return ok ? CUDA_SUCCESS : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult read_payload_header(const std::string &path, uint64_t *size) {
+  FILE *f = fopen(path.c_str(), "rb");
+  if (!f) return CUDA_ERROR_UNKNOWN;
+  PayloadHeader header = {};
+  bool ok = fread(&header, sizeof(header), 1, f) == 1 &&
+            memcmp(header.magic, kPayloadMagic, sizeof(header.magic)) == 0;
+  fclose(f);
+  if (ok) *size = header.size;
+  return ok ? CUDA_SUCCESS : CUDA_ERROR_UNKNOWN;
+}
+
+bool copy_payload_file_to_mem(const std::string &path, int mem, uintptr_t addr,
+                              size_t size) {
+  FILE *f = fopen(path.c_str(), "rb");
+  if (!f) return false;
+  PayloadHeader header = {};
+  bool ok = fread(&header, sizeof(header), 1, f) == 1 &&
+            memcmp(header.magic, kPayloadMagic, sizeof(header.magic)) == 0 &&
+            header.size == size;
+  std::vector<unsigned char> chunk(1 << 20);
+  size_t copied = 0;
+  while (ok && copied < size) {
+    size_t want = std::min(chunk.size(), size - copied);
+    ok = fread(chunk.data(), 1, want, f) == want &&
+         write_exact(mem, chunk.data(), want, static_cast<off_t>(addr + copied));
+    copied += want;
+  }
+  fclose(f);
+  return ok;
+}
+
 } // namespace
 
 CUresult lupine_gpu_alloc(CUdeviceptr *dptr, size_t bytesize) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  if (!g_inited) {
-    CUresult r = reserve_arena(0);
-    if (r != CUDA_SUCCESS) return r;
-  }
-  size_t rounded = round_up(bytesize == 0 ? 1 : bytesize, g_granularity);
-  size_t offset = 0;
-  if (!take_offset(rounded, &offset)) return CUDA_ERROR_OUT_OF_MEMORY;
-  CUmemGenericAllocationHandle handle = 0;
-  CUresult r = map_block(offset, rounded, &handle);
-  if (r != CUDA_SUCCESS) {
-    g_free.emplace(offset, rounded);
-    return r;
-  }
-  CUdeviceptr addr = g_arena_base + offset;
-  g_allocs[addr] = Allocation{bytesize, rounded, handle};
-  *dptr = addr;
-  return CUDA_SUCCESS;
+  return cuMemAlloc_v2(dptr, bytesize);
 }
 
-CUresult lupine_gpu_free(CUdeviceptr dptr) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  auto it = g_allocs.find(dptr);
-  if (it == g_allocs.end()) return CUDA_ERROR_INVALID_VALUE;
-  size_t rounded = it->second.rounded;
-  cuMemUnmap(dptr, rounded);
-  cuMemRelease(it->second.handle);
-  g_free.emplace((size_t)(dptr - g_arena_base), rounded);
-  g_allocs.erase(it);
-  return CUDA_SUCCESS;
-}
+CUresult lupine_gpu_free(CUdeviceptr dptr) { return cuMemFree_v2(dptr); }
 
-int lupine_gpu_owns(CUdeviceptr dptr) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  if (!g_inited || dptr < g_arena_base || dptr >= g_arena_base + g_arena_size)
-    return 0;
-  return g_allocs.find(dptr) != g_allocs.end() ? 1 : 0;
-}
+int lupine_gpu_owns(CUdeviceptr) { return 0; }
 
 CUresult lupine_gpu_snapshot_save(const char *id) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  CUresult result = cuCtxSynchronize();
+  if (id == nullptr || id[0] == '\0') return CUDA_ERROR_INVALID_VALUE;
+
+  CUresult result = ensure_context();
   if (result != CUDA_SUCCESS) return result;
 
   std::string dir = snapshot_dir(id);
   if (dir.empty()) return CUDA_ERROR_UNKNOWN;
-  FILE *mf = fopen(join(dir, "gpu.manifest").c_str(), "wb");
-  FILE *df = fopen(join(dir, "gpu.mem").c_str(), "wb");
-  if (!mf || !df) {
-    if (mf) fclose(mf);
-    if (df) fclose(df);
-    LUPINE_LOG_ERROR("gpu_snapshot: cannot open snapshot files under " << dir);
+  if (!save_objects(dir)) return CUDA_ERROR_UNKNOWN;
+
+  int mem = open_self_mem(O_RDONLY);
+  if (mem < 0) return CUDA_ERROR_UNKNOWN;
+
+  Maps before = read_private_anon_maps();
+  result = checkpoint_self();
+  if (result != CUDA_SUCCESS) {
+    close(mem);
+    return result;
+  }
+  Maps after = read_private_anon_maps();
+
+  Map payload;
+  if (!find_payload_map(before, after, 0, &payload)) {
+    close(mem);
+    restore_self();
     return CUDA_ERROR_UNKNOWN;
   }
 
-  ManifestHeader hdr;
-  memset(&hdr, 0, sizeof(hdr));
-  memcpy(hdr.magic, "LUPGPU01", 8);
-  hdr.arena_base = g_arena_base;
-  hdr.granularity = g_granularity;
-  hdr.count = g_allocs.size();
-  if (fwrite(&hdr, sizeof(hdr), 1, mf) != 1) result = CUDA_ERROR_UNKNOWN;
-
-  std::vector<unsigned char> staging;
-  for (const auto &kv : g_allocs) {
-    if (result != CUDA_SUCCESS) break;
-    ManifestEntry e;
-    e.offset = (uint64_t)(kv.first - g_arena_base);
-    e.size = kv.second.size;
-    e.rounded = kv.second.rounded;
-    if (fwrite(&e, sizeof(e), 1, mf) != 1) {
-      result = CUDA_ERROR_UNKNOWN;
-      break;
-    }
-    if (e.size == 0) continue;
-    staging.resize(e.size);
-    CUresult r = cuMemcpyDtoH(staging.data(), kv.first, e.size);
-    if (r != CUDA_SUCCESS) {
-      result = r;
-      break;
-    }
-    if (fwrite(staging.data(), 1, e.size, df) != e.size)
-      result = CUDA_ERROR_UNKNOWN;
+  size_t payload_size = payload.end - payload.start;
+  std::vector<unsigned char> bytes(payload_size);
+  if (!read_exact(mem, bytes.data(), payload_size,
+                  static_cast<off_t>(payload.start))) {
+    close(mem);
+    restore_self();
+    return CUDA_ERROR_UNKNOWN;
   }
+  close(mem);
 
-  fclose(mf);
-  fclose(df);
-  if (result == CUDA_SUCCESS && !save_objects(dir)) result = CUDA_ERROR_UNKNOWN;
-  return result;
+  result = write_payload_file(join(dir, "gpu.payload"), bytes.data(),
+                              bytes.size());
+  CUresult resume = restore_self();
+  return result != CUDA_SUCCESS ? result : resume;
 }
 
 CUresult lupine_gpu_snapshot_restore(const char *id) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_inited) {
-    LUPINE_LOG_ERROR("gpu_snapshot: restore into an already-initialized arena");
-    return CUDA_ERROR_UNKNOWN;
-  }
-  // A reconnecting worker receives restore as its first op, before the client
-  // re-establishes a context, so set one up ourselves.
-  CUcontext cur = nullptr;
-  if (cuCtxGetCurrent(&cur) != CUDA_SUCCESS || cur == nullptr) {
-    cuInit(0);
-    CUdevice dev;
-    CUcontext ctx;
-    if (cuDeviceGet(&dev, 0) != CUDA_SUCCESS ||
-        cuDevicePrimaryCtxRetain(&ctx, dev) != CUDA_SUCCESS ||
-        cuCtxSetCurrent(ctx) != CUDA_SUCCESS) {
-      LUPINE_LOG_ERROR("gpu_snapshot: restore could not establish a context");
-      return CUDA_ERROR_UNKNOWN;
-    }
-  }
+  if (id == nullptr || id[0] == '\0') return CUDA_ERROR_INVALID_VALUE;
+
+  CUresult result = ensure_context();
+  if (result != CUDA_SUCCESS) return result;
+
   std::string dir = snapshot_dir(id);
   if (dir.empty()) return CUDA_ERROR_UNKNOWN;
-  FILE *mf = fopen(join(dir, "gpu.manifest").c_str(), "rb");
-  FILE *df = fopen(join(dir, "gpu.mem").c_str(), "rb");
-  if (!mf || !df) {
-    if (mf) fclose(mf);
-    if (df) fclose(df);
-    LUPINE_LOG_ERROR("gpu_snapshot: cannot open snapshot files under " << dir);
+
+  std::string payload_path = join(dir, "gpu.payload");
+  uint64_t payload_size = 0;
+  result = read_payload_header(payload_path, &payload_size);
+  if (result != CUDA_SUCCESS) return result;
+
+  int mem = open_self_mem(O_RDWR);
+  if (mem < 0) return CUDA_ERROR_UNKNOWN;
+
+  Maps before = read_private_anon_maps();
+  result = checkpoint_self();
+  if (result != CUDA_SUCCESS) {
+    close(mem);
+    return result;
+  }
+  Maps after = read_private_anon_maps();
+
+  Map payload;
+  if (!find_payload_map(before, after, static_cast<size_t>(payload_size), &payload)) {
+    LUPINE_LOG_ERROR("gpu_snapshot: expected payload size="
+                     << payload_size);
+    log_new_payload_candidates(before, after);
+    close(mem);
+    restore_self();
+    LUPINE_LOG_ERROR("gpu_snapshot: restored process produced incompatible "
+                     "CUDA checkpoint payload size");
     return CUDA_ERROR_UNKNOWN;
   }
 
-  ManifestHeader hdr;
-  if (fread(&hdr, sizeof(hdr), 1, mf) != 1 ||
-      memcmp(hdr.magic, "LUPGPU01", 8) != 0) {
-    fclose(mf);
-    fclose(df);
-    LUPINE_LOG_ERROR("gpu_snapshot: bad manifest in " << dir);
+  if (!copy_payload_file_to_mem(payload_path, mem, payload.start,
+                                static_cast<size_t>(payload_size))) {
+    close(mem);
+    restore_self();
     return CUDA_ERROR_UNKNOWN;
   }
+  close(mem);
 
-  CUresult r = reserve_arena((CUdeviceptr)hdr.arena_base);
-  if (r != CUDA_SUCCESS) {
-    fclose(mf);
-    fclose(df);
-    return r;
-  }
-
-  CUresult result = CUDA_SUCCESS;
-  std::vector<unsigned char> staging;
-  size_t max_end = 0;
-  for (uint64_t i = 0; i < hdr.count; ++i) {
-    ManifestEntry e;
-    if (fread(&e, sizeof(e), 1, mf) != 1) {
-      result = CUDA_ERROR_UNKNOWN;
-      break;
-    }
-    CUmemGenericAllocationHandle handle = 0;
-    r = map_block(e.offset, e.rounded, &handle);
-    if (r != CUDA_SUCCESS) {
-      result = r;
-      break;
-    }
-    CUdeviceptr addr = g_arena_base + e.offset;
-    if (e.size > 0) {
-      staging.resize(e.size);
-      if (fread(staging.data(), 1, e.size, df) != e.size) {
-        result = CUDA_ERROR_UNKNOWN;
-        break;
-      }
-      r = cuMemcpyHtoD(addr, staging.data(), e.size);
-      if (r != CUDA_SUCCESS) {
-        result = r;
-        break;
-      }
-    }
-    g_allocs[addr] = Allocation{e.size, e.rounded, handle};
-    if (e.offset + e.rounded > max_end) max_end = e.offset + e.rounded;
-  }
-  g_bump = max_end;
-
-  fclose(mf);
-  fclose(df);
-  if (result == CUDA_SUCCESS) result = restore_objects(dir);
+  result = restore_self();
+  if (result == CUDA_SUCCESS) result = replay_objects(dir);
   if (result == CUDA_SUCCESS) g_restored = true;
   return result;
 }
 
 int handle_manual_cuMemAlloc_v2(conn_t *conn) {
-  CUdeviceptr dptr;
-  size_t bytesize;
-  if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &bytesize, sizeof(size_t)) < 0)
+  CUdeviceptr dptr = 0;
+  size_t bytesize = 0;
+  if (rpc_read(conn, &dptr, sizeof(dptr)) < 0 ||
+      rpc_read(conn, &bytesize, sizeof(bytesize)) < 0)
     return -1;
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
-  CUresult result = lupine_gpu_alloc(&dptr, bytesize);
+
+  CUresult result = cuMemAlloc_v2(&dptr, bytesize);
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
+      rpc_write(conn, &dptr, sizeof(dptr)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;
 }
 
 int handle_manual_cuMemFree_v2(conn_t *conn) {
-  CUdeviceptr dptr;
-  if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0) return -1;
+  CUdeviceptr dptr = 0;
+  if (rpc_read(conn, &dptr, sizeof(dptr)) < 0) return -1;
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
-  CUresult result =
-      lupine_gpu_owns(dptr) ? lupine_gpu_free(dptr) : cuMemFree_v2(dptr);
+
+  CUresult result = cuMemFree_v2(dptr);
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;
 }
@@ -624,8 +653,7 @@ int handle_gpu_snapshot_save(conn_t *conn) {
   if (request_id < 0) return -1;
   CUresult result = lupine_gpu_snapshot_save(id);
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;
 }
@@ -637,23 +665,16 @@ int handle_gpu_snapshot_restore(conn_t *conn) {
   if (request_id < 0) return -1;
   CUresult result = lupine_gpu_snapshot_restore(id);
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;
 }
-
-// --- object tracking + handle translation ---------------------------------
 
 void lupine_gpu_track_module(CUmodule m, unsigned int kind, const void *image,
                              size_t size) {
   if (!m) return;
   std::lock_guard<std::mutex> lock(g_mutex);
-  ModuleRec r;
-  r.kind = kind;
-  r.image.assign((const unsigned char *)image,
-                 (const unsigned char *)image + size);
-  g_modules[m] = std::move(r);
+  g_modules[m] = make_module_rec(kind, image, size);
 }
 
 void lupine_gpu_track_library_module(CUmodule m, CUlibrary lib) {
@@ -668,75 +689,11 @@ void lupine_gpu_track_function(CUfunction fn, CUmodule m, const char *name) {
   g_functions[fn] = {m, std::string(name ? name : "")};
 }
 
-CUfunction lupine_gpu_xlate_function(CUfunction fn) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  auto it = g_function_remap.find(fn);
-  if (it != g_function_remap.end()) return it->second;
-  // torch launches a CUkernel directly as a CUfunction (no cuKernelGetFunction),
-  // so fall back to the kernel remap.
-  auto k = g_kernel_remap.find((CUkernel)fn);
-  if (k != g_kernel_remap.end()) return (CUfunction)k->second;
-  return fn;
-}
-
-CUmodule lupine_gpu_xlate_module(CUmodule m) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  auto it = g_module_remap.find(m);
-  return it == g_module_remap.end() ? m : it->second;
-}
-
-CUlibrary lupine_gpu_xlate_library(CUlibrary lib) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  auto it = g_library_remap.find(lib);
-  return it == g_library_remap.end() ? lib : it->second;
-}
-
-CUkernel lupine_gpu_xlate_kernel(CUkernel k) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  auto it = g_kernel_remap.find(k);
-  return it == g_kernel_remap.end() ? k : it->second;
-}
-
-CUstream lupine_gpu_xlate_stream(CUstream s) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  return g_restored && s != nullptr ? nullptr : s;
-}
-
-int lupine_gpu_restored(void) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  return g_restored ? 1 : 0;
-}
-
-int handle_manual_cuModuleGetFunction_tracked(conn_t *conn) {
-  CUmodule hmod;
-  size_t name_len;
-  if (rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
-      rpc_read(conn, &name_len, sizeof(size_t)) < 0)
-    return -1;
-  std::vector<char> name(name_len + 1, '\0');
-  if (name_len && rpc_read(conn, name.data(), name_len) < 0) return -1;
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) return -1;
-  hmod = lupine_gpu_xlate_module(hmod); // client handle may be pre-snapshot
-  CUfunction hfunc = nullptr;
-  CUresult result = cuModuleGetFunction(&hfunc, hmod, name.data());
-  if (result == CUDA_SUCCESS) lupine_gpu_track_function(hfunc, hmod, name.data());
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &hfunc, sizeof(CUfunction)) < 0 ||
-      rpc_write(conn, &result, sizeof(CUresult)) < 0 || rpc_write_end(conn) < 0)
-    return -1;
-  return 0;
-}
-
 void lupine_gpu_track_library(CUlibrary lib, unsigned int kind,
                               const void *image, size_t size) {
   if (!lib) return;
   std::lock_guard<std::mutex> lock(g_mutex);
-  ModuleRec r;
-  r.kind = kind;
-  r.image.assign((const unsigned char *)image,
-                 (const unsigned char *)image + size);
-  g_libraries[lib] = std::move(r);
+  g_libraries[lib] = make_module_rec(kind, image, size);
 }
 
 void lupine_gpu_track_kernel(CUkernel k, CUlibrary lib, const char *name) {
@@ -751,40 +708,116 @@ void lupine_gpu_track_kernel_function(CUfunction fn, CUkernel k) {
   g_kernel_functions[fn] = k;
 }
 
-int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn) {
-  CUlibrary library;
-  size_t name_len;
-  if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
-      rpc_read(conn, &name_len, sizeof(size_t)) < 0)
+CUfunction lupine_gpu_xlate_function(CUfunction fn) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_function_remap.find(fn);
+  if (it != g_function_remap.end()) return it->second;
+  auto k = g_kernel_remap.find(reinterpret_cast<CUkernel>(fn));
+  if (k != g_kernel_remap.end()) return reinterpret_cast<CUfunction>(k->second);
+  return fn;
+}
+
+CUmodule lupine_gpu_xlate_module(CUmodule m) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return xlate_handle(g_module_remap, m);
+}
+
+CUlibrary lupine_gpu_xlate_library(CUlibrary lib) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return xlate_handle(g_library_remap, lib);
+}
+
+CUkernel lupine_gpu_xlate_kernel(CUkernel k) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return xlate_handle(g_kernel_remap, k);
+}
+
+CUcontext lupine_gpu_xlate_context(CUcontext ctx) {
+  if (ctx == nullptr) return nullptr;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (!g_restored) return ctx;
+  CUcontext current = nullptr;
+  return cuCtxGetCurrent(&current) == CUDA_SUCCESS ? current : nullptr;
+}
+
+CUstream lupine_gpu_xlate_stream(CUstream s) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (!g_restored || s == nullptr) return s;
+  auto it = g_stream_remap.find(s);
+  if (it != g_stream_remap.end()) return it->second;
+
+  CUstream replacement = nullptr;
+  CUresult result = cuStreamCreate(&replacement, CU_STREAM_DEFAULT);
+  if (result != CUDA_SUCCESS) return nullptr;
+  g_stream_remap[s] = replacement;
+  return replacement;
+}
+
+int lupine_gpu_restored(void) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return g_restored ? 1 : 0;
+}
+
+int handle_manual_cuModuleGetFunction_tracked(conn_t *conn) {
+  CUmodule hmod = nullptr;
+  size_t name_len = 0;
+  if (rpc_read(conn, &hmod, sizeof(hmod)) < 0 ||
+      rpc_read(conn, &name_len, sizeof(name_len)) < 0)
     return -1;
   std::vector<char> name(name_len + 1, '\0');
   if (name_len && rpc_read(conn, name.data(), name_len) < 0) return -1;
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
-  library = lupine_gpu_xlate_library(library); // client handle may be pre-snapshot
-  CUkernel pKernel = nullptr;
-  CUresult result = cuLibraryGetKernel(&pKernel, library, name.data());
-  if (result == CUDA_SUCCESS)
-    lupine_gpu_track_kernel(pKernel, library, name.data());
+
+  hmod = lupine_gpu_xlate_module(hmod);
+  CUfunction hfunc = nullptr;
+  CUresult result = cuModuleGetFunction(&hfunc, hmod, name.data());
+  if (result == CUDA_SUCCESS) lupine_gpu_track_function(hfunc, hmod, name.data());
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pKernel, sizeof(CUkernel)) < 0 ||
-      rpc_write(conn, &result, sizeof(CUresult)) < 0 || rpc_write_end(conn) < 0)
+      rpc_write(conn, &hfunc, sizeof(hfunc)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0)
+    return -1;
+  return 0;
+}
+
+int handle_manual_cuLibraryGetKernel_tracked(conn_t *conn) {
+  CUlibrary library = nullptr;
+  size_t name_len = 0;
+  if (rpc_read(conn, &library, sizeof(library)) < 0 ||
+      rpc_read(conn, &name_len, sizeof(name_len)) < 0)
+    return -1;
+  std::vector<char> name(name_len + 1, '\0');
+  if (name_len && rpc_read(conn, name.data(), name_len) < 0) return -1;
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) return -1;
+
+  library = lupine_gpu_xlate_library(library);
+  CUkernel kernel = nullptr;
+  CUresult result = cuLibraryGetKernel(&kernel, library, name.data());
+  if (result == CUDA_SUCCESS) lupine_gpu_track_kernel(kernel, library, name.data());
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &kernel, sizeof(kernel)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;
 }
 
 int handle_manual_cuKernelGetFunction_tracked(conn_t *conn) {
-  CUkernel kernel;
-  if (rpc_read(conn, &kernel, sizeof(CUkernel)) < 0) return -1;
+  CUkernel kernel = nullptr;
+  if (rpc_read(conn, &kernel, sizeof(kernel)) < 0) return -1;
   int request_id = rpc_read_end(conn);
   if (request_id < 0) return -1;
-  kernel = lupine_gpu_xlate_kernel(kernel); // client handle may be pre-snapshot
-  CUfunction pFunc = nullptr;
-  CUresult result = cuKernelGetFunction(&pFunc, kernel);
-  if (result == CUDA_SUCCESS) lupine_gpu_track_kernel_function(pFunc, kernel);
+
+  kernel = lupine_gpu_xlate_kernel(kernel);
+  CUfunction fn = nullptr;
+  CUresult result = cuKernelGetFunction(&fn, kernel);
+  if (result == CUDA_SUCCESS) lupine_gpu_track_kernel_function(fn, kernel);
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pFunc, sizeof(CUfunction)) < 0 ||
-      rpc_write(conn, &result, sizeof(CUresult)) < 0 || rpc_write_end(conn) < 0)
+      rpc_write(conn, &fn, sizeof(fn)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0)
     return -1;
   return 0;
 }
