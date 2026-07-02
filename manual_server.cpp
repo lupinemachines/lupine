@@ -32,6 +32,7 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "gpu_snapshot.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
@@ -674,6 +675,10 @@ int handle_manual_cuModuleLoad(conn_t *conn) {
   }
 
   result = cuModuleLoadData(&module, image.data());
+  if (result == CUDA_SUCCESS) {
+    lupine_gpu_track_module(module, LUPINE_MODULE_IMAGE_FATBIN_RAW, image.data(),
+                            image_size);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
@@ -712,6 +717,10 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
     result = cuModuleLoadData(&module, image.data());
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
+  }
+
+  if (result == CUDA_SUCCESS) {
+    lupine_gpu_track_module(module, kind, image.data(), image.size());
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -759,6 +768,10 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
                                nullptr, nullptr, 0);
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
+  }
+
+  if (result == CUDA_SUCCESS) {
+    lupine_gpu_track_library(library, kind, image.data(), image.size());
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1535,9 +1548,11 @@ int handle_manual_cuLibraryGetModule(conn_t *conn) {
     return -1;
   }
 
+  library = lupine_gpu_translate_library(library);
   result = cuLibraryGetModule(&module, library);
   if (result == CUDA_SUCCESS) {
     lupine_module_libraries()[module] = library;
+    lupine_gpu_track_library_module(module, library);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1590,6 +1605,7 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
     return -1;
   }
 
+  module = lupine_gpu_translate_module(module);
   result = cuModuleGetGlobal_v2(&dptr, &bytes, module, name.data());
   if (result != CUDA_SUCCESS) {
     auto library_it = lupine_module_libraries().find(module);
@@ -1667,6 +1683,7 @@ int handle_manual_cuFuncGetParamLayout(conn_t *conn) {
     return -1;
   }
 
+  f = lupine_gpu_translate_function(f);
   result = lupine_get_kernel_param_layout(f, &layout);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
@@ -1717,6 +1734,11 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+
+  // Translate handles the client cached before a snapshot to this worker's.
+  f = lupine_gpu_translate_function(f);
+  ctx = lupine_gpu_translate_context(ctx);
+  hStream = lupine_gpu_translate_stream(hStream);
 
   if (ctx != nullptr) {
     CUcontext previous = nullptr;
@@ -1792,6 +1814,10 @@ int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+
+  // Translate handles the client cached before a snapshot to this worker's.
+  f = lupine_gpu_translate_function(f);
+  hStream = lupine_gpu_translate_stream(hStream);
 
   lupine_kernel_param_layout layout;
   result = lupine_get_kernel_param_layout(f, &layout);
@@ -2185,6 +2211,7 @@ int handle_manual_cuGraphAddMemcpyNode(conn_t *conn) {
     return -1;
   }
 
+  ctx = lupine_gpu_translate_context(ctx);
   result = cuGraphAddMemcpyNode(&graphNode, hGraph,
                                 deps.empty() ? nullptr : deps.data(),
                                 deps.size(), &copyParams, ctx);
@@ -2215,6 +2242,7 @@ int handle_manual_cuGraphAddMemsetNode(conn_t *conn) {
     return -1;
   }
 
+  ctx = lupine_gpu_translate_context(ctx);
   result = cuGraphAddMemsetNode(&graphNode, hGraph,
                                 deps.empty() ? nullptr : deps.data(),
                                 deps.size(), &memsetParams, ctx);
@@ -2281,6 +2309,7 @@ int handle_manual_cuGraphConditionalHandleCreate(conn_t *conn) {
     return -1;
   }
 
+  ctx = lupine_gpu_translate_context(ctx);
   result = cuGraphConditionalHandleCreate(&handle, hGraph, ctx,
                                           defaultLaunchValue, flags);
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3168,6 +3197,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(stream)) < 0) {
     return -1;
   }
+  stream = lupine_gpu_translate_stream(stream);
 
   int framed = lupine_payload_framed(conn, byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
@@ -3384,6 +3414,7 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+  stream = lupine_gpu_translate_stream(stream);
 
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (stream != nullptr) {
@@ -3487,6 +3518,7 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+  stream = lupine_gpu_translate_stream(stream);
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuStreamSynchronize(stream);
@@ -3537,6 +3569,7 @@ int handle_manual_cuGraphLaunch(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
+  stream = lupine_gpu_translate_stream(stream);
   CUresult result = cuGraphLaunch(exec, stream);
   auto exec_it = lupine_graph_exec_resource_map().find(exec);
   if (result == CUDA_SUCCESS &&

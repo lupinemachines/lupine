@@ -14,6 +14,8 @@
 
 #include "gen_server.h"
 
+#include "../gpu_snapshot.h"
+
 #include <cstdio>
 
 #include "rpc.h"
@@ -584,7 +586,7 @@ int handle_cuCtxDestroy_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxDestroy_v2(ctx);
+  lupine_intercept_result = cuCtxDestroy_v2(lupine_gpu_translate_context(ctx));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -606,7 +608,8 @@ int handle_cuCtxPushCurrent_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxPushCurrent_v2(ctx);
+  lupine_intercept_result =
+      cuCtxPushCurrent_v2(lupine_gpu_translate_context(ctx));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -651,7 +654,7 @@ int handle_cuCtxSetCurrent(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxSetCurrent(ctx);
+  lupine_intercept_result = cuCtxSetCurrent(lupine_gpu_translate_context(ctx));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -743,7 +746,8 @@ int handle_cuCtxGetId(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxGetId(ctx, &ctxId);
+  lupine_intercept_result =
+      cuCtxGetId(lupine_gpu_translate_context(ctx), &ctxId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ctxId, sizeof(unsigned long long)) < 0 ||
@@ -860,7 +864,8 @@ int handle_cuCtxGetApiVersion(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxGetApiVersion(ctx, &version);
+  lupine_intercept_result =
+      cuCtxGetApiVersion(lupine_gpu_translate_context(ctx), &version);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &version, sizeof(unsigned int)) < 0 ||
@@ -978,7 +983,7 @@ int handle_cuCtxDetach(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxDetach(ctx);
+  lupine_intercept_result = cuCtxDetach(lupine_gpu_translate_context(ctx));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -1045,7 +1050,7 @@ int handle_cuModuleUnload(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuModuleUnload(hmod);
+  lupine_intercept_result = cuModuleUnload(lupine_gpu_translate_module(hmod));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -1097,7 +1102,8 @@ int handle_cuModuleGetFunction(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuModuleGetFunction(&hfunc, hmod, name);
+  lupine_intercept_result =
+      cuModuleGetFunction(&hfunc, lupine_gpu_translate_module(hmod), name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &hfunc, sizeof(CUfunction)) < 0 ||
@@ -1130,7 +1136,8 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuModuleGetGlobal_v2(&dptr, &bytes, hmod, name);
+  lupine_intercept_result = cuModuleGetGlobal_v2(
+      &dptr, &bytes, lupine_gpu_translate_module(hmod), name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -1365,7 +1372,8 @@ int handle_cuModuleGetTexRef(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuModuleGetTexRef(&pTexRef, hmod, name);
+  lupine_intercept_result =
+      cuModuleGetTexRef(&pTexRef, lupine_gpu_translate_module(hmod), name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pTexRef, sizeof(CUtexref)) < 0 ||
@@ -1397,7 +1405,8 @@ int handle_cuModuleGetSurfRef(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuModuleGetSurfRef(&pSurfRef, hmod, name);
+  lupine_intercept_result =
+      cuModuleGetSurfRef(&pSurfRef, lupine_gpu_translate_module(hmod), name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pSurfRef, sizeof(CUsurfref)) < 0 ||
@@ -1511,7 +1520,8 @@ int handle_cuLibraryUnload(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuLibraryUnload(library);
+  lupine_intercept_result =
+      cuLibraryUnload(lupine_gpu_translate_library(library));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -1540,7 +1550,8 @@ int handle_cuLibraryGetKernel(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuLibraryGetKernel(&pKernel, library, name);
+  lupine_intercept_result =
+      cuLibraryGetKernel(&pKernel, lupine_gpu_translate_library(library), name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pKernel, sizeof(CUkernel)) < 0 ||
@@ -1566,7 +1577,8 @@ int handle_cuLibraryGetModule(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuLibraryGetModule(&pMod, library);
+  lupine_intercept_result =
+      cuLibraryGetModule(&pMod, lupine_gpu_translate_library(library));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pMod, sizeof(CUmodule)) < 0 ||
@@ -1590,7 +1602,8 @@ int handle_cuKernelGetFunction(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuKernelGetFunction(&pFunc, kernel);
+  lupine_intercept_result =
+      cuKernelGetFunction(&pFunc, lupine_gpu_translate_kernel(kernel));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pFunc, sizeof(CUfunction)) < 0 ||
@@ -1621,7 +1634,8 @@ int handle_cuLibraryGetGlobal(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuLibraryGetGlobal(&dptr, &bytes, library, name);
+  lupine_intercept_result = cuLibraryGetGlobal(
+      &dptr, &bytes, lupine_gpu_translate_library(library), name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -1655,7 +1669,8 @@ int handle_cuLibraryGetManaged(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuLibraryGetManaged(&dptr, &bytes, library, name);
+  lupine_intercept_result = cuLibraryGetManaged(
+      &dptr, &bytes, lupine_gpu_translate_library(library), name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -1688,7 +1703,8 @@ int handle_cuLibraryGetUnifiedFunction(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuLibraryGetUnifiedFunction(&fptr, library, symbol);
+  lupine_intercept_result = cuLibraryGetUnifiedFunction(
+      &fptr, lupine_gpu_translate_library(library), symbol);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &fptr, sizeof(void *)) < 0 ||
@@ -1719,7 +1735,8 @@ int handle_cuKernelGetAttribute(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuKernelGetAttribute(&pi, attrib, kernel, dev);
+  lupine_intercept_result = cuKernelGetAttribute(
+      &pi, attrib, lupine_gpu_translate_kernel(kernel), dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pi, sizeof(int)) < 0 ||
@@ -1748,7 +1765,8 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuKernelSetAttribute(attrib, val, kernel, dev);
+  lupine_intercept_result = cuKernelSetAttribute(
+      attrib, val, lupine_gpu_translate_kernel(kernel), dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -1774,7 +1792,8 @@ int handle_cuKernelSetCacheConfig(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuKernelSetCacheConfig(kernel, config, dev);
+  lupine_intercept_result =
+      cuKernelSetCacheConfig(lupine_gpu_translate_kernel(kernel), config, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2178,8 +2197,9 @@ int handle_cuMemcpyPeer(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuMemcpyPeer(dstDevice, dstContext, srcDevice, srcContext, ByteCount);
+  lupine_intercept_result = cuMemcpyPeer(
+      dstDevice, lupine_gpu_translate_context(dstContext), srcDevice,
+      lupine_gpu_translate_context(srcContext), ByteCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2363,8 +2383,10 @@ int handle_cuMemcpyPeerAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemcpyPeerAsync(dstDevice, dstContext, srcDevice,
-                                              srcContext, ByteCount, hStream);
+  lupine_intercept_result =
+      cuMemcpyPeerAsync(dstDevice, lupine_gpu_translate_context(dstContext),
+                        srcDevice, lupine_gpu_translate_context(srcContext),
+                        ByteCount, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2392,8 +2414,8 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
+  lupine_intercept_result = cuMemcpyDtoDAsync_v2(
+      dstDevice, srcDevice, ByteCount, lupine_gpu_translate_stream(hStream));
 
   (void)lupine_intercept_result;
 
@@ -2589,7 +2611,8 @@ int handle_cuMemsetD8Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemsetD8Async(dstDevice, uc, N, hStream);
+  lupine_intercept_result =
+      cuMemsetD8Async(dstDevice, uc, N, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2617,7 +2640,8 @@ int handle_cuMemsetD16Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemsetD16Async(dstDevice, us, N, hStream);
+  lupine_intercept_result =
+      cuMemsetD16Async(dstDevice, us, N, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2645,7 +2669,8 @@ int handle_cuMemsetD32Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemsetD32Async(dstDevice, ui, N, hStream);
+  lupine_intercept_result =
+      cuMemsetD32Async(dstDevice, ui, N, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2678,7 +2703,8 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream);
+      cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height,
+                        lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2711,7 +2737,8 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height, hStream);
+      cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height,
+                         lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -2744,7 +2771,8 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height, hStream);
+      cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height,
+                         lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -3256,7 +3284,8 @@ int handle_cuMemMapArrayAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemMapArrayAsync(&mapInfoList, count, hStream);
+  lupine_intercept_result = cuMemMapArrayAsync(
+      &mapInfoList, count, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mapInfoList, sizeof(CUarrayMapInfo)) < 0 ||
@@ -3424,7 +3453,8 @@ int handle_cuMemFreeAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemFreeAsync(dptr, hStream);
+  lupine_intercept_result =
+      cuMemFreeAsync(dptr, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -3450,7 +3480,8 @@ int handle_cuMemAllocAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemAllocAsync(&dptr, bytesize, hStream);
+  lupine_intercept_result =
+      cuMemAllocAsync(&dptr, bytesize, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -3604,8 +3635,8 @@ int handle_cuMemAllocFromPoolAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuMemAllocFromPoolAsync(&dptr, bytesize, pool, hStream);
+  lupine_intercept_result = cuMemAllocFromPoolAsync(
+      &dptr, bytesize, pool, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -3829,7 +3860,8 @@ int handle_cuStreamGetPriority(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamGetPriority(hStream, &priority);
+  lupine_intercept_result =
+      cuStreamGetPriority(lupine_gpu_translate_stream(hStream), &priority);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &priority, sizeof(int)) < 0 ||
@@ -3854,7 +3886,8 @@ int handle_cuStreamGetFlags(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamGetFlags(hStream, &flags);
+  lupine_intercept_result =
+      cuStreamGetFlags(lupine_gpu_translate_stream(hStream), &flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
@@ -3879,7 +3912,8 @@ int handle_cuStreamGetId(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamGetId(hStream, &streamId);
+  lupine_intercept_result =
+      cuStreamGetId(lupine_gpu_translate_stream(hStream), &streamId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &streamId, sizeof(unsigned long long)) < 0 ||
@@ -3904,7 +3938,8 @@ int handle_cuStreamGetCtx(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamGetCtx(hStream, &pctx);
+  lupine_intercept_result =
+      cuStreamGetCtx(lupine_gpu_translate_stream(hStream), &pctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pctx, sizeof(CUcontext)) < 0 ||
@@ -3929,7 +3964,8 @@ int handle_cuStreamBeginCapture_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamBeginCapture_v2(hStream, mode);
+  lupine_intercept_result =
+      cuStreamBeginCapture_v2(lupine_gpu_translate_stream(hStream), mode);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -3980,7 +4016,8 @@ int handle_cuStreamEndCapture(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuStreamEndCapture(hStream, phGraph_null_check ? &phGraph : nullptr);
+      cuStreamEndCapture(lupine_gpu_translate_stream(hStream),
+                         phGraph_null_check ? &phGraph : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraph_null_check, sizeof(CUgraph *)) < 0 ||
@@ -4007,7 +4044,8 @@ int handle_cuStreamIsCapturing(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamIsCapturing(hStream, &captureStatus);
+  lupine_intercept_result =
+      cuStreamIsCapturing(lupine_gpu_translate_stream(hStream), &captureStatus);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &captureStatus, sizeof(CUstreamCaptureStatus)) < 0 ||
@@ -4036,8 +4074,8 @@ int handle_cuStreamAttachMemAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuStreamAttachMemAsync(hStream, dptr, length, flags);
+  lupine_intercept_result = cuStreamAttachMemAsync(
+      lupine_gpu_translate_stream(hStream), dptr, length, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4059,7 +4097,7 @@ int handle_cuStreamQuery(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamQuery(hStream);
+  lupine_intercept_result = cuStreamQuery(lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4081,7 +4119,8 @@ int handle_cuStreamDestroy_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamDestroy_v2(hStream);
+  lupine_intercept_result =
+      cuStreamDestroy_v2(lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4105,7 +4144,8 @@ int handle_cuStreamCopyAttributes(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamCopyAttributes(dst, src);
+  lupine_intercept_result = cuStreamCopyAttributes(
+      lupine_gpu_translate_stream(dst), lupine_gpu_translate_stream(src));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4131,7 +4171,8 @@ int handle_cuStreamGetAttribute(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamGetAttribute(hStream, attr, &value_out);
+  lupine_intercept_result = cuStreamGetAttribute(
+      lupine_gpu_translate_stream(hStream), attr, &value_out);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value_out, sizeof(CUstreamAttrValue)) < 0 ||
@@ -4158,7 +4199,8 @@ int handle_cuStreamSetAttribute(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamSetAttribute(hStream, attr, &value);
+  lupine_intercept_result =
+      cuStreamSetAttribute(lupine_gpu_translate_stream(hStream), attr, &value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4207,7 +4249,8 @@ int handle_cuEventRecord(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuEventRecord(hEvent, hStream);
+  lupine_intercept_result =
+      cuEventRecord(hEvent, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4233,7 +4276,8 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuEventRecordWithFlags(hEvent, hStream, flags);
+  lupine_intercept_result = cuEventRecordWithFlags(
+      hEvent, lupine_gpu_translate_stream(hStream), flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4448,8 +4492,9 @@ int handle_cuSignalExternalSemaphoresAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuSignalExternalSemaphoresAsync(
-      extSemArray, paramsArray, numExtSems, stream);
+  lupine_intercept_result =
+      cuSignalExternalSemaphoresAsync(extSemArray, paramsArray, numExtSems,
+                                      lupine_gpu_translate_stream(stream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4478,8 +4523,9 @@ int handle_cuWaitExternalSemaphoresAsync(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuWaitExternalSemaphoresAsync(
-      extSemArray, paramsArray, numExtSems, stream);
+  lupine_intercept_result =
+      cuWaitExternalSemaphoresAsync(extSemArray, paramsArray, numExtSems,
+                                    lupine_gpu_translate_stream(stream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4529,7 +4575,8 @@ int handle_cuStreamWaitValue32_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamWaitValue32_v2(stream, addr, value, flags);
+  lupine_intercept_result = cuStreamWaitValue32_v2(
+      lupine_gpu_translate_stream(stream), addr, value, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4557,7 +4604,8 @@ int handle_cuStreamWaitValue64_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamWaitValue64_v2(stream, addr, value, flags);
+  lupine_intercept_result = cuStreamWaitValue64_v2(
+      lupine_gpu_translate_stream(stream), addr, value, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4585,7 +4633,8 @@ int handle_cuStreamWriteValue32_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamWriteValue32_v2(stream, addr, value, flags);
+  lupine_intercept_result = cuStreamWriteValue32_v2(
+      lupine_gpu_translate_stream(stream), addr, value, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4613,7 +4662,8 @@ int handle_cuStreamWriteValue64_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamWriteValue64_v2(stream, addr, value, flags);
+  lupine_intercept_result = cuStreamWriteValue64_v2(
+      lupine_gpu_translate_stream(stream), addr, value, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4641,8 +4691,8 @@ int handle_cuStreamBatchMemOp_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuStreamBatchMemOp_v2(stream, count, &paramArray, flags);
+  lupine_intercept_result = cuStreamBatchMemOp_v2(
+      lupine_gpu_translate_stream(stream), count, &paramArray, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &paramArray, sizeof(CUstreamBatchMemOpParams)) < 0 ||
@@ -4669,7 +4719,8 @@ int handle_cuFuncGetAttribute(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuFuncGetAttribute(&pi, attrib, hfunc);
+  lupine_intercept_result =
+      cuFuncGetAttribute(&pi, attrib, lupine_gpu_translate_function(hfunc));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pi, sizeof(int)) < 0 ||
@@ -4696,7 +4747,8 @@ int handle_cuFuncSetAttribute(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuFuncSetAttribute(hfunc, attrib, value);
+  lupine_intercept_result =
+      cuFuncSetAttribute(lupine_gpu_translate_function(hfunc), attrib, value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4720,7 +4772,8 @@ int handle_cuFuncSetCacheConfig(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuFuncSetCacheConfig(hfunc, config);
+  lupine_intercept_result =
+      cuFuncSetCacheConfig(lupine_gpu_translate_function(hfunc), config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4744,7 +4797,8 @@ int handle_cuFuncGetModule(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuFuncGetModule(&hmod, hfunc);
+  lupine_intercept_result =
+      cuFuncGetModule(&hmod, lupine_gpu_translate_function(hfunc));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
@@ -4786,8 +4840,9 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result = cuLaunchCooperativeKernel(
-      f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
-      sharedMemBytes, hStream, &kernelParams);
+      lupine_gpu_translate_function(f), gridDimX, gridDimY, gridDimZ, blockDimX,
+      blockDimY, blockDimZ, sharedMemBytes,
+      lupine_gpu_translate_stream(hStream), &kernelParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &kernelParams, sizeof(void *)) < 0 ||
@@ -4844,7 +4899,8 @@ int handle_cuFuncSetBlockShape(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuFuncSetBlockShape(hfunc, x, y, z);
+  lupine_intercept_result =
+      cuFuncSetBlockShape(lupine_gpu_translate_function(hfunc), x, y, z);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4868,7 +4924,8 @@ int handle_cuFuncSetSharedSize(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuFuncSetSharedSize(hfunc, bytes);
+  lupine_intercept_result =
+      cuFuncSetSharedSize(lupine_gpu_translate_function(hfunc), bytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4892,7 +4949,8 @@ int handle_cuParamSetSize(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuParamSetSize(hfunc, numbytes);
+  lupine_intercept_result =
+      cuParamSetSize(lupine_gpu_translate_function(hfunc), numbytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4918,7 +4976,8 @@ int handle_cuParamSeti(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuParamSeti(hfunc, offset, value);
+  lupine_intercept_result =
+      cuParamSeti(lupine_gpu_translate_function(hfunc), offset, value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4944,7 +5003,8 @@ int handle_cuParamSetf(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuParamSetf(hfunc, offset, value);
+  lupine_intercept_result =
+      cuParamSetf(lupine_gpu_translate_function(hfunc), offset, value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4966,7 +5026,7 @@ int handle_cuLaunch(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuLaunch(f);
+  lupine_intercept_result = cuLaunch(lupine_gpu_translate_function(f));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -4992,7 +5052,8 @@ int handle_cuLaunchGrid(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuLaunchGrid(f, grid_width, grid_height);
+  lupine_intercept_result =
+      cuLaunchGrid(lupine_gpu_translate_function(f), grid_width, grid_height);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -5021,7 +5082,8 @@ int handle_cuLaunchGridAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuLaunchGridAsync(f, grid_width, grid_height, hStream);
+      cuLaunchGridAsync(lupine_gpu_translate_function(f), grid_width,
+                        grid_height, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -5047,7 +5109,8 @@ int handle_cuParamSetTexRef(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuParamSetTexRef(hfunc, texunit, hTexRef);
+  lupine_intercept_result =
+      cuParamSetTexRef(lupine_gpu_translate_function(hfunc), texunit, hTexRef);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -5071,7 +5134,8 @@ int handle_cuFuncSetSharedMemConfig(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuFuncSetSharedMemConfig(hfunc, config);
+  lupine_intercept_result =
+      cuFuncSetSharedMemConfig(lupine_gpu_translate_function(hfunc), config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -6398,8 +6462,8 @@ int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphExecMemcpyNodeSetParams(hGraphExec, hNode, &copyParams, ctx);
+  lupine_intercept_result = cuGraphExecMemcpyNodeSetParams(
+      hGraphExec, hNode, &copyParams, lupine_gpu_translate_context(ctx));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -6428,8 +6492,8 @@ int handle_cuGraphExecMemsetNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphExecMemsetNodeSetParams(hGraphExec, hNode, &memsetParams, ctx);
+  lupine_intercept_result = cuGraphExecMemsetNodeSetParams(
+      hGraphExec, hNode, &memsetParams, lupine_gpu_translate_context(ctx));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -6684,7 +6748,8 @@ int handle_cuGraphUpload(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuGraphUpload(hGraphExec, hStream);
+  lupine_intercept_result =
+      cuGraphUpload(hGraphExec, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -6708,7 +6773,8 @@ int handle_cuGraphLaunch(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuGraphLaunch(hGraphExec, hStream);
+  lupine_intercept_result =
+      cuGraphLaunch(hGraphExec, lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -7024,7 +7090,8 @@ int handle_cuOccupancyMaxActiveBlocksPerMultiprocessor(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result = cuOccupancyMaxActiveBlocksPerMultiprocessor(
-      &numBlocks, func, blockSize, dynamicSMemSize);
+      &numBlocks, lupine_gpu_translate_function(func), blockSize,
+      dynamicSMemSize);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
@@ -7057,7 +7124,8 @@ int handle_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(conn_t *conn) {
     goto ERROR_0;
   lupine_intercept_result =
       cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
-          &numBlocks, func, blockSize, dynamicSMemSize, flags);
+          &numBlocks, lupine_gpu_translate_function(func), blockSize,
+          dynamicSMemSize, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
@@ -7087,7 +7155,8 @@ int handle_cuOccupancyAvailableDynamicSMemPerBlock(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result = cuOccupancyAvailableDynamicSMemPerBlock(
-      &dynamicSmemSize, func, numBlocks, blockSize);
+      &dynamicSmemSize, lupine_gpu_translate_function(func), numBlocks,
+      blockSize);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dynamicSmemSize, sizeof(size_t)) < 0 ||
@@ -7114,8 +7183,8 @@ int handle_cuOccupancyMaxPotentialClusterSize(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuOccupancyMaxPotentialClusterSize(&clusterSize, func, config);
+  lupine_intercept_result = cuOccupancyMaxPotentialClusterSize(
+      &clusterSize, lupine_gpu_translate_function(func), config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &clusterSize, sizeof(int)) < 0 ||
@@ -7142,8 +7211,8 @@ int handle_cuOccupancyMaxActiveClusters(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuOccupancyMaxActiveClusters(&numClusters, func, config);
+  lupine_intercept_result = cuOccupancyMaxActiveClusters(
+      &numClusters, lupine_gpu_translate_function(func), config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numClusters, sizeof(int)) < 0 ||
@@ -8149,7 +8218,8 @@ int handle_cuCtxEnablePeerAccess(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxEnablePeerAccess(peerContext, Flags);
+  lupine_intercept_result =
+      cuCtxEnablePeerAccess(lupine_gpu_translate_context(peerContext), Flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -8171,7 +8241,8 @@ int handle_cuCtxDisablePeerAccess(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuCtxDisablePeerAccess(peerContext);
+  lupine_intercept_result =
+      cuCtxDisablePeerAccess(lupine_gpu_translate_context(peerContext));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -8366,7 +8437,7 @@ int handle_cuGraphicsMapResources(conn_t *conn) {
     goto ERROR_1;
   lupine_intercept_result = cuGraphicsMapResources(
       count, (count * sizeof(CUgraphicsResource) == 0 ? nullptr : resources),
-      hStream);
+      lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -8402,7 +8473,7 @@ int handle_cuGraphicsUnmapResources(conn_t *conn) {
     goto ERROR_1;
   lupine_intercept_result = cuGraphicsUnmapResources(
       count, (count * sizeof(CUgraphicsResource) == 0 ? nullptr : resources),
-      hStream);
+      lupine_gpu_translate_stream(hStream));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||

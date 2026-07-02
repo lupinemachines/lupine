@@ -8979,6 +8979,10 @@ __attribute__((destructor)) static void lupine_rpc_destructor() {
   lupine_rpc_shutdown();
 }
 
+// Drop the connection(s) so the next CUDA op reconnects to a fresh worker. Used
+// to bracket a snapshot save/restore within one client process.
+extern "C" void lupine_snapshot_disconnect() { lupine_rpc_shutdown(); }
+
 typedef void (*func_t)(void *);
 
 void add_host_node(void *fn, void *udata) { host_funcs[fn] = udata; }

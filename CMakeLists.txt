@@ -56,6 +56,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/gpu_snapshot_client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
 )
 
@@ -63,6 +64,7 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/gpu_snapshot.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
@@ -87,6 +89,7 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/gpu_snapshot.h
 )
 
 set(CLIENT_OUTPUT lupine_driver)

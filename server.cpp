@@ -15,6 +15,7 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "gpu_snapshot.h"
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
@@ -40,6 +41,18 @@ lupine_manual_handlers() {
        {handle_manual_cuGetExportTableMetadata, "cuGetExportTable metadata"}},
       {LUPINE_RPC_cuPrivateGetModuleNode,
        {handle_manual_cuPrivateGetModuleNode, "private module node"}},
+      {RPC_cuMemAlloc_v2, {handle_manual_cuMemAlloc_v2, "cuMemAlloc_v2 (vmm)"}},
+      {RPC_cuMemFree_v2, {handle_manual_cuMemFree_v2, "cuMemFree_v2 (vmm)"}},
+      {LUPINE_RPC_gpu_snapshot_save,
+       {handle_gpu_snapshot_save, "gpu snapshot save"}},
+      {LUPINE_RPC_gpu_snapshot_restore,
+       {handle_gpu_snapshot_restore, "gpu snapshot restore"}},
+      {RPC_cuModuleGetFunction,
+       {handle_manual_cuModuleGetFunction_tracked, "cuModuleGetFunction (tracked)"}},
+      {RPC_cuLibraryGetKernel,
+       {handle_manual_cuLibraryGetKernel_tracked, "cuLibraryGetKernel (tracked)"}},
+      {RPC_cuKernelGetFunction,
+       {handle_manual_cuKernelGetFunction_tracked, "cuKernelGetFunction (tracked)"}},
       {RPC_cuModuleLoad, {handle_manual_cuModuleLoad, "cuModuleLoad"}},
       {RPC_cuModuleLoadData,
        {handle_manual_cuModuleLoadData, "cuModuleLoadData"}},
@@ -238,6 +251,11 @@ void client_handler(lupine_socket_t connfd) {
 }
 
 int main() {
+  // GPU snapshots reproduce device pointers by re-reserving the same VMM arena
+  // base in a fresh worker. The arena is large (tens of GiB), so the driver
+  // reliably places it at a low GPU VA below where host ASLR maps libraries,
+  // heap and stack, making the base identical across processes without any
+  // ASLR tweaking.
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
   if (lupine_socket_init() < 0) {
