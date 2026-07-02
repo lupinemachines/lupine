@@ -20,6 +20,13 @@
 // inputs to recreate that shape and translate old client handles to live ones.
 // Streams are not replayed; stale non-default stream handles are lazily mapped
 // to fresh streams after restore.
+//
+// If the workload used in-kernel malloc(), its checkpoint payload includes a
+// device malloc-heap reservation that a bare worker lacks (the heap only
+// materializes when a malloc kernel launches, not when the limit is set). The
+// saved heap limit is recorded, and if the worker's first checkpoint doesn't
+// match the saved payload shape it re-applies the limit, launches a tiny
+// malloc to materialize the heap, and checkpoints again.
 
 // Custom RPC op ids (kept out of the codegen range).
 static const int LUPINE_RPC_gpu_snapshot_save = 1000201;

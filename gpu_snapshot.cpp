@@ -469,6 +469,95 @@ CUresult ensure_context() {
   return cuCtxSetCurrent(ctx);
 }
 
+// The in-kernel malloc heap (CU_LIMIT_MALLOC_HEAP_SIZE) is only materialized
+// when a kernel actually calls malloc(); setting the limit alone reserves
+// nothing. A workload that used device-side malloc therefore has a heap
+// reservation in its checkpoint payload that a bare fresh worker lacks, so the
+// worker's payload comes out smaller and the shapes don't line up. To match, we
+// re-apply the saved limit and launch a tiny malloc so the driver reserves the
+// same heap before the worker checkpoints itself.
+const char kWarmupPtx[] = R"ptx(
+.version 7.0
+.target sm_70
+.address_size 64
+.extern .func (.param .b64 func_retval0) malloc (.param .b64 malloc_param_0);
+.extern .func free (.param .b64 free_param_0);
+.visible .entry lupine_heap_warmup(.param .u64 lupine_heap_warmup_param_0)
+{
+  .reg .pred %p<2>;
+  .reg .b64 %rd<3>;
+  ld.param.u64 %rd2, [lupine_heap_warmup_param_0];
+  { .param .b64 param0;
+    st.param.b64 [param0+0], %rd2;
+    .param .b64 retval0;
+    call.uni (retval0), malloc, (param0);
+    ld.param.b64 %rd1, [retval0+0]; }
+  setp.eq.s64 %p1, %rd1, 0;
+  @%p1 bra $L__BB0_2;
+  { .param .b64 param0;
+    st.param.b64 [param0+0], %rd1;
+    call.uni free, (param0); }
+$L__BB0_2:
+  ret;
+}
+)ptx";
+
+CUresult reproduce_malloc_heap(uint64_t limit) {
+  CUresult result = cuCtxSetLimit(CU_LIMIT_MALLOC_HEAP_SIZE,
+                                  static_cast<size_t>(limit));
+  if (result != CUDA_SUCCESS) return result;
+  CUmodule mod = nullptr;
+  result = cuModuleLoadData(&mod, kWarmupPtx);
+  if (result != CUDA_SUCCESS) return result;
+  CUfunction fn = nullptr;
+  result = cuModuleGetFunction(&fn, mod, "lupine_heap_warmup");
+  if (result == CUDA_SUCCESS) {
+    unsigned long long bytes = 16;
+    void *args[] = {&bytes};
+    result = cuLaunchKernel(fn, 1, 1, 1, 1, 1, 1, 0, 0, args, nullptr);
+    if (result == CUDA_SUCCESS) result = cuCtxSynchronize();
+  }
+  // The heap reservation is a context resource; it outlives the module that
+  // triggered it, so unloading here keeps the worker's payload clean.
+  cuModuleUnload(mod);
+  return result;
+}
+
+bool save_heap_limit(const std::string &dir) {
+  size_t limit = 0;
+  if (cuCtxGetLimit(&limit, CU_LIMIT_MALLOC_HEAP_SIZE) != CUDA_SUCCESS)
+    limit = 0;
+  FILE *f = fopen(join(dir, "gpu.meta").c_str(), "wb");
+  if (!f) return false;
+  uint64_t v = limit;
+  bool ok = fwrite(&v, sizeof(v), 1, f) == 1;
+  fclose(f);
+  return ok;
+}
+
+uint64_t read_saved_heap_limit(const std::string &dir) {
+  FILE *f = fopen(join(dir, "gpu.meta").c_str(), "rb");
+  if (!f) return 0;
+  uint64_t v = 0;
+  if (fread(&v, sizeof(v), 1, f) != 1) v = 0;
+  fclose(f);
+  return v;
+}
+
+// Checkpoint the worker and locate the newly-created payload mapping of the
+// expected size. On success the worker is left checkpointed (the caller must
+// restore it); on a shape mismatch the worker is restored so the caller can
+// retry from a running state or bail cleanly.
+bool checkpoint_and_locate(size_t expected_size, Map *payload) {
+  MapList before = read_private_anon_maps();
+  if (checkpoint_self() != CUDA_SUCCESS) return false;
+  MapList after = read_private_anon_maps();
+  if (find_payload_map(before, after, expected_size, payload)) return true;
+  log_new_payload_candidates(before, after);
+  restore_self();
+  return false;
+}
+
 bool write_payload_header(FILE *f, uint64_t size) {
   PayloadHeader header = {};
   memcpy(header.magic, kPayloadMagic, sizeof(header.magic));
@@ -549,6 +638,9 @@ CUresult lupine_gpu_snapshot_save(const char *id) {
   std::string dir = snapshot_dir(id);
   if (dir.empty()) return CUDA_ERROR_UNKNOWN;
   if (!save_objects(dir)) return CUDA_ERROR_UNKNOWN;
+  // Best-effort: lets a fresh worker reproduce the in-kernel malloc heap
+  // reservation before it checkpoints. A miss only affects malloc workloads.
+  save_heap_limit(dir);
 
   int mem = open_self_mem(O_RDONLY);
   if (mem < 0) return CUDA_ERROR_UNKNOWN;
@@ -596,23 +688,22 @@ CUresult lupine_gpu_snapshot_restore(const char *id) {
   int mem = open_self_mem(O_RDWR);
   if (mem < 0) return CUDA_ERROR_UNKNOWN;
 
-  MapList before = read_private_anon_maps();
-  result = checkpoint_self();
-  if (result != CUDA_SUCCESS) {
-    close(mem);
-    return result;
-  }
-  MapList after = read_private_anon_maps();
-
+  size_t want = static_cast<size_t>(payload_size);
   Map payload;
-  if (!find_payload_map(before, after, static_cast<size_t>(payload_size),
-                        &payload)) {
-    LUPINE_LOG_ERROR("gpu_snapshot: expected payload size=" << payload_size);
-    log_new_payload_candidates(before, after);
+  bool located = checkpoint_and_locate(want, &payload);
+  if (!located) {
+    // A bare worker's payload is smaller than a kernel-malloc workload's,
+    // which carries a device malloc heap reservation. Re-apply the saved heap
+    // limit, launch a malloc to materialize it, and checkpoint again so the
+    // worker's payload shape matches.
+    uint64_t heap_limit = read_saved_heap_limit(dir);
+    if (heap_limit != 0 && reproduce_malloc_heap(heap_limit) == CUDA_SUCCESS)
+      located = checkpoint_and_locate(want, &payload);
+  }
+  if (!located) {
     close(mem);
-    restore_self();
-    LUPINE_LOG_ERROR("gpu_snapshot: restored process produced incompatible "
-                     "CUDA checkpoint payload size");
+    LUPINE_LOG_ERROR("gpu_snapshot: restored worker produced incompatible "
+                     "CUDA checkpoint payload size, expected " << payload_size);
     return CUDA_ERROR_UNKNOWN;
   }
 
