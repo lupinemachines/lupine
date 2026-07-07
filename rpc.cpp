@@ -23,9 +23,8 @@ static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
     new_capacity *= 2;
   }
 
-  void *next = realloc(conn->write_queue,
-                       static_cast<size_t>(new_capacity) *
-                           sizeof(conn->write_queue[0]));
+  void *next = realloc(conn->write_queue, static_cast<size_t>(new_capacity) *
+                                              sizeof(conn->write_queue[0]));
   if (next == nullptr) {
     return -1;
   }
@@ -78,9 +77,11 @@ void *_rpc_read_id_dispatch(void *p) {
       break;
 
     // the read id is zero so it's our turn to read the next int which is the
-    // request id of the next request.
-    int bytes = rpc_read(conn, &conn->read_id, sizeof(int));
-    if (bytes <= 0 || conn->read_id == 0) {
+    // request id of the next request. rpc_read returns the byte count on
+    // success (here sizeof(int)) and <0 on failure, so treat anything but a
+    // full read or a zero id as a closed connection.
+    if (rpc_read(conn, &conn->read_id, sizeof(int)) != sizeof(int) ||
+        conn->read_id == 0) {
       conn->closed = 1;
       pthread_cond_broadcast(&conn->read_cond);
       break;
@@ -391,8 +392,8 @@ int rpc_write_end(conn_t *conn) {
     conn->write_queue[1] = {{&conn->write_op, sizeof(unsigned int)}, 0};
   }
   int write_id = conn->write_id;
-  int result = rpc_http2_writev(conn, conn->write_queue,
-                                conn->write_queue_count);
+  int result =
+      rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
   pthread_mutex_unlock(&conn->write_mutex);
   return result == 0 ? write_id : -1;
 }
