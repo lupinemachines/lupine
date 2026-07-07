@@ -4,8 +4,6 @@
 #include <cstdlib>
 #include <deque>
 #include <iostream>
-#include <lz4.h>
-#include <memory>
 #include <string.h>
 #include <unordered_map>
 
@@ -17,19 +15,6 @@ struct rpc_frame_header {
   int32_t request_id = 0;
   uint32_t lane_id = 0;
   int32_t op = 0;
-  uint64_t payload_size = 0;
-};
-
-enum rpc_segment_kind : uint32_t {
-  RPC_SEGMENT_RAW = 0,
-  RPC_SEGMENT_LZ4 = 1,
-};
-
-struct rpc_segment_header {
-  uint32_t kind = RPC_SEGMENT_RAW;
-  uint32_t reserved = 0;
-  uint64_t encoded_size = 0;
-  uint64_t decoded_size = 0;
 };
 
 struct rpc_connection_state {
@@ -42,10 +27,6 @@ struct rpc_active_frame {
   int request_id = 0;
   uint32_t lane_id = 0;
   int op = 0;
-  std::vector<unsigned char> payload;
-  size_t offset = 0;
-  rpc_segment_header segment = {};
-  uint64_t segment_remaining = 0;
 };
 
 static thread_local rpc_active_frame tls_active_frame;
@@ -190,103 +171,17 @@ void rpc_connection_state_free(conn_t *conn) {
   conn->rpc_state = nullptr;
 }
 
-static int rpc_lz4_encode_segment(const rpc_write_entry &entry,
-                                  std::vector<unsigned char> *out) {
-  if (out == nullptr) {
+static int rpc_write_current_frame_locked(conn_t *conn) {
+  if (conn == nullptr || conn->write_queue_count < 1) {
     return -1;
   }
-  out->clear();
-  const char *src = static_cast<const char *>(entry.iov.iov_base);
-  size_t remaining = entry.iov.iov_len;
-  while (remaining > 0) {
-    size_t raw = std::min<size_t>(LUPINE_COMPRESS_BLOCK_BYTES, remaining);
-    size_t token_offset = out->size();
-    out->resize(out->size() + sizeof(uint32_t));
-
-    uint32_t token = 0;
-    size_t block_len = raw;
-    if (entry.framed == 1) {
-      size_t bound = static_cast<size_t>(
-          LZ4_compressBound(static_cast<int>(LUPINE_COMPRESS_BLOCK_BYTES)));
-      size_t data_offset = out->size();
-      out->resize(data_offset + bound);
-      int compressed = LZ4_compress_default(
-          src, reinterpret_cast<char *>(out->data() + data_offset),
-          static_cast<int>(raw), static_cast<int>(bound));
-      if (compressed > 0 && static_cast<size_t>(compressed) < raw) {
-        token = static_cast<uint32_t>(compressed);
-        block_len = static_cast<size_t>(compressed);
-        out->resize(data_offset + block_len);
-      } else {
-        memcpy(out->data() + data_offset, src, raw);
-        out->resize(data_offset + raw);
-      }
-    } else {
-      size_t data_offset = out->size();
-      out->resize(data_offset + raw);
-      memcpy(out->data() + data_offset, src, raw);
-    }
-
-    memcpy(out->data() + token_offset, &token, sizeof(token));
-    src += raw;
-    remaining -= raw;
-  }
-  return 0;
-}
-
-static int rpc_write_current_frame_locked(conn_t *conn) {
-  struct rpc_segment_storage {
-    rpc_segment_header header;
-    std::vector<unsigned char> encoded;
-    const void *raw = nullptr;
-  };
-
-  std::vector<rpc_segment_storage> segments;
-  segments.reserve(static_cast<size_t>(conn->write_queue_count));
-
-  uint64_t payload_size = 0;
-  for (int i = 0; i < conn->write_queue_count; ++i) {
-    const rpc_write_entry &entry = conn->write_queue[i];
-    rpc_segment_storage segment;
-    segment.header.kind = entry.framed ? RPC_SEGMENT_LZ4 : RPC_SEGMENT_RAW;
-    segment.header.decoded_size = static_cast<uint64_t>(entry.iov.iov_len);
-    if (entry.framed) {
-      if (rpc_lz4_encode_segment(entry, &segment.encoded) < 0) {
-        return -1;
-      }
-      segment.header.encoded_size =
-          static_cast<uint64_t>(segment.encoded.size());
-    } else {
-      segment.raw = entry.iov.iov_base;
-      segment.header.encoded_size = static_cast<uint64_t>(entry.iov.iov_len);
-    }
-    payload_size += sizeof(rpc_segment_header) + segment.header.encoded_size;
-    segments.push_back(std::move(segment));
-  }
-
   rpc_frame_header header;
   header.request_id = conn->write_id;
   header.lane_id = conn->write_lane_id;
   header.op = conn->write_op;
-  header.payload_size = payload_size;
 
-  std::vector<rpc_write_entry> entries;
-  entries.reserve(1 + segments.size() * 2);
-  entries.push_back({{&header, sizeof(header)}, 0});
-  for (auto &segment : segments) {
-    entries.push_back({{&segment.header, sizeof(segment.header)}, 0});
-    if (segment.header.encoded_size == 0) {
-      continue;
-    }
-    void *data = segment.header.kind == RPC_SEGMENT_LZ4
-                     ? static_cast<void *>(segment.encoded.data())
-                     : const_cast<void *>(segment.raw);
-    entries.push_back(
-        {{data, static_cast<size_t>(segment.header.encoded_size)}, 0});
-  }
-
-  return rpc_http2_writev(conn, entries.data(),
-                          static_cast<int>(entries.size()));
+  conn->write_queue[0] = {{&header, sizeof(header)}, 0};
+  return rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
 }
 
 static int rpc_write_control_frame(conn_t *conn, uint32_t lane_id, int op) {
@@ -304,8 +199,9 @@ static int rpc_write_control_frame(conn_t *conn, uint32_t lane_id, int op) {
   conn->write_id = conn->request_id;
   conn->write_op = op;
   conn->write_lane_id = lane_id;
-  conn->write_queue_count = 0;
-  int result = rpc_write_current_frame_locked(conn);
+  int result = rpc_write_queue_reset(conn, 1) < 0
+                   ? -1
+                   : rpc_write_current_frame_locked(conn);
   pthread_mutex_unlock(&conn->write_mutex);
   pthread_mutex_unlock(&conn->call_mutex);
   return result;
@@ -316,79 +212,76 @@ int rpc_read_wire_frame(conn_t *conn, rpc_frame *frame) {
     return -1;
   }
 
+  if (pthread_mutex_lock(&conn->read_mutex) != 0) {
+    return -1;
+  }
+  while (conn->read_id != 0 && !conn->closed) {
+    pthread_cond_wait(&conn->read_cond, &conn->read_mutex);
+  }
+  if (conn->closed) {
+    pthread_mutex_unlock(&conn->read_mutex);
+    return -1;
+  }
+
   rpc_frame_header header;
   if (rpc_http2_read(conn, &header, sizeof(header)) != sizeof(header) ||
       header.request_id == 0) {
     rpc_close_with_broadcast(conn);
+    pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
 
+  conn->read_id = header.request_id;
   frame->request_id = header.request_id;
   frame->lane_id = header.lane_id;
   frame->op = header.op;
-  try {
-    frame->payload.resize(static_cast<size_t>(header.payload_size));
-  } catch (...) {
-    rpc_close_with_broadcast(conn);
-    return -1;
-  }
-  if (!frame->payload.empty() &&
-      rpc_http2_read(conn, frame->payload.data(), frame->payload.size()) < 0) {
-    rpc_close_with_broadcast(conn);
-    return -1;
-  }
   return 0;
 }
 
-int rpc_activate_frame(conn_t *conn, rpc_frame &&frame) {
+static int rpc_activate_frame_locked(conn_t *conn, rpc_frame &&frame) {
+  if (conn == nullptr || conn->read_id != frame.request_id) {
+    return -1;
+  }
   tls_active_frame.conn = conn;
   tls_active_frame.request_id = frame.request_id;
   tls_active_frame.lane_id = frame.lane_id;
   tls_active_frame.op = frame.op;
-  tls_active_frame.payload = std::move(frame.payload);
-  tls_active_frame.offset = 0;
+  return 0;
+}
+
+int rpc_frame_ready(conn_t *conn) {
+  if (conn == nullptr) {
+    return -1;
+  }
+  int result = pthread_cond_broadcast(&conn->read_cond);
+  pthread_mutex_unlock(&conn->read_mutex);
+  return result == 0 ? 0 : -1;
+}
+
+int rpc_activate_frame(conn_t *conn, rpc_frame &&frame) {
+  if (conn == nullptr || pthread_mutex_lock(&conn->read_mutex) != 0) {
+    return -1;
+  }
+  while (!conn->closed && conn->read_id != frame.request_id) {
+    pthread_cond_wait(&conn->read_cond, &conn->read_mutex);
+  }
+  if (conn->closed || rpc_activate_frame_locked(conn, std::move(frame)) < 0) {
+    pthread_mutex_unlock(&conn->read_mutex);
+    return -1;
+  }
   return 0;
 }
 
 uint32_t rpc_active_lane_id() { return tls_active_frame.lane_id; }
 
-static int rpc_load_next_segment(rpc_active_frame *frame) {
-  if (frame == nullptr) {
-    return -1;
-  }
-  if (frame->segment_remaining != 0) {
-    return 0;
-  }
-  if (frame->offset == frame->payload.size()) {
-    return -1;
-  }
-  if (frame->offset + sizeof(rpc_segment_header) > frame->payload.size()) {
-    return -1;
-  }
-  memcpy(&frame->segment, frame->payload.data() + frame->offset,
-         sizeof(frame->segment));
-  frame->offset += sizeof(frame->segment);
-  if ((frame->segment.kind != RPC_SEGMENT_RAW &&
-       frame->segment.kind != RPC_SEGMENT_LZ4) ||
-      frame->offset + frame->segment.encoded_size > frame->payload.size()) {
-    return -1;
-  }
-  frame->segment_remaining = frame->segment.encoded_size;
-  if (frame->segment_remaining == 0 && frame->offset != frame->payload.size()) {
-    return rpc_load_next_segment(frame);
-  }
-  return 0;
-}
-
 int rpc_deliver_response_frame(conn_t *conn, rpc_frame &&frame) {
   rpc_connection_state *state = rpc_state(conn);
-  if (state == nullptr || pthread_mutex_lock(&conn->read_mutex) != 0) {
+  if (state == nullptr) {
+    pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
   state->responses[frame.request_id].push_back(std::move(frame));
-  int result = pthread_cond_broadcast(&conn->read_cond);
-  pthread_mutex_unlock(&conn->read_mutex);
-  return result == 0 ? 0 : -1;
+  return rpc_frame_ready(conn);
 }
 
 void *_rpc_read_id_dispatch(void *p) {
@@ -405,19 +298,16 @@ void *_rpc_read_id_dispatch(void *p) {
       }
       continue;
     }
-    if (pthread_mutex_lock(&conn->read_mutex) != 0) {
-      rpc_close_with_broadcast(conn);
-      break;
-    }
     rpc_connection_state *state = rpc_state(conn);
     if (state == nullptr) {
-      pthread_mutex_unlock(&conn->read_mutex);
       rpc_close_with_broadcast(conn);
+      pthread_mutex_unlock(&conn->read_mutex);
       break;
     }
     state->remote_requests.push_back(std::move(frame));
-    pthread_cond_broadcast(&conn->read_cond);
-    pthread_mutex_unlock(&conn->read_mutex);
+    if (rpc_frame_ready(conn) < 0) {
+      break;
+    }
   }
   rpc_close_with_broadcast(conn);
   conn->rpc_thread = 0;
@@ -460,8 +350,10 @@ int rpc_dispatch(conn_t *conn, int parity) {
   rpc_frame frame = std::move(state->remote_requests.front());
   state->remote_requests.pop_front();
   int op = frame.op;
-  pthread_mutex_unlock(&conn->read_mutex);
-  rpc_activate_frame(conn, std::move(frame));
+  if (rpc_activate_frame_locked(conn, std::move(frame)) < 0) {
+    pthread_mutex_unlock(&conn->read_mutex);
+    return -1;
+  }
 
   return op;
 }
@@ -482,9 +374,12 @@ int rpc_read_start(conn_t *conn, int write_id) {
     return -1;
   }
 
-  while (!conn->closed && state->responses[write_id].empty())
-    if (pthread_cond_wait(&conn->read_cond, &conn->read_mutex) < 0)
+  while (!conn->closed && state->responses[write_id].empty()) {
+    if (pthread_cond_wait(&conn->read_cond, &conn->read_mutex) != 0) {
+      pthread_mutex_unlock(&conn->read_mutex);
       return -1;
+    }
+  }
 
   if (conn->closed) {
     pthread_mutex_unlock(&conn->read_mutex);
@@ -496,34 +391,14 @@ int rpc_read_start(conn_t *conn, int write_id) {
   if (state->responses[write_id].empty()) {
     state->responses.erase(write_id);
   }
-  pthread_mutex_unlock(&conn->read_mutex);
-  rpc_activate_frame(conn, std::move(frame));
+  if (rpc_activate_frame_locked(conn, std::move(frame)) < 0) {
+    pthread_mutex_unlock(&conn->read_mutex);
+    return -1;
+  }
   return 0;
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {
-  if (tls_active_frame.conn == conn) {
-    auto *out = static_cast<unsigned char *>(data);
-    size_t copied = 0;
-    while (copied < size) {
-      if (rpc_load_next_segment(&tls_active_frame) < 0 ||
-          tls_active_frame.segment_remaining == 0) {
-        return -1;
-      }
-      size_t chunk = std::min<size_t>(
-          size - copied,
-          static_cast<size_t>(tls_active_frame.segment_remaining));
-      if (chunk != 0) {
-        memcpy(out + copied,
-               tls_active_frame.payload.data() + tls_active_frame.offset,
-               chunk);
-      }
-      tls_active_frame.offset += chunk;
-      tls_active_frame.segment_remaining -= chunk;
-      copied += chunk;
-    }
-    return static_cast<int>(size);
-  }
   return rpc_http2_read(conn, data, size);
 }
 
@@ -546,6 +421,11 @@ int rpc_read_end(conn_t *conn) {
   }
   int read_id = tls_active_frame.request_id;
   tls_active_frame = {};
+  conn->read_id = 0;
+  if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
+      pthread_mutex_unlock(&conn->read_mutex) < 0) {
+    return -1;
+  }
   return read_id;
 }
 
@@ -588,7 +468,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     return -1;
   }
 
-  if (rpc_write_queue_reset(conn, 0) < 0) {
+  if (rpc_write_queue_reset(conn, 1) < 0) {
     pthread_mutex_unlock(&conn->write_mutex);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
@@ -617,7 +497,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
     return -1;
   }
 
-  if (rpc_write_queue_reset(conn, 0) < 0) {
+  if (rpc_write_queue_reset(conn, 1) < 0) {
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }

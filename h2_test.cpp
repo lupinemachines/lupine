@@ -51,6 +51,19 @@ h2_pair make_pair() {
   return pair;
 }
 
+void init_rpc_read(conn_t *conn) {
+  require(pthread_mutex_init(&conn->read_mutex, nullptr) == 0,
+          "read mutex init failed");
+  require(pthread_cond_init(&conn->read_cond, nullptr) == 0,
+          "read cond init failed");
+  require(rpc_connection_state_init(conn) == 0, "rpc state init failed");
+}
+
+void init_rpc_write(conn_t *conn) {
+  require(pthread_mutex_init(&conn->write_mutex, nullptr) == 0,
+          "write mutex init failed");
+}
+
 void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
   std::vector<rpc_write_entry> entries;
   entries.reserve(chunks.size());
@@ -204,8 +217,8 @@ void test_rpc_write_queue_grows() {
   rpc_write_queue_free(&zero_length);
 
   h2_pair pair = make_pair();
-  require(pthread_mutex_init(&pair.client.write_mutex, nullptr) == 0,
-          "client write mutex init failed");
+  init_rpc_write(&pair.client);
+  init_rpc_read(&pair.server);
 
   constexpr int kCount = 300;
   std::vector<int> values(kCount);
@@ -220,8 +233,10 @@ void test_rpc_write_queue_grows() {
             "large queue frame read failed");
     require(frame.request_id == 17, "large queue request id mismatch");
     require(frame.op == -1, "large queue response op mismatch");
-    require(rpc_activate_frame(&pair.server, std::move(frame)) == 0,
-            "large queue activate failed");
+    require(rpc_deliver_response_frame(&pair.server, std::move(frame)) == 0,
+            "large queue deliver failed");
+    require(rpc_read_start(&pair.server, 17) == 0,
+            "large queue read start failed");
     for (int i = 0; i < kCount; ++i) {
       require(rpc_read(&pair.server, &received[i], sizeof(received[i])) ==
                   static_cast<int>(sizeof(received[i])),
@@ -236,17 +251,17 @@ void test_rpc_write_queue_grows() {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
             "large queue rpc_write failed");
   }
-  require(pair.client.write_queue_count == kCount,
+  require(pair.client.write_queue_count == kCount + 1,
           "large queue count mismatch");
   require(rpc_write_end(&pair.client) == 17, "large queue write_end failed");
   reader.join();
   require(received == values, "large queue payload mismatch");
 }
 
-void test_rpc_lz4_payload_segment_round_trip() {
+void test_rpc_lz4_payload_round_trip() {
   h2_pair pair = make_pair();
-  require(pthread_mutex_init(&pair.client.write_mutex, nullptr) == 0,
-          "client write mutex init failed");
+  init_rpc_write(&pair.client);
+  init_rpc_read(&pair.server);
 
   std::string prefix = "before";
   std::string suffix = "after";
@@ -261,46 +276,48 @@ void test_rpc_lz4_payload_segment_round_trip() {
   std::thread reader([&] {
     rpc_frame frame;
     require(rpc_read_wire_frame(&pair.server, &frame) == 0,
-            "lz4 segment frame read failed");
-    require(frame.request_id == 23, "lz4 segment request id mismatch");
-    require(frame.op == -1, "lz4 segment response op mismatch");
-    require(rpc_activate_frame(&pair.server, std::move(frame)) == 0,
-            "lz4 segment activate failed");
+            "lz4 payload frame read failed");
+    require(frame.request_id == 23, "lz4 payload request id mismatch");
+    require(frame.op == -1, "lz4 payload response op mismatch");
+    require(rpc_deliver_response_frame(&pair.server, std::move(frame)) == 0,
+            "lz4 payload deliver failed");
+    require(rpc_read_start(&pair.server, 23) == 0,
+            "lz4 payload read start failed");
     require(rpc_read(&pair.server, received_prefix.data(),
                      received_prefix.size()) ==
                 static_cast<int>(received_prefix.size()),
-            "lz4 segment prefix read failed");
+            "lz4 payload prefix read failed");
     require(rpc_read_payload(&pair.server, received.data(), received.size()) ==
                 static_cast<int>(received.size()),
-            "lz4 segment payload read failed");
+            "lz4 payload payload read failed");
     require(rpc_read(&pair.server, received_suffix.data(),
                      received_suffix.size()) ==
                 static_cast<int>(received_suffix.size()),
-            "lz4 segment suffix read failed");
-    require(rpc_read_end(&pair.server) == 23, "lz4 segment read_end failed");
+            "lz4 payload suffix read failed");
+    require(rpc_read_end(&pair.server) == 23, "lz4 payload read_end failed");
   });
 
   require(rpc_write_start_response(&pair.client, 23) == 0,
-          "lz4 segment response start failed");
+          "lz4 payload response start failed");
   require(rpc_write(&pair.client, prefix.data(), prefix.size()) == 0,
-          "lz4 segment prefix write failed");
+          "lz4 payload prefix write failed");
   require(rpc_write_payload(&pair.client, payload.data(), payload.size()) == 0,
-          "lz4 segment payload write failed");
+          "lz4 payload payload write failed");
   require(rpc_write(&pair.client, suffix.data(), suffix.size()) == 0,
-          "lz4 segment suffix write failed");
-  require(rpc_write_end(&pair.client) == 23, "lz4 segment write_end failed");
+          "lz4 payload suffix write failed");
+  require(rpc_write_end(&pair.client) == 23, "lz4 payload write_end failed");
   reader.join();
 
-  require(received_prefix == prefix, "lz4 segment prefix mismatch");
-  require(received == payload, "lz4 segment payload mismatch");
-  require(received_suffix == suffix, "lz4 segment suffix mismatch");
+  require(received_prefix == prefix, "lz4 payload prefix mismatch");
+  require(received == payload, "lz4 payload payload mismatch");
+  require(received_suffix == suffix, "lz4 payload suffix mismatch");
 }
 
 } // namespace
 
 int main() {
   test_rpc_write_queue_grows();
-  test_rpc_lz4_payload_segment_round_trip();
+  test_rpc_lz4_payload_round_trip();
   test_client_to_server();
   test_server_to_client_after_request_headers();
   test_fragmented_iovec();

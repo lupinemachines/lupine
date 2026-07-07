@@ -19,10 +19,9 @@
 // server's 64MB staging chunk, chunked readers stay aligned with the block
 // schedule chosen by the writer.
 //
-// Direct HTTP/2 framed writes compress lazily in h2.cpp. RPC envelope writes
-// materialize the encoded segment before sending so the demuxer knows exact
-// request frame sizes; the receiver still decodes blocks incrementally into
-// the caller's output buffer.
+// RPC writes also use the HTTP/2 framed path directly, so compression stays
+// lazy and the receiver decodes blocks incrementally into the caller's output
+// buffer.
 
 #include "rpc.h"
 

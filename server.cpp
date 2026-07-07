@@ -260,6 +260,9 @@ static void lupine_run_lane(conn_t *conn, std::shared_ptr<lupine_lane> lane) {
 
     int op = frame.op;
     if (op == LUPINE_RPC_RELEASE_LANE) {
+      if (rpc_activate_frame(conn, std::move(frame)) == 0) {
+        rpc_read_end(conn);
+      }
       break;
     }
     if (rpc_activate_frame(conn, std::move(frame)) < 0 ||
@@ -377,6 +380,10 @@ void client_handler(lupine_socket_t connfd) {
       continue;
     }
     if (lupine_enqueue_lane(&lanes, std::move(frame)) < 0) {
+      rpc_frame_ready(&conn);
+      break;
+    }
+    if (rpc_frame_ready(&conn) < 0) {
       break;
     }
   }

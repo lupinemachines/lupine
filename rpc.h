@@ -6,9 +6,9 @@
 #include <stdint.h>
 #include <vector>
 
-// Uncompressed block size for optional LZ4 payload framing. RPC envelopes use
-// the same block format as the HTTP/2 transport's direct framed writes, and
-// rpc_read_payload helpers decode those blocks into caller buffers.
+// Uncompressed block size for the optional LZ4 payload framing. The framed
+// bytes are produced lazily, one block at a time, by the HTTP/2 transport
+// (h2.cpp) and decoded by the rpc_read_payload helpers (compress.cpp).
 #define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
 
 struct rpc_write_entry {
@@ -25,7 +25,6 @@ struct rpc_frame {
   int request_id = 0;
   uint32_t lane_id = 0;
   int op = 0;
-  std::vector<unsigned char> payload;
 };
 
 typedef struct {
@@ -73,6 +72,7 @@ extern void rpc_write_queue_free(conn_t *conn);
 extern int rpc_connection_state_init(conn_t *conn);
 extern void rpc_connection_state_free(conn_t *conn);
 extern int rpc_read_wire_frame(conn_t *conn, rpc_frame *frame);
+extern int rpc_frame_ready(conn_t *conn);
 extern int rpc_deliver_response_frame(conn_t *conn, rpc_frame &&frame);
 extern int rpc_activate_frame(conn_t *conn, rpc_frame &&frame);
 extern uint32_t rpc_active_lane_id();
