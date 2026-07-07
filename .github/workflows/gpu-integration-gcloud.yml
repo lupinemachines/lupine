@@ -9,6 +9,7 @@ name: GPU Integration on GCE
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,7 +18,7 @@ permissions:
 jobs:
   gpu-integration:
     name: ${{ matrix.name }} GPU integration on GCE L4
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 300
 
@@ -85,6 +86,14 @@ jobs:
             /usr/share/dotnet \
             "${AGENT_TOOLSDIRECTORY:-}" || true
           df -h
+
+      - name: Restore GPU integration build cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/gpu-integration/${{ matrix.label }}
+          key: gpu-integration-${{ runner.os }}-${{ matrix.label }}-${{ hashFiles('.github/workflows/gpu-integration-gcloud.yml', 'CMakeLists.txt', '*.cpp', '*.h', 'client.exports', 'nvml.exports', 'codegen/**', 'third_party/lz4/**', 'test/run_cuda_samples.sh', 'test/run_custom_tests.sh', 'test/test_*.cu') }}
+          restore-keys: |
+            gpu-integration-${{ runner.os }}-${{ matrix.label }}-
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -291,6 +300,8 @@ jobs:
 
           remote_src="/home/gha/lupine-src"
           remote_ssh="/home/gha/lupine-ssh"
+          cache_root=".ci-cache/gpu-integration/${{ matrix.label }}"
+          mkdir -p "$cache_root/lupine-build" "$cache_root/cuda-samples-build" "$cache_root/ccache"
           "${ssh_base[@]}" "rm -rf '$remote_src' '$remote_ssh'; mkdir -p '$remote_src' '$remote_ssh'"
           tar \
             --exclude=.git \
@@ -341,6 +352,7 @@ jobs:
                 bash \
                 build-essential \
                 ca-certificates \
+                ccache \
                 cmake \
                 curl \
                 freeglut3-dev \
@@ -367,9 +379,16 @@ jobs:
               export CUDA_LIB_DIR=/usr/local/cuda/lib64
               export PATH=/usr/local/cuda/bin:$PATH
               export REPO_ROOT=/src
-              export LUPINE_LIB=/tmp/lupine-build/libcuda.so.1
+              export LUPINE_CACHE_ROOT="/src/.ci-cache/gpu-integration/${MATRIX_LABEL}"
+              export LUPINE_BUILD_DIR="$LUPINE_CACHE_ROOT/lupine-build"
+              export CCACHE_DIR="$LUPINE_CACHE_ROOT/ccache"
+              mkdir -p "$LUPINE_BUILD_DIR" "$LUPINE_CACHE_ROOT/cuda-samples-build" "$CCACHE_DIR"
+              export CCACHE_BASEDIR=/src
+              export CCACHE_COMPILERCHECK=content
+              export CCACHE_COMPRESS=true
+              export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
               export LUPINE_DISABLE_LOCAL=1
-              export SERVER_LOCAL_BIN=/tmp/lupine-build/lupine_driver_server
+              export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
               export SERVER_REMOTE_BIN="/tmp/lupine-driver-server-${MATRIX_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
               export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
               export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
@@ -378,7 +397,8 @@ jobs:
               export PYTORCH_SKIP_LIST=compile_elementwise,microgpt_train
               export CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
               export CUDA_SAMPLES_DIR="/tmp/cuda-samples-${MATRIX_LABEL}"
-              export CUDA_SAMPLES_BUILD_DIR="$CUDA_SAMPLES_DIR/build"
+              export CUDA_SAMPLES_BUILD_DIR="$LUPINE_CACHE_ROOT/cuda-samples-build"
+              export CUDA_SAMPLES_CMAKE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache ${CUDA_SAMPLES_CMAKE_ARGS:-}"
               export CUDA_SAMPLES_ARCH=89
 
               python3 -m venv /tmp/venv-pytorch
@@ -387,15 +407,17 @@ jobs:
               /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
               export PYTHON_BIN=/tmp/venv-pytorch/bin/python
 
-              cmake -S /src -B /tmp/lupine-build \
+              cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCUDAToolkit_ROOT="$CUDA_HOME" \
-                -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
-              cmake --build /tmp/lupine-build --parallel \
+                -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+              cmake --build "$LUPINE_BUILD_DIR" --parallel \
                 --target lupine_driver lupine_nvml lupine_driver_server
-              ln -sf libcuda.so.1 /tmp/lupine-build/libcuda.so
-              ln -sf libnvidia-ml.so.1 /tmp/lupine-build/libnvidia-ml.so
+              ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
+              ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
               BUILD_ONLY=1 BUILD_SAMPLES=auto SAMPLE_SUITE=extended \
                 /src/test/run_cuda_samples.sh
@@ -414,6 +436,8 @@ jobs:
                 echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; custom tests exited $custom_status" >&2
                 exit 1
               fi
+
+              ccache --show-stats || true
             '
           REMOTE
 
@@ -421,6 +445,12 @@ jobs:
           "${ssh_base[@]}" "cd '$remote_src' && paths=''; [ -d test/cuda-samples/results ] && paths=\"\$paths test/cuda-samples/results\"; [ -d test/pytorch/results ] && paths=\"\$paths test/pytorch/results\"; [ -z \"\$paths\" ] || tar -czf - \$paths" > "$results_tgz"
           if [[ -s "$results_tgz" ]]; then
             tar -xzf "$results_tgz"
+          fi
+
+          cache_tgz="$RUNNER_TEMP/gpu-cache-${{ matrix.label }}.tgz"
+          "${ssh_base[@]}" "cd '$remote_src' && [ -d '$cache_root' ] && tar -czf - '$cache_root' || true" > "$cache_tgz"
+          if [[ -s "$cache_tgz" ]]; then
+            tar -xzf "$cache_tgz"
           fi
 
           exit "$remote_status"
