@@ -96,6 +96,7 @@ set(SERVER_OUTPUT lupine_driver_server)
 if (NOT WIN32)
     add_library(${CLIENT_OUTPUT} SHARED ${CLIENT_SOURCES} ${CLIENT_HEADERS})
     target_include_directories(${CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_compile_definitions(${CLIENT_OUTPUT} PRIVATE LUPINE_RPC_CLIENT)
     target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
     target_link_options(${CLIENT_OUTPUT} PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/client.exports"

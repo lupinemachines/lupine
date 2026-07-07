@@ -58,7 +58,7 @@ conn_t conns[16];
 int nconns = 0;
 static bool lupine_rpc_shutting_down = false;
 
-static void lupine_destroy_thread_lane(uint64_t lane_id) {
+void rpc_destroy_thread_lane(uint64_t lane_id) {
   conn_t *active_conns[sizeof(conns) / sizeof(conns[0])];
   int count = 0;
 
@@ -9105,8 +9105,6 @@ void *rpc_client_dispatch_thread(void *arg) {
 }
 
 int rpc_open() {
-  rpc_set_thread_lane_destructor(lupine_destroy_thread_lane);
-
   if (pthread_mutex_lock(&conn_mutex) < 0)
     return -1;
 
