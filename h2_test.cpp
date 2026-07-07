@@ -27,8 +27,6 @@ struct h2_pair {
     }
     rpc_write_queue_free(&client);
     rpc_write_queue_free(&server);
-    rpc_connection_state_free(&client);
-    rpc_connection_state_free(&server);
   }
 };
 
@@ -56,12 +54,23 @@ void init_rpc_read(conn_t *conn) {
           "read mutex init failed");
   require(pthread_cond_init(&conn->read_cond, nullptr) == 0,
           "read cond init failed");
-  require(rpc_connection_state_init(conn) == 0, "rpc state init failed");
 }
 
 void init_rpc_write(conn_t *conn) {
   require(pthread_mutex_init(&conn->write_mutex, nullptr) == 0,
           "write mutex init failed");
+}
+
+void read_rpc_prefix(conn_t *conn) {
+  require(pthread_mutex_lock(&conn->read_mutex) == 0,
+          "prefix read mutex lock failed");
+  require(rpc_read(conn, &conn->read_id, sizeof(conn->read_id)) ==
+              static_cast<int>(sizeof(conn->read_id)),
+          "prefix request id read failed");
+  require(pthread_cond_broadcast(&conn->read_cond) == 0,
+          "prefix cond broadcast failed");
+  require(pthread_mutex_unlock(&conn->read_mutex) == 0,
+          "prefix read mutex unlock failed");
 }
 
 void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
@@ -228,13 +237,8 @@ void test_rpc_write_queue_grows() {
 
   std::vector<int> received(kCount, -1);
   std::thread reader([&] {
-    rpc_frame frame;
-    require(rpc_read_wire_frame(&pair.server, &frame) == 0,
-            "large queue frame read failed");
-    require(frame.request_id == 17, "large queue request id mismatch");
-    require(frame.op == -1, "large queue response op mismatch");
-    require(rpc_deliver_response_frame(&pair.server, std::move(frame)) == 0,
-            "large queue deliver failed");
+    read_rpc_prefix(&pair.server);
+    require(pair.server.read_id == 17, "large queue request id mismatch");
     require(rpc_read_start(&pair.server, 17) == 0,
             "large queue read start failed");
     for (int i = 0; i < kCount; ++i) {
@@ -251,7 +255,7 @@ void test_rpc_write_queue_grows() {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
             "large queue rpc_write failed");
   }
-  require(pair.client.write_queue_count == kCount + 1,
+  require(pair.client.write_queue_count == kCount + 3,
           "large queue count mismatch");
   require(rpc_write_end(&pair.client) == 17, "large queue write_end failed");
   reader.join();
@@ -274,13 +278,8 @@ void test_rpc_lz4_payload_round_trip() {
   std::string received_suffix(suffix.size(), '\0');
   std::vector<char> received(payload.size());
   std::thread reader([&] {
-    rpc_frame frame;
-    require(rpc_read_wire_frame(&pair.server, &frame) == 0,
-            "lz4 payload frame read failed");
-    require(frame.request_id == 23, "lz4 payload request id mismatch");
-    require(frame.op == -1, "lz4 payload response op mismatch");
-    require(rpc_deliver_response_frame(&pair.server, std::move(frame)) == 0,
-            "lz4 payload deliver failed");
+    read_rpc_prefix(&pair.server);
+    require(pair.server.read_id == 23, "lz4 payload request id mismatch");
     require(rpc_read_start(&pair.server, 23) == 0,
             "lz4 payload read start failed");
     require(rpc_read(&pair.server, received_prefix.data(),

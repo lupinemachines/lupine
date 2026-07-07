@@ -21,20 +21,18 @@ struct rpc_write_entry {
 
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
-struct rpc_frame {
-  int request_id = 0;
-  uint32_t lane_id = 0;
-  int op = 0;
-};
+typedef struct conn_t conn_t;
 
-typedef struct {
+struct conn_t {
   lupine_socket_t connfd;
 
   int request_id;
   int read_id;
+  int read_op;
+  uint64_t read_lane_id;
   int write_id;
   int write_op;
-  uint32_t write_lane_id;
+  uint64_t write_lane_id;
 
   pthread_t read_thread;
   pthread_t rpc_thread;
@@ -50,15 +48,13 @@ typedef struct {
   int logical_index;
   int closed;
   void *http2;
-  void *rpc_state;
-} conn_t;
+};
 
 extern int rpc_dispatch(conn_t *conn, int parity);
 extern int rpc_read_start(conn_t *conn, int write_id);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
-extern int rpc_read_end_host_copy_chunk(conn_t *conn);
 
 extern int rpc_wait_for_response(conn_t *conn);
 
@@ -67,14 +63,8 @@ extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
+extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 extern void rpc_write_queue_free(conn_t *conn);
-extern int rpc_connection_state_init(conn_t *conn);
-extern void rpc_connection_state_free(conn_t *conn);
-extern int rpc_read_wire_frame(conn_t *conn, rpc_frame *frame);
-extern int rpc_frame_ready(conn_t *conn);
-extern int rpc_deliver_response_frame(conn_t *conn, rpc_frame &&frame);
-extern int rpc_claim_frame(conn_t *conn, rpc_frame &&frame);
-extern uint32_t rpc_active_lane_id();
 
 extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                          const size_t *sizes,

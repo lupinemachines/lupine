@@ -19,9 +19,12 @@
 // server's 64MB staging chunk, chunked readers stay aligned with the block
 // schedule chosen by the writer.
 //
-// RPC writes also use the HTTP/2 framed path directly, so compression stays
-// lazy and the receiver decodes blocks incrementally into the caller's output
-// buffer.
+// Framed payloads are never materialized in full. The write side only marks
+// the payload iovec (rpc_write_framed) and the HTTP/2 transport compresses
+// one block at a time into a reusable scratch buffer as nghttp2 pulls data
+// (see h2.cpp), so memory stays bounded by a single block and early blocks
+// reach the wire while later blocks are still being compressed. The read
+// side mirrors this with a single compressed-block scratch buffer.
 
 #include "rpc.h"
 
@@ -47,7 +50,9 @@ int lupine_payload_framed(conn_t *conn, size_t total_size) {
 }
 
 // rpc_write_payload writes a bulk data payload, compressing it when the
-// connection negotiated compression and the payload is large enough.
+// connection negotiated compression and the payload is large enough. The
+// payload is compressed lazily by the transport as it streams to the socket;
+// like rpc_write, the caller's buffer must stay valid until rpc_write_end().
 int rpc_write_payload(conn_t *conn, const void *data, size_t size) {
   if (size == 0) {
     return 0;

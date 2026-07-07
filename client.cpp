@@ -29,6 +29,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <thread>
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
@@ -573,11 +574,11 @@ static int lupine_connect_endpoint(conn_t *conn,
       setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
                  sizeof(flag)) < 0 ||
       connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-    LUPINE_LOG_ERROR("Connecting to "
-                     << endpoint.host << " port " << endpoint.port
-                     << " failed: "
-                     << (gai_status != 0 ? gai_strerror(gai_status)
-                                         : strerror(errno)));
+    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
+                                      << endpoint.port << " failed: "
+                                      << (gai_status != 0
+                                              ? gai_strerror(gai_status)
+                                              : strerror(errno)));
     goto error;
   }
 
@@ -592,7 +593,7 @@ static int lupine_connect_endpoint(conn_t *conn,
       pthread_mutex_init(&conn->write_mutex, NULL) != 0 ||
       pthread_mutex_init(&conn->call_mutex, NULL) != 0 ||
       pthread_cond_init(&conn->read_cond, NULL) != 0 ||
-      rpc_connection_state_init(conn) < 0 || rpc_http2_client_init(conn) < 0 ||
+      rpc_http2_client_init(conn) < 0 ||
       pthread_create(&conn->read_thread, NULL, rpc_client_dispatch_thread,
                      (void *)conn) != 0) {
     goto error;
@@ -605,8 +606,6 @@ error:
   if (res != nullptr) {
     freeaddrinfo(res);
   }
-  rpc_connection_state_free(conn);
-  rpc_write_queue_free(conn);
   if (sockfd != -1) {
     close(sockfd);
   }
@@ -639,8 +638,7 @@ static conn_t *lupine_thread_conn_by_index(unsigned int index) {
   // The Linux server forks one child process per accepted connection. CUDA
   // object handles, including primary-context handles used by libcudart, are
   // only valid inside that child process. Keep all client host threads on the
-  // same connection and mirror thread-local current context with
-  // cuCtxSetCurrent.
+  // same connection and mirror thread-local current context with cuCtxSetCurrent.
   return &conns[index];
 }
 
@@ -3162,8 +3160,7 @@ static CUresult lupine_set_current_context_on_route(lupine_route route,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -5906,9 +5903,7 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
     }
     bool final_chunk =
         return_value != CUDA_SUCCESS || offset + chunk == ByteCount;
-    int read_result =
-        final_chunk ? rpc_read_end(conn) : rpc_read_end_host_copy_chunk(conn);
-    if (read_result < 0) {
+    if (rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     if (return_value != CUDA_SUCCESS) {
@@ -5968,9 +5963,7 @@ extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
     }
     bool final_chunk =
         return_value != CUDA_SUCCESS || offset + chunk == ByteCount;
-    int read_result =
-        final_chunk ? rpc_read_end(conn) : rpc_read_end_host_copy_chunk(conn);
-    if (read_result < 0) {
+    if (rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     if (return_value != CUDA_SUCCESS) {
@@ -8953,7 +8946,6 @@ static void lupine_rpc_shutdown() {
   for (int i = 0; i < count; ++i) {
     lupine_join_connection_threads(&conns[i]);
     rpc_write_queue_free(&conns[i]);
-    rpc_connection_state_free(&conns[i]);
   }
 
   if (pthread_mutex_lock(&conn_mutex) == 0) {
