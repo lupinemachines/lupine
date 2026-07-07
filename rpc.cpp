@@ -95,30 +95,13 @@ int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
 
 namespace {
 
-struct rpc_thread_lane_cleanup {
-  uint64_t lane_id = static_cast<uint64_t>(
-      std::hash<std::thread::id>{}(std::this_thread::get_id()));
-  std::vector<conn_t *> conns;
-
-  ~rpc_thread_lane_cleanup() {
-    for (conn_t *conn : conns) {
-      if (conn != nullptr && !conn->closed &&
-          conn->local_request_parity == 0) {
-        rpc_write_lane_termination(conn, lane_id);
-      }
-    }
-  }
-};
-
-static thread_local rpc_thread_lane_cleanup rpc_tls_lane;
+static thread_local uint64_t rpc_tls_lane_id =
+    static_cast<uint64_t>(std::hash<std::thread::id>{}(
+        std::this_thread::get_id()));
 
 uint64_t rpc_thread_lane_id(conn_t *conn) {
-  if (conn != nullptr &&
-      std::find(rpc_tls_lane.conns.begin(), rpc_tls_lane.conns.end(), conn) ==
-          rpc_tls_lane.conns.end()) {
-    rpc_tls_lane.conns.push_back(conn);
-  }
-  return rpc_tls_lane.lane_id;
+  (void)conn;
+  return rpc_tls_lane_id;
 }
 
 } // namespace
