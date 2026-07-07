@@ -52,6 +52,8 @@
 #include "lupine_log.h"
 #include "rpc.h"
 
+extern "C" CUcontext lupine_current_context_for_rpc();
+
 pthread_mutex_t conn_mutex;
 conn_t conns[16];
 int nconns = 0;
@@ -573,11 +575,11 @@ static int lupine_connect_endpoint(conn_t *conn,
       setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
                  sizeof(flag)) < 0 ||
       connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
-                                      << endpoint.port << " failed: "
-                                      << (gai_status != 0
-                                              ? gai_strerror(gai_status)
-                                              : strerror(errno)));
+    LUPINE_LOG_ERROR("Connecting to "
+                     << endpoint.host << " port " << endpoint.port
+                     << " failed: "
+                     << (gai_status != 0 ? gai_strerror(gai_status)
+                                         : strerror(errno)));
     goto error;
   }
 
@@ -637,7 +639,8 @@ static conn_t *lupine_thread_conn_by_index(unsigned int index) {
   // The Linux server forks one child process per accepted connection. CUDA
   // object handles, including primary-context handles used by libcudart, are
   // only valid inside that child process. Keep all client host threads on the
-  // same connection and mirror thread-local current context with cuCtxSetCurrent.
+  // same connection and mirror thread-local current context with
+  // cuCtxSetCurrent.
   return &conns[index];
 }
 
@@ -1746,8 +1749,10 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
     return CUDA_ERROR_FILE_NOT_FOUND;
   }
 
+  CUcontext current_context = lupine_current_context_for_rpc();
   bool failed =
       conn == nullptr || rpc_write_start_request(conn, RPC_cuModuleLoad) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, &mapped_size, sizeof(mapped_size)) < 0 ||
       rpc_write_payload(conn, mapping, mapped_size) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3117,6 +3122,10 @@ static thread_local unsigned long long lupine_ctx_get_device_cache_generation =
 static thread_local CUcontext lupine_ctx_get_device_cache_context = nullptr;
 static thread_local CUdevice lupine_ctx_get_device_cache_device = -1;
 
+extern "C" CUcontext lupine_current_context_for_rpc() {
+  return lupine_current_context;
+}
+
 extern "C" void lupine_invalidate_current_context_cache() {
   lupine_context_cache_generation.fetch_add(1, std::memory_order_acq_rel);
   lupine_ctx_get_device_cache_valid = false;
@@ -3159,7 +3168,8 @@ static CUresult lupine_set_current_context_on_route(lupine_route route,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -4354,8 +4364,10 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
     }
     conn_t *conn = lupine_route_remote_conn(route);
     CUresult return_value;
+    CUcontext current_context = lupine_current_context_for_rpc();
     if (conn == nullptr ||
         rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||
+        rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
         rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5372,9 +5384,11 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  CUcontext current_context = lupine_current_context_for_rpc();
   size_t image_size = image_bytes.size();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
@@ -5438,9 +5452,11 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
 
   conn_t *conn = lupine_rpc_conn_for_current_context();
   CUresult return_value;
+  CUcontext current_context = lupine_current_context_for_rpc();
   size_t image_size = image_bytes.size();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
@@ -5889,8 +5905,10 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext current_context = lupine_current_context_for_rpc();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

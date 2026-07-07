@@ -46,6 +46,7 @@ lupine_manual_handlers() {
       {RPC_cuLibraryLoadData,
        {handle_manual_cuLibraryLoadData, "cuLibraryLoadData"}},
       {RPC_cuCtxCreate_v2, {handle_manual_cuCtxCreate_v2, "cuCtxCreate_v2"}},
+      {RPC_cuMemFree_v2, {handle_manual_cuMemFree_v2, "cuMemFree_v2"}},
       {RPC_cuMemPoolSetAttribute,
        {handle_manual_cuMemPoolSetAttribute, "cuMemPoolSetAttribute"}},
       {RPC_cuMemPoolGetAttribute,

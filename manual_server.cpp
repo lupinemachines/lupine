@@ -60,6 +60,18 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
 static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
 
+static CUresult lupine_set_current_context_for_request(CUcontext ctx) {
+  CUcontext previous = nullptr;
+  CUresult result = cuCtxGetCurrent(&previous);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  if (previous == ctx) {
+    return CUDA_SUCCESS;
+  }
+  return cuCtxSetCurrent(ctx);
+}
+
 // cuMemAllocHost / cuMemFreeHost page-lock and unlock host memory on every
 // call, which costs on the order of a millisecond even for a tiny transfer and
 // dominates the latency of small, frequent copies. The server forks one
@@ -655,11 +667,13 @@ static void *lupine_alloc_capture_scratch(
 
 int handle_manual_cuModuleLoad(conn_t *conn) {
   CUmodule module = nullptr;
+  CUcontext ctx = nullptr;
   size_t image_size = 0;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
+  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
     return -1;
   }
 
@@ -673,7 +687,10 @@ int handle_manual_cuModuleLoad(conn_t *conn) {
     return -1;
   }
 
-  result = cuModuleLoadData(&module, image.data());
+  result = lupine_set_current_context_for_request(ctx);
+  if (result == CUDA_SUCCESS) {
+    result = cuModuleLoadData(&module, image.data());
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
@@ -684,13 +701,15 @@ int handle_manual_cuModuleLoad(conn_t *conn) {
 }
 
 int handle_manual_cuModuleLoadData(conn_t *conn) {
+  CUcontext ctx = nullptr;
   uint32_t kind = 0;
   size_t image_size = 0;
   int request_id;
   CUmodule module = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
+  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_read(conn, &kind, sizeof(kind)) < 0 ||
       rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
     return -1;
   }
@@ -705,13 +724,16 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
     return -1;
   }
 
-  if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
-      kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
-    result = cuModuleLoadFatBinary(&module, image.data());
-  } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
-    result = cuModuleLoadData(&module, image.data());
-  } else {
-    result = CUDA_ERROR_NOT_SUPPORTED;
+  result = lupine_set_current_context_for_request(ctx);
+  if (result == CUDA_SUCCESS) {
+    if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
+        kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
+      result = cuModuleLoadFatBinary(&module, image.data());
+    } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
+      result = cuModuleLoadData(&module, image.data());
+    } else {
+      result = CUDA_ERROR_NOT_SUPPORTED;
+    }
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -723,13 +745,15 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
 }
 
 int handle_manual_cuLibraryLoadData(conn_t *conn) {
+  CUcontext ctx = nullptr;
   uint32_t kind = 0;
   size_t image_size = 0;
   int request_id;
   CUlibrary library = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
+  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_read(conn, &kind, sizeof(kind)) < 0 ||
       rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
     return -1;
   }
@@ -744,21 +768,24 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     return -1;
   }
 
-  if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
-      kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
-    lupine_fatbin_wrapper wrapper = {
-        LUPINE_FATBINC_MAGIC,
-        kind == LUPINE_MODULE_IMAGE_FATBINC_V2 ? 2U : 1U,
-        image.data(),
-        nullptr,
-    };
-    result = cuLibraryLoadData(&library, &wrapper, nullptr, nullptr, 0, nullptr,
-                               nullptr, 0);
-  } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
-    result = cuLibraryLoadData(&library, image.data(), nullptr, nullptr, 0,
-                               nullptr, nullptr, 0);
-  } else {
-    result = CUDA_ERROR_NOT_SUPPORTED;
+  result = lupine_set_current_context_for_request(ctx);
+  if (result == CUDA_SUCCESS) {
+    if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
+        kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
+      lupine_fatbin_wrapper wrapper = {
+          LUPINE_FATBINC_MAGIC,
+          kind == LUPINE_MODULE_IMAGE_FATBINC_V2 ? 2U : 1U,
+          image.data(),
+          nullptr,
+      };
+      result = cuLibraryLoadData(&library, &wrapper, nullptr, nullptr, 0,
+                                 nullptr, nullptr, 0);
+    } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
+      result = cuLibraryLoadData(&library, image.data(), nullptr, nullptr, 0,
+                                 nullptr, nullptr, 0);
+    } else {
+      result = CUDA_ERROR_NOT_SUPPORTED;
+    }
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -788,6 +815,33 @@ int handle_manual_cuCtxCreate_v2(conn_t *conn) {
   result = cuCtxCreate_v2(&ctx, flags, dev);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_cuMemFree_v2(conn_t *conn) {
+  CUcontext ctx = nullptr;
+  CUdeviceptr dptr = 0;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+
+  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_read(conn, &dptr, sizeof(dptr)) < 0) {
+    return -1;
+  }
+
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  result = lupine_set_current_context_for_request(ctx);
+  if (result == CUDA_SUCCESS) {
+    result = cuMemFree_v2(dptr);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -3256,13 +3310,15 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
 }
 
 int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
+  CUcontext ctx = nullptr;
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
   int request_id = 0;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   std::vector<unsigned char> dstHost;
 
-  if (rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
+  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
     return -1;
   }
@@ -3289,6 +3345,15 @@ int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
   }
 
   size_t offset = 0;
+  result = lupine_set_current_context_for_request(ctx);
+  if (result != CUDA_SUCCESS) {
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &result, sizeof(result)) < 0 ||
+        rpc_write_end(conn) < 0) {
+      return -1;
+    }
+    return 0;
+  }
   do {
     size_t chunk = std::min(byteCount - offset, staging_size);
     void *chunk_dst = chunk == 0 ? nullptr : dstHost.data();

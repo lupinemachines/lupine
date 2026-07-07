@@ -1731,6 +1731,7 @@ def main():
             'extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);\n'
             'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
+            'extern "C" CUcontext lupine_current_context_for_rpc();\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
             'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
             'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
@@ -1885,6 +1886,8 @@ def main():
             f.write("        return return_value;\n")
             f.write("    }\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
+            if metadata.routing_kind == "CURRENT_CONTEXT":
+                f.write("    CUcontext current_context = lupine_current_context_for_rpc();\n")
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
@@ -1948,6 +1951,8 @@ def main():
                     name=function.name.format()
                 )
             )
+            if metadata.routing_kind == "CURRENT_CONTEXT":
+                f.write("        rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||\n")
 
             for operation in operations:
                 operation.client_rpc_write(f)
@@ -2068,6 +2073,13 @@ def main():
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
+            "static CUresult lupine_set_current_context_for_request(CUcontext ctx) {\n"
+            "    CUcontext previous = nullptr;\n"
+            "    CUresult result = cuCtxGetCurrent(&previous);\n"
+            "    if (result != CUDA_SUCCESS) return result;\n"
+            "    if (previous == ctx) return CUDA_SUCCESS;\n"
+            "    return cuCtxSetCurrent(ctx);\n"
+            "}\n\n"
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             if metadata.disabled_server:
@@ -2086,6 +2098,8 @@ def main():
             for operation in operations:
                 f.write(operation.server_declaration)
 
+            if metadata.routing_kind == "CURRENT_CONTEXT":
+                f.write("    CUcontext current_context;\n")
             f.write("    int request_id;\n")
 
             # we only generate return from non-void types
@@ -2099,6 +2113,8 @@ def main():
                 f.write("    void* lupine_intercept_result;\n")
 
             f.write("    if (\n")
+            if metadata.routing_kind == "CURRENT_CONTEXT":
+                f.write("        rpc_read(conn, &current_context, sizeof(current_context)) < 0 ||\n")
             for operation in operations:
                 if (
                     isinstance(operation, NullTerminatedOperation)
@@ -2126,12 +2142,23 @@ def main():
                         params.append(op.server_reference)
 
             if function.return_type.format() != "void":
-                f.write(
-                    "    lupine_intercept_result = {name}({params});\n\n".format(
-                        name=server_call_name(function.name.format()),
-                        params=", ".join(params),
+                if metadata.routing_kind == "CURRENT_CONTEXT":
+                    f.write("    lupine_intercept_result = lupine_set_current_context_for_request(current_context);\n")
+                    f.write("    if (lupine_intercept_result == CUDA_SUCCESS) {\n")
+                    f.write(
+                        "        lupine_intercept_result = {name}({params});\n".format(
+                            name=server_call_name(function.name.format()),
+                            params=", ".join(params),
+                        )
                     )
-                )
+                    f.write("    }\n\n")
+                else:
+                    f.write(
+                        "    lupine_intercept_result = {name}({params});\n\n".format(
+                            name=server_call_name(function.name.format()),
+                            params=", ".join(params),
+                        )
+                    )
             else:
                 f.write(
                     "    {name}({params});\n\n".format(

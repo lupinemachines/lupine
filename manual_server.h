@@ -16,6 +16,7 @@ int handle_manual_cuModuleLoad(conn_t *conn);
 int handle_manual_cuModuleLoadData(conn_t *conn);
 int handle_manual_cuLibraryLoadData(conn_t *conn);
 int handle_manual_cuCtxCreate_v2(conn_t *conn);
+int handle_manual_cuMemFree_v2(conn_t *conn);
 int handle_manual_cuMemPoolSetAttribute(conn_t *conn);
 int handle_manual_cuMemPoolGetAttribute(conn_t *conn);
 int handle_manual_cuPointerGetAttribute(conn_t *conn);

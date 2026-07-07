@@ -74,6 +74,7 @@ extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx);
 extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);
 extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);
 extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);
+extern "C" CUcontext lupine_current_context_for_rpc();
 extern "C" void lupine_invalidate_current_context_cache();
 extern "C" CUresult
 lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
@@ -1243,8 +1244,10 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext current_context = lupine_current_context_for_rpc();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemGetInfo_v2) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, free, sizeof(size_t)) < 0 ||
       rpc_write(conn, total, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1270,7 +1273,9 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext current_context = lupine_current_context_for_rpc();
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cuMemAlloc_v2) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &bytesize, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1310,8 +1315,10 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext current_context = lupine_current_context_for_rpc();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemAllocPitch_v2) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, pPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &WidthInBytes, sizeof(size_t)) < 0 ||
@@ -2952,8 +2959,10 @@ CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext current_context = lupine_current_context_for_rpc();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuStreamCreate) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, phStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2981,8 +2990,10 @@ CUresult cuStreamCreateWithPriority(CUstream *phStream, unsigned int flags,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext current_context = lupine_current_context_for_rpc();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuStreamCreateWithPriority) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, phStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &priority, sizeof(int)) < 0 ||
@@ -3327,7 +3338,9 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext current_context = lupine_current_context_for_rpc();
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventCreate) < 0 ||
+      rpc_write(conn, &current_context, sizeof(current_context)) < 0 ||
       rpc_write(conn, phEvent, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||

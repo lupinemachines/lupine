@@ -20,6 +20,16 @@
 
 #include "nvml_server.h"
 
+static CUresult lupine_set_current_context_for_request(CUcontext ctx) {
+  CUcontext previous = nullptr;
+  CUresult result = cuCtxGetCurrent(&previous);
+  if (result != CUDA_SUCCESS)
+    return result;
+  if (previous == ctx)
+    return CUDA_SUCCESS;
+  return cuCtxSetCurrent(ctx);
+}
+
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;
   int request_id;
@@ -1789,16 +1799,22 @@ ERROR_0:
 int handle_cuMemGetInfo_v2(conn_t *conn) {
   size_t free;
   size_t total;
+  CUcontext current_context;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &free, sizeof(size_t)) < 0 ||
+  if (rpc_read(conn, &current_context, sizeof(current_context)) < 0 ||
+      rpc_read(conn, &free, sizeof(size_t)) < 0 ||
       rpc_read(conn, &total, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemGetInfo_v2(&free, &total);
+  lupine_intercept_result =
+      lupine_set_current_context_for_request(current_context);
+  if (lupine_intercept_result == CUDA_SUCCESS) {
+    lupine_intercept_result = cuMemGetInfo_v2(&free, &total);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &free, sizeof(size_t)) < 0 ||
@@ -1815,16 +1831,22 @@ ERROR_0:
 int handle_cuMemAlloc_v2(conn_t *conn) {
   CUdeviceptr dptr;
   size_t bytesize;
+  CUcontext current_context;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &current_context, sizeof(current_context)) < 0 ||
+      rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &bytesize, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemAlloc_v2(&dptr, bytesize);
+  lupine_intercept_result =
+      lupine_set_current_context_for_request(current_context);
+  if (lupine_intercept_result == CUDA_SUCCESS) {
+    lupine_intercept_result = cuMemAlloc_v2(&dptr, bytesize);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -1843,9 +1865,11 @@ int handle_cuMemAllocPitch_v2(conn_t *conn) {
   size_t WidthInBytes;
   size_t Height;
   unsigned int ElementSizeBytes;
+  CUcontext current_context;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &current_context, sizeof(current_context)) < 0 ||
+      rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &pPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &WidthInBytes, sizeof(size_t)) < 0 ||
       rpc_read(conn, &Height, sizeof(size_t)) < 0 ||
@@ -1855,8 +1879,12 @@ int handle_cuMemAllocPitch_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemAllocPitch_v2(&dptr, &pPitch, WidthInBytes,
-                                               Height, ElementSizeBytes);
+  lupine_intercept_result =
+      lupine_set_current_context_for_request(current_context);
+  if (lupine_intercept_result == CUDA_SUCCESS) {
+    lupine_intercept_result = cuMemAllocPitch_v2(&dptr, &pPitch, WidthInBytes,
+                                                 Height, ElementSizeBytes);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -3767,16 +3795,22 @@ ERROR_0:
 int handle_cuStreamCreate(conn_t *conn) {
   CUstream phStream;
   unsigned int Flags;
+  CUcontext current_context;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &phStream, sizeof(CUstream)) < 0 ||
+  if (rpc_read(conn, &current_context, sizeof(current_context)) < 0 ||
+      rpc_read(conn, &phStream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuStreamCreate(&phStream, Flags);
+  lupine_intercept_result =
+      lupine_set_current_context_for_request(current_context);
+  if (lupine_intercept_result == CUDA_SUCCESS) {
+    lupine_intercept_result = cuStreamCreate(&phStream, Flags);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phStream, sizeof(CUstream)) < 0 ||
@@ -3793,9 +3827,11 @@ int handle_cuStreamCreateWithPriority(conn_t *conn) {
   CUstream phStream;
   unsigned int flags;
   int priority;
+  CUcontext current_context;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &phStream, sizeof(CUstream)) < 0 ||
+  if (rpc_read(conn, &current_context, sizeof(current_context)) < 0 ||
+      rpc_read(conn, &phStream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &priority, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -3804,7 +3840,11 @@ int handle_cuStreamCreateWithPriority(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuStreamCreateWithPriority(&phStream, flags, priority);
+      lupine_set_current_context_for_request(current_context);
+  if (lupine_intercept_result == CUDA_SUCCESS) {
+    lupine_intercept_result =
+        cuStreamCreateWithPriority(&phStream, flags, priority);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phStream, sizeof(CUstream)) < 0 ||
@@ -4173,16 +4213,22 @@ ERROR_0:
 int handle_cuEventCreate(conn_t *conn) {
   CUevent phEvent;
   unsigned int Flags;
+  CUcontext current_context;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &phEvent, sizeof(CUevent)) < 0 ||
+  if (rpc_read(conn, &current_context, sizeof(current_context)) < 0 ||
+      rpc_read(conn, &phEvent, sizeof(CUevent)) < 0 ||
       rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuEventCreate(&phEvent, Flags);
+  lupine_intercept_result =
+      lupine_set_current_context_for_request(current_context);
+  if (lupine_intercept_result == CUDA_SUCCESS) {
+    lupine_intercept_result = cuEventCreate(&phEvent, Flags);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phEvent, sizeof(CUevent)) < 0 ||
