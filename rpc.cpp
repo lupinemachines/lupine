@@ -1,5 +1,6 @@
 #include "rpc.h"
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cstdlib>
 #include <deque>
@@ -7,7 +8,7 @@
 #include <string.h>
 #include <unordered_map>
 
-static int rpc_write_control_frame(conn_t *conn, uint32_t lane_id, int op);
+static int rpc_write_lane_termination(conn_t *conn, uint32_t lane_id);
 
 namespace {
 
@@ -22,34 +23,28 @@ struct rpc_connection_state {
   std::unordered_map<int, std::deque<rpc_frame>> responses;
 };
 
-struct rpc_active_frame {
-  conn_t *conn = nullptr;
-  int request_id = 0;
-  uint32_t lane_id = 0;
-  int op = 0;
-};
-
-static thread_local rpc_active_frame tls_active_frame;
-
-struct rpc_thread_lane_entry {
+struct rpc_active_call {
   conn_t *conn = nullptr;
   uint32_t lane_id = 0;
 };
 
-struct rpc_thread_lanes {
-  std::vector<rpc_thread_lane_entry> lanes;
+static thread_local rpc_active_call tls_active_call;
 
-  ~rpc_thread_lanes() {
-    for (const auto &lane : lanes) {
-      if (lane.conn != nullptr && !lane.conn->closed) {
-        rpc_write_control_frame(lane.conn, lane.lane_id,
-                                LUPINE_RPC_RELEASE_LANE);
+struct rpc_client_thread_state {
+  uint32_t lane_id = 0;
+  std::vector<conn_t *> conns;
+
+  ~rpc_client_thread_state() {
+    for (conn_t *conn : conns) {
+      if (conn != nullptr && !conn->closed) {
+        rpc_write_lane_termination(conn, lane_id);
       }
     }
   }
 };
 
-static thread_local rpc_thread_lanes tls_thread_lanes;
+static std::atomic<uint32_t> next_client_lane_id{0};
+static thread_local rpc_client_thread_state tls_client_thread_state;
 
 rpc_connection_state *rpc_state(conn_t *conn) {
   if (conn == nullptr) {
@@ -59,14 +54,19 @@ rpc_connection_state *rpc_state(conn_t *conn) {
 }
 
 uint32_t rpc_lane_for_client_thread(conn_t *conn) {
-  for (const auto &lane : tls_thread_lanes.lanes) {
-    if (lane.conn == conn) {
-      return lane.lane_id;
-    }
+  if (conn == nullptr) {
+    return 0;
   }
-  uint32_t lane_id = ++conn->next_lane_id;
-  tls_thread_lanes.lanes.push_back({conn, lane_id});
-  return lane_id;
+  if (tls_client_thread_state.lane_id == 0) {
+    tls_client_thread_state.lane_id =
+        next_client_lane_id.fetch_add(1, std::memory_order_relaxed) + 1;
+  }
+  if (std::find(tls_client_thread_state.conns.begin(),
+                tls_client_thread_state.conns.end(),
+                conn) == tls_client_thread_state.conns.end()) {
+    tls_client_thread_state.conns.push_back(conn);
+  }
+  return tls_client_thread_state.lane_id;
 }
 
 uint32_t rpc_lane_for_outgoing_request(conn_t *conn) {
@@ -76,7 +76,7 @@ uint32_t rpc_lane_for_outgoing_request(conn_t *conn) {
   if (conn->local_request_parity == 0) {
     return rpc_lane_for_client_thread(conn);
   }
-  return tls_active_frame.conn == conn ? tls_active_frame.lane_id : 0;
+  return tls_active_call.conn == conn ? tls_active_call.lane_id : 0;
 }
 
 void rpc_close_with_broadcast(conn_t *conn) {
@@ -184,8 +184,8 @@ static int rpc_write_current_frame_locked(conn_t *conn) {
   return rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
 }
 
-static int rpc_write_control_frame(conn_t *conn, uint32_t lane_id, int op) {
-  if (conn == nullptr || conn->closed) {
+static int rpc_write_lane_termination(conn_t *conn, uint32_t lane_id) {
+  if (conn == nullptr || conn->closed || lane_id == 0) {
     return -1;
   }
   if (pthread_mutex_lock(&conn->call_mutex) != 0) {
@@ -197,7 +197,7 @@ static int rpc_write_control_frame(conn_t *conn, uint32_t lane_id, int op) {
   }
   conn->request_id = conn->request_id + 2;
   conn->write_id = conn->request_id;
-  conn->write_op = op;
+  conn->write_op = LUPINE_RPC_TERMINATE_LANE;
   conn->write_lane_id = lane_id;
   int result = rpc_write_queue_reset(conn, 1) < 0
                    ? -1
@@ -238,14 +238,12 @@ int rpc_read_wire_frame(conn_t *conn, rpc_frame *frame) {
   return 0;
 }
 
-static int rpc_activate_frame_locked(conn_t *conn, rpc_frame &&frame) {
+static int rpc_claim_frame_locked(conn_t *conn, rpc_frame &&frame) {
   if (conn == nullptr || conn->read_id != frame.request_id) {
     return -1;
   }
-  tls_active_frame.conn = conn;
-  tls_active_frame.request_id = frame.request_id;
-  tls_active_frame.lane_id = frame.lane_id;
-  tls_active_frame.op = frame.op;
+  tls_active_call.conn = conn;
+  tls_active_call.lane_id = frame.lane_id;
   return 0;
 }
 
@@ -258,21 +256,23 @@ int rpc_frame_ready(conn_t *conn) {
   return result == 0 ? 0 : -1;
 }
 
-int rpc_activate_frame(conn_t *conn, rpc_frame &&frame) {
+int rpc_claim_frame(conn_t *conn, rpc_frame &&frame) {
   if (conn == nullptr || pthread_mutex_lock(&conn->read_mutex) != 0) {
     return -1;
   }
   while (!conn->closed && conn->read_id != frame.request_id) {
     pthread_cond_wait(&conn->read_cond, &conn->read_mutex);
   }
-  if (conn->closed || rpc_activate_frame_locked(conn, std::move(frame)) < 0) {
+  if (conn->closed || rpc_claim_frame_locked(conn, std::move(frame)) < 0) {
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
   return 0;
 }
 
-uint32_t rpc_active_lane_id() { return tls_active_frame.lane_id; }
+uint32_t rpc_active_lane_id() {
+  return tls_active_call.conn != nullptr ? tls_active_call.lane_id : 0;
+}
 
 int rpc_deliver_response_frame(conn_t *conn, rpc_frame &&frame) {
   rpc_connection_state *state = rpc_state(conn);
@@ -350,7 +350,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
   rpc_frame frame = std::move(state->remote_requests.front());
   state->remote_requests.pop_front();
   int op = frame.op;
-  if (rpc_activate_frame_locked(conn, std::move(frame)) < 0) {
+  if (rpc_claim_frame_locked(conn, std::move(frame)) < 0) {
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
@@ -391,7 +391,7 @@ int rpc_read_start(conn_t *conn, int write_id) {
   if (state->responses[write_id].empty()) {
     state->responses.erase(write_id);
   }
-  if (rpc_activate_frame_locked(conn, std::move(frame)) < 0) {
+  if (rpc_claim_frame_locked(conn, std::move(frame)) < 0) {
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
@@ -416,11 +416,11 @@ int rpc_drain(conn_t *conn, size_t size) {
 }
 
 int rpc_read_end(conn_t *conn) {
-  if (tls_active_frame.conn != conn) {
+  if (tls_active_call.conn != conn) {
     return -1;
   }
-  int read_id = tls_active_frame.request_id;
-  tls_active_frame = {};
+  int read_id = conn->read_id;
+  tls_active_call = {};
   conn->read_id = 0;
   if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
       pthread_mutex_unlock(&conn->read_mutex) < 0) {

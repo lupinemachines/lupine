@@ -19,7 +19,7 @@ struct rpc_write_entry {
   unsigned char framed;
 };
 
-#define LUPINE_RPC_RELEASE_LANE (-2)
+#define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
 struct rpc_frame {
   int request_id = 0;
@@ -35,7 +35,6 @@ typedef struct {
   int write_id;
   int write_op;
   uint32_t write_lane_id;
-  uint32_t next_lane_id;
 
   pthread_t read_thread;
   pthread_t rpc_thread;
@@ -74,7 +73,7 @@ extern void rpc_connection_state_free(conn_t *conn);
 extern int rpc_read_wire_frame(conn_t *conn, rpc_frame *frame);
 extern int rpc_frame_ready(conn_t *conn);
 extern int rpc_deliver_response_frame(conn_t *conn, rpc_frame &&frame);
-extern int rpc_activate_frame(conn_t *conn, rpc_frame &&frame);
+extern int rpc_claim_frame(conn_t *conn, rpc_frame &&frame);
 extern uint32_t rpc_active_lane_id();
 
 extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,

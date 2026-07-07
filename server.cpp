@@ -1,7 +1,6 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -231,9 +230,9 @@ struct lupine_lane {
   uint32_t id = 0;
   std::mutex mutex;
   std::condition_variable cond;
-  std::deque<rpc_frame> queue;
+  rpc_frame frame;
+  bool has_frame = false;
   bool stopping = false;
-  bool finished = false;
   std::thread worker;
 };
 
@@ -244,55 +243,49 @@ struct lupine_lane_map {
   std::unordered_map<uint32_t, std::shared_ptr<lupine_lane>> lanes;
 };
 
-static void lupine_run_lane(conn_t *conn, std::shared_ptr<lupine_lane> lane) {
+static void lupine_remove_lane(lupine_lane_map *lane_map,
+                               const std::shared_ptr<lupine_lane> &lane) {
+  std::lock_guard<std::mutex> lock(lane_map->mutex);
+  auto it = lane_map->lanes.find(lane->id);
+  if (it == lane_map->lanes.end() || it->second != lane) {
+    return;
+  }
+  if (lane->worker.joinable()) {
+    lane->worker.detach();
+  }
+  lane_map->lanes.erase(it);
+}
+
+static void lupine_run_lane(lupine_lane_map *lane_map,
+                            std::shared_ptr<lupine_lane> lane) {
+  conn_t *conn = lane_map->conn;
   for (;;) {
     rpc_frame frame;
     {
       std::unique_lock<std::mutex> lock(lane->mutex);
       lane->cond.wait(lock,
-                      [&]() { return lane->stopping || !lane->queue.empty(); });
-      if (lane->queue.empty()) {
+                      [&]() { return lane->stopping || lane->has_frame; });
+      if (!lane->has_frame) {
         break;
       }
-      frame = std::move(lane->queue.front());
-      lane->queue.pop_front();
+      frame = lane->frame;
+      lane->has_frame = false;
     }
 
     int op = frame.op;
-    if (op == LUPINE_RPC_RELEASE_LANE) {
-      if (rpc_activate_frame(conn, std::move(frame)) == 0) {
+    if (op == LUPINE_RPC_TERMINATE_LANE) {
+      if (rpc_claim_frame(conn, std::move(frame)) == 0) {
         rpc_read_end(conn);
       }
+      lupine_remove_lane(lane_map, lane);
       break;
     }
-    if (rpc_activate_frame(conn, std::move(frame)) < 0 ||
+    if (rpc_claim_frame(conn, std::move(frame)) < 0 ||
         lupine_handle_rpc_request(conn, op) < 0) {
       conn->closed = 1;
       pthread_cond_broadcast(&conn->read_cond);
       break;
     }
-  }
-
-  std::lock_guard<std::mutex> lock(lane->mutex);
-  lane->finished = true;
-}
-
-static void lupine_cleanup_finished_lanes(lupine_lane_map *lane_map) {
-  for (auto it = lane_map->lanes.begin(); it != lane_map->lanes.end();) {
-    std::shared_ptr<lupine_lane> lane = it->second;
-    bool finished = false;
-    {
-      std::lock_guard<std::mutex> lock(lane->mutex);
-      finished = lane->finished;
-    }
-    if (!finished) {
-      ++it;
-      continue;
-    }
-    if (lane->worker.joinable()) {
-      lane->worker.join();
-    }
-    it = lane_map->lanes.erase(it);
   }
 }
 
@@ -300,7 +293,6 @@ static int lupine_enqueue_lane(lupine_lane_map *lane_map, rpc_frame &&frame) {
   std::shared_ptr<lupine_lane> lane;
   {
     std::lock_guard<std::mutex> lock(lane_map->mutex);
-    lupine_cleanup_finished_lanes(lane_map);
     auto it = lane_map->lanes.find(frame.lane_id);
     if (it == lane_map->lanes.end()) {
       if (lane_map->lanes.size() >= lane_map->max_lanes) {
@@ -310,9 +302,8 @@ static int lupine_enqueue_lane(lupine_lane_map *lane_map, rpc_frame &&frame) {
       }
       lane = std::make_shared<lupine_lane>();
       lane->id = frame.lane_id;
-      conn_t *conn = lane_map->conn;
       lane->worker =
-          std::thread([conn, lane]() { lupine_run_lane(conn, lane); });
+          std::thread([lane_map, lane]() { lupine_run_lane(lane_map, lane); });
       lane_map->lanes.emplace(frame.lane_id, lane);
     } else {
       lane = it->second;
@@ -321,7 +312,11 @@ static int lupine_enqueue_lane(lupine_lane_map *lane_map, rpc_frame &&frame) {
 
   {
     std::lock_guard<std::mutex> lock(lane->mutex);
-    lane->queue.push_back(std::move(frame));
+    if (lane->has_frame) {
+      return -1;
+    }
+    lane->frame = frame;
+    lane->has_frame = true;
   }
   lane->cond.notify_one();
   return 0;
