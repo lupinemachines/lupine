@@ -16,8 +16,6 @@ $ docker run --rm \
 GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
 ```
 
-Are you interested in a paid, hosted GPU? Send me an email at kevmo314@gmail.com, we're considering this offering.
-
 ## Mac Demo
 
 LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to a Linux GPU server.
