@@ -153,6 +153,7 @@ if [[ ! -d "$CUDA_SAMPLES_DIR/.git" ]]; then
   fi
   git clone "$CUDA_SAMPLES_URL" "$CUDA_SAMPLES_DIR"
 fi
+git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
 
 detect_cuda_samples_ref() {
   local release=""
