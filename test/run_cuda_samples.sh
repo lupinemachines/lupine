@@ -50,12 +50,14 @@ CORE_SAMPLES=(
   simpleAttributes simpleCallback simpleDrvRuntime simplePrintf simpleTemplates
   simpleAtomicIntrinsics simpleAtomicIntrinsics_nvrtc simpleStreams simpleMultiCopy simpleMultiGPU
   simpleOccupancy simpleCooperativeGroups
+  FunctionPointers
   simpleCubemapTexture simpleLayeredTexture simpleSurfaceWrite
   simpleTexture simpleTextureDrv simplePitchLinearTexture
   mergeSort reduction reductionMultiBlockCG scan sortingNetworks histogram scalarProd transpose
   BlackScholes BlackScholes_nvrtc binomialOptions binomialOptions_nvrtc SobolQRNG quasirandomGenerator
   quasirandomGenerator_nvrtc
   simpleCudaGraphs streamOrderedAllocation cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter
+  vectorAddMMAP
   simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation
@@ -66,10 +68,12 @@ CORE_SAMPLES=(
   convolutionFFT2D convolutionSeparable convolutionTexture dwtHaar1D dxtc eigenvalues fastWalshTransform FDTD3d
   HSOpticalFlow
   MC_EstimatePiP MC_EstimatePiQ MC_EstimatePiInlineP MC_EstimatePiInlineQ
-  MC_SingleAsianOptionP
+  MC_SingleAsianOptionP MonteCarloMultiGPU
   cudaGraphsPerfScaling graphConditionalNodes graphMemoryNodes graphMemoryFootprint jacobiCudaGraphs
   dct8x8 lineOfSight nbody recursiveGaussian stereoDisparity
-  simpleTexture3D
+  Mandelbrot SobelFilter bicubicTexture bilateralFilter bindlessTexture boxFilter
+  imageDenoising marchingCubes particles simpleGL smokeParticles
+  simpleTexture3D volumeFiltering volumeRender
   radixSortThrust segmentationTreeThrust template interval
   dsl ptxgen ptxjit matrixMulDynlinkJIT threadMigration
 )
@@ -85,6 +89,7 @@ LIBRARY_SAMPLES=(
   MersenneTwisterGP11213
   nvJPEG nvJPEG_encoder
   NV12toBGRandResize
+  randomFog
   jitLto
   watershedSegmentationNPP
 )
@@ -281,8 +286,32 @@ sample_args() {
     cuSolverRf)
       printf '%s\0' "-file=$(resolve_sample_srcdir cuSolverRf)/lap2D_5pt_n100.mtx"
       ;;
+    bicubicTexture)
+      printf '%s\0' -mode=0 -file=data/0_nearest.ppm
+      ;;
+    bilateralFilter)
+      printf '%s\0' -radius=5 -file=data/ref_05.ppm
+      ;;
+    bindlessTexture)
+      printf '%s\0' -file=data/ref_bindlessTexture.bin
+      ;;
+    boxFilter)
+      printf '%s\0' -radius=14 -file=data/ref_14.ppm
+      ;;
     eigenvalues)
       printf '%s\0' -matrix-size=128 -iters-timing=1
+      ;;
+    FunctionPointers)
+      printf '%s\0' -mode=0 -file=data/ref_orig.pgm
+      ;;
+    imageDenoising)
+      printf '%s\0' -kernel=0 -file=data/ref_passthru.ppm
+      ;;
+    Mandelbrot)
+      printf '%s\0' -mode=0 -file=data/Mandelbrot_fp32.ppm
+      ;;
+    marchingCubes)
+      printf '%s\0' -dump=0 -file=data/posArray.bin
       ;;
     matrixMul|matrixMul_nvrtc)
       printf '%s\0' -wA=32 -hA=32 -wB=32 -hB=32
@@ -305,8 +334,14 @@ sample_args() {
     oceanFFT)
       printf '%s\0' -qatest
       ;;
+    particles)
+      printf '%s\0' -file=data/ref_particles.bin
+      ;;
     ptxgen)
       printf '%s\0' test.ll
+      ;;
+    randomFog)
+      printf '%s\0' -qatest
       ;;
     reduction|threadFenceReduction)
       printf '%s\0' -n=1024 -threads=64 -maxblocks=16
@@ -314,11 +349,26 @@ sample_args() {
     recursiveGaussian)
       printf '%s\0' -benchmark
       ;;
+    simpleGL)
+      printf '%s\0' -file=data/ref_simpleGL.bin
+      ;;
+    smokeParticles)
+      printf '%s\0' -qatest
+      ;;
+    SobelFilter)
+      printf '%s\0' -mode=0 -file=data/ref_orig.pgm
+      ;;
     simpleTexture3D)
       printf '%s\0' -file=data/ref_texture3D.bin
       ;;
     transpose)
       printf '%s\0' -dimX=512 -dimY=512
+      ;;
+    volumeFiltering)
+      printf '%s\0' -file=data/ref_volumefilter.ppm
+      ;;
+    volumeRender)
+      printf '%s\0' --file=ref_volume.ppm
       ;;
   esac
 }
@@ -328,7 +378,10 @@ sample_workdir() {
   local sample_exe="$2"
 
   case "$sample" in
-    nbody|NV12toBGRandResize|oceanFFT|ptxgen|recursiveGaussian|simpleTexture3D)
+    bicubicTexture|bilateralFilter|bindlessTexture|boxFilter|FunctionPointers|\
+      imageDenoising|Mandelbrot|marchingCubes|nbody|NV12toBGRandResize|\
+      oceanFFT|particles|ptxgen|randomFog|recursiveGaussian|simpleGL|\
+      smokeParticles|SobelFilter|simpleTexture3D|volumeFiltering|volumeRender)
       printf '%s\n' "$(resolve_sample_srcdir "$sample")"
       return 0
       ;;
