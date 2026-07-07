@@ -1,5 +1,6 @@
 #include "rpc.h"
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cstdlib>
 #include <functional>
@@ -95,16 +96,35 @@ int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
 
 namespace {
 
-static thread_local uint64_t rpc_tls_lane_id =
-    static_cast<uint64_t>(std::hash<std::thread::id>{}(
-        std::this_thread::get_id()));
+static std::atomic<rpc_thread_lane_destructor_t> rpc_thread_lane_destructor{
+    nullptr};
+
+struct rpc_thread_lane {
+  uint64_t id = static_cast<uint64_t>(
+      std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+  ~rpc_thread_lane() {
+    auto destructor =
+        rpc_thread_lane_destructor.load(std::memory_order_acquire);
+    if (destructor != nullptr) {
+      destructor(id);
+    }
+  }
+};
+
+static thread_local rpc_thread_lane rpc_tls_lane;
 
 uint64_t rpc_thread_lane_id(conn_t *conn) {
   (void)conn;
-  return rpc_tls_lane_id;
+  return rpc_tls_lane.id;
 }
 
 } // namespace
+
+void rpc_set_thread_lane_destructor(
+    rpc_thread_lane_destructor_t destructor) {
+  rpc_thread_lane_destructor.store(destructor, std::memory_order_release);
+}
 
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;

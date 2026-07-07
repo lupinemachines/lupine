@@ -58,6 +58,27 @@ conn_t conns[16];
 int nconns = 0;
 static bool lupine_rpc_shutting_down = false;
 
+static void lupine_destroy_thread_lane(uint64_t lane_id) {
+  conn_t *active_conns[sizeof(conns) / sizeof(conns[0])];
+  int count = 0;
+
+  if (pthread_mutex_lock(&conn_mutex) != 0) {
+    return;
+  }
+  if (!lupine_rpc_shutting_down) {
+    for (int i = 0; i < nconns; ++i) {
+      if (!conns[i].closed) {
+        active_conns[count++] = &conns[i];
+      }
+    }
+  }
+  pthread_mutex_unlock(&conn_mutex);
+
+  for (int i = 0; i < count; ++i) {
+    rpc_write_lane_termination(active_conns[i], lane_id);
+  }
+}
+
 const char *DEFAULT_PORT = "14833";
 
 std::map<void *, void *> host_funcs;
@@ -9084,6 +9105,8 @@ void *rpc_client_dispatch_thread(void *arg) {
 }
 
 int rpc_open() {
+  rpc_set_thread_lane_destructor(lupine_destroy_thread_lane);
+
   if (pthread_mutex_lock(&conn_mutex) < 0)
     return -1;
 
