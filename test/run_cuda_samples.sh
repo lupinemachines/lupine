@@ -49,7 +49,7 @@ CORE_SAMPLES=(
   simpleAssert simpleAssert_nvrtc
   simpleAttributes simpleCallback simpleDrvRuntime simplePrintf simpleTemplates
   simpleAtomicIntrinsics simpleAtomicIntrinsics_nvrtc simpleStreams simpleMultiCopy simpleMultiGPU
-  simpleOccupancy simpleCooperativeGroups
+  simpleOccupancy simpleCooperativeGroups simpleIPC
   simpleCubemapTexture simpleLayeredTexture simpleSurfaceWrite
   simpleTexture simpleTextureDrv simplePitchLinearTexture
   mergeSort reduction reductionMultiBlockCG scan sortingNetworks histogram scalarProd transpose

@@ -1497,6 +1497,15 @@ CUresult cuIpcOpenMemHandle_v2(CUdeviceptr *pdptr, CUipcMemHandle handle,
   return return_value;
 }
 
+#ifdef cuIpcOpenMemHandle
+#undef cuIpcOpenMemHandle
+#endif
+extern "C" CUresult cuIpcOpenMemHandle(CUdeviceptr *pdptr,
+                                        CUipcMemHandle handle,
+                                        unsigned int Flags) {
+  return cuIpcOpenMemHandle_v2(pdptr, handle, Flags);
+}
+
 CUresult cuIpcCloseMemHandle(CUdeviceptr dptr) {
   lupine_route route = lupine_route_for_deviceptr(dptr);
   CUresult return_value;
@@ -7456,6 +7465,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuIpcGetEventHandle", (void *)cuIpcGetEventHandle},
     {"cuIpcOpenEventHandle", (void *)cuIpcOpenEventHandle},
     {"cuIpcGetMemHandle", (void *)cuIpcGetMemHandle},
+    {"cuIpcOpenMemHandle", (void *)cuIpcOpenMemHandle},
     {"cuIpcOpenMemHandle_v2", (void *)cuIpcOpenMemHandle_v2},
     {"cuIpcCloseMemHandle", (void *)cuIpcCloseMemHandle},
     {"cuMemcpy", (void *)cuMemcpy},
