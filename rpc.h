@@ -6,9 +6,9 @@
 #include <stdint.h>
 #include <vector>
 
-// Uncompressed block size for the optional LZ4 payload framing. The framed
-// bytes are produced lazily, one block at a time, by the HTTP/2 transport
-// (h2.cpp) and decoded by the rpc_read_payload helpers (compress.cpp).
+// Uncompressed block size for optional LZ4 payload framing. RPC envelopes use
+// the same block format as the HTTP/2 transport's direct framed writes, and
+// rpc_read_payload helpers decode those blocks into caller buffers.
 #define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
 
 struct rpc_write_entry {
@@ -19,6 +19,15 @@ struct rpc_write_entry {
   unsigned char framed;
 };
 
+#define LUPINE_RPC_RELEASE_LANE (-2)
+
+struct rpc_frame {
+  int request_id = 0;
+  uint32_t lane_id = 0;
+  int op = 0;
+  std::vector<unsigned char> payload;
+};
+
 typedef struct {
   lupine_socket_t connfd;
 
@@ -26,6 +35,8 @@ typedef struct {
   int read_id;
   int write_id;
   int write_op;
+  uint32_t write_lane_id;
+  uint32_t next_lane_id;
 
   pthread_t read_thread;
   pthread_t rpc_thread;
@@ -41,6 +52,7 @@ typedef struct {
   int logical_index;
   int closed;
   void *http2;
+  void *rpc_state;
 } conn_t;
 
 extern int rpc_dispatch(conn_t *conn, int parity);
@@ -48,6 +60,7 @@ extern int rpc_read_start(conn_t *conn, int write_id);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
+extern int rpc_read_end_host_copy_chunk(conn_t *conn);
 
 extern int rpc_wait_for_response(conn_t *conn);
 
@@ -57,6 +70,12 @@ extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 extern void rpc_write_queue_free(conn_t *conn);
+extern int rpc_connection_state_init(conn_t *conn);
+extern void rpc_connection_state_free(conn_t *conn);
+extern int rpc_read_wire_frame(conn_t *conn, rpc_frame *frame);
+extern int rpc_deliver_response_frame(conn_t *conn, rpc_frame &&frame);
+extern int rpc_activate_frame(conn_t *conn, rpc_frame &&frame);
+extern uint32_t rpc_active_lane_id();
 
 extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                          const size_t *sizes,

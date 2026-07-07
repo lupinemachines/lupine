@@ -1747,11 +1747,8 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {
-    if (conn != nullptr)
-      pthread_mutex_unlock(&conn->call_mutex);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  pthread_mutex_unlock(&conn->call_mutex);
   return CUDA_SUCCESS;
 }
 

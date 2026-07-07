@@ -1931,14 +1931,12 @@ def main():
                 for operation in operations:
                     operation.client_rpc_write(f)
                 f.write("        rpc_write_end(conn) < 0) {\n")
-                f.write("        if (conn != nullptr) pthread_mutex_unlock(&conn->call_mutex);\n")
                 f.write(
                     "        return {error_return};\n".format(
                         error_return=error_const(function.return_type.format())
                     )
                 )
                 f.write("    }\n")
-                f.write("    pthread_mutex_unlock(&conn->call_mutex);\n")
                 f.write("    return CUDA_SUCCESS;\n")
                 f.write("}\n\n")
                 continue

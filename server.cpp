@@ -1,6 +1,10 @@
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <stdio.h>
 #include <thread>
 #include <unordered_map>
@@ -185,14 +189,173 @@ lupine_manual_handlers() {
   return handlers;
 }
 
+static int lupine_handle_rpc_request(conn_t *conn, int op) {
+  LUPINE_TRACE_LOG("LUPINE server handling op " << op);
+
+  const auto &manual_handlers = lupine_manual_handlers();
+  auto manual = manual_handlers.find(op);
+  if (manual != manual_handlers.end()) {
+    if (manual->second.handler(conn) < 0) {
+      lupine_log_manual_handler_error(manual->second.name);
+      return -1;
+    }
+    return 0;
+  }
+
+  auto opHandler = get_handler(op);
+  if (opHandler == nullptr) {
+    LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
+    return -1;
+  }
+  if (opHandler(conn) < 0) {
+    LUPINE_LOG_ERROR("Error handling request.");
+    return -1;
+  }
+  return 0;
+}
+
+static size_t lupine_max_lanes() {
+  const char *value = getenv("LUPINE_MAX_LANES");
+  if (value == nullptr || value[0] == '\0') {
+    return 64;
+  }
+  char *end = nullptr;
+  long parsed = strtol(value, &end, 10);
+  if (end == value || *end != '\0' || parsed < 1) {
+    return 64;
+  }
+  return static_cast<size_t>(parsed);
+}
+
+struct lupine_lane {
+  uint32_t id = 0;
+  std::mutex mutex;
+  std::condition_variable cond;
+  std::deque<rpc_frame> queue;
+  bool stopping = false;
+  bool finished = false;
+  std::thread worker;
+};
+
+struct lupine_lane_map {
+  conn_t *conn = nullptr;
+  size_t max_lanes = 0;
+  std::mutex mutex;
+  std::unordered_map<uint32_t, std::shared_ptr<lupine_lane>> lanes;
+};
+
+static void lupine_run_lane(conn_t *conn, std::shared_ptr<lupine_lane> lane) {
+  for (;;) {
+    rpc_frame frame;
+    {
+      std::unique_lock<std::mutex> lock(lane->mutex);
+      lane->cond.wait(lock,
+                      [&]() { return lane->stopping || !lane->queue.empty(); });
+      if (lane->queue.empty()) {
+        break;
+      }
+      frame = std::move(lane->queue.front());
+      lane->queue.pop_front();
+    }
+
+    int op = frame.op;
+    if (op == LUPINE_RPC_RELEASE_LANE) {
+      break;
+    }
+    if (rpc_activate_frame(conn, std::move(frame)) < 0 ||
+        lupine_handle_rpc_request(conn, op) < 0) {
+      conn->closed = 1;
+      pthread_cond_broadcast(&conn->read_cond);
+      break;
+    }
+  }
+
+  std::lock_guard<std::mutex> lock(lane->mutex);
+  lane->finished = true;
+}
+
+static void lupine_cleanup_finished_lanes(lupine_lane_map *lane_map) {
+  for (auto it = lane_map->lanes.begin(); it != lane_map->lanes.end();) {
+    std::shared_ptr<lupine_lane> lane = it->second;
+    bool finished = false;
+    {
+      std::lock_guard<std::mutex> lock(lane->mutex);
+      finished = lane->finished;
+    }
+    if (!finished) {
+      ++it;
+      continue;
+    }
+    if (lane->worker.joinable()) {
+      lane->worker.join();
+    }
+    it = lane_map->lanes.erase(it);
+  }
+}
+
+static int lupine_enqueue_lane(lupine_lane_map *lane_map, rpc_frame &&frame) {
+  std::shared_ptr<lupine_lane> lane;
+  {
+    std::lock_guard<std::mutex> lock(lane_map->mutex);
+    lupine_cleanup_finished_lanes(lane_map);
+    auto it = lane_map->lanes.find(frame.lane_id);
+    if (it == lane_map->lanes.end()) {
+      if (lane_map->lanes.size() >= lane_map->max_lanes) {
+        LUPINE_LOG_ERROR("Too many active RPC lanes; set LUPINE_MAX_LANES "
+                         "higher if this workload needs more threads.");
+        return -1;
+      }
+      lane = std::make_shared<lupine_lane>();
+      lane->id = frame.lane_id;
+      conn_t *conn = lane_map->conn;
+      lane->worker =
+          std::thread([conn, lane]() { lupine_run_lane(conn, lane); });
+      lane_map->lanes.emplace(frame.lane_id, lane);
+    } else {
+      lane = it->second;
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(lane->mutex);
+    lane->queue.push_back(std::move(frame));
+  }
+  lane->cond.notify_one();
+  return 0;
+}
+
+static void lupine_stop_lanes(lupine_lane_map *lane_map) {
+  std::unordered_map<uint32_t, std::shared_ptr<lupine_lane>> lanes;
+  {
+    std::lock_guard<std::mutex> lock(lane_map->mutex);
+    lanes.swap(lane_map->lanes);
+  }
+  for (auto &entry : lanes) {
+    auto &lane = entry.second;
+    {
+      std::lock_guard<std::mutex> lock(lane->mutex);
+      lane->stopping = true;
+    }
+    lane->cond.notify_one();
+  }
+  for (auto &entry : lanes) {
+    auto &lane = entry.second;
+    if (lane->worker.joinable()) {
+      lane->worker.join();
+    }
+  }
+}
+
 void client_handler(lupine_socket_t connfd) {
-  conn_t conn = {connfd, 1};
+  conn_t conn = {};
+  conn.connfd = connfd;
   conn.request_id = 1;
   conn.local_request_parity = conn.request_id & 1;
   if (pthread_mutex_init(&conn.read_mutex, NULL) < 0 ||
       pthread_mutex_init(&conn.write_mutex, NULL) < 0 ||
       pthread_mutex_init(&conn.call_mutex, NULL) < 0 ||
       pthread_cond_init(&conn.read_cond, NULL) < 0 ||
+      rpc_connection_state_init(&conn) < 0 ||
       rpc_http2_server_init(&conn) < 0) {
     LUPINE_LOG_ERROR("Error initializing mutex.");
     return;
@@ -200,37 +363,27 @@ void client_handler(lupine_socket_t connfd) {
 
   printf("Client connected.\n");
 
-  while (1) {
-    int op = rpc_dispatch(&conn, 0);
-    if (op < 0) {
+  lupine_lane_map lanes = {&conn, lupine_max_lanes()};
+  while (!conn.closed) {
+    rpc_frame frame;
+    if (rpc_read_wire_frame(&conn, &frame) < 0) {
       LUPINE_LOG_ERROR("RPC dispatch failed; closing client.");
       break;
     }
-    LUPINE_TRACE_LOG("LUPINE server handling op " << op);
-
-    const auto &manual_handlers = lupine_manual_handlers();
-    auto manual = manual_handlers.find(op);
-    if (manual != manual_handlers.end()) {
-      if (manual->second.handler(&conn) < 0) {
-        lupine_log_manual_handler_error(manual->second.name);
+    if (frame.op == -1) {
+      if (rpc_deliver_response_frame(&conn, std::move(frame)) < 0) {
         break;
       }
       continue;
     }
-
-    auto opHandler = get_handler(op);
-    if (opHandler == nullptr) {
-      LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
-      break;
-    }
-    if (opHandler(&conn) < 0) {
-      LUPINE_LOG_ERROR("Error handling request.");
+    if (lupine_enqueue_lane(&lanes, std::move(frame)) < 0) {
       break;
     }
   }
 
   conn.closed = 1;
   pthread_cond_broadcast(&conn.read_cond);
+  lupine_stop_lanes(&lanes);
   lupine_socket_close(connfd);
   if (conn.rpc_thread != 0) {
     pthread_join(conn.rpc_thread, nullptr);
@@ -244,6 +397,7 @@ void client_handler(lupine_socket_t connfd) {
     LUPINE_LOG_ERROR("Error destroying mutex.");
 
   rpc_write_queue_free(&conn);
+  rpc_connection_state_free(&conn);
 }
 
 int main() {
