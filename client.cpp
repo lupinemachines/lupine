@@ -573,11 +573,11 @@ static int lupine_connect_endpoint(conn_t *conn,
       setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
                  sizeof(flag)) < 0 ||
       connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
-                                      << endpoint.port << " failed: "
-                                      << (gai_status != 0
-                                              ? gai_strerror(gai_status)
-                                              : strerror(errno)));
+    LUPINE_LOG_ERROR("Connecting to "
+                     << endpoint.host << " port " << endpoint.port
+                     << " failed: "
+                     << (gai_status != 0 ? gai_strerror(gai_status)
+                                         : strerror(errno)));
     goto error;
   }
 
@@ -637,7 +637,8 @@ static conn_t *lupine_thread_conn_by_index(unsigned int index) {
   // The Linux server forks one child process per accepted connection. CUDA
   // object handles, including primary-context handles used by libcudart, are
   // only valid inside that child process. Keep all client host threads on the
-  // same connection and mirror thread-local current context with cuCtxSetCurrent.
+  // same connection and mirror thread-local current context with
+  // cuCtxSetCurrent.
   return &conns[index];
 }
 
@@ -3159,7 +3160,8 @@ static CUresult lupine_set_current_context_on_route(lupine_route route,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -5412,6 +5414,11 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   if (library == nullptr || code == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
+  // jit/library option values are intentionally unsupported here (see the
+  // CUDA_ERROR_NOT_SUPPORTED path below); reference them to keep -Wextra quiet.
+  (void)jitOptions;
+  (void)jitOptionsValues;
+  (void)libraryOptionValues;
   bool can_ignore_library_options =
       numLibraryOptions == 1 && libraryOptions != nullptr &&
       (libraryOptions[0] == CU_LIBRARY_HOST_UNIVERSAL_FUNCTION_AND_DATA_TABLE ||
@@ -9178,7 +9185,12 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                              CUdriverProcAddressQueryResult *symbolStatus) {
   LUPINE_TRACE_LOG("cuGetProcAddress getting symbol: " << symbol);
 
-  if (symbol != nullptr && strcmp(symbol, "cuFuncGetAttribute") == 0) {
+  // cudaVersion/flags are part of the cuGetProcAddress ABI but lupine routes
+  // purely by symbol name, so they are unused here.
+  (void)cudaVersion;
+  (void)flags;
+
+  if (strcmp(symbol, "cuFuncGetAttribute") == 0) {
     *pfn = reinterpret_cast<void *>(&lupine_cuFuncGetAttribute_safe);
     if (symbolStatus != nullptr) {
       *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
@@ -9493,20 +9505,18 @@ void *dlsym(void *handle, const char *name) __THROW {
     return lupine_real_dlsym(handle, name);
   }
 
-  if (name != nullptr && strcmp(name, "cuFuncGetAttribute") == 0) {
+  if (strcmp(name, "cuFuncGetAttribute") == 0) {
     return reinterpret_cast<void *>(&lupine_cuFuncGetAttribute_safe);
   }
-  if (name != nullptr && strcmp(name, "cuPointerGetAttributes") == 0) {
+  if (strcmp(name, "cuPointerGetAttributes") == 0) {
     return reinterpret_cast<void *>(&cuPointerGetAttributes);
   }
-  if (name != nullptr &&
-      strcmp(name, "cuOccupancyMaxActiveBlocksPerMultiprocessor") == 0) {
+  if (strcmp(name, "cuOccupancyMaxActiveBlocksPerMultiprocessor") == 0) {
     return reinterpret_cast<void *>(
         &lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_safe);
   }
-  if (name != nullptr &&
-      strcmp(name, "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags") ==
-          0) {
+  if (strcmp(name, "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags") ==
+      0) {
     return reinterpret_cast<void *>(
         &lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_safe);
   }
