@@ -1,0 +1,260 @@
+name: Build Lambda Client
+
+on:
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: Lambda client AL2023 / CUDA ${{ matrix.cuda.version }} / ${{ matrix.platform.arch }}
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cuda:
+              version: 13.1.2
+              packages: cuda-nvcc-13-1 cuda-cudart-devel-13-1 cuda-driver-devel-13-1 cuda-nvml-devel-13-1 cuda-profiler-api-13-1
+              home: /usr/local/cuda-13.1
+            platform:
+              arch: x86_64
+              docker_platform: linux/amd64
+              runner: ubuntu-latest
+          - cuda:
+              version: 12.5.1
+              packages: cuda-nvcc-12-5 cuda-cudart-devel-12-5 cuda-driver-devel-12-5 cuda-nvml-devel-12-5 cuda-profiler-api-12-5
+              home: /usr/local/cuda-12.5
+            platform:
+              arch: x86_64
+              docker_platform: linux/amd64
+              runner: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Free runner disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache \
+            /usr/local/.ghcup /usr/share/swift /usr/local/share/powershell
+          df -h /
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare artifact names
+        id: names
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          asset="lupine-lambda-client-al2023-cuda-${{ matrix.cuda.version }}-${{ matrix.platform.arch }}"
+          image="ghcr.io/${owner}/lupine-lambda-client:al2023-cuda-${{ matrix.cuda.version }}-${{ matrix.platform.arch }}"
+          release_image=""
+          if [ "${{ github.event_name }}" = "release" ]; then
+            release_image="ghcr.io/${owner}/lupine-lambda-client:${{ github.event.release.tag_name }}-al2023-cuda-${{ matrix.cuda.version }}-${{ matrix.platform.arch }}"
+          fi
+          {
+            echo "asset=${asset}"
+            echo "image=${image}"
+            echo "release_image=${release_image}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write Lambda client Dockerfile
+        run: |
+          cat > Dockerfile.lambda-client <<'EOF'
+          ARG CUDA_PACKAGES
+          ARG CUDA_HOME_PATH
+          ARG TARGET_ARCH
+          ARG CUDA_VERSION
+
+          FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS build
+
+          ARG CUDA_PACKAGES
+          ARG CUDA_HOME_PATH
+          ARG TARGET_ARCH
+          ARG CUDA_VERSION
+
+          RUN dnf install -y dnf-plugins-core \
+              && dnf install -y nvidia-release \
+              && dnf install -y \
+                bash \
+                ca-certificates \
+                cmake \
+                findutils \
+                gcc \
+                gcc-c++ \
+                libnghttp2-devel \
+                make \
+                ninja-build \
+                ${CUDA_PACKAGES} \
+              && dnf clean all \
+              && rm -rf /var/cache/dnf
+
+          ENV CUDA_HOME="${CUDA_HOME_PATH}"
+          ENV PATH="${CUDA_HOME}/bin:${PATH}"
+          ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64"
+          ENV LIBRARY_PATH="${CUDA_HOME}/lib64/stubs"
+
+          WORKDIR /opt/lupine-src
+          COPY . /opt/lupine-src
+
+          RUN cmake -S /opt/lupine-src -B /opt/lupine-src/build \
+                -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_LIBRARY_PATH="${CUDA_HOME}/lib64/stubs"
+
+          RUN cmake --build /opt/lupine-src/build --parallel --target lupine_driver lupine_nvml
+
+          RUN mkdir -p /opt/lib /opt/bin /opt/share/lupine \
+              && cp /opt/lupine-src/build/libcuda.so.1 /opt/lib/libcuda.so.1 \
+              && cp /opt/lupine-src/build/libnvidia-ml.so.1 /opt/lib/libnvidia-ml.so.1 \
+              && ln -sfn libcuda.so.1 /opt/lib/libcuda.so \
+              && ln -sfn libnvidia-ml.so.1 /opt/lib/libnvidia-ml.so \
+              && cp -a /usr/lib64/libnghttp2.so.14* /opt/lib/ \
+              && printf '%s\n' \
+                '#!/bin/sh' \
+                'set -eu' \
+                'export LD_LIBRARY_PATH="/opt/lib:${LD_LIBRARY_PATH:-}"' \
+                'test -f /opt/lib/libcuda.so.1' \
+                'test -f /opt/lib/libnvidia-ml.so.1' \
+                'ldd /opt/lib/libcuda.so.1 >/dev/null' \
+                'ldd /opt/lib/libnvidia-ml.so.1 >/dev/null' \
+                'if [ -n "${LUPINE_SERVER:-}" ]; then' \
+                '  printf "LUPINE_SERVER=%s\n" "$LUPINE_SERVER"' \
+                'else' \
+                '  printf "LUPINE_SERVER is not set\n" >&2' \
+                'fi' \
+                'printf "LUPINE Lambda client layer is installed\n"' \
+                > /opt/bin/lupine-lambda-check \
+              && chmod +x /opt/bin/lupine-lambda-check \
+              && printf '{\n  "component": "lupine-lambda-client",\n  "os": "al2023",\n  "architecture": "%s",\n  "cuda": "%s",\n  "files": [\n    "lib/libcuda.so.1",\n    "lib/libnvidia-ml.so.1"\n  ]\n}\n' "${TARGET_ARCH}" "${CUDA_VERSION}" \
+                > /opt/share/lupine/manifest.json \
+              && (cd /opt && sha256sum \
+                lib/libcuda.so.1 \
+                lib/libnvidia-ml.so.1 \
+                lib/libnghttp2.so.14* \
+                bin/lupine-lambda-check \
+                share/lupine/manifest.json \
+                > share/lupine/SHA256SUMS)
+
+          FROM public.ecr.aws/lambda/provided:al2023 AS lambda-client
+
+          COPY --from=build /opt/lib/ /opt/lib/
+          COPY --from=build /opt/bin/ /opt/bin/
+          COPY --from=build /opt/share/lupine/ /opt/share/lupine/
+
+          ENV LUPINE_LIBCUDA=/opt/lib/libcuda.so.1
+          ENV LUPINE_LIB=/opt/lib/libcuda.so.1
+          ENV LD_LIBRARY_PATH=/opt/lib
+
+          ENTRYPOINT []
+          CMD ["/opt/bin/lupine-lambda-check"]
+          EOF
+
+      - name: Build Lambda client image
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform "${{ matrix.platform.docker_platform }}" \
+            --target lambda-client \
+            --build-arg CUDA_PACKAGES="${{ matrix.cuda.packages }}" \
+            --build-arg CUDA_HOME_PATH="${{ matrix.cuda.home }}" \
+            --build-arg TARGET_ARCH="${{ matrix.platform.arch }}" \
+            --build-arg CUDA_VERSION="${{ matrix.cuda.version }}" \
+            -f Dockerfile.lambda-client \
+            -t "${{ steps.names.outputs.image }}" \
+            .
+
+      - name: Verify Lambda client image
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh "${{ steps.names.outputs.image }}" -lc '
+            set -euo pipefail
+            test -e /opt/lib/libcuda.so.1
+            test -e /opt/lib/libnvidia-ml.so.1
+            test -e /opt/lib/libnghttp2.so.14
+            test -x /opt/bin/lupine-lambda-check
+            test "$LUPINE_LIBCUDA" = /opt/lib/libcuda.so.1
+            test "$LUPINE_LIB" = /opt/lib/libcuda.so.1
+            /opt/bin/lupine-lambda-check
+          '
+
+      - name: Collect Lambda layer artifact
+        run: |
+          set -euo pipefail
+          out="artifacts/${{ steps.names.outputs.asset }}"
+          rm -rf "$out"
+          mkdir -p "$out"
+
+          container="$(docker create "${{ steps.names.outputs.image }}")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+
+          docker cp "$container:/opt/." "$out/"
+          (cd "$out" && zip -r "../${{ steps.names.outputs.asset }}.zip" .)
+          (cd artifacts && sha256sum "${{ steps.names.outputs.asset }}.zip" > "${{ steps.names.outputs.asset }}.SHA256SUMS")
+
+      - name: Verify layer on Lambda Python base image
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --platform "${{ matrix.platform.docker_platform }}" \
+            --entrypoint /bin/sh \
+            -v "$PWD/artifacts/${{ steps.names.outputs.asset }}:/opt:ro" \
+            public.ecr.aws/lambda/python:3.12 \
+            -lc '
+              set -euo pipefail
+              export LD_LIBRARY_PATH="/opt/lib:${LD_LIBRARY_PATH:-}"
+              ldd /opt/lib/libcuda.so.1 >/dev/null
+              ldd /opt/lib/libnvidia-ml.so.1 >/dev/null
+              /opt/bin/lupine-lambda-check
+            '
+
+      - name: Upload Lambda layer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.names.outputs.asset }}
+          path: |
+            artifacts/${{ steps.names.outputs.asset }}.zip
+            artifacts/${{ steps.names.outputs.asset }}.SHA256SUMS
+          if-no-files-found: error
+
+      - name: Push Lambda client image
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.names.outputs.image }}"
+          if [ -n "${{ steps.names.outputs.release_image }}" ]; then
+            docker tag "${{ steps.names.outputs.image }}" "${{ steps.names.outputs.release_image }}"
+            docker push "${{ steps.names.outputs.release_image }}"
+          fi
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload \
+            "${{ github.event.release.tag_name }}" \
+            "artifacts/${{ steps.names.outputs.asset }}.zip" \
+            "artifacts/${{ steps.names.outputs.asset }}.SHA256SUMS" \
+            --repo "${{ github.repository }}" \
+            --clobber
