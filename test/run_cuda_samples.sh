@@ -56,8 +56,8 @@ CORE_SAMPLES=(
   mergeSort reduction reductionMultiBlockCG scan sortingNetworks histogram scalarProd transpose
   BlackScholes BlackScholes_nvrtc binomialOptions binomialOptions_nvrtc SobolQRNG quasirandomGenerator
   quasirandomGenerator_nvrtc
-  simpleCudaGraphs streamOrderedAllocation cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter
-  vectorAddMMAP
+  simpleCudaGraphs streamOrderedAllocation streamOrderedAllocationIPC cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter
+  vectorAddMMAP memMapIPCDrv
   simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation

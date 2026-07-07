@@ -15,6 +15,7 @@
 #include "gen_api.h"
 
 #include "client_routing.h"
+#include "ipc.h"
 #include "rpc.h"
 
 extern int rpc_size();
@@ -75,6 +76,7 @@ extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);
 extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);
 extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);
 extern "C" void lupine_invalidate_current_context_cache();
+extern "C" void lupine_forget_context_owner(CUcontext ctx);
 extern "C" CUresult
 lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
                                          int *active);
@@ -530,11 +532,20 @@ CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
 CUresult cuCtxDestroy_v2(CUcontext ctx) {
   lupine_route route = lupine_route_for_context(ctx);
   CUresult return_value;
+  CUcontext current_context = nullptr;
+  bool was_current_context =
+      lupine_cuCtxGetCurrent_virtual(&current_context) == CUDA_SUCCESS &&
+      current_context == ctx;
+  if (was_current_context) {
+    lupine_cuCtxSetCurrent_virtual(nullptr);
+  }
   using real_fn_t = CUresult (*)(CUcontext);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxDestroy_v2",
                                                   &return_value, ctx)) {
-    if (return_value == CUDA_SUCCESS)
+    if (return_value == CUDA_SUCCESS) {
+      lupine_forget_context_owner(ctx);
       lupine_invalidate_current_context_cache();
+    }
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -545,8 +556,10 @@ CUresult cuCtxDestroy_v2(CUcontext ctx) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
+  if (return_value == CUDA_SUCCESS) {
+    lupine_forget_context_owner(ctx);
     lupine_invalidate_current_context_cache();
+  }
   return return_value;
 }
 
@@ -2629,6 +2642,78 @@ cuMemGetAllocationPropertiesFromHandle(CUmemAllocationProp *prop,
   return return_value;
 }
 
+CUresult cuMemExportToShareableHandle(void *shareableHandle,
+                                      CUmemGenericAllocationHandle handle,
+                                      CUmemAllocationHandleType handleType,
+                                      unsigned long long flags) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(void *, CUmemGenericAllocationHandle,
+                   CUmemAllocationHandleType, unsigned long long);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuMemExportToShareableHandle", &return_value,
+          shareableHandle, handle, handleType, flags)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  lupine_ipc_token token = {};
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuMemExportToShareableHandle) < 0 ||
+      rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+      rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && shareableHandle != nullptr) {
+    int proxy_fd = -1;
+    if (lupine_ipc_create_proxy_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &token,
+                                   &proxy_fd) < 0) {
+      return CUDA_ERROR_UNKNOWN;
+    }
+    *reinterpret_cast<int *>(shareableHandle) = proxy_fd;
+  }
+  return return_value;
+}
+
+CUresult cuMemImportFromShareableHandle(CUmemGenericAllocationHandle *handle,
+                                        void *osHandle,
+                                        CUmemAllocationHandleType shHandleType) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUmemGenericAllocationHandle *, void *,
+                   CUmemAllocationHandleType);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuMemImportFromShareableHandle", &return_value, handle,
+          osHandle, shHandleType)) {
+    return return_value;
+  }
+  uint32_t kind = 0;
+  lupine_ipc_token token = {};
+  int proxy_fd = static_cast<int>(reinterpret_cast<uintptr_t>(osHandle));
+  if (lupine_ipc_read_proxy_fd(proxy_fd, &kind, &token) < 0 ||
+      kind != LUPINE_IPC_FD_KIND_VMM_ALLOCATION) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuMemImportFromShareableHandle) < 0 ||
+      rpc_write(conn, &token, sizeof(token)) < 0 ||
+      rpc_write(conn, &shHandleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
 CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
   lupine_route route = lupine_route_for_deviceptr(dptr);
   CUresult return_value;
@@ -2769,7 +2854,7 @@ CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps) {
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemPoolCreate) < 0 ||
       rpc_write(conn, pool, sizeof(CUmemoryPool)) < 0 ||
-      rpc_write(conn, &poolProps, sizeof(const CUmemPoolProps *)) < 0 ||
+      rpc_write(conn, poolProps, sizeof(CUmemPoolProps)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2833,6 +2918,84 @@ CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
   }
   if (return_value == CUDA_SUCCESS && dptr != nullptr)
     lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return return_value;
+}
+
+CUresult cuMemPoolExportToShareableHandle(void *handle_out, CUmemoryPool pool,
+                                          CUmemAllocationHandleType handleType,
+                                          unsigned long long flags) {
+  lupine_route route = lupine_route_for_memory_pool(pool);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(void *, CUmemoryPool,
+                                CUmemAllocationHandleType, unsigned long long);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuMemPoolExportToShareableHandle", &return_value, handle_out,
+          pool, handleType, flags)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  lupine_ipc_token token = {};
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuMemPoolExportToShareableHandle) < 0 ||
+      rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+      rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && handle_out != nullptr) {
+    int proxy_fd = -1;
+    if (lupine_ipc_create_proxy_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
+                                   &proxy_fd) < 0) {
+      return CUDA_ERROR_UNKNOWN;
+    }
+    *reinterpret_cast<int *>(handle_out) = proxy_fd;
+  }
+  return return_value;
+}
+
+CUresult cuMemPoolImportFromShareableHandle(
+    CUmemoryPool *pool_out, void *handle,
+    CUmemAllocationHandleType handleType, unsigned long long flags) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUmemoryPool *, void *, CUmemAllocationHandleType,
+                   unsigned long long);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuMemPoolImportFromShareableHandle", &return_value, pool_out,
+          handle, handleType, flags)) {
+    if (return_value == CUDA_SUCCESS && pool_out != nullptr) {
+      lupine_note_memory_pool_owner_route(*pool_out, route);
+    }
+    return return_value;
+  }
+  uint32_t kind = 0;
+  lupine_ipc_token token = {};
+  int proxy_fd = static_cast<int>(reinterpret_cast<uintptr_t>(handle));
+  if (lupine_ipc_read_proxy_fd(proxy_fd, &kind, &token) < 0 ||
+      kind != LUPINE_IPC_FD_KIND_MEMORY_POOL) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuMemPoolImportFromShareableHandle) <
+          0 ||
+      rpc_write(conn, &token, sizeof(token)) < 0 ||
+      rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pool_out, sizeof(CUmemoryPool)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && pool_out != nullptr) {
+    lupine_note_memory_pool_owner_route(*pool_out, route);
+  }
   return return_value;
 }
 
@@ -7506,6 +7669,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemGetAllocationGranularity", (void *)cuMemGetAllocationGranularity},
     {"cuMemGetAllocationPropertiesFromHandle",
      (void *)cuMemGetAllocationPropertiesFromHandle},
+    {"cuMemExportToShareableHandle", (void *)cuMemExportToShareableHandle},
+    {"cuMemImportFromShareableHandle", (void *)cuMemImportFromShareableHandle},
     {"cuMemFreeAsync", (void *)cuMemFreeAsync},
     {"cuMemAllocAsync", (void *)cuMemAllocAsync},
     {"cuMemPoolTrimTo", (void *)cuMemPoolTrimTo},
@@ -7514,6 +7679,10 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemPoolCreate", (void *)cuMemPoolCreate},
     {"cuMemPoolDestroy", (void *)cuMemPoolDestroy},
     {"cuMemAllocFromPoolAsync", (void *)cuMemAllocFromPoolAsync},
+    {"cuMemPoolExportToShareableHandle",
+     (void *)cuMemPoolExportToShareableHandle},
+    {"cuMemPoolImportFromShareableHandle",
+     (void *)cuMemPoolImportFromShareableHandle},
     {"cuMemPoolExportPointer", (void *)cuMemPoolExportPointer},
     {"cuMemPoolImportPointer", (void *)cuMemPoolImportPointer},
     {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
