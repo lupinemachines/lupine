@@ -9027,7 +9027,7 @@ void *rpc_client_dispatch_thread(void *arg) {
 
         // Read the actual data from the server (sent from `src` in device
         // memory)
-        if (rpc_read(conn, host_data, count) < 0) {
+        if (rpc_read_payload(conn, host_data, count) < 0) {
           LUPINE_LOG_ERROR("Failed to read device data from server.");
           free(host_data);
           break;

@@ -1838,7 +1838,7 @@ static void CUDA_CB lupine_graph_host_callback(void *userData) {
     for (const auto &copy : callback->resources->dtoh_copies) {
       if (rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
           rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-          rpc_write(conn, copy.server_src, copy.bytes) < 0) {
+          rpc_write_payload(conn, copy.server_src, copy.bytes) < 0) {
         return;
       }
     }
