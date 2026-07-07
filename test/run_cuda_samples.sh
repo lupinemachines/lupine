@@ -206,6 +206,7 @@ fi
 if [[ -n "$CUDA_SAMPLES_REF" ]]; then
   git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
   git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
+  git -C "$CUDA_SAMPLES_DIR" reset --hard "$CUDA_SAMPLES_REF"
 fi
 
 # The samples hardcode set(CMAKE_CUDA_ARCHITECTURES ...) per CMakeLists, so a
