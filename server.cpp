@@ -256,7 +256,16 @@ int main() {
   if (p == NULL) {
     port = DEFAULT_PORT;
   } else {
-    port = atoi(p);
+    // Validate LUPINE_PORT so a typo (e.g. "14833x" or "") can't silently
+    // fall back to atoi's 0, which the kernel would reinterpret as an
+    // ephemeral port.
+    char *end = nullptr;
+    long parsed = strtol(p, &end, 10);
+    if (end == p || *end != '\0' || parsed < 1 || parsed > 65535) {
+      printf("Invalid LUPINE_PORT '%s'; expected 1-65535.\n", p);
+      exit(EXIT_FAILURE);
+    }
+    port = static_cast<int>(parsed);
   }
 
   // Bind the socket
