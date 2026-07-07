@@ -663,8 +663,16 @@ int handle_manual_cuModuleLoad(conn_t *conn) {
     return -1;
   }
 
+  // image_size is peer-controlled. Cap it well above any real fat binary so
+  // `image_size + 1` below cannot overflow to 0 (a SIZE_MAX request would
+  // otherwise allocate an empty buffer and then attempt a SIZE_MAX read).
+  static constexpr size_t kMaxModuleImageBytes = 1ull << 31; // 2 GiB
+  if (image_size == 0 || image_size > kMaxModuleImageBytes) {
+    return -1;
+  }
+
   std::vector<unsigned char> image(image_size + 1, 0);
-  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
+  if (rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
 
@@ -695,8 +703,15 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
     return -1;
   }
 
+  // image_size is peer-controlled; cap it so the allocation below cannot be
+  // driven to SIZE_MAX (std::bad_alloc -> std::terminate) by a malformed peer.
+  static constexpr size_t kMaxModuleLoadDataBytes = 1ull << 31; // 2 GiB
+  if (image_size == 0 || image_size > kMaxModuleLoadDataBytes) {
+    return -1;
+  }
+
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
+  if (rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
 
@@ -734,8 +749,15 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     return -1;
   }
 
+  // image_size is peer-controlled; cap it so the allocation below cannot be
+  // driven to SIZE_MAX (std::bad_alloc -> std::terminate) by a malformed peer.
+  static constexpr size_t kMaxLibraryImageBytes = 1ull << 31; // 2 GiB
+  if (image_size == 0 || image_size > kMaxLibraryImageBytes) {
+    return -1;
+  }
+
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
+  if (rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
 

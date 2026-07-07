@@ -139,6 +139,19 @@ test_graphs() {
   fi
 }
 
+test_module_overflow() {
+  # Server must reject a malformed cuModuleLoad (image_size = SIZE_MAX) and
+  # close the connection instead of hanging. Requires a running server.
+  output=$(timeout 15 ./module_image_overflow_test 2>&1 | tail -n 1)
+
+  if [[ "$output" == "RESULT: PASS"* ]]; then
+    ansi_format "pass" "$pass_message"
+  else
+    ansi_format "fail" "test_module_overflow failed. Got [$output]."
+    return 1
+  fi
+}
+
 #---- declare test cases ----#
 declare -A test_cuda_avail=(
   ["function"]="test_cuda_available"
@@ -180,8 +193,13 @@ declare -A test_graphs=(
   ["pass"]="Graphs works as expected."
 )
 
+declare -A test_module_overflow=(
+  ["function"]="test_module_overflow"
+  ["pass"]="Server rejects oversized module image without hanging."
+)
+
 #---- assign them to our associative array ----#
-tests=("test_cuda_avail" "test_tensor_to_cuda" "test_tensor_to_cuda_to_cpu" "test_vector_add" "test_cudnn" "test_cublas_batched" "test_unified_mem" "test_graphs")
+tests=("test_cuda_avail" "test_tensor_to_cuda" "test_tensor_to_cuda_to_cpu" "test_vector_add" "test_cudnn" "test_cublas_batched" "test_unified_mem" "test_graphs" "test_module_overflow")
 
 test() {
   set_paths
@@ -220,6 +238,8 @@ build_tests() {
   nvcc --cudart=shared -lnvidia-ml -lcuda -lcudnn -lcublas ./test/cublas_unified.cu -o cublas_unified.o
   nvcc --cudart=shared -lnvidia-ml -lcuda -lcudnn -lcublas ./test/cudnn_managed.cu -o cudnn_managed.o
   nvcc --cudart=shared -lnvidia-ml -lcuda -lcudnn -lcublas ./test/cuda_graphs_host_func.cu -o cuda_graphs_host_func.o
+
+  # Robustness test binaries are produced by CMake (see CMakeLists.txt).
 }
 
 set_paths() {
