@@ -60,6 +60,7 @@ inline int pthread_mutex_unlock(pthread_mutex_t *mutex) {
 }
 
 inline int pthread_cond_init(pthread_cond_t *, void *) { return 0; }
+inline int pthread_cond_destroy(pthread_cond_t *) { return 0; }
 
 inline int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex) {
   std::unique_lock<std::mutex> lock(mutex->mutex, std::adopt_lock);
