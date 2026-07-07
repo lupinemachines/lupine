@@ -148,6 +148,9 @@ fi
 mkdir -p "$(dirname "$CUDA_SAMPLES_DIR")" "$RESULTS_DIR"
 
 if [[ ! -d "$CUDA_SAMPLES_DIR/.git" ]]; then
+  if [[ -e "$CUDA_SAMPLES_DIR" ]]; then
+    rm -rf "$CUDA_SAMPLES_DIR"
+  fi
   git clone "$CUDA_SAMPLES_URL" "$CUDA_SAMPLES_DIR"
 fi
 

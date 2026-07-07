@@ -306,7 +306,7 @@ jobs:
           mkdir -p "$cache_root/lupine-build" "$cache_root/cuda-samples-build" "$cache_root/ccache"
           "${ssh_base[@]}" "rm -rf '$remote_src' '$remote_ssh'; mkdir -p '$remote_src' '$remote_ssh'"
           tar \
-            --exclude=.git \
+            --exclude=./.git \
             --exclude=test/cuda-samples/results \
             --exclude=test/pytorch/results \
             -czf - . | "${ssh_base[@]}" "tar -xzf - -C '$remote_src'"
