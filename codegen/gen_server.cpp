@@ -4,8 +4,8 @@
 
 #include <cstring>
 #include <string>
-#include <unordered_map>
 #include <unistd.h>
+#include <unordered_map>
 
 #include "gen_api.h"
 
@@ -3359,61 +3359,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuMemGetAllocationGranularity(conn_t *conn) {
-  size_t granularity;
-  CUmemAllocationProp prop;
-  CUmemAllocationGranularity_flags option;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &prop, sizeof(const CUmemAllocationProp)) < 0 ||
-      rpc_read(conn, &option, sizeof(CUmemAllocationGranularity_flags)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuMemGetAllocationGranularity(&granularity, &prop, option);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &granularity, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuMemGetAllocationPropertiesFromHandle(conn_t *conn) {
-  CUmemAllocationProp prop;
-  CUmemGenericAllocationHandle handle;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &prop, sizeof(CUmemAllocationProp)) < 0 ||
-      rpc_read(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuMemGetAllocationPropertiesFromHandle(&prop, handle);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &prop, sizeof(CUmemAllocationProp)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuMemExportToShareableHandle(conn_t *conn) {
   CUmemGenericAllocationHandle handle;
   CUmemAllocationHandleType handleType;
@@ -3483,6 +3428,61 @@ int handle_cuMemImportFromShareableHandle(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemGetAllocationGranularity(conn_t *conn) {
+  size_t granularity;
+  CUmemAllocationProp prop;
+  CUmemAllocationGranularity_flags option;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &prop, sizeof(const CUmemAllocationProp)) < 0 ||
+      rpc_read(conn, &option, sizeof(CUmemAllocationGranularity_flags)) < 0 ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuMemGetAllocationGranularity(&granularity, &prop, option);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &granularity, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemGetAllocationPropertiesFromHandle(conn_t *conn) {
+  CUmemAllocationProp prop;
+  CUmemGenericAllocationHandle handle;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &prop, sizeof(CUmemAllocationProp)) < 0 ||
+      rpc_read(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuMemGetAllocationPropertiesFromHandle(&prop, handle);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &prop, sizeof(CUmemAllocationProp)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -3717,8 +3717,8 @@ int handle_cuMemPoolExportToShareableHandle(conn_t *conn) {
 
   if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
       lupine_ipc_make_token(&token) == 0) {
-    lupine_intercept_result =
-        cuMemPoolExportToShareableHandle(&shareable_fd, pool, handleType, flags);
+    lupine_intercept_result = cuMemPoolExportToShareableHandle(
+        &shareable_fd, pool, handleType, flags);
     if (lupine_intercept_result == CUDA_SUCCESS) {
       if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
                                         shareable_fd) < 0) {
@@ -8699,11 +8699,11 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuMemUnmap, handle_cuMemUnmap},
     {RPC_cuMemSetAccess, handle_cuMemSetAccess},
     {RPC_cuMemGetAccess, handle_cuMemGetAccess},
+    {RPC_cuMemExportToShareableHandle, handle_cuMemExportToShareableHandle},
+    {RPC_cuMemImportFromShareableHandle, handle_cuMemImportFromShareableHandle},
     {RPC_cuMemGetAllocationGranularity, handle_cuMemGetAllocationGranularity},
     {RPC_cuMemGetAllocationPropertiesFromHandle,
      handle_cuMemGetAllocationPropertiesFromHandle},
-    {RPC_cuMemExportToShareableHandle, handle_cuMemExportToShareableHandle},
-    {RPC_cuMemImportFromShareableHandle, handle_cuMemImportFromShareableHandle},
     {RPC_cuMemFreeAsync, handle_cuMemFreeAsync},
     {RPC_cuMemAllocAsync, handle_cuMemAllocAsync},
     {RPC_cuMemPoolTrimTo, handle_cuMemPoolTrimTo},
