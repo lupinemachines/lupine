@@ -1703,7 +1703,7 @@ def write_server_ipc_shareable_handle(f, name: str):
                                               &token, shareable_fd) < 0) {
                 lupine_intercept_result = CUDA_ERROR_UNKNOWN;
             }
-            close(shareable_fd);
+            lupine_close_fd(shareable_fd);
         }
     }
 
@@ -1741,7 +1741,7 @@ ERROR_0:
             lupine_intercept_result = cuMemImportFromShareableHandle(
                 &handle, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
                 shHandleType);
-            close(import_fd);
+            lupine_close_fd(import_fd);
         }
     }
 
@@ -1783,7 +1783,7 @@ ERROR_0:
                                               &token, shareable_fd) < 0) {
                 lupine_intercept_result = CUDA_ERROR_UNKNOWN;
             }
-            close(shareable_fd);
+            lupine_close_fd(shareable_fd);
         }
     }
 
@@ -1822,7 +1822,7 @@ ERROR_0:
             lupine_intercept_result = cuMemPoolImportFromShareableHandle(
                 &pool, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
                 handleType, flags);
-            close(import_fd);
+            lupine_close_fd(import_fd);
         }
     }
 
@@ -2466,7 +2466,13 @@ def main():
             "#include <cstring>\n"
             "#include <string>\n"
             "#include <unordered_map>\n"
-            "#include <unistd.h>\n\n"
+            "#ifdef _WIN32\n"
+            "#include <io.h>\n"
+            "#define lupine_close_fd _close\n"
+            "#else\n"
+            "#include <unistd.h>\n"
+            "#define lupine_close_fd close\n"
+            "#endif\n\n"
             '#include "gen_api.h"\n\n'
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'

@@ -4,8 +4,14 @@
 
 #include <cstring>
 #include <string>
-#include <unistd.h>
 #include <unordered_map>
+#ifdef _WIN32
+#include <io.h>
+#define lupine_close_fd _close
+#else
+#include <unistd.h>
+#define lupine_close_fd close
+#endif
 
 #include "gen_api.h"
 
@@ -3385,7 +3391,7 @@ int handle_cuMemExportToShareableHandle(conn_t *conn) {
                                         &token, shareable_fd) < 0) {
         lupine_intercept_result = CUDA_ERROR_UNKNOWN;
       }
-      close(shareable_fd);
+      lupine_close_fd(shareable_fd);
     }
   }
 
@@ -3422,7 +3428,7 @@ int handle_cuMemImportFromShareableHandle(conn_t *conn) {
       lupine_intercept_result = cuMemImportFromShareableHandle(
           &handle, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
           shHandleType);
-      close(import_fd);
+      lupine_close_fd(import_fd);
     }
   }
 
@@ -3724,7 +3730,7 @@ int handle_cuMemPoolExportToShareableHandle(conn_t *conn) {
                                         shareable_fd) < 0) {
         lupine_intercept_result = CUDA_ERROR_UNKNOWN;
       }
-      close(shareable_fd);
+      lupine_close_fd(shareable_fd);
     }
   }
 
@@ -3762,7 +3768,7 @@ int handle_cuMemPoolImportFromShareableHandle(conn_t *conn) {
       lupine_intercept_result = cuMemPoolImportFromShareableHandle(
           &pool, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
           handleType, flags);
-      close(import_fd);
+      lupine_close_fd(import_fd);
     }
   }
 
