@@ -104,6 +104,7 @@ jobs:
                 libnghttp2-devel \
                 make \
                 ninja-build \
+                openssl-devel \
                 ${CUDA_PACKAGES} \
               && dnf clean all \
               && rm -rf /var/cache/dnf
@@ -128,7 +129,7 @@ jobs:
               && cp /opt/lupine-src/build/libnvidia-ml.so.1 /opt/lib/libnvidia-ml.so.1 \
               && ln -sfn libcuda.so.1 /opt/lib/libcuda.so \
               && ln -sfn libnvidia-ml.so.1 /opt/lib/libnvidia-ml.so \
-              && cp -a /usr/lib64/libnghttp2.so.14* /opt/lib/ \
+              && cp -a /usr/lib64/libnghttp2.so.14* /usr/lib64/libssl.so.3* /usr/lib64/libcrypto.so.3* /opt/lib/ \
               && printf '%s\n' \
                 '#!/bin/sh' \
                 'set -eu' \
@@ -151,6 +152,8 @@ jobs:
                 lib/libcuda.so.1 \
                 lib/libnvidia-ml.so.1 \
                 lib/libnghttp2.so.14* \
+                lib/libssl.so.3* \
+                lib/libcrypto.so.3* \
                 bin/lupine-lambda-check \
                 share/lupine/manifest.json \
                 > share/lupine/SHA256SUMS)
