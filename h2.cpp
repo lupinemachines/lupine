@@ -29,9 +29,7 @@ struct h2_buffer {
 
 struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
-  // Opaque borrowed TLS session (SSL*) when the client connected with https://;
-  // null for plaintext connections and on the server. Owned by the conn_t.
-  void *tls = nullptr;
+  void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
   bool response_sent = false;
   bool compress_lz4 = false;
@@ -99,9 +97,7 @@ int h2_write_all(h2_transport *transport, const struct iovec *iov,
     ssize_t n;
 #ifdef LUPINE_TLS_OPENSSL
     if (transport->tls != nullptr) {
-      // TLS is a byte stream, so send one buffer at a time. The cursor
-      // accounting below advances over partial writes just like the vectored
-      // plaintext path.
+      // Byte stream: send one buffer; the cursor loop handles partial writes.
       SSL *ssl = static_cast<SSL *>(transport->tls);
       int want = static_cast<int>(
           std::min(cursor[0].iov_len, static_cast<size_t>(INT_MAX)));
@@ -117,8 +113,8 @@ int h2_write_all(h2_transport *transport, const struct iovec *iov,
 #endif
     {
       // Send all currently pending buffers in one syscall instead of one send()
-      // per buffer. Coalescing avoids emitting the 9-byte HTTP/2 frame header as
-      // its own TCP segment and cuts syscall overhead on every frame.
+      // per buffer. Coalescing avoids emitting the 9-byte HTTP/2 frame header
+      // as its own TCP segment and cuts syscall overhead on every frame.
       int batch = std::min(count, kH2MaxSendIov);
       n = lupine_socket_sendv(transport->netfd, cursor, batch);
       if (n < 0) {
@@ -437,7 +433,6 @@ int h2_read_from_net(h2_transport *transport) {
       if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         continue;
       }
-      // EOF or error.
       return -1;
     }
   } else

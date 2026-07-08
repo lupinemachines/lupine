@@ -599,11 +599,11 @@ static int lupine_connect_endpoint(conn_t *conn,
       setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
                  sizeof(flag)) < 0 ||
       connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
-                                      << endpoint.port << " failed: "
-                                      << (gai_status != 0
-                                              ? gai_strerror(gai_status)
-                                              : strerror(errno)));
+    LUPINE_LOG_ERROR("Connecting to "
+                     << endpoint.host << " port " << endpoint.port
+                     << " failed: "
+                     << (gai_status != 0 ? gai_strerror(gai_status)
+                                         : strerror(errno)));
     goto error;
   }
 
@@ -616,7 +616,6 @@ static int lupine_connect_endpoint(conn_t *conn,
   conn->logical_index = static_cast<int>(logical_index);
   if (endpoint.tls) {
 #ifdef LUPINE_TLS_OPENSSL
-    // One shared client context: system trust store, peer verification on.
     static SSL_CTX *tls_ctx = []() {
       SSL_CTX *c = SSL_CTX_new(TLS_client_method());
       if (c != nullptr) {
@@ -642,8 +641,8 @@ static int lupine_connect_endpoint(conn_t *conn,
       goto error;
     }
 #else
-    LUPINE_LOG_ERROR("LUPINE_SERVER entry " << endpoint.host << ":"
-                     << endpoint.port
+    LUPINE_LOG_ERROR("LUPINE_SERVER entry "
+                     << endpoint.host << ":" << endpoint.port
                      << " uses https:// but this client was built "
                         "without TLS support");
     close(sockfd);
@@ -699,7 +698,8 @@ static conn_t *lupine_thread_conn_by_index(unsigned int index) {
   // The Linux server forks one child process per accepted connection. CUDA
   // object handles, including primary-context handles used by libcudart, are
   // only valid inside that child process. Keep all client host threads on the
-  // same connection and mirror thread-local current context with cuCtxSetCurrent.
+  // same connection and mirror thread-local current context with
+  // cuCtxSetCurrent.
   return &conns[index];
 }
 
@@ -3226,7 +3226,8 @@ static CUresult lupine_set_current_context_on_route(lupine_route route,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||

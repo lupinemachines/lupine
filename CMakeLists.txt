@@ -11,8 +11,7 @@ set(MIN_CUDA_VERSION 11.0)
 find_package(CUDAToolkit REQUIRED)
 find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
 find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
-# Client-side TLS (https:// endpoints). The server stays plaintext and is
-# expected to be fronted by a TLS-terminating proxy.
+# The server stays plaintext (front it with a TLS proxy); only the client links OpenSSL.
 find_package(OpenSSL QUIET)
 
 if (NOT CUDAToolkit_VERSION)

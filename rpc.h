@@ -48,10 +48,7 @@ struct conn_t {
   int logical_index;
   int closed;
   void *http2;
-  // Opaque TLS session (SSL*) when the client connected with https://.
-  // Owned by the connection: created in the client connect path, freed in
-  // rpc_close. Null on the server and on plain (http://) client connections.
-  void *tls_session;
+  void *tls_session; // SSL* for https:// client connections; otherwise null.
 };
 
 extern int rpc_dispatch(conn_t *conn, int parity);

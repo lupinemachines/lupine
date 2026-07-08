@@ -85,7 +85,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     libnghttp2-14 \
-    # Runtime OpenSSL for the TLS-capable client shim (https:// endpoints).
     # libssl3 on jammy, libssl3t64 on noble.
     && (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64) \
     && rm -rf /var/lib/apt/lists/*
@@ -122,7 +121,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 \
     libnghttp2-14 \
     libstdc++6 \
-    # Runtime OpenSSL for the TLS-capable client shim (https:// endpoints).
     # libssl3 on jammy, libssl3t64 on noble.
     && (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64) \
     && rm -rf /var/lib/apt/lists/*
