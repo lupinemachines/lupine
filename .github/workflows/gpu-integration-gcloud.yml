@@ -512,6 +512,29 @@ jobs:
             test/pytorch/results/
           if-no-files-found: ignore
 
+      - name: Report sample results
+        id: sample_results
+        if: always()
+        run: |
+          set -uo pipefail
+          rd="$(ls -td test/cuda-samples/results/*/ 2>/dev/null | head -n1 || true)"
+          if [[ -z "${rd:-}" ]]; then
+            echo "No CUDA sample results dir found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### CUDA samples (${{ matrix.label }})"
+            echo '```'
+            [[ -f "$rd/summary.txt" ]] && cat "$rd/summary.txt"
+            [[ -f "$rd/coverage.txt" ]] && { echo; cat "$rd/coverage.txt"; }
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$rd/summary.txt" ]]; then
+            awk '{print tolower($1)"="$2}' "$rd/summary.txt" >> "$GITHUB_OUTPUT"
+          fi
+          cov="$(grep 'coverage:' "$rd/coverage.txt" 2>/dev/null | sed -E 's/^CUDA sample coverage: /coverage=/')"
+          [[ -n "${cov:-}" ]] && echo "$cov" >> "$GITHUB_OUTPUT"
+
       - name: Refresh Google Cloud credentials for cleanup
         if: always()
         uses: google-github-actions/auth@v3

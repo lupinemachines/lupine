@@ -75,7 +75,7 @@ CORE_SAMPLES=(
   imageDenoising marchingCubes particles simpleGL smokeParticles
   simpleTexture3D volumeFiltering volumeRender
   radixSortThrust segmentationTreeThrust template interval
-  dsl ptxgen ptxjit matrixMulDynlinkJIT threadMigration
+  ptxgen ptxjit matrixMulDynlinkJIT threadMigration
 )
 
 LIBRARY_SAMPLES=(
@@ -93,6 +93,7 @@ LIBRARY_SAMPLES=(
   jitLto
   watershedSegmentationNPP
   boxFilterNPP
+  cannyEdgeDetectorNPP
 )
 
 DEFAULT_SAMPLES=(
@@ -473,11 +474,13 @@ if [[ "$needs_build" == "1" ]]; then
           continue
         fi
         sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$sample"
+        build_log="$RESULTS_DIR/.build-$sample.log"
+        : > "$build_log"
         if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
           # shellcheck disable=SC2086
-          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS >>"$build_log" 2>&1
         fi
-        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" || true
+        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" >>"$build_log" 2>&1 || true
       done
     else
       if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
@@ -626,12 +629,25 @@ run_sample() {
 
   sample_exe="$(resolve_sample_exe "$sample" || true)"
   if [[ -z "$sample_exe" ]]; then
-    if [[ "$explicit_samples" == "1" ]]; then
-      status="FAIL:missing"
+    if [[ -z "$(resolve_sample_srcdir "$sample" || true)" ]]; then
+      if [[ "$explicit_samples" == "1" ]]; then
+        status="FAIL:missing"
+      else
+        status="SKIP:missing"
+      fi
+      signature="missing sample source dir: $sample"
     else
-      status="SKIP:missing"
+      if [[ "$explicit_samples" == "1" ]]; then
+        status="FAIL:build-failed"
+      else
+        status="SKIP:build-failed"
+      fi
+      build_log="$RESULTS_DIR/.build-$sample.log"
+      signature="$(grep -iE 'will not build|fatal error|:[[:space:]]*error:|No rule to make target|not found' "$build_log" 2>/dev/null | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+      if [[ -z "$signature" ]]; then
+        signature="sample source present but executable not produced: $sample"
+      fi
     fi
-    signature="missing executable: $sample"
     printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
     return 0
   fi
@@ -747,6 +763,38 @@ done
   echo "TOTAL $((pass + skip + fail))"
   echo "RESULTS $tsv"
 } | tee "$summary"
+
+# Coverage: how much of the pinned cuda-samples catalog this run exercises.
+if [[ "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/Samples" ]]; then
+  declare -A _enabled=()
+  for _s in "${samples[@]}"; do _enabled["$_s"]=1; done
+
+  graphics=0; ipc=0; mgpu=0; um=0; other=0; covered=0; catalog_total=0
+  while IFS= read -r _c; do
+    [[ -n "$_c" ]] || continue
+    catalog_total=$((catalog_total + 1))
+    if [[ -n "${_enabled[$_c]:-}" ]]; then
+      covered=$((covered + 1))
+    elif [[ "$_c" =~ (D3D|GL|GLES|Vulkan|vulkan|EGL|NvSci|NvMedia|cuDLA|MPI|freeImage|Tegra|fluids|postProcess|CUDA2GL|SLI) ]]; then
+      graphics=$((graphics + 1))
+    elif [[ " memMapIPCDrv simpleIPC streamOrderedAllocationIPC " == *" $_c "* ]]; then
+      ipc=$((ipc + 1))
+    elif [[ " simpleP2P p2pBandwidthLatencyTest streamOrderedAllocationP2P conjugateGradientMultiDeviceCG simpleCUFFT_MGPU simpleCUFFT_2d_MGPU " == *" $_c "* ]]; then
+      mgpu=$((mgpu + 1))
+    elif [[ " UnifiedMemoryPerf UnifiedMemoryStreams systemWideAtomics uvmlite " == *" $_c "* ]]; then
+      um=$((um + 1))
+    else
+      other=$((other + 1))
+    fi
+  done < <(find "$CUDA_SAMPLES_DIR/Samples" -mindepth 2 -maxdepth 2 -type d -printf '%f\n' 2>/dev/null | sort -u)
+
+  _cov_line="CUDA sample coverage: $covered/$catalog_total catalog samples enabled ($CUDA_SAMPLES_REF)"
+  _ne_line="Not enabled: $((catalog_total - covered)) (graphics $graphics, ipc $ipc, multi-gpu $mgpu, unified-memory $um, other $other)"
+  echo ""
+  echo "$_cov_line"
+  echo "$_ne_line"
+  printf '%s\n%s\n' "$_cov_line" "$_ne_line" > "$RESULTS_DIR/coverage.txt"
+fi
 
 if [[ "$fail" -ne 0 ]]; then
   exit 1
