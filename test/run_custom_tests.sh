@@ -24,6 +24,7 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 NVCC="${NVCC:-$CUDA_HOME/bin/nvcc}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-120}"
+CUSTOM_TEST_BIN_DIR="${CUSTOM_TEST_BIN_DIR:-}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
   owns_build_dir=0
 else
@@ -62,12 +63,22 @@ fi
 for src in "${tests[@]}"; do
   name="$(basename "$src" .cu)"
   exe="$BUILD_DIR/$name"
-  echo "=== building $name ==="
-  if ! "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$src" -o "$exe" \
-       -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs" 2>&1; then
-    echo "BUILD FAILED: $name" >&2
-    fail=$((fail + 1))
-    continue
+  if [[ -n "$CUSTOM_TEST_BIN_DIR" ]]; then
+    exe="$CUSTOM_TEST_BIN_DIR/$name"
+    if [[ ! -x "$exe" ]]; then
+      echo "missing prebuilt custom test: $exe" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+    echo "=== using prebuilt $name ==="
+  else
+    echo "=== building $name ==="
+    if ! "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$src" -o "$exe" \
+         -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs" 2>&1; then
+      echo "BUILD FAILED: $name" >&2
+      fail=$((fail + 1))
+      continue
+    fi
   fi
   echo "=== running $name against $SERVER_HOST:$SERVER_PORT ==="
   if timeout --kill-after=5s "$TEST_TIMEOUT" env \
