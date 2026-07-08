@@ -3065,9 +3065,6 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
     if (async) {
       result = cuMemcpyHtoDAsync_v2(dstDevice + offset, staging.data(), chunk,
                                     hStream);
-      if (result == CUDA_SUCCESS) {
-        result = cuStreamSynchronize(hStream);
-      }
     } else {
       result = cuMemcpyHtoD_v2(dstDevice + offset, staging.data(), chunk);
     }
