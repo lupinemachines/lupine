@@ -75,94 +75,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Free runner disk
-        run: |
-          set -euo pipefail
-          sudo rm -rf \
-            /opt/hostedtoolcache \
-            /opt/ghc \
-            /usr/local/.ghcup \
-            /usr/local/lib/android \
-            /usr/local/share/boost \
-            /usr/share/dotnet \
-            "${AGENT_TOOLSDIRECTORY:-}" || true
-          df -h
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Write inline client image Dockerfile
-        run: |
-          cat > "${RUNNER_TEMP}/gpu-integration.Dockerfile" <<'EOF'
-          # syntax=docker/dockerfile:1.7
-
-          ARG BASE_IMAGE
-          FROM ${BASE_IMAGE}
-
-          ARG CUDA_SAMPLE_SKIP_LIST=""
-          ARG CUDA_SAMPLES_REF=""
-
-          ENV DEBIAN_FRONTEND=noninteractive \
-              CUDA_HOME=/usr/local/cuda \
-              CUDA_LIB_DIR=/usr/local/cuda/lib64 \
-              CUDA_SAMPLES_DIR=/opt/cuda-samples-src \
-              CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build \
-              CUDA_SAMPLES_ARCH=89 \
-              CCACHE_DIR=/opt/lupine/ccache \
-              CCACHE_BASEDIR=/src \
-              CCACHE_COMPILERCHECK=content \
-              CCACHE_COMPRESS=true \
-              PATH=/usr/local/cuda/bin:$PATH
-
-          RUN apt-get update && apt-get install -y --no-install-recommends \
-                bash \
-                build-essential \
-                ca-certificates \
-                ccache \
-                cmake \
-                curl \
-                freeglut3-dev \
-                git \
-                libfreeimage-dev \
-                libgl-dev \
-                libglu1-mesa-dev \
-                libnghttp2-dev \
-                libx11-dev \
-                libxi-dev \
-                libxmu-dev \
-                ninja-build \
-                openssh-client \
-                python3 \
-                python3-pip \
-                python3-venv \
-              && rm -rf /var/lib/apt/lists/*
-
-          WORKDIR /src
-          COPY . /src
-
-          RUN --mount=type=cache,target=/opt/lupine/ccache \
-              CUDA_SAMPLES_REF="$CUDA_SAMPLES_REF" \
-                 CUDA_SAMPLE_SKIP_LIST="$CUDA_SAMPLE_SKIP_LIST" \
-                 CUDA_SAMPLES_CMAKE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache" \
-                 BUILD_ONLY=1 BUILD_SAMPLES=auto SAMPLE_SUITE=extended \
-                 /src/test/run_cuda_samples.sh \
-              && { ccache --show-stats || true; }
-          EOF
-
-      - name: Build ${{ matrix.name }} client image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ runner.temp }}/gpu-integration.Dockerfile
-          load: true
-          tags: ${{ env.CLIENT_IMAGE }}
-          build-args: |
-            BASE_IMAGE=${{ matrix.client_image }}
-            CUDA_SAMPLE_SKIP_LIST=${{ env.CUDA_SAMPLE_SKIP_LIST }}
-            CUDA_SAMPLES_REF=${{ matrix.samples_ref }}
-          cache-from: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }}
-          cache-to: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }},mode=max
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -293,6 +205,94 @@ jobs:
             echo "VM_IP=$vm_ip"
             echo "GCP_ZONE=$selected_zone"
           } >> "$GITHUB_ENV"
+
+      - name: Free runner disk
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            /opt/hostedtoolcache \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet \
+            "${AGENT_TOOLSDIRECTORY:-}" || true
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Write inline client image Dockerfile
+        run: |
+          cat > "${RUNNER_TEMP}/gpu-integration.Dockerfile" <<'EOF'
+          # syntax=docker/dockerfile:1.7
+
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+
+          ARG CUDA_SAMPLE_SKIP_LIST=""
+          ARG CUDA_SAMPLES_REF=""
+
+          ENV DEBIAN_FRONTEND=noninteractive \
+              CUDA_HOME=/usr/local/cuda \
+              CUDA_LIB_DIR=/usr/local/cuda/lib64 \
+              CUDA_SAMPLES_DIR=/opt/cuda-samples-src \
+              CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build \
+              CUDA_SAMPLES_ARCH=89 \
+              CCACHE_DIR=/opt/lupine/ccache \
+              CCACHE_BASEDIR=/src \
+              CCACHE_COMPILERCHECK=content \
+              CCACHE_COMPRESS=true \
+              PATH=/usr/local/cuda/bin:$PATH
+
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                bash \
+                build-essential \
+                ca-certificates \
+                ccache \
+                cmake \
+                curl \
+                freeglut3-dev \
+                git \
+                libfreeimage-dev \
+                libgl-dev \
+                libglu1-mesa-dev \
+                libnghttp2-dev \
+                libx11-dev \
+                libxi-dev \
+                libxmu-dev \
+                ninja-build \
+                openssh-client \
+                python3 \
+                python3-pip \
+                python3-venv \
+              && rm -rf /var/lib/apt/lists/*
+
+          WORKDIR /src
+          COPY . /src
+
+          RUN --mount=type=cache,target=/opt/lupine/ccache \
+              CUDA_SAMPLES_REF="$CUDA_SAMPLES_REF" \
+                 CUDA_SAMPLE_SKIP_LIST="$CUDA_SAMPLE_SKIP_LIST" \
+                 CUDA_SAMPLES_CMAKE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache" \
+                 BUILD_ONLY=1 BUILD_SAMPLES=auto SAMPLE_SUITE=extended \
+                 /src/test/run_cuda_samples.sh \
+              && { ccache --show-stats || true; }
+          EOF
+
+      - name: Build ${{ matrix.name }} client image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ runner.temp }}/gpu-integration.Dockerfile
+          load: true
+          tags: ${{ env.CLIENT_IMAGE }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.client_image }}
+            CUDA_SAMPLE_SKIP_LIST=${{ env.CUDA_SAMPLE_SKIP_LIST }}
+            CUDA_SAMPLES_REF=${{ matrix.samples_ref }}
+          cache-from: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }}
+          cache-to: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }},mode=max
 
       - name: Wait for SSH and NVIDIA driver
         run: |
