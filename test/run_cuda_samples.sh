@@ -618,6 +618,23 @@ sample_timeout() {
   esac
 }
 
+compact_signature() {
+  local text="$1"
+
+  text="$(printf '%s' "$text" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' || true)"
+  printf '%.240s' "$text"
+}
+
+compact_file_signature() {
+  local file="$1"
+  local text=""
+
+  if [[ -f "$file" ]]; then
+    text="$(tr '\n' ' ' < "$file" | sed -E 's/[[:space:]]+/ /g' || true)"
+  fi
+  printf '%.240s' "$text"
+}
+
 tsv="$RESULTS_DIR/results.tsv"
 summary="$RESULTS_DIR/summary.txt"
 : > "$tsv"
@@ -668,7 +685,7 @@ run_sample() {
         status="SKIP:build-failed"
       fi
       build_log="$RESULTS_DIR/.build-$sample.log"
-      signature="$(grep -iE 'will not build|fatal error|:[[:space:]]*error:|No rule to make target|not found' "$build_log" 2>/dev/null | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+      signature="$(compact_signature "$(grep -iE 'will not build|fatal error|:[[:space:]]*error:|No rule to make target|not found' "$build_log" 2>/dev/null || true)")"
       if [[ -z "$signature" ]]; then
         signature="sample source present but executable not produced: $sample"
       fi
@@ -718,7 +735,7 @@ run_sample() {
     status="FAIL:$rc"
   fi
 
-  signature="$(tr '\n' ' ' < "$log" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+  signature="$(compact_file_signature "$log")"
   if [[ -z "$signature" && "$rc" == "124" ]]; then
     signature="timed out after ${timeout_seconds}s"
   fi
