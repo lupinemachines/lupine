@@ -757,6 +757,38 @@ done
   echo "RESULTS $tsv"
 } | tee "$summary"
 
+# Coverage: how much of the pinned cuda-samples catalog this run exercises.
+if [[ "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/Samples" ]]; then
+  declare -A _enabled=()
+  for _s in "${samples[@]}"; do _enabled["$_s"]=1; done
+
+  graphics=0; ipc=0; mgpu=0; um=0; other=0; covered=0; catalog_total=0
+  while IFS= read -r _c; do
+    [[ -n "$_c" ]] || continue
+    catalog_total=$((catalog_total + 1))
+    if [[ -n "${_enabled[$_c]:-}" ]]; then
+      covered=$((covered + 1))
+    elif [[ "$_c" =~ (D3D|GL|GLES|Vulkan|vulkan|EGL|NvSci|NvMedia|cuDLA|MPI|freeImage|Tegra|fluids|postProcess|CUDA2GL|SLI) ]]; then
+      graphics=$((graphics + 1))
+    elif [[ " memMapIPCDrv simpleIPC streamOrderedAllocationIPC " == *" $_c "* ]]; then
+      ipc=$((ipc + 1))
+    elif [[ " simpleP2P p2pBandwidthLatencyTest streamOrderedAllocationP2P conjugateGradientMultiDeviceCG simpleCUFFT_MGPU simpleCUFFT_2d_MGPU " == *" $_c "* ]]; then
+      mgpu=$((mgpu + 1))
+    elif [[ " UnifiedMemoryPerf UnifiedMemoryStreams systemWideAtomics uvmlite " == *" $_c "* ]]; then
+      um=$((um + 1))
+    else
+      other=$((other + 1))
+    fi
+  done < <(find "$CUDA_SAMPLES_DIR/Samples" -mindepth 2 -maxdepth 2 -type d -printf '%f\n' 2>/dev/null | sort -u)
+
+  _cov_line="CUDA sample coverage: $covered/$catalog_total catalog samples enabled ($CUDA_SAMPLES_REF)"
+  _ne_line="Not enabled: $((catalog_total - covered)) (graphics $graphics, ipc $ipc, multi-gpu $mgpu, unified-memory $um, other $other)"
+  echo ""
+  echo "$_cov_line"
+  echo "$_ne_line"
+  printf '%s\n%s\n' "$_cov_line" "$_ne_line" > "$RESULTS_DIR/coverage.txt"
+fi
+
 if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
