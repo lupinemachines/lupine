@@ -116,7 +116,8 @@ Environment:
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
   BUILD_ONLY           1 to clone/build selected samples and exit before running.
-  CUDA_SAMPLE_JOBS     Number of samples to run concurrently. Default: $CUDA_SAMPLE_JOBS.
+  CUDA_SAMPLE_JOBS     Number of worker processes that drain the sample queue
+                       concurrently. Default: $CUDA_SAMPLE_JOBS.
   SAMPLE_SUITE         compliance, core, libraries, or extended when no samples are given.
                        Default: compliance.
   SAMPLE_TIMEOUT       Default per-sample execution timeout in seconds. Default: $SAMPLE_TIMEOUT.
@@ -704,30 +705,48 @@ run_sample() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $sample -> $status in $((SECONDS - sample_start_seconds))s" >&2
 }
 
-result_files=()
-pids=()
+# Drain the sample queue with a fixed pool of CUDA_SAMPLE_JOBS workers instead
+# of dispatching fixed batches. Sample indices are pushed onto a FIFO; each
+# worker pulls the next index, runs the sample, and loops. The pool stays
+# saturated (a freed worker immediately grabs the next sample) instead of
+# blocking until a whole batch drains. One poison token per worker is enqueued
+# last so every worker shuts down cleanly once the queue is empty.
+dispatch_samples() {
+  local workers="$CUDA_SAMPLE_JOBS"
+  local queue
+  queue="$(mktemp -u "$RESULTS_DIR/.queue.XXXXXX")"
+  mkfifo "$queue"
+  # A bidirectional open keeps the FIFO alive while we feed it; the inode is
+  # held open by the fd below, so unlinking now is safe and avoids cleanup.
+  exec 3<>"$queue"
+  rm -f "$queue"
 
-wait_for_batch() {
-  local pid=""
-
-  for pid in "${pids[@]}"; do
-    wait "$pid" || true
+  local i w
+  for i in "${!samples[@]}"; do
+    result_files[$i]="$RESULTS_DIR/.sample-$i.tsv"
+    printf '%s\0' "$i" >&3
   done
-  pids=()
+  # Empty index == shutdown sentinel; real indices are always non-empty.
+  for ((w = 0; w < workers; w++)); do
+    printf '%s\0' '' >&3
+  done
+
+  for ((w = 0; w < workers; w++)); do
+    (
+      local sample_index
+      while IFS= read -r -d '' sample_index <&3; do
+        [[ -z "$sample_index" ]] && break
+        run_sample "$sample_index" "$RESULTS_DIR/.sample-$sample_index.tsv"
+      done
+    ) &
+  done
+
+  exec 3>&-
+  wait || true
 }
 
-for i in "${!samples[@]}"; do
-  result_file="$RESULTS_DIR/.sample-$i.tsv"
-  result_files[$i]="$result_file"
-  run_sample "$i" "$result_file" &
-  pids+=("$!")
-
-  if (( ${#pids[@]} >= CUDA_SAMPLE_JOBS )); then
-    wait_for_batch
-  fi
-done
-
-wait_for_batch
+result_files=()
+dispatch_samples
 
 for i in "${!samples[@]}"; do
   result_file="${result_files[$i]}"

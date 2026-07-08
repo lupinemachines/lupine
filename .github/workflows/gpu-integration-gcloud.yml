@@ -62,7 +62,7 @@ jobs:
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      CUDA_SAMPLE_JOBS: 8
+      CUDA_SAMPLE_JOBS: 16
       PYTORCH_TEST_TIMEOUT: 180
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
