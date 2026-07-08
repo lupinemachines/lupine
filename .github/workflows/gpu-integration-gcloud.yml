@@ -74,19 +74,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Free runner disk
-        run: |
-          set -euo pipefail
-          sudo rm -rf \
-            /opt/hostedtoolcache \
-            /opt/ghc \
-            /usr/local/.ghcup \
-            /usr/local/lib/android \
-            /usr/local/share/boost \
-            /usr/share/dotnet \
-            "${AGENT_TOOLSDIRECTORY:-}" || true
-          df -h
-
       - name: Restore GPU integration build cache
         id: gpu-build-cache
         uses: actions/cache/restore@v4
@@ -226,6 +213,19 @@ jobs:
             echo "VM_IP=$vm_ip"
             echo "GCP_ZONE=$selected_zone"
           } >> "$GITHUB_ENV"
+
+      - name: Free runner disk
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            /opt/hostedtoolcache \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet \
+            "${AGENT_TOOLSDIRECTORY:-}" || true
+          df -h
 
       - name: Wait for SSH and NVIDIA driver
         run: |
@@ -490,33 +490,43 @@ jobs:
           fallback_zones=($GCP_FALLBACK_ZONES)
           candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
 
+          delete_pids=()
           for zone in "${candidate_zones[@]}"; do
             gcloud compute instances delete "$VM_NAME" \
               --project="$GCP_PROJECT_ID" \
               --zone="$zone" \
-              --quiet || true
+              --quiet &
+            delete_pids+=("$!")
           done
 
           for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
             gcloud compute firewall-rules delete "$rule" \
               --project="$GCP_PROJECT_ID" \
-              --quiet || true
+              --quiet &
+            delete_pids+=("$!")
+          done
+
+          for pid in "${delete_pids[@]}"; do
+            wait "$pid" || true
           done
 
           leftovers=0
+          check_pids=()
           for zone in "${candidate_zones[@]}"; do
-            if gcloud compute instances describe "$VM_NAME" \
+            (! gcloud compute instances describe "$VM_NAME" \
               --project="$GCP_PROJECT_ID" \
-              --zone="$zone" >/dev/null 2>&1; then
-              echo "leftover VM still exists in $zone: $VM_NAME" >&2
-              leftovers=1
-            fi
+              --zone="$zone" >/dev/null 2>&1) &
+            check_pids+=("$!")
           done
 
           for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
-            if gcloud compute firewall-rules describe "$rule" \
-              --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-              echo "leftover firewall rule still exists: $rule" >&2
+            (! gcloud compute firewall-rules describe "$rule" \
+              --project="$GCP_PROJECT_ID" >/dev/null 2>&1) &
+            check_pids+=("$!")
+          done
+
+          for pid in "${check_pids[@]}"; do
+            if ! wait "$pid"; then
               leftovers=1
             fi
           done
