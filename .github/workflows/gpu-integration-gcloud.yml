@@ -270,7 +270,7 @@ jobs:
 
           # Keep the expensive CUDA sample build before COPY . so regular
           # Lupine source changes do not invalidate this cached layer.
-          RUN --mount=type=cache,target=/opt/lupine/ccache <<'SCRIPT'
+          RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
           set -euo pipefail
           git clone https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
           git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
