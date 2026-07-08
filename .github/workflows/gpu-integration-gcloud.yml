@@ -63,6 +63,7 @@ jobs:
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
       CUDA_SAMPLE_JOBS: 16
+      SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
@@ -268,16 +269,38 @@ jobs:
                 python3-venv \
               && rm -rf /var/lib/apt/lists/*
 
+          # Keep the expensive CUDA sample build before COPY . so regular
+          # Lupine source changes do not invalidate this cached layer.
+          RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
+          set -euo pipefail
+          git clone https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
+          git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
+          if [[ -n "$CUDA_SAMPLES_REF" ]]; then
+            git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
+            git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
+            git -C "$CUDA_SAMPLES_DIR" reset --hard "$CUDA_SAMPLES_REF"
+          fi
+
+          if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
+            find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
+              "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
+          fi
+
+          export CCACHE_BASEDIR="$CUDA_SAMPLES_DIR"
+          if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
+            cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+            cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
+          else
+            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)"
+          fi
+          ccache --show-stats || true
+          SCRIPT
+
           WORKDIR /src
           COPY . /src
-
-          RUN --mount=type=cache,target=/opt/lupine/ccache \
-              CUDA_SAMPLES_REF="$CUDA_SAMPLES_REF" \
-                 CUDA_SAMPLE_SKIP_LIST="$CUDA_SAMPLE_SKIP_LIST" \
-                 CUDA_SAMPLES_CMAKE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache" \
-                 BUILD_ONLY=1 BUILD_SAMPLES=auto SAMPLE_SUITE=extended \
-                 /src/test/run_cuda_samples.sh \
-              && { ccache --show-stats || true; }
           EOF
 
       - name: Build ${{ matrix.name }} client image
@@ -398,13 +421,14 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
             -e CUDA_SAMPLE_JOBS="$CUDA_SAMPLE_JOBS" \
             -e CUDA_SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT" \
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
+            -e SSH_COMMAND_TIMEOUT="$SSH_COMMAND_TIMEOUT" \
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
@@ -532,7 +556,10 @@ jobs:
           if [[ -f "$rd/summary.txt" ]]; then
             awk '{print tolower($1)"="$2}' "$rd/summary.txt" >> "$GITHUB_OUTPUT"
           fi
-          cov="$(grep 'coverage:' "$rd/coverage.txt" 2>/dev/null | sed -E 's/^CUDA sample coverage: /coverage=/')"
+          cov=""
+          if [[ -f "$rd/coverage.txt" ]]; then
+            cov="$(grep 'coverage:' "$rd/coverage.txt" | sed -E 's/^CUDA sample coverage: /coverage=/')"
+          fi
           if [[ -n "${cov:-}" ]]; then
             echo "$cov" >> "$GITHUB_OUTPUT"
           fi
