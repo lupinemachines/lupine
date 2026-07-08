@@ -75,7 +75,7 @@ CORE_SAMPLES=(
   imageDenoising marchingCubes particles simpleGL smokeParticles
   simpleTexture3D volumeFiltering volumeRender
   radixSortThrust segmentationTreeThrust template interval
-  dsl ptxgen ptxjit matrixMulDynlinkJIT threadMigration
+  ptxgen ptxjit matrixMulDynlinkJIT threadMigration
 )
 
 LIBRARY_SAMPLES=(
