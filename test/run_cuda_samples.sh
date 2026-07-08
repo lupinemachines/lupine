@@ -689,24 +689,29 @@ run_sample() {
 }
 
 result_files=()
-running=0
+pids=()
+
+wait_for_batch() {
+  local pid=""
+
+  for pid in "${pids[@]}"; do
+    wait "$pid" || true
+  done
+  pids=()
+}
 
 for i in "${!samples[@]}"; do
   result_file="$RESULTS_DIR/.sample-$i.tsv"
   result_files[$i]="$result_file"
   run_sample "$i" "$result_file" &
-  running=$((running + 1))
+  pids+=("$!")
 
-  if (( running >= CUDA_SAMPLE_JOBS )); then
-    wait -n || true
-    running=$((running - 1))
+  if (( ${#pids[@]} >= CUDA_SAMPLE_JOBS )); then
+    wait_for_batch
   fi
 done
 
-while (( running > 0 )); do
-  wait -n || true
-  running=$((running - 1))
-done
+wait_for_batch
 
 for i in "${!samples[@]}"; do
   result_file="${result_files[$i]}"
