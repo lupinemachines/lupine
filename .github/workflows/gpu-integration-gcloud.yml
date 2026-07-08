@@ -63,6 +63,7 @@ jobs:
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
       CUDA_SAMPLE_JOBS: 16
+      SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
@@ -420,13 +421,14 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
             -e CUDA_SAMPLE_JOBS="$CUDA_SAMPLE_JOBS" \
             -e CUDA_SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT" \
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
+            -e SSH_COMMAND_TIMEOUT="$SSH_COMMAND_TIMEOUT" \
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
@@ -554,7 +556,10 @@ jobs:
           if [[ -f "$rd/summary.txt" ]]; then
             awk '{print tolower($1)"="$2}' "$rd/summary.txt" >> "$GITHUB_OUTPUT"
           fi
-          cov="$(grep 'coverage:' "$rd/coverage.txt" 2>/dev/null | sed -E 's/^CUDA sample coverage: /coverage=/')"
+          cov=""
+          if [[ -f "$rd/coverage.txt" ]]; then
+            cov="$(grep 'coverage:' "$rd/coverage.txt" | sed -E 's/^CUDA sample coverage: /coverage=/')"
+          fi
           if [[ -n "${cov:-}" ]]; then
             echo "$cov" >> "$GITHUB_OUTPUT"
           fi

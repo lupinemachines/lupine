@@ -584,6 +584,29 @@ stop_remote_server() {
   " >/dev/null 2>&1 || true
 }
 
+start_remote_server() {
+  local pidfile="$1"
+  local server_log="$2"
+  local port="$3"
+  local attempt
+
+  for attempt in 1 2 3; do
+    stop_remote_server "$pidfile" "$server_log"
+    if ssh_with_timeout "
+      rm -f '$server_log' '$pidfile'
+      LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null &
+      echo \$! >'$pidfile'
+      sleep 0.5
+      test -s '$pidfile'
+    "; then
+      return 0
+    fi
+    sleep "$attempt"
+  done
+
+  return 1
+}
+
 sample_timeout() {
   case "$1" in
     simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
@@ -666,10 +689,7 @@ run_sample() {
     sample_argv+=("$arg")
   done < <(sample_args "$sample")
 
-  stop_remote_server "$pidfile" "$server_log"
-
-  if ! ssh_with_timeout \
-    "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"; then
+  if ! start_remote_server "$pidfile" "$server_log" "$port"; then
     status="FAIL:ssh"
     signature="failed to start remote server on port $port"
     printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
@@ -706,44 +726,27 @@ run_sample() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $sample -> $status in $((SECONDS - sample_start_seconds))s" >&2
 }
 
-# Drain the sample queue with a fixed pool of CUDA_SAMPLE_JOBS workers instead
-# of dispatching fixed batches. Sample indices are pushed onto a FIFO; each
-# worker pulls the next index, runs the sample, and loops. The pool stays
-# saturated (a freed worker immediately grabs the next sample) instead of
-# blocking until a whole batch drains. One poison token per worker is enqueued
-# last so every worker shuts down cleanly once the queue is empty.
+# Keep a fixed number of samples in flight. When one finishes, launch the next
+# sample immediately so the worker pool stays saturated without a shared FIFO.
 dispatch_samples() {
   local workers="$CUDA_SAMPLE_JOBS"
-  local queue
-  queue="$(mktemp -u "$RESULTS_DIR/.queue.XXXXXX")"
-  mkfifo "$queue"
-  # A bidirectional open keeps the FIFO alive while we feed it; the inode is
-  # held open by the fd below, so unlinking now is safe and avoids cleanup.
-  exec 3<>"$queue"
-  rm -f "$queue"
+  local active=0
+  local i
 
-  local i w
   for i in "${!samples[@]}"; do
     result_files[$i]="$RESULTS_DIR/.sample-$i.tsv"
-    printf '%s\0' "$i" >&3
-  done
-  # Empty index == shutdown sentinel; real indices are always non-empty.
-  for ((w = 0; w < workers; w++)); do
-    printf '%s\0' '' >&3
-  done
-
-  for ((w = 0; w < workers; w++)); do
-    (
-      local sample_index
-      while IFS= read -r -d '' sample_index <&3; do
-        [[ -z "$sample_index" ]] && break
-        run_sample "$sample_index" "$RESULTS_DIR/.sample-$sample_index.tsv"
-      done
-    ) &
+    run_sample "$i" "$RESULTS_DIR/.sample-$i.tsv" &
+    active=$((active + 1))
+    if (( active >= workers )); then
+      wait -n || true
+      active=$((active - 1))
+    fi
   done
 
-  exec 3>&-
-  wait || true
+  while (( active > 0 )); do
+    wait -n || true
+    active=$((active - 1))
+  done
 }
 
 result_files=()
