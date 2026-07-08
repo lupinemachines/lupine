@@ -11,6 +11,9 @@ set(MIN_CUDA_VERSION 11.0)
 find_package(CUDAToolkit REQUIRED)
 find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
 find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
+# Client-side TLS (https:// endpoints). The server stays plaintext and is
+# expected to be fronted by a TLS-terminating proxy.
+find_package(OpenSSL QUIET)
 
 if (NOT CUDAToolkit_VERSION)
     message(FATAL_ERROR "CUDA Toolkit is required but not found.")
@@ -97,6 +100,10 @@ if (NOT WIN32)
     add_library(${CLIENT_OUTPUT} SHARED ${CLIENT_SOURCES} ${CLIENT_HEADERS})
     target_include_directories(${CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_compile_definitions(${CLIENT_OUTPUT} PRIVATE LUPINE_RPC_CLIENT)
+    if(OpenSSL_FOUND)
+      target_compile_definitions(${CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
+      target_link_libraries(${CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
     target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
     target_link_options(${CLIENT_OUTPUT} PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/client.exports"
@@ -164,6 +171,7 @@ if (NOT WIN32)
     )
 
     message(STATUS "Building client output: ${CLIENT_OUTPUT}")
+    message(STATUS "Client TLS (OpenSSL): ${OpenSSL_FOUND}")
     message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
 endif()
 message(STATUS "Building server output: ${SERVER_OUTPUT}")
