@@ -92,6 +92,7 @@ LIBRARY_SAMPLES=(
   randomFog
   jitLto
   watershedSegmentationNPP
+  boxFilterNPP
 )
 
 DEFAULT_SAMPLES=(
