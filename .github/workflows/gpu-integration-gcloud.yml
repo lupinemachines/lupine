@@ -232,6 +232,7 @@ jobs:
           FROM ${BASE_IMAGE}
 
           ARG CUDA_SAMPLE_SKIP_LIST=""
+          ARG CUDA_SAMPLES_CACHE_HIT="false"
           ARG CUDA_SAMPLES_REF=""
 
           ENV DEBIAN_FRONTEND=noninteractive \
@@ -269,10 +270,22 @@ jobs:
                 python3-venv \
               && rm -rf /var/lib/apt/lists/*
 
+          COPY --from=cuda_samples_src . /opt/cuda-samples-src
+          COPY --from=cuda_samples_build . /opt/cuda-samples-build
+
           # Keep the expensive CUDA sample build before COPY . so regular
-          # Lupine source changes do not invalidate this cached layer.
+          # Lupine source changes do not invalidate this step. Warm runs copy
+          # the restored Actions cache into the image and skip compilation.
           RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
           set -euo pipefail
+
+          if [[ "$CUDA_SAMPLES_CACHE_HIT" == "true" && -d "$CUDA_SAMPLES_DIR/.git" && -d "$CUDA_SAMPLES_BUILD_DIR" ]]; then
+            git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
+            echo "Using restored CUDA sample cache"
+            exit 0
+          fi
+
+          rm -rf "$CUDA_SAMPLES_DIR" "$CUDA_SAMPLES_BUILD_DIR"
           git clone https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
           git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
           if [[ -n "$CUDA_SAMPLES_REF" ]]; then
@@ -303,6 +316,20 @@ jobs:
           COPY . /src
           EOF
 
+      - name: Restore CUDA sample cache
+        id: cuda-samples-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}
+          key: gpu-integration-cuda-samples-v2-${{ matrix.label }}-${{ matrix.samples_ref }}
+
+      - name: Prepare CUDA sample cache context
+        run: |
+          set -euo pipefail
+          cache_dir="${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}"
+          mkdir -p "$cache_dir/src" "$cache_dir/build"
+          touch "$cache_dir/src/.keep" "$cache_dir/build/.keep"
+
       - name: Build ${{ matrix.name }} client image
         uses: docker/build-push-action@v6
         with:
@@ -310,12 +337,37 @@ jobs:
           file: ${{ runner.temp }}/gpu-integration.Dockerfile
           load: true
           tags: ${{ env.CLIENT_IMAGE }}
+          build-contexts: |
+            cuda_samples_src=${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}/src
+            cuda_samples_build=${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}/build
           build-args: |
             BASE_IMAGE=${{ matrix.client_image }}
+            CUDA_SAMPLES_CACHE_HIT=${{ steps.cuda-samples-cache.outputs.cache-hit == 'true' }}
             CUDA_SAMPLE_SKIP_LIST=${{ env.CUDA_SAMPLE_SKIP_LIST }}
             CUDA_SAMPLES_REF=${{ matrix.samples_ref }}
-          cache-from: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }}
-          cache-to: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }},mode=max
+
+      - name: Extract CUDA sample cache
+        if: steps.cuda-samples-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cache_dir="${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}"
+          rm -rf "$cache_dir"
+          mkdir -p "$cache_dir/src" "$cache_dir/build"
+          container_id="$(docker create "$CLIENT_IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/opt/cuda-samples-src/." "$cache_dir/src/"
+          if ! docker cp "$container_id:/opt/cuda-samples-build/." "$cache_dir/build/" 2>/tmp/cuda-samples-build-copy.err; then
+            echo "No separate CUDA samples build directory found; caching source tree only"
+            touch "$cache_dir/build/.keep"
+          fi
+          du -sh "$cache_dir"
+
+      - name: Save CUDA sample cache
+        if: steps.cuda-samples-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}
+          key: ${{ steps.cuda-samples-cache.outputs.cache-primary-key }}
 
       - name: Wait for SSH and NVIDIA driver
         run: |
@@ -358,11 +410,13 @@ jobs:
           '
 
       - name: Install docker pussh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p ~/.docker/cli-plugins
-          curl -fsSL https://raw.githubusercontent.com/psviderski/unregistry/v0.4.3/docker-pussh \
-            -o ~/.docker/cli-plugins/docker-pussh
+          gh api "repos/psviderski/unregistry/contents/docker-pussh?ref=v0.4.3" \
+            --jq .content | base64 -d > ~/.docker/cli-plugins/docker-pussh
           chmod +x ~/.docker/cli-plugins/docker-pussh
           docker pussh --version
 
