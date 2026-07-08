@@ -148,7 +148,12 @@ docker run --rm --network host \
   ./your_cuda_program
 ```
 
-Cross-server peer access and device-to-device copies are not implemented yet.
+Cross-server device-to-device and peer (`cuMemcpyDtoD` / `cuMemcpyPeer`) copies are
+supported: when the source and destination live on different servers, the client
+transparently stages the data through itself (device->host on one server, then
+host->device on the other). Direct server-to-server transfers that avoid that
+client hop, cross-server peer-access enablement, and `cuMemcpy3DPeer` are not
+implemented yet.
 Same-server operations route by handle ownership.
 
 For a specific CUDA version:
