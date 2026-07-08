@@ -471,11 +471,13 @@ if [[ "$needs_build" == "1" ]]; then
           continue
         fi
         sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$sample"
+        build_log="$RESULTS_DIR/.build-$sample.log"
+        : > "$build_log"
         if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
           # shellcheck disable=SC2086
-          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS >>"$build_log" 2>&1
         fi
-        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" || true
+        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" >>"$build_log" 2>&1 || true
       done
     else
       if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
@@ -624,12 +626,25 @@ run_sample() {
 
   sample_exe="$(resolve_sample_exe "$sample" || true)"
   if [[ -z "$sample_exe" ]]; then
-    if [[ "$explicit_samples" == "1" ]]; then
-      status="FAIL:missing"
+    if [[ -z "$(resolve_sample_srcdir "$sample" || true)" ]]; then
+      if [[ "$explicit_samples" == "1" ]]; then
+        status="FAIL:missing"
+      else
+        status="SKIP:missing"
+      fi
+      signature="missing sample source dir: $sample"
     else
-      status="SKIP:missing"
+      if [[ "$explicit_samples" == "1" ]]; then
+        status="FAIL:build-failed"
+      else
+        status="SKIP:build-failed"
+      fi
+      build_log="$RESULTS_DIR/.build-$sample.log"
+      signature="$(grep -iE 'will not build|fatal error|:[[:space:]]*error:|No rule to make target|not found' "$build_log" 2>/dev/null | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+      if [[ -z "$signature" ]]; then
+        signature="sample source present but executable not produced: $sample"
+      fi
     fi
-    signature="missing executable: $sample"
     printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
     return 0
   fi
