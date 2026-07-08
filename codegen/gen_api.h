@@ -149,6 +149,8 @@
 #define RPC_cuMemUnmap 2079607367
 #define RPC_cuMemSetAccess 1451145107
 #define RPC_cuMemGetAccess 659727598
+#define RPC_cuMemExportToShareableHandle 625805694
+#define RPC_cuMemImportFromShareableHandle 956879964
 #define RPC_cuMemGetAllocationGranularity 456804952
 #define RPC_cuMemGetAllocationPropertiesFromHandle 1832377395
 #define RPC_cuMemFreeAsync 121394514
@@ -159,6 +161,8 @@
 #define RPC_cuMemPoolCreate 2112346226
 #define RPC_cuMemPoolDestroy 1759284423
 #define RPC_cuMemAllocFromPoolAsync 1326874906
+#define RPC_cuMemPoolExportToShareableHandle 216093383
+#define RPC_cuMemPoolImportFromShareableHandle 1891033213
 #define RPC_cuMemPoolExportPointer 858999363
 #define RPC_cuMemPoolImportPointer 1026713940
 #define RPC_cuMemRangeGetAttributes 694140572
@@ -358,14 +362,10 @@
 #define RPC_cuGraphNodeGetDependentNodes_v2 310507977
 #define RPC_cuGraphRemoveDependencies_v2 1606074400
 #define RPC_cuMemAdvise_v2 1952016083
-#define RPC_cuMemExportToShareableHandle 625805694
 #define RPC_cuMemGetHandleForAddressRange 835443611
 #define RPC_cuMemHostRegister_v2 590145791
 #define RPC_cuMemHostUnregister 983276883
-#define RPC_cuMemImportFromShareableHandle 956879964
-#define RPC_cuMemPoolExportToShareableHandle 216093383
 #define RPC_cuMemPoolGetAttribute 830843819
-#define RPC_cuMemPoolImportFromShareableHandle 1891033213
 #define RPC_cuMemPoolSetAttribute 1050377512
 #define RPC_cuMemPrefetchAsync_v2 199313298
 #define RPC_cuMemRangeGetAttribute 1819983801

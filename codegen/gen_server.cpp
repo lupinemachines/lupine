@@ -5,6 +5,13 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#ifdef _WIN32
+#include <io.h>
+#define lupine_close_fd _close
+#else
+#include <unistd.h>
+#define lupine_close_fd close
+#endif
 
 #include "gen_api.h"
 
@@ -16,6 +23,7 @@
 
 #include <cstdio>
 
+#include "ipc.h"
 #include "rpc.h"
 
 #include "nvml_server.h"
@@ -3357,6 +3365,84 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuMemExportToShareableHandle(conn_t *conn) {
+  CUmemGenericAllocationHandle handle;
+  CUmemAllocationHandleType handleType;
+  unsigned long long flags;
+  int request_id;
+  int shareable_fd = -1;
+  lupine_ipc_token token = {};
+  CUresult lupine_intercept_result = CUDA_ERROR_NOT_SUPPORTED;
+  if (rpc_read(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+      rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
+      lupine_ipc_make_token(&token) == 0) {
+    lupine_intercept_result =
+        cuMemExportToShareableHandle(&shareable_fd, handle, handleType, flags);
+    if (lupine_intercept_result == CUDA_SUCCESS) {
+      if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION,
+                                        &token, shareable_fd) < 0) {
+        lupine_intercept_result = CUDA_ERROR_UNKNOWN;
+      }
+      lupine_close_fd(shareable_fd);
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &token, sizeof(token)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemImportFromShareableHandle(conn_t *conn) {
+  lupine_ipc_token token;
+  CUmemAllocationHandleType shHandleType;
+  CUmemGenericAllocationHandle handle = 0;
+  int request_id;
+  CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
+  if (rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &shHandleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  if (shHandleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+    int import_fd =
+        lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &token);
+    if (import_fd >= 0) {
+      lupine_intercept_result = cuMemImportFromShareableHandle(
+          &handle, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
+          shHandleType);
+      lupine_close_fd(import_fd);
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_cuMemGetAllocationGranularity(conn_t *conn) {
   size_t granularity;
   CUmemAllocationProp prop;
@@ -3543,17 +3629,17 @@ ERROR_0:
 
 int handle_cuMemPoolCreate(conn_t *conn) {
   CUmemoryPool pool;
-  const CUmemPoolProps *poolProps;
+  CUmemPoolProps poolProps;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-      rpc_read(conn, &poolProps, sizeof(const CUmemPoolProps *)) < 0 || false)
+      rpc_read(conn, &poolProps, sizeof(CUmemPoolProps)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemPoolCreate(&pool, poolProps);
+  lupine_intercept_result = cuMemPoolCreate(&pool, &poolProps);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
@@ -3609,6 +3695,85 @@ int handle_cuMemAllocFromPoolAsync(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemPoolExportToShareableHandle(conn_t *conn) {
+  CUmemoryPool pool;
+  CUmemAllocationHandleType handleType;
+  unsigned long long flags;
+  int request_id;
+  int shareable_fd = -1;
+  lupine_ipc_token token = {};
+  CUresult lupine_intercept_result = CUDA_ERROR_NOT_SUPPORTED;
+  if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+      rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
+      lupine_ipc_make_token(&token) == 0) {
+    lupine_intercept_result = cuMemPoolExportToShareableHandle(
+        &shareable_fd, pool, handleType, flags);
+    if (lupine_intercept_result == CUDA_SUCCESS) {
+      if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
+                                        shareable_fd) < 0) {
+        lupine_intercept_result = CUDA_ERROR_UNKNOWN;
+      }
+      lupine_close_fd(shareable_fd);
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &token, sizeof(token)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemPoolImportFromShareableHandle(conn_t *conn) {
+  lupine_ipc_token token;
+  CUmemAllocationHandleType handleType;
+  unsigned long long flags;
+  CUmemoryPool pool = nullptr;
+  int request_id;
+  CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
+  if (rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+    int import_fd =
+        lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token);
+    if (import_fd >= 0) {
+      lupine_intercept_result = cuMemPoolImportFromShareableHandle(
+          &pool, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
+          handleType, flags);
+      lupine_close_fd(import_fd);
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -8540,6 +8705,8 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuMemUnmap, handle_cuMemUnmap},
     {RPC_cuMemSetAccess, handle_cuMemSetAccess},
     {RPC_cuMemGetAccess, handle_cuMemGetAccess},
+    {RPC_cuMemExportToShareableHandle, handle_cuMemExportToShareableHandle},
+    {RPC_cuMemImportFromShareableHandle, handle_cuMemImportFromShareableHandle},
     {RPC_cuMemGetAllocationGranularity, handle_cuMemGetAllocationGranularity},
     {RPC_cuMemGetAllocationPropertiesFromHandle,
      handle_cuMemGetAllocationPropertiesFromHandle},
@@ -8551,6 +8718,10 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuMemPoolCreate, handle_cuMemPoolCreate},
     {RPC_cuMemPoolDestroy, handle_cuMemPoolDestroy},
     {RPC_cuMemAllocFromPoolAsync, handle_cuMemAllocFromPoolAsync},
+    {RPC_cuMemPoolExportToShareableHandle,
+     handle_cuMemPoolExportToShareableHandle},
+    {RPC_cuMemPoolImportFromShareableHandle,
+     handle_cuMemPoolImportFromShareableHandle},
     {RPC_cuMemPoolExportPointer, handle_cuMemPoolExportPointer},
     {RPC_cuMemPoolImportPointer, handle_cuMemPoolImportPointer},
     {RPC_cuMemRangeGetAttributes, handle_cuMemRangeGetAttributes},

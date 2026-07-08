@@ -3152,6 +3152,32 @@ extern "C" void lupine_invalidate_current_context_cache() {
   lupine_ctx_get_device_cache_valid = false;
 }
 
+extern "C" void lupine_forget_context_owner(CUcontext ctx) {
+  if (ctx == nullptr) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+    lupine_context_owners().erase(ctx);
+  }
+  if (lupine_current_context == ctx) {
+    lupine_current_context = nullptr;
+  }
+  if (lupine_default_context_hint == ctx) {
+    lupine_default_context_hint = nullptr;
+  }
+  CUcontext global_hint =
+      lupine_global_default_context_hint.load(std::memory_order_relaxed);
+  if (global_hint == ctx) {
+    lupine_global_default_context_hint.store(nullptr, std::memory_order_relaxed);
+  }
+  lupine_context_stack->erase(
+      std::remove(lupine_context_stack->begin(), lupine_context_stack->end(),
+                  ctx),
+      lupine_context_stack->end());
+  lupine_invalidate_current_context_cache();
+}
+
 static void lupine_cache_current_context_device(CUdevice device) {
   lupine_ctx_get_device_cache_generation =
       lupine_context_cache_generation.load(std::memory_order_acquire);

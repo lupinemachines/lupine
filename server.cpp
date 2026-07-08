@@ -5,20 +5,25 @@
 #include <memory>
 #include <mutex>
 #include <stdio.h>
+#include <algorithm>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "lupine_log.h"
+#include "ipc.h"
 #include "manual_server.h"
 #include "rpc.h"
 
@@ -434,6 +439,89 @@ int main() {
   signal(SIGCHLD, SIG_IGN);
 #endif
 
+#ifndef _WIN32
+  std::vector<int> broker_fds;
+  while (1) {
+    std::vector<struct pollfd> poll_fds;
+    poll_fds.push_back({sockfd, POLLIN, 0});
+    for (int broker_fd : broker_fds) {
+      poll_fds.push_back({broker_fd, POLLIN | POLLHUP | POLLERR, 0});
+    }
+
+    int poll_rc;
+    do {
+      poll_rc = poll(poll_fds.data(), poll_fds.size(), -1);
+    } while (poll_rc < 0 && errno == EINTR);
+    if (poll_rc < 0) {
+      LUPINE_LOG_ERROR("Server poll failed.");
+      continue;
+    }
+
+    for (size_t i = 1; i < poll_fds.size(); ++i) {
+      if ((poll_fds[i].revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
+        continue;
+      }
+      int broker_fd = poll_fds[i].fd;
+      if (lupine_ipc_broker_parent_handle(broker_fd) < 0) {
+        close(broker_fd);
+        broker_fds.erase(std::remove(broker_fds.begin(), broker_fds.end(),
+                                     broker_fd),
+                         broker_fds.end());
+      }
+    }
+
+    if ((poll_fds[0].revents & POLLIN) == 0) {
+      continue;
+    }
+
+    socklen_t len = sizeof(cli);
+    lupine_socket_t connfd = accept(sockfd, (struct sockaddr *)&cli, &len);
+
+    if (connfd == LUPINE_INVALID_SOCKET) {
+      LUPINE_LOG_ERROR("Server accept failed.");
+      continue;
+    }
+
+    int flag = 1;
+    setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+
+    int broker_pair[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, broker_pair) < 0) {
+      LUPINE_LOG_ERROR("Server broker socketpair failed.");
+      lupine_socket_close(connfd);
+      continue;
+    }
+
+    // fork a process per connection so each client gets its own CUDA driver
+    // state (primary context, allocations, modules). this matches local
+    // semantics: a client resetting or corrupting its context cannot affect
+    // other clients, and everything is released when the client disconnects.
+    // the parent must never initialize CUDA; forked children cannot use a
+    // parent's initialized driver. the broker fd lets children transfer CUDA
+    // IPC POSIX fds through the parent without the parent touching CUDA.
+    fflush(stdout);
+    fflush(stderr);
+    pid_t pid = fork();
+    if (pid < 0) {
+      LUPINE_LOG_ERROR("Server fork failed.");
+      close(broker_pair[0]);
+      close(broker_pair[1]);
+      lupine_socket_close(connfd);
+      continue;
+    }
+    if (pid == 0) {
+      lupine_socket_close(sockfd);
+      close(broker_pair[0]);
+      lupine_ipc_set_broker_fd(broker_pair[1]);
+      client_handler(connfd);
+      close(broker_pair[1]);
+      exit(0);
+    }
+    close(broker_pair[1]);
+    broker_fds.push_back(broker_pair[0]);
+    lupine_socket_close(connfd);
+  }
+#else
   // Server loop
   while (1) {
     socklen_t len = sizeof(cli);
@@ -444,40 +532,13 @@ int main() {
       continue;
     }
 
-#ifndef _WIN32
-    int flag = 1;
-    setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-#endif
-
-#ifndef _WIN32
-    // fork a process per connection so each client gets its own CUDA driver
-    // state (primary context, allocations, modules). this matches local
-    // semantics: a client resetting or corrupting its context cannot affect
-    // other clients, and everything is released when the client disconnects.
-    // the parent must never initialize CUDA; forked children cannot use a
-    // parent's initialized driver.
-    fflush(stdout);
-    fflush(stderr);
-    pid_t pid = fork();
-    if (pid < 0) {
-      LUPINE_LOG_ERROR("Server fork failed.");
-      lupine_socket_close(connfd);
-      continue;
-    }
-    if (pid == 0) {
-      lupine_socket_close(sockfd);
-      client_handler(connfd);
-      exit(0);
-    }
-    lupine_socket_close(connfd);
-#else
     // Windows has no fork; connections share the server process.
     std::thread client_thread(client_handler, connfd);
 
     // detach the thread so it runs independently
     client_thread.detach();
-#endif
   }
+#endif
 
   lupine_socket_close(sockfd);
   return 0;

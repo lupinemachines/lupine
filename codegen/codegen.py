@@ -175,6 +175,13 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuStreamGetCaptureInfo_v3",
 ]
 
+IPC_SHAREABLE_HANDLE_FUNCTIONS = {
+    "cuMemExportToShareableHandle",
+    "cuMemImportFromShareableHandle",
+    "cuMemPoolExportToShareableHandle",
+    "cuMemPoolImportFromShareableHandle",
+}
+
 
 def rpc_id(name: str) -> int:
     return zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
@@ -1453,11 +1460,387 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
     if function.name.format() == "cuDevicePrimaryCtxReset_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
     if function.name.format() == "cuCtxDestroy_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
+        f.write("    if (return_value == CUDA_SUCCESS) {\n")
+        f.write("        lupine_forget_context_owner(ctx);\n")
+        f.write("        lupine_invalidate_current_context_cache();\n")
+        f.write("    }\n")
     if function.name.format() == "cuModuleGetFunction":
         f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) lupine_record_module_function(*hfunc, hmod, name, route);\n")
     if function.name.format() == "cuLibraryGetKernel":
         f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) lupine_record_library_kernel(*pKernel, library, name, route);\n")
+
+
+def write_client_mem_pool_create(f):
+    f.write("""    lupine_route route = lupine_route_for_default();
+    CUresult return_value;
+    using real_fn_t = CUresult (*)(CUmemoryPool *, const CUmemPoolProps *);
+    if (lupine_call_local_cuda_if_routed<real_fn_t>(
+            route, "cuMemPoolCreate", &return_value, pool, poolProps)) {
+        if (return_value == CUDA_SUCCESS && pool != nullptr) {
+            lupine_note_memory_pool_owner_route(*pool, route);
+        }
+        return return_value;
+    }
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (conn == nullptr ||
+        rpc_write_start_request(conn, RPC_cuMemPoolCreate) < 0 ||
+        rpc_write(conn, pool, sizeof(CUmemoryPool)) < 0 ||
+        rpc_write(conn, poolProps, sizeof(CUmemPoolProps)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, pool, sizeof(CUmemoryPool)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+        rpc_read_end(conn) < 0)
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (return_value == CUDA_SUCCESS && pool != nullptr) {
+        lupine_note_memory_pool_owner_route(*pool, route);
+    }
+    return return_value;
+}
+
+""")
+
+
+def write_client_ipc_shareable_handle(f, name: str):
+    if name == "cuMemExportToShareableHandle":
+        f.write("""    lupine_route route = lupine_route_for_default();
+    CUresult return_value;
+    using real_fn_t =
+        CUresult (*)(void *, CUmemGenericAllocationHandle,
+                     CUmemAllocationHandleType, unsigned long long);
+    if (lupine_call_local_cuda_if_routed<real_fn_t>(
+            route, "cuMemExportToShareableHandle", &return_value,
+            shareableHandle, handle, handleType, flags)) {
+        return return_value;
+    }
+    conn_t *conn = lupine_route_remote_conn(route);
+    lupine_ipc_token token = {};
+    if (conn == nullptr ||
+        rpc_write_start_request(conn, RPC_cuMemExportToShareableHandle) < 0 ||
+        rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+        rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &token, sizeof(token)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+        rpc_read_end(conn) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (return_value == CUDA_SUCCESS && shareableHandle != nullptr) {
+        int proxy_fd = -1;
+        if (lupine_ipc_create_proxy_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &token,
+                                       &proxy_fd) < 0) {
+            return CUDA_ERROR_UNKNOWN;
+        }
+        *reinterpret_cast<int *>(shareableHandle) = proxy_fd;
+    }
+    return return_value;
+}
+
+""")
+    elif name == "cuMemImportFromShareableHandle":
+        f.write("""    lupine_route route = lupine_route_for_default();
+    CUresult return_value;
+    using real_fn_t =
+        CUresult (*)(CUmemGenericAllocationHandle *, void *,
+                     CUmemAllocationHandleType);
+    if (lupine_call_local_cuda_if_routed<real_fn_t>(
+            route, "cuMemImportFromShareableHandle", &return_value, handle,
+            osHandle, shHandleType)) {
+        return return_value;
+    }
+    uint32_t kind = 0;
+    lupine_ipc_token token = {};
+    int proxy_fd = static_cast<int>(reinterpret_cast<uintptr_t>(osHandle));
+    if (lupine_ipc_read_proxy_fd(proxy_fd, &kind, &token) < 0 ||
+        kind != LUPINE_IPC_FD_KIND_VMM_ALLOCATION) {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (conn == nullptr ||
+        rpc_write_start_request(conn, RPC_cuMemImportFromShareableHandle) < 0 ||
+        rpc_write(conn, &token, sizeof(token)) < 0 ||
+        rpc_write(conn, &shHandleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+        rpc_read_end(conn) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return return_value;
+}
+
+""")
+    elif name == "cuMemPoolExportToShareableHandle":
+        f.write("""    lupine_route route = lupine_route_for_memory_pool(pool);
+    CUresult return_value;
+    using real_fn_t = CUresult (*)(void *, CUmemoryPool,
+                                  CUmemAllocationHandleType, unsigned long long);
+    if (lupine_call_local_cuda_if_routed<real_fn_t>(
+            route, "cuMemPoolExportToShareableHandle", &return_value, handle_out,
+            pool, handleType, flags)) {
+        return return_value;
+    }
+    conn_t *conn = lupine_route_remote_conn(route);
+    lupine_ipc_token token = {};
+    if (conn == nullptr ||
+        rpc_write_start_request(conn, RPC_cuMemPoolExportToShareableHandle) < 0 ||
+        rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+        rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &token, sizeof(token)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+        rpc_read_end(conn) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (return_value == CUDA_SUCCESS && handle_out != nullptr) {
+        int proxy_fd = -1;
+        if (lupine_ipc_create_proxy_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
+                                       &proxy_fd) < 0) {
+            return CUDA_ERROR_UNKNOWN;
+        }
+        *reinterpret_cast<int *>(handle_out) = proxy_fd;
+    }
+    return return_value;
+}
+
+""")
+    elif name == "cuMemPoolImportFromShareableHandle":
+        f.write("""    lupine_route route = lupine_route_for_default();
+    CUresult return_value;
+    using real_fn_t =
+        CUresult (*)(CUmemoryPool *, void *, CUmemAllocationHandleType,
+                     unsigned long long);
+    if (lupine_call_local_cuda_if_routed<real_fn_t>(
+            route, "cuMemPoolImportFromShareableHandle", &return_value, pool_out,
+            handle, handleType, flags)) {
+        if (return_value == CUDA_SUCCESS && pool_out != nullptr) {
+            lupine_note_memory_pool_owner_route(*pool_out, route);
+        }
+        return return_value;
+    }
+    uint32_t kind = 0;
+    lupine_ipc_token token = {};
+    int proxy_fd = static_cast<int>(reinterpret_cast<uintptr_t>(handle));
+    if (lupine_ipc_read_proxy_fd(proxy_fd, &kind, &token) < 0 ||
+        kind != LUPINE_IPC_FD_KIND_MEMORY_POOL) {
+        return CUDA_ERROR_INVALID_VALUE;
+    }
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (conn == nullptr ||
+        rpc_write_start_request(conn, RPC_cuMemPoolImportFromShareableHandle) < 0 ||
+        rpc_write(conn, &token, sizeof(token)) < 0 ||
+        rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, pool_out, sizeof(CUmemoryPool)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+        rpc_read_end(conn) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (return_value == CUDA_SUCCESS && pool_out != nullptr) {
+        lupine_note_memory_pool_owner_route(*pool_out, route);
+    }
+    return return_value;
+}
+
+""")
+    else:
+        raise NotImplementedError(f"No IPC client codegen for {name}")
+
+
+def write_server_mem_pool_create(f):
+    f.write("""    CUmemoryPool pool;
+    CUmemPoolProps poolProps;
+    int request_id;
+    CUresult lupine_intercept_result;
+    if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+        rpc_read(conn, &poolProps, sizeof(CUmemPoolProps)) < 0 || false)
+        goto ERROR_0;
+
+    request_id = rpc_read_end(conn);
+    if (request_id < 0)
+        goto ERROR_0;
+    lupine_intercept_result = cuMemPoolCreate(&pool, &poolProps);
+
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+        rpc_write_end(conn) < 0)
+        goto ERROR_0;
+
+    return 0;
+ERROR_0:
+    return -1;
+}
+
+""")
+
+
+def write_server_ipc_shareable_handle(f, name: str):
+    if name == "cuMemExportToShareableHandle":
+        f.write("""    CUmemGenericAllocationHandle handle;
+    CUmemAllocationHandleType handleType;
+    unsigned long long flags;
+    int request_id;
+    int shareable_fd = -1;
+    lupine_ipc_token token = {};
+    CUresult lupine_intercept_result = CUDA_ERROR_NOT_SUPPORTED;
+    if (rpc_read(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+        rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
+        goto ERROR_0;
+
+    request_id = rpc_read_end(conn);
+    if (request_id < 0)
+        goto ERROR_0;
+
+    if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
+        lupine_ipc_make_token(&token) == 0) {
+        lupine_intercept_result =
+            cuMemExportToShareableHandle(&shareable_fd, handle, handleType, flags);
+        if (lupine_intercept_result == CUDA_SUCCESS) {
+            if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION,
+                                              &token, shareable_fd) < 0) {
+                lupine_intercept_result = CUDA_ERROR_UNKNOWN;
+            }
+            lupine_close_fd(shareable_fd);
+        }
+    }
+
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &token, sizeof(token)) < 0 ||
+        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+        rpc_write_end(conn) < 0)
+        goto ERROR_0;
+
+    return 0;
+ERROR_0:
+    return -1;
+}
+
+""")
+    elif name == "cuMemImportFromShareableHandle":
+        f.write("""    lupine_ipc_token token;
+    CUmemAllocationHandleType shHandleType;
+    CUmemGenericAllocationHandle handle = 0;
+    int request_id;
+    CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
+    if (rpc_read(conn, &token, sizeof(token)) < 0 ||
+        rpc_read(conn, &shHandleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        false)
+        goto ERROR_0;
+
+    request_id = rpc_read_end(conn);
+    if (request_id < 0)
+        goto ERROR_0;
+
+    if (shHandleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+        int import_fd =
+            lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &token);
+        if (import_fd >= 0) {
+            lupine_intercept_result = cuMemImportFromShareableHandle(
+                &handle, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
+                shHandleType);
+            lupine_close_fd(import_fd);
+        }
+    }
+
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
+        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+        rpc_write_end(conn) < 0)
+        goto ERROR_0;
+
+    return 0;
+ERROR_0:
+    return -1;
+}
+
+""")
+    elif name == "cuMemPoolExportToShareableHandle":
+        f.write("""    CUmemoryPool pool;
+    CUmemAllocationHandleType handleType;
+    unsigned long long flags;
+    int request_id;
+    int shareable_fd = -1;
+    lupine_ipc_token token = {};
+    CUresult lupine_intercept_result = CUDA_ERROR_NOT_SUPPORTED;
+    if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+        rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
+        goto ERROR_0;
+
+    request_id = rpc_read_end(conn);
+    if (request_id < 0)
+        goto ERROR_0;
+
+    if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
+        lupine_ipc_make_token(&token) == 0) {
+        lupine_intercept_result =
+            cuMemPoolExportToShareableHandle(&shareable_fd, pool, handleType, flags);
+        if (lupine_intercept_result == CUDA_SUCCESS) {
+            if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL,
+                                              &token, shareable_fd) < 0) {
+                lupine_intercept_result = CUDA_ERROR_UNKNOWN;
+            }
+            lupine_close_fd(shareable_fd);
+        }
+    }
+
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &token, sizeof(token)) < 0 ||
+        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+        rpc_write_end(conn) < 0)
+        goto ERROR_0;
+
+    return 0;
+ERROR_0:
+    return -1;
+}
+
+""")
+    elif name == "cuMemPoolImportFromShareableHandle":
+        f.write("""    lupine_ipc_token token;
+    CUmemAllocationHandleType handleType;
+    unsigned long long flags;
+    CUmemoryPool pool = nullptr;
+    int request_id;
+    CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
+    if (rpc_read(conn, &token, sizeof(token)) < 0 ||
+        rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
+        rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
+        goto ERROR_0;
+
+    request_id = rpc_read_end(conn);
+    if (request_id < 0)
+        goto ERROR_0;
+
+    if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+        int import_fd =
+            lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token);
+        if (import_fd >= 0) {
+            lupine_intercept_result = cuMemPoolImportFromShareableHandle(
+                &pool, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
+                handleType, flags);
+            lupine_close_fd(import_fd);
+        }
+    }
+
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+        rpc_write_end(conn) < 0)
+        goto ERROR_0;
+
+    return 0;
+ERROR_0:
+    return -1;
+}
+
+""")
+    else:
+        raise NotImplementedError(f"No IPC server codegen for {name}")
 
 
 def error_const(return_type: str) -> str:
@@ -1586,6 +1969,11 @@ def main():
         except StopIteration:
             print(f"Annotation for {function.name} not found")
             continue
+        if function.name.format() in IPC_SHAREABLE_HANDLE_FUNCTIONS:
+            functions_with_annotations.append(
+                (function, annotation, [], FunctionAnnotationMetadata([]))
+            )
+            continue
         try:
             metadata = parse_annotation(annotation.doxygen, function.parameters)
         except Exception as e:
@@ -1685,6 +2073,7 @@ def main():
             "#include <vector>\n\n"
             '#include "gen_api.h"\n\n'
             '#include "client_routing.h"\n'
+            '#include "ipc.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -1733,6 +2122,7 @@ def main():
             'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
+            'extern "C" void lupine_forget_context_owner(CUcontext ctx);\n'
             'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
             'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
             'extern "C" void lupine_note_primary_context_flags(CUdevice dev, unsigned int flags);\n'
@@ -1746,6 +2136,7 @@ def main():
             'extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
+            name = function.name.format()
             # We don't generate client function definitions for client-disabled
             # functions; their RPC/server definitions may still be generated.
             if metadata.disabled_client:
@@ -1756,21 +2147,21 @@ def main():
             f.write(
                 "{return_type} {name}({params})\n".format(
                     return_type=function.return_type.format(),
-                    name=function.name.format(),
+                    name=name,
                     params=joined_params,
                 )
             )
             f.write("{\n")
 
-            if function.name.format() == "cuInit":
+            if name == "cuInit":
                 f.write("    return lupine_cuInit_multi(Flags);\n")
                 f.write("}\n\n")
                 continue
-            if function.name.format() == "cuDeviceGet":
+            if name == "cuDeviceGet":
                 f.write("    return lupine_cuDeviceGet_multi(device, ordinal);\n")
                 f.write("}\n\n")
                 continue
-            if function.name.format() == "cuDeviceGetCount":
+            if name == "cuDeviceGetCount":
                 f.write("    return lupine_cuDeviceGetCount_multi(count);\n")
                 f.write("}\n\n")
                 continue
@@ -1789,11 +2180,11 @@ def main():
                 "cuCtxEnablePeerAccess": "lupine_cuCtxEnablePeerAccess_multi(peerContext, Flags)",
                 "cuCtxDisablePeerAccess": "lupine_cuCtxDisablePeerAccess_multi(peerContext)",
             }
-            if function.name.format() in direct_wrappers:
-                f.write("    return {call};\n".format(call=direct_wrappers[function.name.format()]))
+            if name in direct_wrappers:
+                f.write("    return {call};\n".format(call=direct_wrappers[name]))
                 f.write("}\n\n")
                 continue
-            if function.name.format() == "cuModuleGetGlobal_v2":
+            if name == "cuModuleGetGlobal_v2":
                 f.write("    conn_t *conn = lupine_rpc_conn_for_module(hmod);\n")
                 f.write("    CUresult return_value;\n")
                 f.write("    size_t remote_bytes = 0;\n")
@@ -1814,7 +2205,7 @@ def main():
                 f.write("    return return_value;\n")
                 f.write("}\n\n")
                 continue
-            if function.name.format() in {"cuLibraryGetGlobal", "cuLibraryGetManaged"}:
+            if name in {"cuLibraryGetGlobal", "cuLibraryGetManaged"}:
                 f.write("    lupine_route route = lupine_route_for_library(library);\n")
                 f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
                 f.write("    CUresult return_value;\n")
@@ -1835,6 +2226,12 @@ def main():
                 f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation(*dptr, remote_bytes, conn);\n")
                 f.write("    return return_value;\n")
                 f.write("}\n\n")
+                continue
+            if name == "cuMemPoolCreate":
+                write_client_mem_pool_create(f)
+                continue
+            if name in IPC_SHAREABLE_HANDLE_FUNCTIONS:
+                write_client_ipc_shareable_handle(f, name)
                 continue
 
             f.write(
@@ -1867,6 +2264,14 @@ def main():
                     return_type=function.return_type.format()
                 )
             )
+            if name == "cuCtxDestroy_v2":
+                f.write("    CUcontext current_context = nullptr;\n")
+                f.write("    bool was_current_context =\n")
+                f.write("        lupine_cuCtxGetCurrent_virtual(&current_context) == CUDA_SUCCESS &&\n")
+                f.write("        current_context == ctx;\n")
+                f.write("    if (was_current_context) {\n")
+                f.write("        lupine_cuCtxSetCurrent_virtual(nullptr);\n")
+                f.write("    }\n")
             f.write(
                 "    using real_fn_t = {return_type} (*)({params});\n".format(
                     return_type=function.return_type.format(),
@@ -2059,26 +2464,42 @@ def main():
             "\n"
             "#include <cstring>\n"
             "#include <string>\n"
-            "#include <unordered_map>\n\n"
+            "#include <unordered_map>\n"
+            "#ifdef _WIN32\n"
+            "#include <io.h>\n"
+            "#define lupine_close_fd _close\n"
+            "#else\n"
+            "#include <unistd.h>\n"
+            "#define lupine_close_fd close\n"
+            "#endif\n\n"
             '#include "gen_api.h"\n\n'
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "gen_server.h"\n\n'
             '#include <cstdio>\n\n'
+            '#include "ipc.h"\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
+            name = function.name.format()
             if metadata.disabled_server:
                 continue
 
             # parse the annotation doxygen
             f.write(
                 "int handle_{name}(conn_t *conn)\n".format(
-                    name=function.name.format(),
+                    name=name,
                 )
             )
             f.write("{\n")
+
+            if name == "cuMemPoolCreate":
+                write_server_mem_pool_create(f)
+                continue
+            if name in IPC_SHAREABLE_HANDLE_FUNCTIONS:
+                write_server_ipc_shareable_handle(f, name)
+                continue
 
             defers = []
 
