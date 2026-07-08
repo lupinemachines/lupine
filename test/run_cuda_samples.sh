@@ -94,6 +94,7 @@ LIBRARY_SAMPLES=(
   watershedSegmentationNPP
   boxFilterNPP
   cannyEdgeDetectorNPP
+  FilterBorderControlNPP
 )
 
 DEFAULT_SAMPLES=(
