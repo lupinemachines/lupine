@@ -358,6 +358,7 @@ jobs:
                 curl \
                 freeglut3-dev \
                 git \
+                libfreeimage-dev \
                 libgl-dev \
                 libglu1-mesa-dev \
                 libnghttp2-dev \
