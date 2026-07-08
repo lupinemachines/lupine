@@ -93,6 +93,7 @@ LIBRARY_SAMPLES=(
   jitLto
   watershedSegmentationNPP
   boxFilterNPP
+  cannyEdgeDetectorNPP
 )
 
 DEFAULT_SAMPLES=(
