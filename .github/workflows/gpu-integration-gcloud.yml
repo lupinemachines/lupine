@@ -102,9 +102,8 @@ jobs:
             BASE_IMAGE=${{ matrix.client_image }}
             CUDA_SAMPLE_SKIP_LIST=${{ env.CUDA_SAMPLE_SKIP_LIST }}
             CUDA_SAMPLES_REF=${{ matrix.samples_ref }}
-            PYTORCH_INDEX_URL=${{ matrix.pytorch_index_url }}
-          cache-from: type=gha,scope=gpu-integration-client-${{ matrix.label }}
-          cache-to: type=gha,scope=gpu-integration-client-${{ matrix.label }},mode=max
+          cache-from: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }}
+          cache-to: type=gha,scope=gpu-integration-cuda-samples-${{ matrix.label }},mode=max
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -341,7 +340,7 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
@@ -350,6 +349,7 @@ jobs:
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
+            -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
             -e SERVER_HOST=host.docker.internal \
             -e SERVER_USER=gha \
             -e SERVER_SSH_TARGET=gha@host.docker.internal \
@@ -380,7 +380,12 @@ jobs:
               export CUDA_LIB_DIR=/usr/local/cuda/lib64
               export PATH=/usr/local/cuda/bin:$PATH
               export REPO_ROOT=/src
-              export LUPINE_BUILD_DIR=/opt/lupine/build
+              export LUPINE_BUILD_DIR=/tmp/lupine-build
+              export CCACHE_DIR=/tmp/lupine-ccache
+              mkdir -p "$LUPINE_BUILD_DIR" "$CCACHE_DIR"
+              export CCACHE_BASEDIR=/src
+              export CCACHE_COMPILERCHECK=content
+              export CCACHE_COMPRESS=true
               export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
               export LUPINE_DISABLE_LOCAL=1
               export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
@@ -393,8 +398,24 @@ jobs:
               export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
               export CUDA_SAMPLES_ARCH=89
-              export PYTHON_BIN=/opt/venv-pytorch/bin/python
-              export CUSTOM_TEST_BIN_DIR=/opt/lupine/custom-tests
+
+              python3 -m venv /tmp/venv-pytorch
+              /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
+              /tmp/venv-pytorch/bin/pip install numpy >/dev/null
+              /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
+              export PYTHON_BIN=/tmp/venv-pytorch/bin/python
+
+              cmake -S /src -B "$LUPINE_BUILD_DIR" \
+                -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCUDAToolkit_ROOT="$CUDA_HOME" \
+                -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+              cmake --build "$LUPINE_BUILD_DIR" --parallel \
+                --target lupine_driver lupine_nvml lupine_driver_server
+              ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
+              ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
               cuda_status=0
               RESULTS_DIR="/results/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)" \

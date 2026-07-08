@@ -92,6 +92,7 @@ LIBRARY_SAMPLES=(
   randomFog
   jitLto
   watershedSegmentationNPP
+  boxFilterNPP
 )
 
 DEFAULT_SAMPLES=(
@@ -133,16 +134,18 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ ! -x "$LUPINE_LIB" ]]; then
-  echo "missing shim: $LUPINE_LIB" >&2
-  exit 1
-fi
+if [[ "$BUILD_ONLY" != "1" ]]; then
+  if [[ ! -x "$LUPINE_LIB" ]]; then
+    echo "missing shim: $LUPINE_LIB" >&2
+    exit 1
+  fi
 
-runtime_exports="$(nm -D --defined-only "$LUPINE_LIB" | awk '{print $3}' | grep -E '^cuda' || true)"
-if [[ -n "$runtime_exports" ]]; then
-  echo "shim exports CUDA Runtime API symbols; keep this driver-only:" >&2
-  echo "$runtime_exports" >&2
-  exit 1
+  runtime_exports="$(nm -D --defined-only "$LUPINE_LIB" | awk '{print $3}' | grep -E '^cuda' || true)"
+  if [[ -n "$runtime_exports" ]]; then
+    echo "shim exports CUDA Runtime API symbols; keep this driver-only:" >&2
+    echo "$runtime_exports" >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$(dirname "$CUDA_SAMPLES_DIR")" "$RESULTS_DIR"
