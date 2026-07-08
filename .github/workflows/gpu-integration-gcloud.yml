@@ -533,7 +533,9 @@ jobs:
             awk '{print tolower($1)"="$2}' "$rd/summary.txt" >> "$GITHUB_OUTPUT"
           fi
           cov="$(grep 'coverage:' "$rd/coverage.txt" 2>/dev/null | sed -E 's/^CUDA sample coverage: /coverage=/')"
-          [[ -n "${cov:-}" ]] && echo "$cov" >> "$GITHUB_OUTPUT"
+          if [[ -n "${cov:-}" ]]; then
+            echo "$cov" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Refresh Google Cloud credentials for cleanup
         if: always()
