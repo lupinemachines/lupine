@@ -211,7 +211,6 @@ jobs:
         run: |
           set -euo pipefail
           sudo rm -rf \
-            /opt/hostedtoolcache \
             /opt/ghc \
             /usr/local/.ghcup \
             /usr/local/lib/android \
