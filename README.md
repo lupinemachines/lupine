@@ -16,8 +16,6 @@ $ docker run --rm \
 GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
 ```
 
-Are you interested in a paid, hosted GPU? Send me an email at kevmo314@gmail.com, we're considering this offering.
-
 ## Mac Demo
 
 LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to a Linux GPU server.
@@ -150,7 +148,12 @@ docker run --rm --network host \
   ./your_cuda_program
 ```
 
-Cross-server peer access and device-to-device copies are not implemented yet.
+Cross-server device-to-device and peer (`cuMemcpyDtoD` / `cuMemcpyPeer`) copies are
+supported: when the source and destination live on different servers, the client
+transparently stages the data through itself (device->host on one server, then
+host->device on the other). Direct server-to-server transfers that avoid that
+client hop, cross-server peer-access enablement, and `cuMemcpy3DPeer` are not
+implemented yet.
 Same-server operations route by handle ownership.
 
 For a specific CUDA version:
