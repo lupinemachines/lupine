@@ -3501,8 +3501,9 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
       resources == nullptr
           ? 0
           : static_cast<uint32_t>(resources->dtoh_copies.size());
+  bool all_pending_streams = stream == nullptr;
   uint32_t pending_copy_count =
-      lupine_count_pending_dtoh_copies(conn, nullptr, true);
+      lupine_count_pending_dtoh_copies(conn, stream, all_pending_streams);
   copy_count = graph_copy_count + pending_copy_count;
   uint64_t stdout_size = 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3517,12 +3518,13 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
                     (copy.bytes != 0 &&
                      rpc_write_payload(conn, copy.server_src, copy.bytes) < 0);
            })) ||
-      lupine_write_pending_dtoh_copies(nullptr, conn, nullptr, true) < 0 ||
+      lupine_write_pending_dtoh_copies(nullptr, conn, stream,
+                                       all_pending_streams) < 0 ||
       lupine_write_captured_stdout(conn, capture, &stdout_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
-  lupine_cleanup_pending_dtoh_copies(conn, nullptr, true);
+  lupine_cleanup_pending_dtoh_copies(conn, stream, all_pending_streams);
   return 0;
 }
 
