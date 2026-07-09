@@ -1948,12 +1948,13 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetByPCIBusId(conn_t *conn) {
+  CUdevice *dev_null_check;
   CUdevice dev;
   const char *pciBusId;
   std::size_t pciBusId_len;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 ||
+  if (rpc_read(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
       rpc_read(conn, &pciBusId_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
   pciBusId = (const char *)malloc(pciBusId_len);
@@ -1963,10 +1964,12 @@ int handle_cuDeviceGetByPCIBusId(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_1;
-  lupine_intercept_result = cuDeviceGetByPCIBusId(&dev, pciBusId);
+  lupine_intercept_result =
+      cuDeviceGetByPCIBusId(dev_null_check ? &dev : nullptr, pciBusId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
+      rpc_write(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
+      (dev_null_check && rpc_write(conn, &dev, sizeof(CUdevice)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_1;

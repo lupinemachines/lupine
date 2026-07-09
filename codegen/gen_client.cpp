@@ -1371,14 +1371,16 @@ CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUdevice *dev_null_check;
   std::size_t pciBusId_len = std::strlen(pciBusId) + 1;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuDeviceGetByPCIBusId) < 0 ||
-      rpc_write(conn, dev, sizeof(CUdevice)) < 0 ||
+      rpc_write(conn, &dev, sizeof(CUdevice *)) < 0 ||
       rpc_write(conn, &pciBusId_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, pciBusId, pciBusId_len) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, dev, sizeof(CUdevice)) < 0 ||
+      rpc_read(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
+      (dev_null_check && rpc_read(conn, dev, sizeof(CUdevice)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
