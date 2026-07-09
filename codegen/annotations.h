@@ -2555,7 +2555,7 @@ CUresult cuMemHostGetFlags(unsigned int *pFlags, void *p);
 CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
                            unsigned int flags);
 /**
- * @param dev SEND_RECV
+ * @param dev RECV_ONLY NULLABLE
  * @param pciBusId SEND_ONLY NULL_TERMINATED
  */
 CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId);
