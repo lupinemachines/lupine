@@ -526,7 +526,6 @@ jobs:
               export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
               export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
               export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
-              export PYTORCH_SKIP_LIST=compile_elementwise,microgpt_train
               export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
               export CUDA_SAMPLES_ARCH=89
