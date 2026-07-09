@@ -365,14 +365,7 @@ void client_handler(lupine_socket_t connfd) {
     pthread_join(conn.rpc_thread, nullptr);
     conn.rpc_thread = 0;
   }
-
-  if (pthread_mutex_destroy(&conn.read_mutex) != 0 ||
-      pthread_mutex_destroy(&conn.write_mutex) != 0 ||
-      pthread_mutex_destroy(&conn.call_mutex) != 0 ||
-      pthread_cond_destroy(&conn.read_cond) != 0)
-    LUPINE_LOG_ERROR("Error destroying mutex.");
-
-  rpc_write_queue_free(&conn);
+  rpc_conn_destroy(&conn);
 }
 
 int main() {

@@ -8,6 +8,8 @@
 #include <thread>
 #include <vector>
 
+extern void rpc_http2_destroy(conn_t *conn);
+
 static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
   if (conn == nullptr || capacity < 0) {
     return -1;
@@ -65,6 +67,18 @@ void rpc_write_queue_free(conn_t *conn) {
   conn->write_queue = nullptr;
   conn->write_queue_count = 0;
   conn->write_queue_capacity = 0;
+}
+
+void rpc_conn_destroy(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+  rpc_http2_destroy(conn);
+  rpc_write_queue_free(conn);
+  pthread_mutex_destroy(&conn->read_mutex);
+  pthread_mutex_destroy(&conn->write_mutex);
+  pthread_mutex_destroy(&conn->call_mutex);
+  pthread_cond_destroy(&conn->read_cond);
 }
 
 int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {

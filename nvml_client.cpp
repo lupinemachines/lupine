@@ -179,6 +179,47 @@ conn_t *connection(unsigned int index = 0) {
   return &conns[index];
 }
 
+void close_connections() {
+  if (pthread_mutex_lock(&conn_mutex) != 0) {
+    return;
+  }
+  int count = nconns;
+  for (int i = 0; i < count; ++i) {
+    conn_t *c = &conns[i];
+    if (!c->closed) {
+      c->closed = 1;
+      shutdown(c->connfd, SHUT_RDWR);
+      close(c->connfd);
+    }
+    pthread_mutex_lock(&c->read_mutex);
+    pthread_cond_broadcast(&c->read_cond);
+    pthread_mutex_unlock(&c->read_mutex);
+  }
+  pthread_mutex_unlock(&conn_mutex);
+
+  for (int i = 0; i < count; ++i) {
+    conn_t *c = &conns[i];
+    if (c->read_thread != 0) {
+      pthread_join(c->read_thread, nullptr);
+      c->read_thread = 0;
+    }
+    if (c->rpc_thread != 0) {
+      pthread_join(c->rpc_thread, nullptr);
+      c->rpc_thread = 0;
+    }
+    rpc_conn_destroy(c);
+  }
+
+  if (pthread_mutex_lock(&conn_mutex) == 0) {
+    nconns = 0;
+    connected = false;
+    devices_ready = false;
+    devices.clear();
+    conn_labels.clear();
+    pthread_mutex_unlock(&conn_mutex);
+  }
+}
+
 lupine_nvml_remote_device *mapped_device(nvmlDevice_t device) {
   if (device == nullptr || devices.empty()) {
     return nullptr;
@@ -460,7 +501,25 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
 }
 
 extern "C" nvmlReturn_t nvmlShutdown(void) {
-  return call_no_args(RPC_nvmlShutdown);
+  if (pthread_mutex_lock(&conn_mutex) != 0) {
+    return rpc_error();
+  }
+  if (!connected) {
+    pthread_mutex_unlock(&conn_mutex);
+    return NVML_SUCCESS;
+  }
+  int count = nconns;
+  pthread_mutex_unlock(&conn_mutex);
+
+  nvmlReturn_t first_error = NVML_SUCCESS;
+  for (int i = 0; i < count; ++i) {
+    nvmlReturn_t result = call_no_args_on(&conns[i], RPC_nvmlShutdown);
+    if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
+      first_error = result;
+    }
+  }
+  close_connections();
+  return first_error;
 }
 
 extern "C" const char *nvmlErrorString(nvmlReturn_t result) {

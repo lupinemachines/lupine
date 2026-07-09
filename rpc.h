@@ -66,6 +66,7 @@ extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 extern void rpc_write_queue_free(conn_t *conn);
+extern void rpc_conn_destroy(conn_t *conn);
 
 extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                          const size_t *sizes,

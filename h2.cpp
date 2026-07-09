@@ -616,3 +616,17 @@ int rpc_http2_compress_lz4(conn_t *conn) {
 int rpc_http2_client_init(conn_t *conn) { return h2_init_direct(conn, false); }
 
 int rpc_http2_server_init(conn_t *conn) { return h2_init_direct(conn, true); }
+
+void rpc_http2_destroy(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  conn->http2 = nullptr;
+  if (transport->session != nullptr) {
+    nghttp2_session_del(transport->session);
+    transport->session = nullptr;
+  }
+  pthread_mutex_destroy(&transport->session_mutex);
+  delete transport;
+}
