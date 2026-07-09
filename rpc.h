@@ -30,9 +30,12 @@ struct conn_t {
   int read_id;
   int read_op;
   uint64_t read_lane_id;
+  size_t read_body_remaining; // bytes left in the current response/request body
+  int body_tracking_active; // 1 while body bytes are being consumed
   int write_id;
   int write_op;
   uint64_t write_lane_id;
+  size_t write_body_size; // total payload size, written in the frame header
 
   pthread_t read_thread;
   pthread_t rpc_thread;

@@ -273,11 +273,15 @@ void client_handler(lupine_socket_t connfd) {
     if (rpc_read(&conn, &conn.read_lane_id, sizeof(conn.read_lane_id)) !=
             sizeof(conn.read_lane_id) ||
         rpc_read(&conn, &conn.read_op, sizeof(conn.read_op)) !=
-            sizeof(conn.read_op)) {
+            sizeof(conn.read_op) ||
+        rpc_read(&conn, &conn.read_body_remaining,
+                 sizeof(conn.read_body_remaining)) !=
+            sizeof(conn.read_body_remaining)) {
       pthread_mutex_unlock(&conn.read_mutex);
       LUPINE_LOG_ERROR("RPC dispatch failed; closing client.");
       break;
     }
+    conn.body_tracking_active = 1;
     uint64_t lane_id = conn.read_lane_id;
     int op = conn.read_op;
 

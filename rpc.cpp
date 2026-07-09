@@ -178,12 +178,16 @@ int rpc_dispatch(conn_t *conn, int parity) {
   if (rpc_http2_read(conn, &conn->read_lane_id, sizeof(conn->read_lane_id)) !=
           sizeof(conn->read_lane_id) ||
       rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) !=
-          sizeof(conn->read_op)) {
+          sizeof(conn->read_op) ||
+      rpc_http2_read(conn, &conn->read_body_remaining,
+                     sizeof(conn->read_body_remaining)) !=
+          sizeof(conn->read_body_remaining)) {
     conn->closed = 1;
     pthread_cond_broadcast(&conn->read_cond);
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
+  conn->body_tracking_active = 1;
   pthread_mutex_unlock(&conn->read_mutex);
   return conn->read_op;
 }
@@ -214,12 +218,16 @@ int rpc_read_start(conn_t *conn, int write_id) {
           sizeof(conn->read_lane_id) ||
       rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) !=
               sizeof(conn->read_op) ||
+      rpc_http2_read(conn, &conn->read_body_remaining,
+                     sizeof(conn->read_body_remaining)) !=
+              sizeof(conn->read_body_remaining) ||
       conn->read_op != -1) {
     conn->closed = 1;
     pthread_cond_broadcast(&conn->read_cond);
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
+  conn->body_tracking_active = 1;
   pthread_mutex_unlock(&conn->read_mutex);
   return 0;
 }
@@ -242,6 +250,13 @@ int rpc_drain(conn_t *conn, size_t size) {
 }
 
 int rpc_read_end(conn_t *conn) {
+  conn->body_tracking_active = 0;
+  // Drain any body bytes the handler did not consume so the stream stays
+  // aligned for the next frame.
+  if (conn->read_body_remaining > 0) {
+    rpc_drain(conn, conn->read_body_remaining);
+    conn->read_body_remaining = 0;
+  }
   if (pthread_mutex_lock(&conn->read_mutex) != 0) {
     return -1;
   }
@@ -291,7 +306,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     return -1;
   }
 
-  if (rpc_write_queue_reset(conn, 3) < 0) {
+  if (rpc_write_queue_reset(conn, 4) < 0) {
     pthread_mutex_unlock(&conn->write_mutex);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
@@ -320,7 +335,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
     return -1;
   }
 
-  if (rpc_write_queue_reset(conn, 3) < 0) {
+  if (rpc_write_queue_reset(conn, 4) < 0) {
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
@@ -673,11 +688,18 @@ int rpc_write_end(conn_t *conn) {
   }
   int write_id = conn->write_id;
   int result = -1;
-  if (conn->write_queue_count >= 3) {
+  if (conn->write_queue_count >= 4) {
+    // Compute total payload size (entries [4..count-1]).
+    size_t body_size = 0;
+    for (int i = 4; i < conn->write_queue_count; ++i) {
+      body_size += conn->write_queue[i].iov.iov_len;
+    }
+    conn->write_body_size = body_size;
     conn->write_queue[0] = {{&conn->write_id, sizeof(conn->write_id)}, 0};
     conn->write_queue[1] = {
         {&conn->write_lane_id, sizeof(conn->write_lane_id)}, 0};
     conn->write_queue[2] = {{&conn->write_op, sizeof(conn->write_op)}, 0};
+    conn->write_queue[3] = {{&conn->write_body_size, sizeof(conn->write_body_size)}, 0};
     result = rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
   }
   pthread_mutex_unlock(&conn->write_mutex);

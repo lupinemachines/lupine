@@ -91,12 +91,15 @@ void echo_server(rpc_pair *pair) {
     int request_id = 0;
     uint64_t lane = 0;
     int op = 0;
+    size_t body_size = 0;
     int32_t payload = 0;
     if (rpc_http2_read(conn, &request_id, sizeof(request_id)) !=
             static_cast<int>(sizeof(request_id)) ||
         rpc_http2_read(conn, &lane, sizeof(lane)) !=
             static_cast<int>(sizeof(lane)) ||
         rpc_http2_read(conn, &op, sizeof(op)) != static_cast<int>(sizeof(op)) ||
+        rpc_http2_read(conn, &body_size, sizeof(body_size)) !=
+            static_cast<int>(sizeof(body_size)) ||
         rpc_http2_read(conn, &payload, sizeof(payload)) !=
             static_cast<int>(sizeof(payload))) {
       return;

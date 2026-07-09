@@ -4543,13 +4543,16 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   for (unsigned int i = 0; i < numAttributes; ++i) {
     size_t remote_size = 0;
     if (rpc_read(conn, &remote_size, sizeof(remote_size)) < 0) {
+      rpc_read_end(conn);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     if (remote_size > 64) {
+      rpc_read_end(conn);
       return CUDA_ERROR_NOT_SUPPORTED;
     }
     values[i].resize(remote_size);
     if (remote_size != 0 && rpc_read(conn, values[i].data(), remote_size) < 0) {
+      rpc_read_end(conn);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }

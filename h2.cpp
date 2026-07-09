@@ -559,6 +559,10 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
       }
     }
     if (copied == size) {
+      if (conn->body_tracking_active) {
+        conn->read_body_remaining -=
+            std::min(copied, conn->read_body_remaining);
+      }
       return static_cast<int>(size);
     }
     if ((transport->response_status != 0 &&
