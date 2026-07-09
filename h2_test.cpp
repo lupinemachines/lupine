@@ -18,15 +18,20 @@ struct h2_pair {
   conn_t client = {};
   conn_t server = {};
 
+  h2_pair() {
+    client.connfd = -1;
+    server.connfd = -1;
+  }
+
   ~h2_pair() {
+    rpc_conn_destroy(&client);
+    rpc_conn_destroy(&server);
     if (client.connfd >= 0) {
       close(client.connfd);
     }
     if (server.connfd >= 0) {
       close(server.connfd);
     }
-    rpc_write_queue_free(&client);
-    rpc_write_queue_free(&server);
   }
 };
 
@@ -37,6 +42,9 @@ void require(bool condition, const char *message) {
   }
 }
 
+void init_rpc_read(conn_t *conn);
+void init_rpc_write(conn_t *conn);
+
 h2_pair make_pair() {
   int fds[2] = {-1, -1};
   require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
@@ -44,6 +52,14 @@ h2_pair make_pair() {
   h2_pair pair;
   pair.client.connfd = fds[0];
   pair.server.connfd = fds[1];
+  init_rpc_read(&pair.client);
+  init_rpc_write(&pair.client);
+  require(pthread_mutex_init(&pair.client.call_mutex, nullptr) == 0,
+          "client call mutex init failed");
+  init_rpc_read(&pair.server);
+  init_rpc_write(&pair.server);
+  require(pthread_mutex_init(&pair.server.call_mutex, nullptr) == 0,
+          "server call mutex init failed");
   require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
   require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
   return pair;

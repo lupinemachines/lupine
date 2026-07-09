@@ -8982,7 +8982,7 @@ static void lupine_rpc_shutdown() {
       conns[i].tls_session = nullptr;
     }
 #endif
-    rpc_write_queue_free(&conns[i]);
+    rpc_conn_destroy(&conns[i]);
   }
 
   if (pthread_mutex_lock(&conn_mutex) == 0) {
