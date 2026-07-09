@@ -4444,8 +4444,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
 
   std::vector<size_t> value_sizes(numAttributes, 0);
   for (unsigned int i = 0; i < numAttributes; ++i) {
-    if (!lupine_pointer_attribute_size(attributes[i], &value_sizes[i]) ||
-        value_sizes[i] > 64) {
+    if (!lupine_pointer_attribute_size(attributes[i], &value_sizes[i])) {
       return CUDA_ERROR_NOT_SUPPORTED;
     }
   }
@@ -4477,9 +4476,6 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     if (rpc_read(conn, &remote_size, sizeof(remote_size)) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    if (remote_size > 64) {
-      return CUDA_ERROR_NOT_SUPPORTED;
-    }
     values[i].resize(remote_size);
     if (remote_size != 0 && rpc_read(conn, values[i].data(), remote_size) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4497,7 +4493,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
       if (data[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
-      if (values[i].size() > value_sizes[i]) {
+      if (values[i].size() != value_sizes[i]) {
         return CUDA_ERROR_NOT_SUPPORTED;
       }
       memcpy(data[i], values[i].data(), values[i].size());

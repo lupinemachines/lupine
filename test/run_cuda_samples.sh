@@ -86,7 +86,7 @@ LIBRARY_SAMPLES=(
   nvJPEG nvJPEG_encoder
   NV12toBGRandResize
   jitLto
-  watershedSegmentationNPP
+  histEqualizationNPP watershedSegmentationNPP
 )
 
 DEFAULT_SAMPLES=(

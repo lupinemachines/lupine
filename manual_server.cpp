@@ -926,8 +926,7 @@ int handle_manual_cuPointerGetAttributes(conn_t *conn) {
   std::vector<void *> data(num_attributes, nullptr);
   for (unsigned int i = 0; i < num_attributes; ++i) {
     size_t value_size = 0;
-    if (!lupine_pointer_attribute_size(attributes[i], &value_size) ||
-        value_size > 64) {
+    if (!lupine_pointer_attribute_size(attributes[i], &value_size)) {
       result = CUDA_ERROR_NOT_SUPPORTED;
       break;
     }
@@ -940,15 +939,17 @@ int handle_manual_cuPointerGetAttributes(conn_t *conn) {
     result = cuPointerGetAttributes(num_attributes, attributes.data(),
                                     data.data(), ptr);
   }
+  if (result != CUDA_SUCCESS) {
+    std::fill(value_sizes.begin(), value_sizes.end(), 0);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0) {
     return -1;
   }
   for (unsigned int i = 0; i < num_attributes; ++i) {
-    size_t value_size = result == CUDA_SUCCESS ? value_sizes[i] : 0;
-    if (rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
-        (value_size != 0 &&
-         rpc_write(conn, values[i].data(), value_size) < 0)) {
+    if (rpc_write(conn, &value_sizes[i], sizeof(value_sizes[i])) < 0 ||
+        (value_sizes[i] != 0 &&
+         rpc_write(conn, values[i].data(), value_sizes[i]) < 0)) {
       return -1;
     }
   }
