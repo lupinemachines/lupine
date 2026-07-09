@@ -2,10 +2,14 @@
 #include "rpc.h"
 
 #include <algorithm>
+#include <climits>
 #include <deque>
 #include <errno.h>
 #include <lz4.h>
 #include <nghttp2/nghttp2.h>
+#ifdef LUPINE_TLS_OPENSSL
+#include <openssl/ssl.h>
+#endif
 #include <sstream>
 #include <stdint.h>
 #include <string.h>
@@ -25,6 +29,7 @@ struct h2_buffer {
 
 struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
+  void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
   bool response_sent = false;
   bool compress_lz4 = false;
@@ -89,19 +94,38 @@ int h2_write_all(h2_transport *transport, const struct iovec *iov,
   struct iovec *cursor = local.data();
   int count = iov_count;
   while (count > 0) {
-    // Send all currently pending buffers in one syscall instead of one send()
-    // per buffer. Coalescing avoids emitting the 9-byte HTTP/2 frame header as
-    // its own TCP segment and cuts syscall overhead on every frame.
-    int batch = std::min(count, kH2MaxSendIov);
-    ssize_t n = lupine_socket_sendv(transport->netfd, cursor, batch);
-    if (n < 0) {
-      if (lupine_socket_error_is_intr()) {
-        continue;
+    ssize_t n;
+#ifdef LUPINE_TLS_OPENSSL
+    if (transport->tls != nullptr) {
+      // Byte stream: send one buffer; the cursor loop handles partial writes.
+      SSL *ssl = static_cast<SSL *>(transport->tls);
+      int want = static_cast<int>(
+          std::min(cursor[0].iov_len, static_cast<size_t>(INT_MAX)));
+      int r;
+      while ((r = SSL_write(ssl, cursor[0].iov_base, want)) <= 0) {
+        int err = SSL_get_error(ssl, r);
+        if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+          return -1;
+        }
       }
-      return -1;
-    }
-    if (n == 0) {
-      return -1;
+      n = r;
+    } else
+#endif
+    {
+      // Send all currently pending buffers in one syscall instead of one send()
+      // per buffer. Coalescing avoids emitting the 9-byte HTTP/2 frame header
+      // as its own TCP segment and cuts syscall overhead on every frame.
+      int batch = std::min(count, kH2MaxSendIov);
+      n = lupine_socket_sendv(transport->netfd, cursor, batch);
+      if (n < 0) {
+        if (lupine_socket_error_is_intr()) {
+          continue;
+        }
+        return -1;
+      }
+      if (n == 0) {
+        return -1;
+      }
     }
     size_t written = static_cast<size_t>(n);
     while (count > 0 && written >= cursor[0].iov_len) {
@@ -396,9 +420,28 @@ int h2_flush_session(h2_transport *transport) {
 int h2_read_from_net(h2_transport *transport) {
   unsigned char buffer[64 * 1024];
   ssize_t n = 0;
-  do {
-    n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
-  } while (n < 0 && lupine_socket_error_is_intr());
+#ifdef LUPINE_TLS_OPENSSL
+  if (transport->tls != nullptr) {
+    SSL *ssl = static_cast<SSL *>(transport->tls);
+    for (;;) {
+      int r = SSL_read(ssl, buffer, sizeof(buffer));
+      if (r > 0) {
+        n = r;
+        break;
+      }
+      int err = SSL_get_error(ssl, r);
+      if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        continue;
+      }
+      return -1;
+    }
+  } else
+#endif
+  {
+    do {
+      n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
+    } while (n < 0 && lupine_socket_error_is_intr());
+  }
   if (n <= 0) {
     return -1;
   }
@@ -422,6 +465,7 @@ int h2_read_from_net(h2_transport *transport) {
 int h2_init_direct(conn_t *conn, bool server) {
   auto *transport = new h2_transport();
   transport->netfd = conn->connfd;
+  transport->tls = conn->tls_session;
   transport->server = server;
 
   nghttp2_session_callbacks *callbacks = nullptr;

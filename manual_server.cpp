@@ -70,6 +70,19 @@ static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
 // over the large transfer) so a process never pins a huge buffer indefinitely.
 static constexpr size_t LUPINE_STAGING_RETAIN_BYTES = 8 * 1024 * 1024;
 
+static std::unordered_map<CUlibrary, std::vector<unsigned char>> &
+lupine_preserved_library_images() {
+  static std::unordered_map<CUlibrary, std::vector<unsigned char>> images;
+  return images;
+}
+
+static std::unordered_map<CUlinkState, std::unique_ptr<rpc_jit_server_state>> &
+lupine_jit_server_states() {
+  static std::unordered_map<CUlinkState, std::unique_ptr<rpc_jit_server_state>>
+      states;
+  return states;
+}
+
 struct lupine_staging {
   void *ptr = nullptr;
   bool owned = false; // true => caller must release (a per-call allocation)
@@ -352,11 +365,18 @@ static void lupine_retire_graph_resources(
   retired->push_back(resources);
 }
 
-static std::unordered_map<conn_t *, std::vector<lupine_pending_dtoh_copy>> &
+using lupine_pending_dtoh_streams =
+    std::unordered_map<CUstream, std::vector<lupine_pending_dtoh_copy>>;
+
+static std::unordered_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies() {
-  static std::unordered_map<conn_t *, std::vector<lupine_pending_dtoh_copy>>
-      copies;
+  static std::unordered_map<conn_t *, lupine_pending_dtoh_streams> copies;
   return copies;
+}
+
+static std::mutex &lupine_pending_dtoh_mutex() {
+  static std::mutex mutex;
+  return mutex;
 }
 
 static std::shared_ptr<lupine_graph_resources>
@@ -583,31 +603,46 @@ static void *lupine_alloc_host_resource(
   return ptr;
 }
 
-static uint32_t lupine_count_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                                 bool all_streams) {
-  auto &pending = lupine_pending_dtoh_copies()[conn];
-  uint32_t count = 0;
-  for (const auto &copy : pending) {
-    if (all_streams || copy.stream == stream) {
-      ++count;
+static std::vector<lupine_pending_dtoh_copy>
+lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
+                                  bool all_streams) {
+  std::vector<lupine_pending_dtoh_copy> copies;
+  std::lock_guard<std::mutex> lock(lupine_pending_dtoh_mutex());
+  auto conn_it = lupine_pending_dtoh_copies().find(conn);
+  if (conn_it == lupine_pending_dtoh_copies().end()) {
+    return copies;
+  }
+  auto &streams = conn_it->second;
+  if (all_streams) {
+    for (auto &entry : streams) {
+      auto &stream_copies = entry.second;
+      copies.insert(copies.end(), stream_copies.begin(), stream_copies.end());
+    }
+    lupine_pending_dtoh_copies().erase(conn_it);
+    return copies;
+  }
+
+  auto stream_it = streams.find(stream);
+  if (stream_it != streams.end()) {
+    copies.swap(stream_it->second);
+    streams.erase(stream_it);
+    if (streams.empty()) {
+      lupine_pending_dtoh_copies().erase(conn_it);
     }
   }
-  return count;
+  return copies;
 }
 
-static int lupine_write_pending_dtoh_copies(uint32_t *copy_count, conn_t *conn,
-                                            CUstream stream, bool all_streams) {
-  auto &pending = lupine_pending_dtoh_copies()[conn];
+static int lupine_write_pending_dtoh_copies(
+    uint32_t *copy_count, conn_t *conn,
+    const std::vector<lupine_pending_dtoh_copy> &pending) {
   if (copy_count != nullptr) {
-    *copy_count = lupine_count_pending_dtoh_copies(conn, stream, all_streams);
+    *copy_count = static_cast<uint32_t>(pending.size());
     if (rpc_write(conn, copy_count, sizeof(*copy_count)) < 0) {
       return -1;
     }
   }
-  for (auto &copy : pending) {
-    if (!all_streams && copy.stream != stream) {
-      continue;
-    }
+  for (const auto &copy : pending) {
     if (rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
         rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
         (copy.bytes != 0 &&
@@ -618,25 +653,22 @@ static int lupine_write_pending_dtoh_copies(uint32_t *copy_count, conn_t *conn,
   return 0;
 }
 
-static void lupine_cleanup_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                               bool all_streams) {
-  auto &pending = lupine_pending_dtoh_copies()[conn];
-  auto keep = std::remove_if(pending.begin(), pending.end(),
-                             [&](lupine_pending_dtoh_copy &copy) {
-                               if (!all_streams && copy.stream != stream) {
-                                 return false;
-                               }
-                               if (copy.server_src != nullptr) {
-                                 if (copy.pinned) {
-                                   cuMemFreeHost(copy.server_src);
-                                 } else {
-                                   free(copy.server_src);
-                                 }
-                                 copy.server_src = nullptr;
-                               }
-                               return true;
-                             });
-  pending.erase(keep, pending.end());
+static void lupine_cleanup_pending_dtoh_copies(
+    std::vector<lupine_pending_dtoh_copy> *pending) {
+  if (pending == nullptr) {
+    return;
+  }
+  for (auto &copy : *pending) {
+    if (copy.server_src != nullptr) {
+      if (copy.pinned) {
+        cuMemFreeHost(copy.server_src);
+      } else {
+        free(copy.server_src);
+      }
+      copy.server_src = nullptr;
+    }
+  }
+  pending->clear();
 }
 
 static void *lupine_alloc_capture_scratch(
@@ -728,6 +760,8 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   int request_id;
   CUlibrary library = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
+  rpc_jit_server_state jit_state;
+  bool has_library_option_values = false;
 
   if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
       rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
@@ -738,11 +772,39 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
+  if (rpc_read_jit_options(conn, &jit_state) < 0) {
+    return -1;
+  }
+  std::vector<CUlibraryOption> library_options;
+  std::vector<uintptr_t> library_raw_values;
+  if (rpc_read_library_options(conn, &library_options, &library_raw_values,
+                               &has_library_option_values) < 0) {
+    return -1;
+  }
+  unsigned int num_library_options =
+      static_cast<unsigned int>(library_options.size());
+  std::vector<void *> library_option_values(num_library_options);
+  for (unsigned int i = 0; i < num_library_options; ++i) {
+    library_option_values[i] = reinterpret_cast<void *>(library_raw_values[i]);
+  }
 
   request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
+
+  CUjit_option *jit_opts =
+      jit_state.options.empty() ? nullptr : jit_state.options.data();
+  void **jit_vals = jit_state.option_values.empty()
+                        ? nullptr
+                        : jit_state.option_values.data();
+  CUlibraryOption *lib_opts =
+      library_options.empty() ? nullptr : library_options.data();
+  void **lib_vals = !has_library_option_values || library_option_values.empty()
+                        ? nullptr
+                        : library_option_values.data();
+  unsigned int num_jit_options =
+      static_cast<unsigned int>(jit_state.options.size());
 
   if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
       kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
@@ -752,17 +814,23 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
         image.data(),
         nullptr,
     };
-    result = cuLibraryLoadData(&library, &wrapper, nullptr, nullptr, 0, nullptr,
-                               nullptr, 0);
+    result = cuLibraryLoadData(&library, &wrapper, jit_opts, jit_vals,
+                               num_jit_options, lib_opts, lib_vals,
+                               num_library_options);
   } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
-    result = cuLibraryLoadData(&library, image.data(), nullptr, nullptr, 0,
-                               nullptr, nullptr, 0);
+    result = cuLibraryLoadData(&library, image.data(), jit_opts, jit_vals,
+                               num_jit_options, lib_opts, lib_vals,
+                               num_library_options);
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_preserved_library_images()[library] = std::move(image);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
+      rpc_write_jit_outputs(conn, &jit_state) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1004,98 +1072,13 @@ int handle_manual_cuMemPrefetchAsync(conn_t *conn) {
   return 0;
 }
 
-struct lupine_jit_server_state {
-  std::vector<CUjit_option> options;
-  std::vector<uintptr_t> raw_values;
-  std::vector<void *> option_values;
-  float wall_time = 0.0f;
-  std::vector<char> info_log;
-  std::vector<char> error_log;
-  bool capture_wall_time = false;
-  bool capture_info_log = false;
-  bool capture_error_log = false;
-};
-
-static std::unordered_map<CUlinkState,
-                          std::unique_ptr<lupine_jit_server_state>> &
-lupine_jit_server_states() {
-  static std::unordered_map<CUlinkState,
-                            std::unique_ptr<lupine_jit_server_state>>
-      states;
-  return states;
-}
-
-static size_t lupine_find_jit_size_option(const lupine_jit_server_state &state,
-                                          CUjit_option option) {
-  for (size_t i = 0; i < state.options.size(); ++i) {
-    if (state.options[i] == option) {
-      return static_cast<size_t>(state.raw_values[i]);
-    }
-  }
-  return 0;
-}
-
-static void lupine_prepare_jit_options(lupine_jit_server_state *state) {
-  if (state == nullptr) {
-    return;
-  }
-  size_t info_size =
-      lupine_find_jit_size_option(*state, CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES);
-  size_t error_size =
-      lupine_find_jit_size_option(*state, CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES);
-  state->option_values.resize(state->options.size());
-  if (info_size != 0) {
-    state->info_log.assign(info_size, '\0');
-  }
-  if (error_size != 0) {
-    state->error_log.assign(error_size, '\0');
-  }
-  for (size_t i = 0; i < state->options.size(); ++i) {
-    switch (state->options[i]) {
-    case CU_JIT_WALL_TIME:
-      state->capture_wall_time = true;
-      state->option_values[i] = &state->wall_time;
-      break;
-    case CU_JIT_INFO_LOG_BUFFER:
-      state->capture_info_log = !state->info_log.empty();
-      state->option_values[i] =
-          state->info_log.empty() ? nullptr : state->info_log.data();
-      break;
-    case CU_JIT_ERROR_LOG_BUFFER:
-      state->capture_error_log = !state->error_log.empty();
-      state->option_values[i] =
-          state->error_log.empty() ? nullptr : state->error_log.data();
-      break;
-    default:
-      state->option_values[i] = reinterpret_cast<void *>(state->raw_values[i]);
-      break;
-    }
-  }
-}
-
-static uint32_t lupine_jit_output_count(const lupine_jit_server_state &state) {
-  uint32_t count = 0;
-  if (state.capture_wall_time) {
-    ++count;
-  }
-  if (state.capture_info_log) {
-    ++count;
-  }
-  if (state.capture_error_log) {
-    ++count;
-  }
-  return count;
-}
-
 int handle_manual_cuLinkCreate_v2(conn_t *conn) {
-  auto jit_state = std::make_unique<lupine_jit_server_state>();
+  auto jit_state = std::make_unique<rpc_jit_server_state>();
   CUlinkState state = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read_jit_options(conn, &jit_state->options, &jit_state->raw_values) <
-      0) {
+  if (rpc_read_jit_options(conn, jit_state.get()) < 0) {
     return -1;
   }
-  lupine_prepare_jit_options(jit_state.get());
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
@@ -1122,7 +1105,7 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
   CUjitInputType type = CU_JIT_INPUT_PTX;
   size_t size = 0;
   size_t name_len = 0;
-  lupine_jit_server_state jit_state;
+  rpc_jit_server_state jit_state;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   if (rpc_read(conn, &state, sizeof(state)) < 0 ||
       rpc_read(conn, &type, sizeof(type)) < 0 ||
@@ -1136,11 +1119,9 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
   }
   std::vector<char> name(name_len == 0 ? 1 : name_len, '\0');
   if ((name_len != 0 && rpc_read(conn, name.data(), name_len) < 0) ||
-      rpc_read_jit_options(conn, &jit_state.options, &jit_state.raw_values) <
-          0) {
+      rpc_read_jit_options(conn, &jit_state) < 0) {
     return -1;
   }
-  lupine_prepare_jit_options(&jit_state);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
@@ -1152,9 +1133,8 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
       jit_state.options.empty() ? nullptr : jit_state.options.data(),
       jit_state.option_values.empty() ? nullptr
                                       : jit_state.option_values.data());
-  uint32_t output_count = 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &output_count, sizeof(output_count)) < 0 ||
+      rpc_write_jit_outputs(conn, &jit_state) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1167,7 +1147,7 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
   size_t path_len = 0;
   uint8_t has_file_data = 0;
   uint64_t file_size = 0;
-  lupine_jit_server_state jit_state;
+  rpc_jit_server_state jit_state;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   if (rpc_read(conn, &state, sizeof(state)) < 0 ||
       rpc_read(conn, &type, sizeof(type)) < 0 ||
@@ -1189,11 +1169,9 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
       return -1;
     }
   }
-  if (rpc_read_jit_options(conn, &jit_state.options, &jit_state.raw_values) <
-      0) {
+  if (rpc_read_jit_options(conn, &jit_state) < 0) {
     return -1;
   }
-  lupine_prepare_jit_options(&jit_state);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
@@ -1214,9 +1192,8 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
         jit_state.option_values.empty() ? nullptr
                                         : jit_state.option_values.data());
   }
-  uint32_t output_count = 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &output_count, sizeof(output_count)) < 0 ||
+      rpc_write_jit_outputs(conn, &jit_state) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1238,47 +1215,15 @@ int handle_manual_cuLinkComplete(conn_t *conn) {
   result = cuLinkComplete(state, &cubin, &size);
   size_t returned_size = result == CUDA_SUCCESS ? size : 0;
   auto jit_it = lupine_jit_server_states().find(state);
-  const lupine_jit_server_state empty_jit_state;
-  const auto &jit_state = jit_it == lupine_jit_server_states().end()
-                              ? empty_jit_state
-                              : *jit_it->second;
-  std::vector<CUjit_option> output_options;
-  std::vector<size_t> output_sizes;
-  std::vector<const void *> output_data;
-  output_options.reserve(lupine_jit_output_count(jit_state));
-  output_sizes.reserve(output_options.capacity());
-  output_data.reserve(output_options.capacity());
-  if (jit_state.capture_wall_time) {
-    output_options.push_back(CU_JIT_WALL_TIME);
-    output_sizes.push_back(sizeof(jit_state.wall_time));
-    output_data.push_back(&jit_state.wall_time);
-  }
-  if (jit_state.capture_info_log) {
-    output_options.push_back(CU_JIT_INFO_LOG_BUFFER);
-    output_sizes.push_back(jit_state.info_log.size());
-    output_data.push_back(jit_state.info_log.data());
-  }
-  if (jit_state.capture_error_log) {
-    output_options.push_back(CU_JIT_ERROR_LOG_BUFFER);
-    output_sizes.push_back(jit_state.error_log.size());
-    output_data.push_back(jit_state.error_log.data());
-  }
-  uint32_t output_count = static_cast<uint32_t>(output_options.size());
+  rpc_jit_server_state empty_jit_state;
+  rpc_jit_server_state *jit_state = jit_it == lupine_jit_server_states().end()
+                                        ? &empty_jit_state
+                                        : jit_it->second.get();
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &returned_size, sizeof(returned_size)) < 0 ||
       (returned_size != 0 && rpc_write(conn, cubin, returned_size) < 0) ||
-      rpc_write(conn, &output_count, sizeof(output_count)) < 0) {
-    return -1;
-  }
-  for (size_t i = 0; i < output_options.size(); ++i) {
-    if (rpc_write(conn, &output_options[i], sizeof(output_options[i])) < 0 ||
-        rpc_write(conn, &output_sizes[i], sizeof(output_sizes[i])) < 0 ||
-        (output_sizes[i] != 0 &&
-         rpc_write(conn, output_data[i], output_sizes[i]) < 0)) {
-      return -1;
-    }
-  }
-  if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write_jit_outputs(conn, jit_state) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -1560,7 +1505,7 @@ int handle_manual_cuLibraryUnload(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  (void)library;
+  lupine_preserved_library_images().erase(library);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -1866,17 +1811,18 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   void *client_user_data = callback->userData;
   void *response = nullptr;
   uint32_t copy_count = 0;
+  auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false);
   if (rpc_write_start_request(conn, 2) >= 0 &&
-      lupine_write_pending_dtoh_copies(&copy_count, conn, stream, false) >= 0 &&
+      lupine_write_pending_dtoh_copies(&copy_count, conn, pending) >= 0 &&
       rpc_write(conn, &stream, sizeof(stream)) >= 0 &&
       rpc_write(conn, &status, sizeof(status)) >= 0 &&
       rpc_write(conn, &fn, sizeof(fn)) >= 0 &&
       rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
       rpc_wait_for_response(conn) >= 0) {
-    lupine_cleanup_pending_dtoh_copies(conn, stream, false);
     rpc_read(conn, &response, sizeof(response));
     rpc_read_end(conn);
   }
+  lupine_cleanup_pending_dtoh_copies(&pending);
   delete callback;
 }
 
@@ -2731,9 +2677,11 @@ int handle_manual_cuEventQuery(conn_t *conn) {
     return -1;
   }
   uint32_t copy_count = 0;
+  std::vector<lupine_pending_dtoh_copy> pending;
   if (result == CUDA_SUCCESS) {
-    if (lupine_write_pending_dtoh_copies(&copy_count, conn, nullptr, true) <
-        0) {
+    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+    if (lupine_write_pending_dtoh_copies(&copy_count, conn, pending) < 0) {
+      lupine_cleanup_pending_dtoh_copies(&pending);
       return -1;
     }
   } else {
@@ -2742,11 +2690,10 @@ int handle_manual_cuEventQuery(conn_t *conn) {
     }
   }
   if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    lupine_cleanup_pending_dtoh_copies(&pending);
     return -1;
   }
-  if (result == CUDA_SUCCESS) {
-    lupine_cleanup_pending_dtoh_copies(conn, nullptr, true);
-  }
+  lupine_cleanup_pending_dtoh_copies(&pending);
   return 0;
 }
 
@@ -3409,29 +3356,17 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
       host = nullptr;
     }
   } else {
-    auto &pending = lupine_pending_dtoh_copies()[conn];
-    bool reused_pending_host = false;
-    for (auto &copy : pending) {
-      if (copy.client_dst == dstHost && copy.bytes == byteCount) {
-        host = copy.server_src;
-        reused_pending_host = true;
-        break;
-      }
-    }
-    if (!reused_pending_host) {
-      alloc_result = cuMemAllocHost(&host, byteCount);
-      if (alloc_result != CUDA_SUCCESS) {
-        host = byteCount == 0 ? nullptr : malloc(byteCount);
-      }
+    alloc_result = cuMemAllocHost(&host, byteCount);
+    if (alloc_result != CUDA_SUCCESS) {
+      host = byteCount == 0 ? nullptr : malloc(byteCount);
     }
     if (byteCount != 0 && host == nullptr) {
       result = CUDA_ERROR_OUT_OF_MEMORY;
     } else {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
-      if (reused_pending_host) {
-        host = nullptr;
-      }
-      if (result == CUDA_SUCCESS && byteCount != 0 && !reused_pending_host) {
+      if (result == CUDA_SUCCESS && byteCount != 0) {
+        std::lock_guard<std::mutex> lock(lupine_pending_dtoh_mutex());
+        auto &pending = lupine_pending_dtoh_copies()[conn][stream];
         pending.push_back(
             {stream, dstHost, host, byteCount, alloc_result == CUDA_SUCCESS});
         host = nullptr;
@@ -3468,13 +3403,15 @@ int handle_manual_cuCtxSynchronize(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   uint64_t stdout_size = 0;
+  auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      lupine_write_pending_dtoh_copies(&copy_count, conn, nullptr, true) < 0 ||
+      lupine_write_pending_dtoh_copies(&copy_count, conn, pending) < 0 ||
       lupine_write_captured_stdout(conn, capture, &stdout_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    lupine_cleanup_pending_dtoh_copies(&pending);
     return -1;
   }
-  lupine_cleanup_pending_dtoh_copies(conn, nullptr, true);
+  lupine_cleanup_pending_dtoh_copies(&pending);
   return 0;
 }
 
@@ -3502,8 +3439,9 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
           ? 0
           : static_cast<uint32_t>(resources->dtoh_copies.size());
   bool all_pending_streams = stream == nullptr;
-  uint32_t pending_copy_count =
-      lupine_count_pending_dtoh_copies(conn, stream, all_pending_streams);
+  auto pending =
+      lupine_detach_pending_dtoh_copies(conn, stream, all_pending_streams);
+  uint32_t pending_copy_count = static_cast<uint32_t>(pending.size());
   copy_count = graph_copy_count + pending_copy_count;
   uint64_t stdout_size = 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3518,13 +3456,13 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
                     (copy.bytes != 0 &&
                      rpc_write_payload(conn, copy.server_src, copy.bytes) < 0);
            })) ||
-      lupine_write_pending_dtoh_copies(nullptr, conn, stream,
-                                       all_pending_streams) < 0 ||
+      lupine_write_pending_dtoh_copies(nullptr, conn, pending) < 0 ||
       lupine_write_captured_stdout(conn, capture, &stdout_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    lupine_cleanup_pending_dtoh_copies(&pending);
     return -1;
   }
-  lupine_cleanup_pending_dtoh_copies(conn, stream, all_pending_streams);
+  lupine_cleanup_pending_dtoh_copies(&pending);
   return 0;
 }
 
@@ -3567,13 +3505,15 @@ int handle_manual_cuEventSynchronize(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   uint64_t stdout_size = 0;
+  auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      lupine_write_pending_dtoh_copies(&copy_count, conn, nullptr, true) < 0 ||
+      lupine_write_pending_dtoh_copies(&copy_count, conn, pending) < 0 ||
       lupine_write_captured_stdout(conn, capture, &stdout_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    lupine_cleanup_pending_dtoh_copies(&pending);
     return -1;
   }
-  lupine_cleanup_pending_dtoh_copies(conn, nullptr, true);
+  lupine_cleanup_pending_dtoh_copies(&pending);
   return 0;
 }
 

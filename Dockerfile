@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     cmake \
     libnghttp2-dev \
+    libssl-dev \
     ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
@@ -84,6 +85,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     libnghttp2-14 \
+    # libssl3 on jammy, libssl3t64 on noble.
+    && (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64) \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=nvidia-utils /nvidia-smi /usr/bin/nvidia-smi
@@ -118,6 +121,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 \
     libnghttp2-14 \
     libstdc++6 \
+    # libssl3 on jammy, libssl3t64 on noble.
+    && (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64) \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=nvidia-utils /nvidia-smi /usr/bin/nvidia-smi

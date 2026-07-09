@@ -9,6 +9,7 @@ name: GPU Integration on GCE
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,7 +18,7 @@ permissions:
 jobs:
   gpu-integration:
     name: ${{ matrix.name }} GPU integration on GCE L4
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 300
 
@@ -61,30 +62,19 @@ jobs:
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      CUDA_SAMPLE_JOBS: 8
+      CUDA_SAMPLE_JOBS: 16
+      SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
       VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
       FIREWALL_ALLOW_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}-allow
       FIREWALL_DENY_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}-deny
+      CLIENT_IMAGE: lupine-gpu-integration:${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-
-      - name: Free runner disk
-        run: |
-          set -euo pipefail
-          sudo rm -rf \
-            /opt/hostedtoolcache \
-            /opt/ghc \
-            /usr/local/.ghcup \
-            /usr/local/lib/android \
-            /usr/local/share/boost \
-            /usr/share/dotnet \
-            "${AGENT_TOOLSDIRECTORY:-}" || true
-          df -h
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -217,6 +207,128 @@ jobs:
             echo "GCP_ZONE=$selected_zone"
           } >> "$GITHUB_ENV"
 
+      - name: Free runner disk
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet \
+            "${AGENT_TOOLSDIRECTORY:-}" || true
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Write inline client image Dockerfile
+        run: |
+          cat > "${RUNNER_TEMP}/gpu-integration.Dockerfile" <<'EOF'
+          # syntax=docker/dockerfile:1.7
+
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+
+          ARG CUDA_SAMPLE_SKIP_LIST=""
+          ARG CUDA_SAMPLES_CACHE_HIT="false"
+          ARG CUDA_SAMPLES_REF=""
+
+          ENV DEBIAN_FRONTEND=noninteractive \
+              CUDA_HOME=/usr/local/cuda \
+              CUDA_LIB_DIR=/usr/local/cuda/lib64 \
+              CUDA_SAMPLES_DIR=/opt/cuda-samples-src \
+              CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build \
+              CUDA_SAMPLES_ARCH=89 \
+              CCACHE_DIR=/opt/lupine/ccache \
+              CCACHE_BASEDIR=/src \
+              CCACHE_COMPILERCHECK=content \
+              CCACHE_COMPRESS=true \
+              PATH=/usr/local/cuda/bin:$PATH
+
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                bash \
+                build-essential \
+                ca-certificates \
+                ccache \
+                cmake \
+                curl \
+                freeglut3-dev \
+                git \
+                libfreeimage-dev \
+                libgl-dev \
+                libglu1-mesa-dev \
+                libnghttp2-dev \
+                libx11-dev \
+                libxi-dev \
+                libxmu-dev \
+                ninja-build \
+                openssh-client \
+                python3 \
+                python3-pip \
+                python3-venv \
+              && rm -rf /var/lib/apt/lists/*
+
+          COPY --from=cuda_samples_src . /opt/cuda-samples-src
+          COPY --from=cuda_samples_build . /opt/cuda-samples-build
+
+          # Keep the expensive CUDA sample build before COPY . so regular
+          # Lupine source changes do not invalidate this step. Warm runs copy
+          # the restored Actions cache into the image and skip compilation.
+          RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
+          set -euo pipefail
+
+          if [[ "$CUDA_SAMPLES_CACHE_HIT" == "true" && -d "$CUDA_SAMPLES_DIR/.git" && -d "$CUDA_SAMPLES_BUILD_DIR" ]]; then
+            git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
+            echo "Using restored CUDA sample cache"
+            exit 0
+          fi
+
+          rm -rf "$CUDA_SAMPLES_DIR" "$CUDA_SAMPLES_BUILD_DIR"
+          git clone https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
+          git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
+          if [[ -n "$CUDA_SAMPLES_REF" ]]; then
+            git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
+            git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
+            git -C "$CUDA_SAMPLES_DIR" reset --hard "$CUDA_SAMPLES_REF"
+          fi
+
+          if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
+            find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
+              "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
+          fi
+
+          export CCACHE_BASEDIR="$CUDA_SAMPLES_DIR"
+          if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
+            cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+            cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
+          else
+            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)"
+          fi
+          ccache --show-stats || true
+          SCRIPT
+
+          WORKDIR /src
+          COPY . /src
+          EOF
+
+      - name: Restore CUDA sample cache
+        id: cuda-samples-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}
+          key: gpu-integration-cuda-samples-v2-${{ matrix.label }}-${{ matrix.samples_ref }}
+
+      - name: Prepare CUDA sample cache context
+        run: |
+          set -euo pipefail
+          cache_dir="${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}"
+          mkdir -p "$cache_dir/src" "$cache_dir/build"
+          touch "$cache_dir/src/.keep" "$cache_dir/build/.keep"
+
       - name: Wait for SSH and NVIDIA driver
         run: |
           set -euo pipefail
@@ -257,6 +369,68 @@ jobs:
             done
           '
 
+      - name: Build and stream ${{ matrix.name }} client image to L4 VM
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4
+            "gha@$VM_IP"
+          )
+
+          common_build_args=(
+            --progress=plain
+            --file "${RUNNER_TEMP}/gpu-integration.Dockerfile"
+            --tag "$CLIENT_IMAGE"
+            --build-context "cuda_samples_src=${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}/src"
+            --build-context "cuda_samples_build=${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}/build"
+            --build-arg "BASE_IMAGE=${{ matrix.client_image }}"
+            --build-arg "CUDA_SAMPLES_CACHE_HIT=${{ steps.cuda-samples-cache.outputs.cache-hit == 'true' }}"
+            --build-arg "CUDA_SAMPLE_SKIP_LIST=${CUDA_SAMPLE_SKIP_LIST:-}"
+            --build-arg "CUDA_SAMPLES_REF=${{ matrix.samples_ref }}"
+          )
+
+          start=$SECONDS
+          docker buildx build \
+            "${common_build_args[@]}" \
+            --output=type=docker,dest=- \
+            . | "${ssh_base[@]}" 'sudo docker load'
+          echo "Streamed $CLIENT_IMAGE to L4 VM in $((SECONDS - start))s"
+          "${ssh_base[@]}" "sudo docker image inspect '$CLIENT_IMAGE' >/dev/null"
+
+          if [[ "${{ steps.cuda-samples-cache.outputs.cache-hit }}" != "true" ]]; then
+            docker buildx build "${common_build_args[@]}" --load .
+          fi
+
+      - name: Extract CUDA sample cache
+        if: steps.cuda-samples-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cache_dir="${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}"
+          rm -rf "$cache_dir"
+          mkdir -p "$cache_dir/src" "$cache_dir/build"
+          container_id="$(docker create "$CLIENT_IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/opt/cuda-samples-src/." "$cache_dir/src/"
+          if ! docker cp "$container_id:/opt/cuda-samples-build/." "$cache_dir/build/" 2>/tmp/cuda-samples-build-copy.err; then
+            echo "No separate CUDA samples build directory found; caching source tree only"
+            touch "$cache_dir/build/.keep"
+          fi
+          du -sh "$cache_dir"
+
+      - name: Save CUDA sample cache
+        if: steps.cuda-samples-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}
+          key: ${{ steps.cuda-samples-cache.outputs.cache-primary-key }}
+
       - name: Run ${{ matrix.name }} client inside L4 VM
         run: |
           set -euo pipefail
@@ -289,40 +463,33 @@ jobs:
             -o UserKnownHostsFile="$SSH_DIR/known_hosts"
           )
 
-          remote_src="/home/gha/lupine-src"
           remote_ssh="/home/gha/lupine-ssh"
-          "${ssh_base[@]}" "rm -rf '$remote_src' '$remote_ssh'; mkdir -p '$remote_src' '$remote_ssh'"
-          tar \
-            --exclude=.git \
-            --exclude=test/cuda-samples/results \
-            --exclude=test/pytorch/results \
-            -czf - . | "${ssh_base[@]}" "tar -xzf - -C '$remote_src'"
+          remote_results="/home/gha/lupine-results-${{ matrix.label }}"
+          "${ssh_base[@]}" "rm -rf '$remote_results' '$remote_ssh'; mkdir -p '$remote_results' '$remote_ssh'"
           "${scp_base[@]}" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts" "gha@$VM_IP:$remote_ssh/"
           "${ssh_base[@]}" "chmod 700 '$remote_ssh'; chmod 600 '$remote_ssh/id_ed25519'"
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='${{ matrix.client_image }}' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' CUDA_SAMPLES_REF='${{ matrix.samples_ref }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
-          sudo docker pull "$CLIENT_IMAGE"
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
             -e CUDA_SAMPLE_JOBS="$CUDA_SAMPLE_JOBS" \
             -e CUDA_SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT" \
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
+            -e SSH_COMMAND_TIMEOUT="$SSH_COMMAND_TIMEOUT" \
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
-            -e CUDA_SAMPLES_REF="$CUDA_SAMPLES_REF" \
             -e SERVER_HOST=host.docker.internal \
             -e SERVER_USER=gha \
             -e SERVER_SSH_TARGET=gha@host.docker.internal \
             -e MATRIX_LABEL="$MATRIX_LABEL" \
             -e GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             -e GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
-            -v /home/gha/lupine-src:/src \
             -v /home/gha/lupine-ssh:/ssh:ro \
-            -w /src \
+            -v /home/gha/lupine-results-"$MATRIX_LABEL":/results \
             "$CLIENT_IMAGE" \
             bash -lc '
               set -euo pipefail
@@ -335,28 +502,6 @@ jobs:
                 exit 1
               fi
 
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update >/dev/null
-              apt-get install -y --no-install-recommends \
-                bash \
-                build-essential \
-                ca-certificates \
-                cmake \
-                curl \
-                freeglut3-dev \
-                git \
-                libgl-dev \
-                libglu1-mesa-dev \
-                libnghttp2-dev \
-                libx11-dev \
-                libxi-dev \
-                libxmu-dev \
-                ninja-build \
-                openssh-client \
-                python3 \
-                python3-pip \
-                python3-venv >/dev/null
-
               mkdir -p /tmp/lupine-ssh
               cp /ssh/id_ed25519 /tmp/lupine-ssh/id_ed25519
               cp /ssh/known_hosts /tmp/lupine-ssh/known_hosts
@@ -367,18 +512,23 @@ jobs:
               export CUDA_LIB_DIR=/usr/local/cuda/lib64
               export PATH=/usr/local/cuda/bin:$PATH
               export REPO_ROOT=/src
-              export LUPINE_LIB=/tmp/lupine-build/libcuda.so.1
+              export LUPINE_BUILD_DIR=/tmp/lupine-build
+              export CCACHE_DIR=/tmp/lupine-ccache
+              mkdir -p "$LUPINE_BUILD_DIR" "$CCACHE_DIR"
+              export CCACHE_BASEDIR=/src
+              export CCACHE_COMPILERCHECK=content
+              export CCACHE_COMPRESS=true
+              export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
               export LUPINE_DISABLE_LOCAL=1
-              export SERVER_LOCAL_BIN=/tmp/lupine-build/lupine_driver_server
+              export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
               export SERVER_REMOTE_BIN="/tmp/lupine-driver-server-${MATRIX_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
               export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
               export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
               export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
               export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
               export PYTORCH_SKIP_LIST=compile_elementwise,microgpt_train
-              export CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
-              export CUDA_SAMPLES_DIR="/tmp/cuda-samples-${MATRIX_LABEL}"
-              export CUDA_SAMPLES_BUILD_DIR="$CUDA_SAMPLES_DIR/build"
+              export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
+              export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
               export CUDA_SAMPLES_ARCH=89
 
               python3 -m venv /tmp/venv-pytorch
@@ -387,25 +537,26 @@ jobs:
               /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
               export PYTHON_BIN=/tmp/venv-pytorch/bin/python
 
-              cmake -S /src -B /tmp/lupine-build \
+              cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCUDAToolkit_ROOT="$CUDA_HOME" \
-                -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
-              cmake --build /tmp/lupine-build --parallel \
+                -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+              cmake --build "$LUPINE_BUILD_DIR" --parallel \
                 --target lupine_driver lupine_nvml lupine_driver_server
-              ln -sf libcuda.so.1 /tmp/lupine-build/libcuda.so
-              ln -sf libnvidia-ml.so.1 /tmp/lupine-build/libnvidia-ml.so
-
-              BUILD_ONLY=1 BUILD_SAMPLES=auto SAMPLE_SUITE=extended \
-                /src/test/run_cuda_samples.sh
+              ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
+              ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
               cuda_status=0
-              BUILD_SAMPLES=0 SAMPLE_SUITE=compliance \
+              RESULTS_DIR="/results/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)" \
+                BUILD_SAMPLES=0 SAMPLE_SUITE=compliance \
                 /src/test/run_cuda_samples.sh || cuda_status=$?
 
               pytorch_status=0
-              /src/test/run_pytorch_lupine_tests.sh || pytorch_status=$?
+              RESULTS_DIR="/results/test/pytorch/results/$(date +%Y%m%d-%H%M%S)" \
+                /src/test/run_pytorch_lupine_tests.sh || pytorch_status=$?
 
               custom_status=0
               SERVER_PORT=20900 /src/test/run_custom_tests.sh || custom_status=$?
@@ -418,7 +569,7 @@ jobs:
           REMOTE
 
           results_tgz="$RUNNER_TEMP/gpu-results-${{ matrix.label }}.tgz"
-          "${ssh_base[@]}" "cd '$remote_src' && paths=''; [ -d test/cuda-samples/results ] && paths=\"\$paths test/cuda-samples/results\"; [ -d test/pytorch/results ] && paths=\"\$paths test/pytorch/results\"; [ -z \"\$paths\" ] || tar -czf - \$paths" > "$results_tgz"
+          "${ssh_base[@]}" "cd '$remote_results' && [ -d test ] && tar -czf - test || true" > "$results_tgz"
           if [[ -s "$results_tgz" ]]; then
             tar -xzf "$results_tgz"
           fi
@@ -434,6 +585,34 @@ jobs:
             test/cuda-samples/results/
             test/pytorch/results/
           if-no-files-found: ignore
+
+      - name: Report sample results
+        id: sample_results
+        if: always()
+        run: |
+          set -uo pipefail
+          rd="$(ls -td test/cuda-samples/results/*/ 2>/dev/null | head -n1 || true)"
+          if [[ -z "${rd:-}" ]]; then
+            echo "No CUDA sample results dir found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### CUDA samples (${{ matrix.label }})"
+            echo '```'
+            [[ -f "$rd/summary.txt" ]] && cat "$rd/summary.txt"
+            [[ -f "$rd/coverage.txt" ]] && { echo; cat "$rd/coverage.txt"; }
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$rd/summary.txt" ]]; then
+            awk '{print tolower($1)"="$2}' "$rd/summary.txt" >> "$GITHUB_OUTPUT"
+          fi
+          cov=""
+          if [[ -f "$rd/coverage.txt" ]]; then
+            cov="$(grep 'coverage:' "$rd/coverage.txt" | sed -E 's/^CUDA sample coverage: /coverage=/')"
+          fi
+          if [[ -n "${cov:-}" ]]; then
+            echo "$cov" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Refresh Google Cloud credentials for cleanup
         if: always()
@@ -452,33 +631,43 @@ jobs:
           fallback_zones=($GCP_FALLBACK_ZONES)
           candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
 
+          delete_pids=()
           for zone in "${candidate_zones[@]}"; do
             gcloud compute instances delete "$VM_NAME" \
               --project="$GCP_PROJECT_ID" \
               --zone="$zone" \
-              --quiet || true
+              --quiet &
+            delete_pids+=("$!")
           done
 
           for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
             gcloud compute firewall-rules delete "$rule" \
               --project="$GCP_PROJECT_ID" \
-              --quiet || true
+              --quiet &
+            delete_pids+=("$!")
+          done
+
+          for pid in "${delete_pids[@]}"; do
+            wait "$pid" || true
           done
 
           leftovers=0
+          check_pids=()
           for zone in "${candidate_zones[@]}"; do
-            if gcloud compute instances describe "$VM_NAME" \
+            (! gcloud compute instances describe "$VM_NAME" \
               --project="$GCP_PROJECT_ID" \
-              --zone="$zone" >/dev/null 2>&1; then
-              echo "leftover VM still exists in $zone: $VM_NAME" >&2
-              leftovers=1
-            fi
+              --zone="$zone" >/dev/null 2>&1) &
+            check_pids+=("$!")
           done
 
           for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
-            if gcloud compute firewall-rules describe "$rule" \
-              --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-              echo "leftover firewall rule still exists: $rule" >&2
+            (! gcloud compute firewall-rules describe "$rule" \
+              --project="$GCP_PROJECT_ID" >/dev/null 2>&1) &
+            check_pids+=("$!")
+          done
+
+          for pid in "${check_pids[@]}"; do
+            if ! wait "$pid"; then
               leftovers=1
             fi
           done
