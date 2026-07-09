@@ -1747,11 +1747,8 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {
-    if (conn != nullptr)
-      pthread_mutex_unlock(&conn->call_mutex);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  pthread_mutex_unlock(&conn->call_mutex);
   return CUDA_SUCCESS;
 }
 
@@ -7078,6 +7075,15 @@ extern "C" CUresult cuMemsetD2D32(CUdeviceptr dstDevice, size_t dstPitch,
   return cuMemsetD2D32_v2(dstDevice, dstPitch, ui, Width, Height);
 }
 
+#ifdef cuIpcOpenMemHandle
+#undef cuIpcOpenMemHandle
+#endif
+extern "C" CUresult cuIpcOpenMemHandle(CUdeviceptr *pdptr,
+                                       CUipcMemHandle handle,
+                                       unsigned int Flags) {
+  return cuIpcOpenMemHandle_v2(pdptr, handle, Flags);
+}
+
 #ifdef cuStreamBeginCapture
 #undef cuStreamBeginCapture
 #endif
@@ -7724,6 +7730,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemsetD2D8", (void *)cuMemsetD2D8_v2},
     {"cuMemsetD2D16", (void *)cuMemsetD2D16_v2},
     {"cuMemsetD2D32", (void *)cuMemsetD2D32_v2},
+    {"cuIpcOpenMemHandle", (void *)cuIpcOpenMemHandle_v2},
     {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
     {"cuMemcpy_ptds", (void *)cuMemcpy},

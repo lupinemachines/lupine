@@ -44,6 +44,7 @@ MANUAL_REMAPPINGS = [
     ("cuMemsetD2D8", "cuMemsetD2D8_v2"),
     ("cuMemsetD2D16", "cuMemsetD2D16_v2"),
     ("cuMemsetD2D32", "cuMemsetD2D32_v2"),
+    ("cuIpcOpenMemHandle", "cuIpcOpenMemHandle_v2"),
     ("cuStreamBeginCapture", "cuStreamBeginCapture_v2"),
     ("cuGraphExecUpdate", "cuGraphExecUpdate_v2"),
     ("cuMemcpy_ptds", "cuMemcpy"),
@@ -1930,14 +1931,12 @@ def main():
                 for operation in operations:
                     operation.client_rpc_write(f)
                 f.write("        rpc_write_end(conn) < 0) {\n")
-                f.write("        if (conn != nullptr) pthread_mutex_unlock(&conn->call_mutex);\n")
                 f.write(
                     "        return {error_return};\n".format(
                         error_return=error_const(function.return_type.format())
                     )
                 )
                 f.write("    }\n")
-                f.write("    pthread_mutex_unlock(&conn->call_mutex);\n")
                 f.write("    return CUDA_SUCCESS;\n")
                 f.write("}\n\n")
                 continue

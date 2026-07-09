@@ -18,6 +18,7 @@ SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
 PYTORCH_SKIP_LIST="${PYTORCH_SKIP_LIST:-}"
 
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
+LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$repo_root/.venv-pytorch312/bin/python}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-90}"
@@ -137,7 +138,7 @@ for i in "${!TESTS[@]}"; do
 
   set +e
   timeout --kill-after=5s "$TEST_TIMEOUT" env \
-    LD_LIBRARY_PATH="$repo_root/build:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+    LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" \
     LD_PRELOAD="$LUPINE_LIB" \
     "$PYTHON_BIN" "$repo_root/test/pytorch_lupine_tests.py" "$test_name" \
