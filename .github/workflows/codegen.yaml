@@ -42,5 +42,8 @@ jobs:
             codegen/gen_nvml_server.inc \
             codegen/gen_server.cpp
 
+      - name: Test generated handler cleanup
+        run: python3 -m unittest discover -s codegen/tests -v
+
       - name: Verify generated files are current
         run: git diff --exit-code -- codegen
