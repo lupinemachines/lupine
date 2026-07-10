@@ -23,9 +23,6 @@ extern void rpc_close(conn_t *conn);
 extern "C" void lupine_deep_cache_reset(const void *key);
 extern "C" void *lupine_deep_cache_add(const void *key, size_t bytes);
 
-extern "C" CUresult lupine_cuInit_multi(unsigned int flags);
-extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count);
-extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal);
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
 extern "C" conn_t *lupine_rpc_conn_for_current_context();
 extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);
@@ -94,15 +91,6 @@ extern "C" CUresult
 lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags);
-extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer,
-                                                       CUdevice dev,
-                                                       CUdevice peerDev);
-extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext,
-                                                       unsigned int flags);
-extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);
-
-CUresult cuInit(unsigned int Flags) { return lupine_cuInit_multi(Flags); }
-
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
@@ -130,14 +118,6 @@ CUresult cuDriverGetVersion(int *driverVersion) {
       *driverVersion = atoi(override_version);
   }
   return return_value;
-}
-
-CUresult cuDeviceGet(CUdevice *device, int ordinal) {
-  return lupine_cuDeviceGet_multi(device, ordinal);
-}
-
-CUresult cuDeviceGetCount(int *count) {
-  return lupine_cuDeviceGetCount_multi(count);
 }
 
 CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
@@ -1391,28 +1371,34 @@ CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
 }
 
 CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId) {
-  lupine_route route = lupine_route_for_default();
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUdevice *, const char *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDeviceGetByPCIBusId", &return_value, dev, pciBusId)) {
-    return return_value;
+  if (dev == nullptr || pciBusId == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
   }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUdevice *dev_null_check;
-  std::size_t pciBusId_len = std::strlen(pciBusId) + 1;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetByPCIBusId) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice *)) < 0 ||
-      rpc_write(conn, &pciBusId_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, pciBusId, pciBusId_len) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
-      (dev_null_check && rpc_read(conn, dev, sizeof(CUdevice)) < 0) ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_lookup_device_on_all_routes(
+      dev, [&](lupine_route route, CUdevice *route_output) {
+        CUdevice *dev = route_output;
+        CUresult return_value;
+        using real_fn_t = CUresult (*)(CUdevice *, const char *);
+        if (lupine_call_local_cuda_if_routed<real_fn_t>(
+                route, "cuDeviceGetByPCIBusId", &return_value, dev, pciBusId)) {
+          return return_value;
+        }
+        conn_t *conn = lupine_route_remote_conn(route);
+        CUdevice *dev_null_check;
+        std::size_t pciBusId_len = std::strlen(pciBusId) + 1;
+        if (conn == nullptr ||
+            rpc_write_start_request(conn, RPC_cuDeviceGetByPCIBusId) < 0 ||
+            rpc_write(conn, &dev, sizeof(CUdevice *)) < 0 ||
+            rpc_write(conn, &pciBusId_len, sizeof(std::size_t)) < 0 ||
+            rpc_write(conn, pciBusId, pciBusId_len) < 0 ||
+            rpc_wait_for_response(conn) < 0 ||
+            rpc_read(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
+            (dev_null_check && rpc_read(conn, dev, sizeof(CUdevice)) < 0) ||
+            rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+            rpc_read_end(conn) < 0)
+          return CUDA_ERROR_DEVICE_UNAVAILABLE;
+        return return_value;
+      });
 }
 
 CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
@@ -6761,19 +6747,6 @@ CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
   return return_value;
 }
 
-CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
-                               CUdevice peerDev) {
-  return lupine_cuDeviceCanAccessPeer_multi(canAccessPeer, dev, peerDev);
-}
-
-CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags) {
-  return lupine_cuCtxEnablePeerAccess_multi(peerContext, Flags);
-}
-
-CUresult cuCtxDisablePeerAccess(CUcontext peerContext) {
-  return lupine_cuCtxDisablePeerAccess_multi(peerContext);
-}
-
 CUresult cuDeviceGetP2PAttribute(int *value, CUdevice_P2PAttribute attrib,
                                  CUdevice srcDevice, CUdevice dstDevice) {
   lupine_route route = lupine_route_for_device(&srcDevice);
@@ -7473,6 +7446,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuCtxGetCacheConfig", (void *)cuCtxGetCacheConfig},
     {"cuCtxSetCacheConfig", (void *)cuCtxSetCacheConfig},
     {"cuCtxGetApiVersion", (void *)cuCtxGetApiVersion},
+    {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
     {"cuCtxResetPersistingL2Cache", (void *)cuCtxResetPersistingL2Cache},
     {"cuCtxGetExecAffinity", (void *)cuCtxGetExecAffinity},
     {"cuCtxAttach", (void *)cuCtxAttach},
@@ -7483,6 +7457,11 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuModuleGetLoadingMode", (void *)cuModuleGetLoadingMode},
     {"cuModuleGetFunction", (void *)cuModuleGetFunction},
     {"cuModuleGetGlobal_v2", (void *)cuModuleGetGlobal_v2},
+    {"cuLinkCreate_v2", (void *)cuLinkCreate_v2},
+    {"cuLinkAddData_v2", (void *)cuLinkAddData_v2},
+    {"cuLinkAddFile_v2", (void *)cuLinkAddFile_v2},
+    {"cuLinkComplete", (void *)cuLinkComplete},
+    {"cuLinkDestroy", (void *)cuLinkDestroy},
     {"cuModuleGetTexRef", (void *)cuModuleGetTexRef},
     {"cuModuleGetSurfRef", (void *)cuModuleGetSurfRef},
     {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
@@ -7499,7 +7478,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemGetInfo_v2", (void *)cuMemGetInfo_v2},
     {"cuMemAlloc_v2", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch_v2", (void *)cuMemAllocPitch_v2},
+    {"cuMemFree_v2", (void *)cuMemFree_v2},
     {"cuMemGetAddressRange_v2", (void *)cuMemGetAddressRange_v2},
+    {"cuMemAllocManaged", (void *)cuMemAllocManaged},
     {"cuDeviceGetByPCIBusId", (void *)cuDeviceGetByPCIBusId},
     {"cuDeviceGetPCIBusId", (void *)cuDeviceGetPCIBusId},
     {"cuIpcGetEventHandle", (void *)cuIpcGetEventHandle},
@@ -7567,6 +7548,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemPoolImportPointer", (void *)cuMemPoolImportPointer},
     {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
     {"cuPointerSetAttribute", (void *)cuPointerSetAttribute},
+    {"cuPointerGetAttributes", (void *)cuPointerGetAttributes},
     {"cuStreamCreate", (void *)cuStreamCreate},
     {"cuStreamCreateWithPriority", (void *)cuStreamCreateWithPriority},
     {"cuStreamGetPriority", (void *)cuStreamGetPriority},
@@ -7609,6 +7591,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuFuncSetAttribute", (void *)cuFuncSetAttribute},
     {"cuFuncSetCacheConfig", (void *)cuFuncSetCacheConfig},
     {"cuFuncGetModule", (void *)cuFuncGetModule},
+    {"cuLaunchCooperativeKernel", (void *)cuLaunchCooperativeKernel},
     {"cuLaunchCooperativeKernelMultiDevice",
      (void *)cuLaunchCooperativeKernelMultiDevice},
     {"cuFuncSetBlockShape", (void *)cuFuncSetBlockShape},

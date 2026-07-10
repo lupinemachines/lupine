@@ -35,6 +35,23 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);
 extern "C" bool lupine_route_is_local(lupine_route route);
 extern "C" conn_t *lupine_route_remote_conn(lupine_route route);
 
+using lupine_device_lookup_callback = CUresult (*)(void *context,
+                                                   lupine_route route,
+                                                   CUdevice *route_device);
+extern "C" CUresult
+lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
+                                        lupine_device_lookup_callback lookup);
+
+template <typename Lookup>
+static CUresult lupine_lookup_device_on_all_routes(CUdevice *device,
+                                                   Lookup lookup) {
+  return lupine_lookup_device_on_all_routes_impl(
+      device, &lookup,
+      [](void *context, lupine_route route, CUdevice *route_device) {
+        return (*static_cast<Lookup *>(context))(route, route_device);
+      });
+}
+
 extern "C" void *lupine_real_cuda_symbol(const char *name);
 extern "C" bool lupine_local_cuda_symbol_if_routed(lupine_route route,
                                                    const char *symbol,

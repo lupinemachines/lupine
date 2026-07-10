@@ -884,7 +884,7 @@ static CUresult lupine_ensure_device_table() {
   return CUDA_SUCCESS;
 }
 
-extern "C" CUresult lupine_cuInit_multi(unsigned int flags) {
+extern "C" CUresult cuInit(unsigned int flags) {
   CUresult first_error = CUDA_SUCCESS;
   bool initialized_any = false;
   using cuInit_fn = CUresult (*)(unsigned int);
@@ -910,7 +910,7 @@ extern "C" CUresult lupine_cuInit_multi(unsigned int flags) {
   return initialized_any ? CUDA_SUCCESS : first_error;
 }
 
-extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count) {
+extern "C" CUresult cuDeviceGetCount(int *count) {
   if (count == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -924,7 +924,7 @@ extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count) {
   return CUDA_SUCCESS;
 }
 
-extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal) {
+extern "C" CUresult cuDeviceGet(CUdevice *device, int ordinal) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -940,6 +940,85 @@ extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal) {
   }
   *device = static_cast<CUdevice>(ordinal);
   return CUDA_SUCCESS;
+}
+
+static CUdevice lupine_virtual_device_for_route(lupine_route route,
+                                                CUdevice route_device) {
+  int conn_index = -1;
+  if (route.kind == LUPINE_ROUTE_REMOTE) {
+    conn_index = lupine_conn_index(route.conn);
+    if (conn_index < 0) {
+      return -1;
+    }
+  } else if (route.kind != LUPINE_ROUTE_LOCAL) {
+    return -1;
+  }
+
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  auto &devices = lupine_device_table();
+  for (size_t i = 0; i < devices.size(); ++i) {
+    const auto &candidate = devices[i];
+    bool matches =
+        route.kind == LUPINE_ROUTE_LOCAL
+            ? candidate.local && candidate.local_device == route_device
+            : !candidate.local &&
+                  candidate.conn_index ==
+                      static_cast<unsigned int>(conn_index) &&
+                  candidate.remote_device == route_device;
+    if (matches) {
+      return static_cast<CUdevice>(i);
+    }
+  }
+  return -1;
+}
+
+extern "C" CUresult
+lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
+                                        lupine_device_lookup_callback lookup) {
+  if (device == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  CUresult result = lupine_ensure_device_table();
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+
+  bool has_local_device = false;
+  {
+    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+    has_local_device =
+        std::any_of(lupine_device_table().begin(), lupine_device_table().end(),
+                    [](const auto &candidate) { return candidate.local; });
+  }
+
+  CUresult first_error = CUDA_ERROR_INVALID_DEVICE;
+  for (int i = has_local_device ? -1 : 0; i < nconns; ++i) {
+    lupine_route route =
+        i < 0 ? lupine_local_route() : lupine_remote_route_for_conn(&conns[i]);
+    CUdevice route_device = 0;
+    result = lookup(context, route, &route_device);
+    if (result != CUDA_SUCCESS) {
+      if (first_error == CUDA_ERROR_INVALID_DEVICE &&
+          result != CUDA_ERROR_INVALID_DEVICE) {
+        first_error = result;
+      }
+      continue;
+    }
+
+    CUdevice virtual_device =
+        lupine_virtual_device_for_route(route, route_device);
+    if (virtual_device < 0) {
+      if (first_error == CUDA_ERROR_INVALID_DEVICE) {
+        first_error = CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+      continue;
+    }
+
+    *device = virtual_device;
+    return CUDA_SUCCESS;
+  }
+  return first_error;
 }
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device) {
@@ -1015,28 +1094,15 @@ extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,
   if (conn == nullptr || lupine_ensure_device_table() != CUDA_SUCCESS) {
     return -1;
   }
-  int conn_index = lupine_conn_index(conn);
-  if (conn_index < 0) {
-    return -1;
-  }
-
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto &devices = lupine_device_table();
-  for (size_t i = 0; i < devices.size(); ++i) {
-    if (devices[i].conn_index == static_cast<unsigned int>(conn_index) &&
-        !devices[i].local && devices[i].remote_device == remote_device) {
-      return static_cast<CUdevice>(i);
-    }
-  }
-  return -1;
+  return lupine_virtual_device_for_route(lupine_remote_route_for_conn(conn),
+                                         remote_device);
 }
 
 extern "C" lupine_route lupine_route_for_current_context();
 extern "C" lupine_route lupine_route_for_context(CUcontext ctx);
 
-extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer,
-                                                       CUdevice dev,
-                                                       CUdevice peerDev) {
+extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
+                                          CUdevice peerDev) {
   if (canAccessPeer == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -1075,8 +1141,8 @@ extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer,
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext,
-                                                       unsigned int flags) {
+extern "C" CUresult cuCtxEnablePeerAccess(CUcontext peerContext,
+                                          unsigned int flags) {
   lupine_route current_route = lupine_route_for_current_context();
   lupine_route peer_route = lupine_route_for_context(peerContext);
   if (lupine_route_identity(current_route) !=
@@ -1102,7 +1168,7 @@ extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext,
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext) {
+extern "C" CUresult cuCtxDisablePeerAccess(CUcontext peerContext) {
   lupine_route current_route = lupine_route_for_current_context();
   lupine_route peer_route = lupine_route_for_context(peerContext);
   if (lupine_route_identity(current_route) !=
@@ -9134,6 +9200,9 @@ int rpc_size() { return nconns; }
 extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
                                      int cudaVersion, cuuint64_t flags);
 
+static const std::unordered_map<std::string, void *> &
+lupine_manual_function_map();
+
 CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                              cuuint64_t flags,
                              CUdriverProcAddressQueryResult *symbolStatus) {
@@ -9188,177 +9257,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
 
-  static const std::unordered_map<std::string, void *> manual_function_map = {
-#if CUDA_VERSION >= 12050
-      {"cuCtxCreate", (void *)cuCtxCreate_v4},
-      {"cuCtxCreate_v4", (void *)cuCtxCreate_v4},
-#else
-      {"cuCtxCreate", (void *)cuCtxCreate_v2},
-#endif
-      {"cuCtxCreate_v2", (void *)cuCtxCreate_v2},
-      {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
-      {"cuOccupancyMaxPotentialBlockSize",
-       (void *)cuOccupancyMaxPotentialBlockSize},
-      {"cuOccupancyMaxPotentialBlockSizeWithFlags",
-       (void *)cuOccupancyMaxPotentialBlockSizeWithFlags},
-      {"cuProfilerInitialize", (void *)cuProfilerInitialize},
-      {"cuProfilerStart", (void *)cuProfilerStart},
-      {"cuProfilerStop", (void *)cuProfilerStop},
-      {"cuStreamDestroy", (void *)cuStreamDestroy},
-      {"cuEventDestroy", (void *)cuEventDestroy},
-      {"cuEventElapsedTime", (void *)cuEventElapsedTime},
-      {"cuMemPoolSetAttribute", (void *)cuMemPoolSetAttribute},
-      {"cuMemPoolGetAttribute", (void *)cuMemPoolGetAttribute},
-      {"cuMemAllocHost", (void *)cuMemAllocHost_v2},
-      {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
-      {"cuMemAllocManaged", (void *)cuMemAllocManaged},
-      {"cuMemFree", (void *)cuMemFree_v2},
-      {"cuMemFree_v2", (void *)cuMemFree_v2},
-      {"cuMemFreeHost", (void *)cuMemFreeHost},
-      {"cuMemHostAlloc", (void *)cuMemHostAlloc},
-      {"cuMemHostGetDevicePointer", (void *)cuMemHostGetDevicePointer_v2},
-      {"cuMemHostGetDevicePointer_v2", (void *)cuMemHostGetDevicePointer_v2},
-      {"cuMemHostGetFlags", (void *)cuMemHostGetFlags},
-      {"cuMemHostRegister", (void *)cuMemHostRegister},
-      {"cuMemHostRegister_v2", (void *)cuMemHostRegister_v2},
-      {"cuMemHostUnregister", (void *)cuMemHostUnregister},
-      {"cuMemGetAddressRange", (void *)cuMemGetAddressRange},
-      {"cuMemGetInfo", (void *)cuMemGetInfo},
-      {"cuMemPrefetchAsync", (void *)cuMemPrefetchAsync},
-      {"cuMemPrefetchAsync_ptsz", (void *)cuMemPrefetchAsync_ptsz},
-      {"cuMemPrefetchAsync_v2", (void *)cuMemPrefetchAsync_v2},
-      {"cuArrayCreate", (void *)cuArrayCreate_v2},
-      {"cuArrayCreate_v2", (void *)cuArrayCreate_v2},
-      {"cuArray3DCreate", (void *)cuArray3DCreate_v2},
-      {"cuArray3DCreate_v2", (void *)cuArray3DCreate_v2},
-      {"cuArray3DGetDescriptor", (void *)cuArray3DGetDescriptor_v2},
-      {"cuArray3DGetDescriptor_v2", (void *)cuArray3DGetDescriptor_v2},
-      {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
-      {"cuMemcpyDtoH_v2", (void *)cuMemcpyDtoH_v2},
-      {"cuMemcpyDtoA", (void *)cuMemcpyDtoA_v2},
-      {"cuMemcpyDtoA_v2", (void *)cuMemcpyDtoA_v2},
-      {"cuMemcpyAtoD", (void *)cuMemcpyAtoD_v2},
-      {"cuMemcpyAtoD_v2", (void *)cuMemcpyAtoD_v2},
-      {"cuMemcpyAtoH", (void *)cuMemcpyAtoH_v2},
-      {"cuMemcpyAtoH_v2", (void *)cuMemcpyAtoH_v2},
-      {"cuMemcpyAtoA", (void *)cuMemcpyAtoA_v2},
-      {"cuMemcpyAtoA_v2", (void *)cuMemcpyAtoA_v2},
-      {"cuMemcpy2D", (void *)cuMemcpy2D_v2},
-      {"cuMemcpy2D_v2", (void *)cuMemcpy2D_v2},
-      {"cuMemcpy2DUnaligned", (void *)cuMemcpy2DUnaligned_v2},
-      {"cuMemcpy2DUnaligned_v2", (void *)cuMemcpy2DUnaligned_v2},
-      {"cuMemcpy2DAsync", (void *)cuMemcpy2DAsync_v2},
-      {"cuMemcpy2DAsync_v2", (void *)cuMemcpy2DAsync_v2},
-      {"cuMemcpy2DAsync_ptsz", (void *)cuMemcpy2DAsync_v2},
-      {"cuMemcpy3D", (void *)cuMemcpy3D_v2},
-      {"cuMemcpy3D_v2", (void *)cuMemcpy3D_v2},
-      {"cuPointerGetAttribute", (void *)cuPointerGetAttribute},
-      {"cuPointerGetAttributes", (void *)cuPointerGetAttributes},
-      {"cuGetExportTable", (void *)cuGetExportTable},
-      {"cuModuleLoad", (void *)cuModuleLoad},
-      {"cuModuleLoadData", (void *)cuModuleLoadData},
-      {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
-      {"cuLibraryLoadData", (void *)cuLibraryLoadData},
-      {"cuLinkCreate", (void *)cuLinkCreate_v2},
-      {"cuLinkCreate_v2", (void *)cuLinkCreate_v2},
-      {"cuLinkAddData", (void *)cuLinkAddData_v2},
-      {"cuLinkAddData_v2", (void *)cuLinkAddData_v2},
-      {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
-      {"cuLinkAddFile_v2", (void *)cuLinkAddFile_v2},
-      {"cuLinkComplete", (void *)cuLinkComplete},
-      {"cuLinkDestroy", (void *)cuLinkDestroy},
-      {"cuLaunchKernel", (void *)cuLaunchKernel},
-      {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
-      {"cuLaunchCooperativeKernel", (void *)cuLaunchCooperativeKernel},
-      {"cuLaunchCooperativeKernel_ptsz",
-       (void *)cuLaunchCooperativeKernel_ptsz},
-      {"cuMemcpyAsync", (void *)cuMemcpyAsync},
-      {"cuMemcpyAsync_ptsz", (void *)cuMemcpyAsync},
-      {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
-      {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
-      {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
-      {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
-      {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
-      {"cuStreamWaitValue64", (void *)cuStreamWaitValue64_v2},
-      {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},
-      {"cuStreamWaitEvent_ptsz", (void *)cuStreamWaitEvent_ptsz},
-      {"cuStreamWriteValue32", (void *)cuStreamWriteValue32_v2},
-      {"cuStreamWriteValue64", (void *)cuStreamWriteValue64_v2},
-      {"cuStreamBatchMemOp", (void *)cuStreamBatchMemOp_v2},
-      {"cuStreamGetCaptureInfo", (void *)cuStreamGetCaptureInfo},
-      {"cuStreamGetCaptureInfo_v2", (void *)cuStreamGetCaptureInfo_v2},
-      {"cuStreamGetCaptureInfo_v3", (void *)cuStreamGetCaptureInfo_v3},
-      {"cuCtxSynchronize", (void *)cuCtxSynchronize},
-      {"cuStreamSynchronize", (void *)cuStreamSynchronize},
-      {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
-      {"cuEventQuery", (void *)cuEventQuery},
-      {"cuEventSynchronize", (void *)cuEventSynchronize},
-      {"cuGetErrorName", (void *)cuGetErrorName},
-      {"cuGetErrorString", (void *)cuGetErrorString},
-      {"cuGraphAddKernelNode", (void *)cuGraphAddKernelNode_v2},
-      {"cuGraphAddKernelNode_v2", (void *)cuGraphAddKernelNode_v2},
-      {"cuGraphAddNode", (void *)cuGraphAddNode},
-      {"cuGraphAddNode_v2", (void *)cuGraphAddNode_v2},
-      {"cuGraphConditionalHandleCreate",
-       (void *)cuGraphConditionalHandleCreate},
-      {"cuGraphAddMemcpyNode", (void *)cuGraphAddMemcpyNode},
-      {"cuGraphAddMemsetNode", (void *)cuGraphAddMemsetNode},
-      {"cuGraphAddHostNode", (void *)cuGraphAddHostNode},
-      {"cuGraphAddMemAllocNode", (void *)cuGraphAddMemAllocNode},
-      {"cuGraphAddMemFreeNode", (void *)cuGraphAddMemFreeNode},
-      {"cuDeviceGetGraphMemAttribute", (void *)cuDeviceGetGraphMemAttribute},
-      {"cuDeviceSetGraphMemAttribute", (void *)cuDeviceSetGraphMemAttribute},
-      {"cuGraphKernelNodeGetParams", (void *)cuGraphKernelNodeGetParams_v2},
-      {"cuGraphKernelNodeGetParams_v2", (void *)cuGraphKernelNodeGetParams_v2},
-      {"cuGraphKernelNodeSetParams", (void *)cuGraphKernelNodeSetParams_v2},
-      {"cuGraphKernelNodeSetParams_v2", (void *)cuGraphKernelNodeSetParams_v2},
-      {"cuGraphExecKernelNodeSetParams",
-       (void *)cuGraphExecKernelNodeSetParams_v2},
-      {"cuGraphExecKernelNodeSetParams_v2",
-       (void *)cuGraphExecKernelNodeSetParams_v2},
-      {"cuGraphGetNodes", (void *)cuGraphGetNodes},
-      {"cuGraphGetRootNodes", (void *)cuGraphGetRootNodes},
-      {"cuGraphAddExternalSemaphoresSignalNode",
-       (void *)cuGraphAddExternalSemaphoresSignalNode},
-      {"cuGraphExternalSemaphoresSignalNodeGetParams",
-       (void *)cuGraphExternalSemaphoresSignalNodeGetParams},
-      {"cuGraphExternalSemaphoresSignalNodeSetParams",
-       (void *)cuGraphExternalSemaphoresSignalNodeSetParams},
-      {"cuGraphExecExternalSemaphoresSignalNodeSetParams",
-       (void *)cuGraphExecExternalSemaphoresSignalNodeSetParams},
-      {"cuGraphAddExternalSemaphoresWaitNode",
-       (void *)cuGraphAddExternalSemaphoresWaitNode},
-      {"cuGraphExternalSemaphoresWaitNodeGetParams",
-       (void *)cuGraphExternalSemaphoresWaitNodeGetParams},
-      {"cuGraphExternalSemaphoresWaitNodeSetParams",
-       (void *)cuGraphExternalSemaphoresWaitNodeSetParams},
-      {"cuGraphExecExternalSemaphoresWaitNodeSetParams",
-       (void *)cuGraphExecExternalSemaphoresWaitNodeSetParams},
-      {"cuGraphAddBatchMemOpNode", (void *)cuGraphAddBatchMemOpNode},
-      {"cuGraphBatchMemOpNodeGetParams",
-       (void *)cuGraphBatchMemOpNodeGetParams},
-      {"cuGraphBatchMemOpNodeSetParams",
-       (void *)cuGraphBatchMemOpNodeSetParams},
-      {"cuGraphExecBatchMemOpNodeSetParams",
-       (void *)cuGraphExecBatchMemOpNodeSetParams},
-      {"cuGraphHostNodeGetParams", (void *)cuGraphHostNodeGetParams},
-      {"cuGraphHostNodeSetParams", (void *)cuGraphHostNodeSetParams},
-      {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
-      {"cuGraphInstantiate", (void *)cuGraphInstantiate},
-      {"cuKernelGetLibrary", (void *)cuKernelGetLibrary},
-      {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
-      {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
-      {"cuStreamAddCallback", (void *)cuStreamAddCallback},
-      {"cuStreamAddCallback_ptsz", (void *)cuStreamAddCallback},
-      {"cuStreamBeginCaptureToGraph", (void *)cuStreamBeginCaptureToGraph},
-      {"cuStreamBeginCaptureToGraph_ptsz", (void *)cuStreamBeginCaptureToGraph},
-      {"cuStreamUpdateCaptureDependencies",
-       (void *)cuStreamUpdateCaptureDependencies},
-      {"cuStreamUpdateCaptureDependencies_v2",
-       (void *)cuStreamUpdateCaptureDependencies_v2},
-      {"cuStreamUpdateCaptureDependencies_ptsz",
-       (void *)cuStreamUpdateCaptureDependencies_ptsz},
-  };
+  const auto &manual_function_map = lupine_manual_function_map();
   auto manual_it = manual_function_map.find(symbol);
   if (manual_it != manual_function_map.end()) {
     *pfn = manual_it->second;
@@ -9491,6 +9390,29 @@ void *dlsym(void *handle, const char *name) __THROW {
     return func;
   }
 
+  const auto &manual_function_map = lupine_manual_function_map();
+  auto manual_it = manual_function_map.find(name);
+  if (manual_it != manual_function_map.end()) {
+    return manual_it->second;
+  }
+
+  void *unsupported_stub = lupine_get_unsupported_stub(name);
+  if (unsupported_stub != nullptr) {
+    return unsupported_stub;
+  }
+
+  if (lupine_stub_missing_enabled() &&
+      lupine_symbol_looks_like_driver_api(name)) {
+    return lupine_make_missing_stub(name);
+  }
+
+  // std::cout << "[dlsym] Falling back to real_dlsym for name: " << name <<
+  // std::endl;
+  return lupine_real_dlsym(handle, name);
+}
+
+static const std::unordered_map<std::string, void *> &
+lupine_manual_function_map() {
   static const std::unordered_map<std::string, void *> manual_function_map = {
 #if CUDA_VERSION >= 12050
       {"cuCtxCreate", (void *)cuCtxCreate_v4},
@@ -9499,7 +9421,6 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuCtxCreate", (void *)cuCtxCreate_v2},
 #endif
       {"cuCtxCreate_v2", (void *)cuCtxCreate_v2},
-      {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
       {"cuOccupancyMaxPotentialBlockSize",
        (void *)cuOccupancyMaxPotentialBlockSize},
       {"cuOccupancyMaxPotentialBlockSizeWithFlags",
@@ -9514,9 +9435,7 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuMemPoolGetAttribute", (void *)cuMemPoolGetAttribute},
       {"cuMemAllocHost", (void *)cuMemAllocHost_v2},
       {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
-      {"cuMemAllocManaged", (void *)cuMemAllocManaged},
       {"cuMemFree", (void *)cuMemFree_v2},
-      {"cuMemFree_v2", (void *)cuMemFree_v2},
       {"cuMemFreeHost", (void *)cuMemFreeHost},
       {"cuMemHostAlloc", (void *)cuMemHostAlloc},
       {"cuMemHostGetDevicePointer", (void *)cuMemHostGetDevicePointer_v2},
@@ -9556,23 +9475,16 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuMemcpy3D", (void *)cuMemcpy3D_v2},
       {"cuMemcpy3D_v2", (void *)cuMemcpy3D_v2},
       {"cuPointerGetAttribute", (void *)cuPointerGetAttribute},
-      {"cuPointerGetAttributes", (void *)cuPointerGetAttributes},
       {"cuGetExportTable", (void *)cuGetExportTable},
       {"cuModuleLoad", (void *)cuModuleLoad},
       {"cuModuleLoadData", (void *)cuModuleLoadData},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
-      {"cuLinkCreate_v2", (void *)cuLinkCreate_v2},
       {"cuLinkAddData", (void *)cuLinkAddData_v2},
-      {"cuLinkAddData_v2", (void *)cuLinkAddData_v2},
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
-      {"cuLinkAddFile_v2", (void *)cuLinkAddFile_v2},
-      {"cuLinkComplete", (void *)cuLinkComplete},
-      {"cuLinkDestroy", (void *)cuLinkDestroy},
       {"cuLaunchKernel", (void *)cuLaunchKernel},
       {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
-      {"cuLaunchCooperativeKernel", (void *)cuLaunchCooperativeKernel},
       {"cuLaunchCooperativeKernel_ptsz",
        (void *)cuLaunchCooperativeKernel_ptsz},
       {"cuMemcpyAsync", (void *)cuMemcpyAsync},
@@ -9662,22 +9574,5 @@ void *dlsym(void *handle, const char *name) __THROW {
       {"cuStreamUpdateCaptureDependencies_ptsz",
        (void *)cuStreamUpdateCaptureDependencies_ptsz},
   };
-  auto manual_it = manual_function_map.find(name);
-  if (manual_it != manual_function_map.end()) {
-    return manual_it->second;
-  }
-
-  void *unsupported_stub = lupine_get_unsupported_stub(name);
-  if (unsupported_stub != nullptr) {
-    return unsupported_stub;
-  }
-
-  if (lupine_stub_missing_enabled() &&
-      lupine_symbol_looks_like_driver_api(name)) {
-    return lupine_make_missing_stub(name);
-  }
-
-  // std::cout << "[dlsym] Falling back to real_dlsym for name: " << name <<
-  // std::endl;
-  return lupine_real_dlsym(handle, name);
+  return manual_function_map;
 }

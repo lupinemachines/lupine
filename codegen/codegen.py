@@ -1155,9 +1155,6 @@ def main():
             'extern "C" void lupine_deep_cache_reset(const void *key);\n'
             'extern "C" void *lupine_deep_cache_add(const void *key, '
             "size_t bytes);\n\n"
-            'extern "C" CUresult lupine_cuInit_multi(unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count);\n'
-            'extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
             'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'
@@ -1205,9 +1202,6 @@ def main():
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer, CUdevice dev, CUdevice peerDev);\n'
-            'extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1226,18 +1220,6 @@ def main():
             )
             f.write("{\n")
 
-            if function.name.format() == "cuInit":
-                f.write("    return lupine_cuInit_multi(Flags);\n")
-                f.write("}\n\n")
-                continue
-            if function.name.format() == "cuDeviceGet":
-                f.write("    return lupine_cuDeviceGet_multi(device, ordinal);\n")
-                f.write("}\n\n")
-                continue
-            if function.name.format() == "cuDeviceGetCount":
-                f.write("    return lupine_cuDeviceGetCount_multi(count);\n")
-                f.write("}\n\n")
-                continue
             direct_wrappers = {
                 "cuDeviceGetAttribute": "lupine_cuDeviceGetAttribute_cached(pi, attrib, dev)",
                 "cuDevicePrimaryCtxGetState": "lupine_cuDevicePrimaryCtxGetState_cached(dev, flags, active)",
@@ -1249,9 +1231,6 @@ def main():
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
-                "cuDeviceCanAccessPeer": "lupine_cuDeviceCanAccessPeer_multi(canAccessPeer, dev, peerDev)",
-                "cuCtxEnablePeerAccess": "lupine_cuCtxEnablePeerAccess_multi(peerContext, Flags)",
-                "cuCtxDisablePeerAccess": "lupine_cuCtxDisablePeerAccess_multi(peerContext)",
             }
             if function.name.format() in direct_wrappers:
                 f.write("    return {call};\n".format(call=direct_wrappers[function.name.format()]))
@@ -1301,11 +1280,51 @@ def main():
                 f.write("}\n\n")
                 continue
 
-            f.write(
-                "    lupine_route route = {route_expr};\n".format(
-                    route_expr=client_routing_route_expr(metadata)
+            all_output = metadata.routing_parameter
+            if metadata.routing_kind == "ALL":
+                if (
+                    function.return_type.format() != "CUresult"
+                    or all_output is None
+                    or not isinstance(all_output.type, Pointer)
+                    or all_output.type.ptr_to.format() != "CUdevice"
+                ):
+                    raise RuntimeError(
+                        f"{function.name.format()}: ALL routing requires a CUdevice * output"
+                    )
+                if metadata.async_fire_forget:
+                    raise RuntimeError(
+                        f"{function.name.format()}: ALL routing cannot be fire-and-forget"
+                    )
+
+                output_name = all_output.name
+                checks = [f"{output_name} == nullptr"]
+                for operation in operations:
+                    if isinstance(operation, NullTerminatedOperation) and operation.send:
+                        checks.append(f"{operation.parameter.name} == nullptr")
+                    elif (
+                        isinstance(operation, DereferenceOperation)
+                        and operation.parameter.name != output_name
+                    ):
+                        checks.append(f"{operation.parameter.name} == nullptr")
+                    elif isinstance(operation, ArrayOperation):
+                        checks.append(
+                            f"({operation.transfer_size_expr()} != 0 && "
+                            f"{operation.parameter.name} == nullptr)"
+                        )
+                f.write("    if (" + " || ".join(checks) + ") {\n")
+                f.write("        return CUDA_ERROR_INVALID_VALUE;\n")
+                f.write("    }\n")
+                f.write(
+                    f"    return lupine_lookup_device_on_all_routes({output_name},\n"
+                    "        [&](lupine_route route, CUdevice *route_output) {\n"
+                    f"            {all_output.type.format()} {output_name} = route_output;\n"
                 )
-            )
+            else:
+                f.write(
+                    "    lupine_route route = {route_expr};\n".format(
+                        route_expr=client_routing_route_expr(metadata)
+                    )
+                )
             if metadata.cross_server_copy is not None:
                 copy = metadata.cross_server_copy
                 stream_arg = copy.stream.name if copy.stream is not None else "nullptr"
@@ -1452,6 +1471,8 @@ def main():
                     operation.client_post_rpc_read_success(f)
 
             f.write("    return return_value;\n")
+            if metadata.routing_kind == "ALL":
+                f.write("        });\n")
             f.write("}\n\n")
 
         function_by_name = {
@@ -1490,7 +1511,7 @@ def main():
 
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
-            if metadata.disabled_client:
+            if metadata.disabled_client and metadata.disabled_server:
                 continue
 
             f.write(

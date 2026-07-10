@@ -2034,6 +2034,7 @@ CUresult cuGetErrorString(CUresult error, const char **pStr);
  */
 CUresult cuGetErrorName(CUresult error, const char **pStr);
 /**
+ * @disabled client - manual client initializes every configured route
  * @param Flags SEND_ONLY
  */
 CUresult cuInit(unsigned int Flags);
@@ -2042,11 +2043,13 @@ CUresult cuInit(unsigned int Flags);
  */
 CUresult cuDriverGetVersion(int *driverVersion);
 /**
+ * @disabled client - manual client maps the virtual device ordinal
  * @param device RECV_ONLY
  * @param ordinal SEND_ONLY
  */
 CUresult cuDeviceGet(CUdevice *device, int ordinal);
 /**
+ * @disabled client - manual client reports the virtual device table size
  * @param count RECV_ONLY
  */
 CUresult cuDeviceGetCount(int *count);
@@ -2582,6 +2585,7 @@ CUresult cuMemHostGetFlags(unsigned int *pFlags, void *p);
 CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
                            unsigned int flags);
 /**
+ * @routingkey ALL dev
  * @param dev RECV_ONLY NULLABLE
  * @param pciBusId SEND_ONLY NULL_TERMINATED
  */
@@ -4707,6 +4711,7 @@ CUresult cuTensorMapEncodeIm2col(
  */
 CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 /**
+ * @disabled client - manual client handles cross-route peer devices
  * @param canAccessPeer SEND_RECV
  * @param dev SEND_ONLY
  * @param peerDev SEND_ONLY
@@ -4714,11 +4719,13 @@ CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
                                CUdevice peerDev);
 /**
+ * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
  * @param Flags SEND_ONLY
  */
 CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags);
 /**
+ * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
  */
 CUresult cuCtxDisablePeerAccess(CUcontext peerContext);

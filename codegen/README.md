@@ -28,6 +28,14 @@ APIs without an input handle use `@routingkey ALL` together with
 `@recordowner NVML_DEVICE <output>` to search every server and translate the
 returned remote handle back to the client's virtual device handle.
 
+Inverse CUDA device lookups use `@routingkey ALL <output>`. The generated
+client tries each local and remote route, then translates the successful
+route-local device back to its virtual client ordinal before returning it.
+
+`@disabled client` leaves server/RPC generation enabled while requiring a
+manual client implementation with the original API name. These manual symbols
+remain part of the generated client function map.
+
 Generated wrappers can record ownership for handles returned by an API with
 `@recordowner <kind> <param>`. Supported owner kinds are `CONTEXT`, `MODULE`,
 `FUNCTION`, `STREAM`, `EVENT`, `MEMORY_POOL`, `GRAPH`, `GRAPH_NODE`,
