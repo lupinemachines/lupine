@@ -297,7 +297,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   }
   if (pthread_mutex_lock(&conn->write_mutex) < 0) {
 #ifdef VERBOSE
-    std::cout << "rpc_write_start failed due to rpc_open() < 0 || "
+    std::cerr << "rpc_write_start failed due to rpc_open() < 0 || "
                  "conns[index].write_mutex lock"
               << std::endl;
 #endif
@@ -327,7 +327,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
   }
   if (pthread_mutex_lock(&conn->write_mutex) < 0) {
 #ifdef VERBOSE
-    std::cout << "rpc_write_start failed due to rpc_open() < 0 || "
+    std::cerr << "rpc_write_start failed due to rpc_open() < 0 || "
                  "conns[index].write_mutex lock"
               << std::endl;
 #endif

@@ -4,6 +4,9 @@
 #include <cstring>
 #include <cuda.h>
 #include <errno.h>
+#if defined(__linux__)
+#include <sys/mman.h> // memfd_create
+#endif
 #include <future>
 #include <iostream>
 #include <memory>
@@ -136,21 +139,59 @@ static void lupine_release_staging(const lupine_staging &s) {
 
 struct lupine_captured_stdout {
   int saved_stdout = -1;
-  FILE *capture_file = nullptr;
   bool active = false;
   std::string output;
 };
 
 static pthread_mutex_t lupine_stdout_capture_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// Device printf output is drained by the CUDA driver as a write to fd 1
+// (process stdout) during synchronization (see issue #294). We capture it by
+// temporarily redirecting fd 1 to a backing file we can read back. The lupine
+// server writes all of its own diagnostics to stderr, so fd 1 is exclusively
+// the device-printf channel and nothing else can contaminate the capture.
+//
+// This returns a single process-global, reusable backing file: created once
+// on first use and kept open for the process lifetime, so the per-synchronize
+// hot path performs no filesystem open/close. On Linux it is an anonymous
+// in-memory file from memfd_create() (no path, no /tmp, no inode, no page
+// cache of a real file); other platforms (and old kernels without memfd)
+// fall back to a single tmpfile() created once. The file is reset (truncated
+// to empty) at the start of each capture.
+static FILE *lupine_stdout_capture_file() {
+  static FILE *file = []() -> FILE * {
+#if defined(__linux__)
+    int fd = memfd_create("lupine-stdout-capture", MFD_CLOEXEC);
+    if (fd >= 0) {
+      FILE *f = fdopen(fd, "w+");
+      if (f != nullptr) {
+        return f;
+      }
+      // fdopen failed; reclaim the fd and fall through to tmpfile().
+      close(fd);
+    }
+#endif
+    return tmpfile();
+  }();
+  return file;
+}
+
 static bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
   if (capture == nullptr) {
     return false;
   }
   capture->saved_stdout = -1;
-  capture->capture_file = nullptr;
   capture->active = false;
   capture->output.clear();
+
+  FILE *capture_file = lupine_stdout_capture_file();
+  if (capture_file == nullptr) {
+    return false;
+  }
+  int capture_fd = lupine_fd_fileno(capture_file);
+  if (capture_fd < 0) {
+    return false;
+  }
 
   if (pthread_mutex_lock(&lupine_stdout_capture_mutex) != 0) {
     return false;
@@ -159,25 +200,21 @@ static bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
   fflush(stdout);
   std::cout.flush();
 
-  capture->saved_stdout = lupine_fd_dup(LUPINE_STDOUT_FD);
-  capture->capture_file = tmpfile();
-  if (capture->saved_stdout < 0 || capture->capture_file == nullptr) {
-    if (capture->saved_stdout >= 0) {
-      lupine_fd_close(capture->saved_stdout);
-      capture->saved_stdout = -1;
-    }
-    if (capture->capture_file != nullptr) {
-      fclose(capture->capture_file);
-      capture->capture_file = nullptr;
-    }
+  // Reset the reused backing file to empty so this capture only contains
+  // output produced during the synchronization below.
+  if (lupine_fd_truncate(capture_fd, 0) != 0 ||
+      lupine_fd_seek(capture_fd, 0, SEEK_SET) < 0) {
     pthread_mutex_unlock(&lupine_stdout_capture_mutex);
     return false;
   }
 
-  if (lupine_fd_dup2(lupine_fd_fileno(capture->capture_file),
-                     LUPINE_STDOUT_FD) < 0) {
-    fclose(capture->capture_file);
-    capture->capture_file = nullptr;
+  capture->saved_stdout = lupine_fd_dup(LUPINE_STDOUT_FD);
+  if (capture->saved_stdout < 0) {
+    pthread_mutex_unlock(&lupine_stdout_capture_mutex);
+    return false;
+  }
+
+  if (lupine_fd_dup2(capture_fd, LUPINE_STDOUT_FD) < 0) {
     lupine_fd_close(capture->saved_stdout);
     capture->saved_stdout = -1;
     pthread_mutex_unlock(&lupine_stdout_capture_mutex);
@@ -198,8 +235,13 @@ static void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
   lupine_fd_dup2(capture->saved_stdout, LUPINE_STDOUT_FD);
   lupine_fd_close(capture->saved_stdout);
   capture->saved_stdout = -1;
-  if (capture->capture_file != nullptr) {
-    int capture_fd = lupine_fd_fileno(capture->capture_file);
+
+  // The backing file is process-global and reused, so read it back without
+  // closing it. Its extent is exactly the bytes written during this capture
+  // (it was truncated to empty on entry).
+  FILE *capture_file = lupine_stdout_capture_file();
+  if (capture_file != nullptr) {
+    int capture_fd = lupine_fd_fileno(capture_file);
     if (capture_fd >= 0 && lupine_fd_seek(capture_fd, 0, SEEK_SET) >= 0) {
       char buffer[4096];
       for (;;) {
@@ -217,8 +259,6 @@ static void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
         break;
       }
     }
-    fclose(capture->capture_file);
-    capture->capture_file = nullptr;
   }
   capture->active = false;
   pthread_mutex_unlock(&lupine_stdout_capture_mutex);
