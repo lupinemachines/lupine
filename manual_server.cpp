@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -8,8 +9,10 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdio.h>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -132,6 +135,90 @@ static void lupine_release_staging(const lupine_staging &s) {
       free(s.ptr);
     }
   }
+}
+
+struct lupine_deferred_host_free {
+  void *ptr = nullptr;
+  lupine_deferred_host_free *next = nullptr;
+};
+
+struct lupine_host_free_queue {
+  std::mutex mutex;
+  std::condition_variable condition;
+  lupine_deferred_host_free *head = nullptr;
+  lupine_deferred_host_free *tail = nullptr;
+};
+
+static lupine_host_free_queue &lupine_host_frees() {
+  // The server process owns this detached worker until exit. Keep its queue
+  // alive for the same lifetime so static destruction cannot race the worker.
+  static auto *queue = new lupine_host_free_queue();
+  return *queue;
+}
+
+static void lupine_reap_host_frees() {
+  auto &queue = lupine_host_frees();
+  for (;;) {
+    lupine_deferred_host_free *item = nullptr;
+    {
+      std::unique_lock<std::mutex> lock(queue.mutex);
+      queue.condition.wait(lock, [&queue] { return queue.head != nullptr; });
+      item = queue.head;
+      queue.head = item->next;
+      if (queue.head == nullptr) {
+        queue.tail = nullptr;
+      }
+    }
+
+    CUresult result = cuMemFreeHost(item->ptr);
+    if (result != CUDA_SUCCESS) {
+      LUPINE_LOG_ERROR("Deferred cuMemFreeHost failed for " << item->ptr << ": "
+                                                            << result);
+    }
+    delete item;
+  }
+}
+
+static bool lupine_start_host_free_reaper() {
+  static std::once_flag once;
+  try {
+    (void)lupine_host_frees();
+    std::call_once(once, [] { std::thread(lupine_reap_host_frees).detach(); });
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+static void CUDA_CB lupine_queue_host_free(void *userData) {
+  // CUDA host functions cannot call CUDA APIs. Hand the completed allocation
+  // to a normal host thread before calling cuMemFreeHost.
+  auto *item = static_cast<lupine_deferred_host_free *>(userData);
+  auto &queue = lupine_host_frees();
+  {
+    std::lock_guard<std::mutex> lock(queue.mutex);
+    if (queue.tail == nullptr) {
+      queue.head = item;
+    } else {
+      queue.tail->next = item;
+    }
+    queue.tail = item;
+  }
+  queue.condition.notify_one();
+}
+
+static CUresult lupine_defer_host_free(CUstream stream, void *ptr) {
+  auto *item = new (std::nothrow) lupine_deferred_host_free{ptr, nullptr};
+  if (item == nullptr || !lupine_start_host_free_reaper()) {
+    delete item;
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+
+  CUresult result = cuLaunchHostFunc(stream, lupine_queue_host_free, item);
+  if (result != CUDA_SUCCESS) {
+    delete item;
+  }
+  return result;
 }
 
 struct lupine_captured_stdout {
@@ -3180,8 +3267,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       offset += chunk;
     }
     if (host != nullptr && result == CUDA_SUCCESS) {
-      result = cuLaunchHostFunc(
-          stream, [](void *userData) { cuMemFreeHost(userData); }, host);
+      result = lupine_defer_host_free(stream, host);
       if (result != CUDA_SUCCESS) {
         cuStreamSynchronize(stream);
         cuMemFreeHost(host);
