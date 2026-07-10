@@ -442,6 +442,8 @@ CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
     if (return_value == CUDA_SUCCESS)
       lupine_invalidate_primary_context_state(dev);
     if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_current_context_cache();
+    if (return_value == CUDA_SUCCESS)
       lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
@@ -455,6 +457,8 @@ CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_primary_context_state(dev);
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_current_context_cache();
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_kernel_param_layout_cache();
   return return_value;
@@ -498,6 +502,8 @@ CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     if (return_value == CUDA_SUCCESS)
       lupine_invalidate_primary_context_state(dev);
     if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_current_context_cache();
+    if (return_value == CUDA_SUCCESS)
       lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
@@ -511,6 +517,8 @@ CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_primary_context_state(dev);
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_current_context_cache();
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_kernel_param_layout_cache();
   return return_value;
@@ -761,6 +769,8 @@ CUresult cuCtxDetach(CUcontext ctx) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxDetach",
                                                   &return_value, ctx)) {
     if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_current_context_cache();
+    if (return_value == CUDA_SUCCESS)
       lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
@@ -771,6 +781,8 @@ CUresult cuCtxDetach(CUcontext ctx) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_current_context_cache();
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_kernel_param_layout_cache();
   return return_value;

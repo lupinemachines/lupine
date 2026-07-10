@@ -109,9 +109,17 @@ int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
 
 #ifdef LUPINE_RPC_CLIENT
 extern void rpc_destroy_thread_lane(uint64_t lane_id);
+extern "C" void lupine_invalidate_current_context_cache();
 #else
 static void rpc_destroy_thread_lane(uint64_t lane_id) { (void)lane_id; }
 #endif
+
+static void rpc_mark_connection_closed(conn_t *conn) {
+  conn->closed = 1;
+#ifdef LUPINE_RPC_CLIENT
+  lupine_invalidate_current_context_cache();
+#endif
+}
 
 namespace {
 
@@ -150,7 +158,7 @@ void *_rpc_read_id_dispatch(void *p) {
     if (rpc_http2_read(conn, &request_id, sizeof(request_id)) !=
             sizeof(request_id) ||
         request_id == 0) {
-      conn->closed = 1;
+      rpc_mark_connection_closed(conn);
       pthread_cond_broadcast(&conn->read_cond);
       pthread_mutex_unlock(&conn->read_mutex);
       break;
@@ -162,7 +170,7 @@ void *_rpc_read_id_dispatch(void *p) {
       break;
     }
   }
-  conn->closed = 1;
+  rpc_mark_connection_closed(conn);
   pthread_cond_broadcast(&conn->read_cond);
   conn->rpc_thread = 0;
   return NULL;
@@ -193,7 +201,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
           sizeof(conn->read_lane_id) ||
       rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) !=
           sizeof(conn->read_op)) {
-    conn->closed = 1;
+    rpc_mark_connection_closed(conn);
     pthread_cond_broadcast(&conn->read_cond);
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;
@@ -227,9 +235,9 @@ int rpc_read_start(conn_t *conn, int write_id) {
   if (rpc_http2_read(conn, &conn->read_lane_id, sizeof(conn->read_lane_id)) !=
           sizeof(conn->read_lane_id) ||
       rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) !=
-              sizeof(conn->read_op) ||
+          sizeof(conn->read_op) ||
       conn->read_op != -1) {
-    conn->closed = 1;
+    rpc_mark_connection_closed(conn);
     pthread_cond_broadcast(&conn->read_cond);
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;

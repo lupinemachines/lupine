@@ -736,7 +736,12 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_flags(dev, flags);\n")
     if function.name.format() == "cuDevicePrimaryCtxReset_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
-    if function.name.format() == "cuCtxDestroy_v2":
+    if function.name.format() in {
+        "cuCtxDestroy_v2",
+        "cuCtxDetach",
+        "cuDevicePrimaryCtxRelease_v2",
+        "cuDevicePrimaryCtxReset_v2",
+    }:
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
     if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_kernel_param_layout_cache();\n")
