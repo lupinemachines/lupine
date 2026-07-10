@@ -6747,32 +6747,6 @@ CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
   return return_value;
 }
 
-CUresult cuDeviceGetP2PAttribute(int *value, CUdevice_P2PAttribute attrib,
-                                 CUdevice srcDevice, CUdevice dstDevice) {
-  lupine_route route = lupine_route_for_device(&srcDevice);
-  CUresult return_value;
-  using real_fn_t =
-      CUresult (*)(int *, CUdevice_P2PAttribute, CUdevice, CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDeviceGetP2PAttribute", &return_value, value, attrib,
-          srcDevice, dstDevice)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetP2PAttribute) < 0 ||
-      rpc_write(conn, value, sizeof(int)) < 0 ||
-      rpc_write(conn, &attrib, sizeof(CUdevice_P2PAttribute)) < 0 ||
-      rpc_write(conn, &srcDevice, sizeof(CUdevice)) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, value, sizeof(int)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuGraphicsUnregisterResource(CUgraphicsResource resource) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
