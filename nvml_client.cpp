@@ -3,6 +3,9 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <nvml.h>
+#ifdef LUPINE_TLS_OPENSSL
+#include <openssl/ssl.h>
+#endif
 #include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -100,12 +103,29 @@ int open_connection() {
       continue;
     }
 
+    bool tls = false;
+    if (strncmp(token, "https://", 8) == 0) {
+      tls = true;
+      token += 8;
+    } else if (strncmp(token, "http://", 7) == 0) {
+      token += 7;
+    } else if (strstr(token, "://") != nullptr ||
+               strncmp(token, "http:", 5) == 0 ||
+               strncmp(token, "https:", 6) == 0) {
+      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER URL scheme: " << token);
+      continue;
+    }
+
     char *host = token;
-    char *port = const_cast<char *>(DEFAULT_PORT);
+    char *port = const_cast<char *>(tls ? "443" : DEFAULT_PORT);
     char *colon = strchr(token, ':');
     if (colon != nullptr) {
       *colon = '\0';
       port = colon + 1;
+    }
+    if (host[0] == '\0' || port[0] == '\0') {
+      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER endpoint");
+      continue;
     }
 
     addrinfo hints = {};
@@ -137,6 +157,40 @@ int open_connection() {
         c->connfd = sockfd;
         c->request_id = 0;
         c->local_request_parity = c->request_id & 1;
+        if (tls) {
+#ifdef LUPINE_TLS_OPENSSL
+          static SSL_CTX *tls_ctx = []() {
+            SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+            if (ctx != nullptr) {
+              SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+              SSL_CTX_set_default_verify_paths(ctx);
+              SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
+            }
+            return ctx;
+          }();
+          SSL *ssl = tls_ctx != nullptr ? SSL_new(tls_ctx) : nullptr;
+          if (ssl == nullptr || SSL_set_tlsext_host_name(ssl, host) != 1 ||
+              SSL_set1_host(ssl, host) != 1 || SSL_set_fd(ssl, sockfd) != 1 ||
+              SSL_connect(ssl) != 1) {
+            if (ssl != nullptr) {
+              SSL_free(ssl);
+            }
+            LUPINE_LOG_ERROR("TLS handshake with " << host << " failed");
+            close(sockfd);
+            freeaddrinfo(res);
+            continue;
+          }
+          c->tls_session = ssl;
+#else
+          LUPINE_LOG_ERROR("LUPINE_SERVER entry "
+                           << host << ":" << port
+                           << " uses https:// but this client was built "
+                              "without TLS support");
+          close(sockfd);
+          freeaddrinfo(res);
+          continue;
+#endif
+        }
         if (pthread_mutex_init(&c->read_mutex, nullptr) < 0 ||
             pthread_mutex_init(&c->write_mutex, nullptr) < 0 ||
             pthread_mutex_init(&c->call_mutex, nullptr) < 0 ||
@@ -144,6 +198,12 @@ int open_connection() {
             rpc_http2_client_init(c) < 0 ||
             pthread_create(&c->read_thread, nullptr, rpc_client_dispatch_thread,
                            c) < 0) {
+#ifdef LUPINE_TLS_OPENSSL
+          if (c->tls_session != nullptr) {
+            SSL_free(static_cast<SSL *>(c->tls_session));
+            c->tls_session = nullptr;
+          }
+#endif
           close(sockfd);
           freeaddrinfo(res);
           continue;
@@ -207,6 +267,12 @@ void close_connections() {
       pthread_join(c->rpc_thread, nullptr);
       c->rpc_thread = 0;
     }
+#ifdef LUPINE_TLS_OPENSSL
+    if (c->tls_session != nullptr) {
+      SSL_free(static_cast<SSL *>(c->tls_session));
+      c->tls_session = nullptr;
+    }
+#endif
     rpc_conn_destroy(c);
   }
 

@@ -116,6 +116,10 @@ if (NOT WIN32)
 
     add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
     target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    if(OpenSSL_FOUND)
+      target_compile_definitions(${NVML_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
+      target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
     target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
     target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
