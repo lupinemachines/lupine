@@ -10,6 +10,10 @@ struct lupine_kernel_param_layout;
 CUresult lupine_get_kernel_param_layout(CUfunction f,
                                         lupine_kernel_param_layout *layout);
 
+void lupine_before_context_destroy(CUcontext context);
+void lupine_before_primary_context_release(CUdevice device);
+void lupine_before_primary_context_reset(CUdevice device);
+
 int handle_manual_cuGetExportTableMetadata(conn_t *conn);
 int handle_manual_cuPrivateGetModuleNode(conn_t *conn);
 int handle_manual_cuModuleLoad(conn_t *conn);

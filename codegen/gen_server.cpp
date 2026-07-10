@@ -18,6 +18,8 @@
 
 #include "rpc.h"
 
+#include "manual_server.h"
+
 #include "nvml_server.h"
 
 int handle_cuInit(conn_t *conn) {
@@ -490,6 +492,7 @@ int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_before_primary_context_release(dev);
   lupine_intercept_result = cuDevicePrimaryCtxRelease_v2(dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -562,6 +565,7 @@ int handle_cuDevicePrimaryCtxReset_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_before_primary_context_reset(dev);
   lupine_intercept_result = cuDevicePrimaryCtxReset_v2(dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -584,6 +588,7 @@ int handle_cuCtxDestroy_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_before_context_destroy(ctx);
   lupine_intercept_result = cuCtxDestroy_v2(ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -978,6 +983,7 @@ int handle_cuCtxDetach(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_before_context_destroy(ctx);
   lupine_intercept_result = cuCtxDetach(ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||

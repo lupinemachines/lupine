@@ -2076,6 +2076,7 @@ def main():
             '#include "gen_server.h"\n\n'
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
+            '#include "manual_server.h"\n\n'
             '#include "nvml_server.h"\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
@@ -2133,6 +2134,13 @@ def main():
                 for op in operations:
                     if op.parameter.name == param.name:
                         params.append(op.server_reference)
+
+            if function.name.format() in ("cuCtxDestroy_v2", "cuCtxDetach"):
+                f.write("    lupine_before_context_destroy(ctx);\n")
+            if function.name.format() == "cuDevicePrimaryCtxRelease_v2":
+                f.write("    lupine_before_primary_context_release(dev);\n")
+            if function.name.format() == "cuDevicePrimaryCtxReset_v2":
+                f.write("    lupine_before_primary_context_reset(dev);\n")
 
             if function.return_type.format() != "void":
                 f.write(

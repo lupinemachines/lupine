@@ -59,6 +59,11 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
 static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
+static constexpr size_t LUPINE_SYNC_HTOD_SLOT_BYTES = 8 * 1024 * 1024;
+static constexpr size_t LUPINE_SYNC_HTOD_SLOT_COUNT = 2;
+
+static_assert(LUPINE_SYNC_HTOD_SLOT_BYTES % LUPINE_COMPRESS_BLOCK_BYTES == 0,
+              "HtoD staging slots must preserve LZ4 block alignment");
 
 // cuMemAllocHost / cuMemFreeHost page-lock and unlock host memory on every
 // call, which costs on the order of a millisecond even for a tiny transfer and
@@ -87,7 +92,35 @@ struct lupine_staging {
   void *ptr = nullptr;
   bool owned = false; // true => caller must release (a per-call allocation)
   bool pinned = false;
+  std::unique_lock<std::mutex> retained_lock;
 };
+
+struct lupine_retained_staging {
+  std::mutex mutex;
+  void *ptr = nullptr;
+  size_t size = 0;
+  CUcontext context = nullptr;
+  CUdevice device = -1;
+};
+
+static lupine_retained_staging &lupine_retained_staging_buffer() {
+  static auto *staging = new lupine_retained_staging();
+  return *staging;
+}
+
+static void
+lupine_retire_retained_staging_locked(lupine_retained_staging &staging) {
+  if (staging.ptr != nullptr && staging.context != nullptr &&
+      cuCtxPushCurrent(staging.context) == CUDA_SUCCESS) {
+    (void)cuMemFreeHost(staging.ptr);
+    CUcontext popped = nullptr;
+    (void)cuCtxPopCurrent(&popped);
+  }
+  staging.ptr = nullptr;
+  staging.size = 0;
+  staging.context = nullptr;
+  staging.device = -1;
+}
 
 // Returns a host buffer of at least `bytes`. On success ptr != nullptr; when
 // owned is true the caller must release it via lupine_release_staging, when
@@ -106,20 +139,53 @@ static lupine_staging lupine_acquire_staging(size_t bytes) {
     }
     return out;
   }
-  static void *retained = nullptr;
-  static size_t retained_size = 0;
-  if (retained_size < bytes) {
+
+  auto &retained = lupine_retained_staging_buffer();
+  out.retained_lock =
+      std::unique_lock<std::mutex>(retained.mutex, std::try_to_lock);
+  if (!out.retained_lock.owns_lock()) {
+    if (cuMemAllocHost(&out.ptr, bytes) == CUDA_SUCCESS) {
+      out.owned = true;
+      out.pinned = true;
+    } else if ((out.ptr = malloc(bytes)) != nullptr) {
+      out.owned = true;
+    }
+    return out;
+  }
+
+  CUcontext current = nullptr;
+  CUdevice current_device = -1;
+  if (cuCtxGetCurrent(&current) != CUDA_SUCCESS || current == nullptr ||
+      cuCtxGetDevice(&current_device) != CUDA_SUCCESS) {
+    out.retained_lock.unlock();
+    return out;
+  }
+  if (retained.context != current) {
+    lupine_retire_retained_staging_locked(retained);
+    retained.context = current;
+    retained.device = current_device;
+  } else if (retained.ptr != nullptr) {
+    unsigned int flags = 0;
+    if (cuMemHostGetFlags(&flags, retained.ptr) != CUDA_SUCCESS) {
+      // Primary-context reset may recycle the same CUcontext handle while
+      // invalidating allocations made by its previous incarnation.
+      retained.ptr = nullptr;
+      retained.size = 0;
+    }
+  }
+  if (retained.size < bytes) {
     void *grown = nullptr;
     if (cuMemAllocHost(&grown, bytes) != CUDA_SUCCESS) {
+      out.retained_lock.unlock();
       return out;
     }
-    if (retained != nullptr) {
-      cuMemFreeHost(retained);
+    if (retained.ptr != nullptr) {
+      (void)cuMemFreeHost(retained.ptr);
     }
-    retained = grown;
-    retained_size = bytes;
+    retained.ptr = grown;
+    retained.size = bytes;
   }
-  out.ptr = retained;
+  out.ptr = retained.ptr;
   out.pinned = true;
   return out;
 }
@@ -132,6 +198,130 @@ static void lupine_release_staging(const lupine_staging &s) {
       free(s.ptr);
     }
   }
+}
+
+// Synchronous HtoD copies can overlap receipt of the next payload block with
+// DMA from the previous block. Retain exactly two portable pinned slots for
+// that pipeline. Linux gives each connection its own server process; on
+// Windows, where connections share a process, try-locking the pool lets one
+// connection use the fast path while the others retain the serial fallback.
+// The object intentionally lives until process exit, like the existing
+// retained staging allocation, so CUDA teardown cannot race a C++ destructor.
+struct lupine_sync_htod_pool {
+  std::mutex mutex;
+  void *slots[LUPINE_SYNC_HTOD_SLOT_COUNT] = {};
+  CUcontext context = nullptr;
+  CUdevice device = -1;
+  bool disabled = false;
+};
+
+static lupine_sync_htod_pool &lupine_sync_htod_staging_pool() {
+  static auto *pool = new lupine_sync_htod_pool();
+  return *pool;
+}
+
+static void lupine_retire_sync_htod_slots_locked(lupine_sync_htod_pool &pool) {
+  if (!pool.disabled && pool.context != nullptr &&
+      cuCtxPushCurrent(pool.context) == CUDA_SUCCESS) {
+    for (void *slot : pool.slots) {
+      if (slot != nullptr) {
+        (void)cuMemFreeHost(slot);
+      }
+    }
+    CUcontext popped = nullptr;
+    (void)cuCtxPopCurrent(&popped);
+  }
+  for (void *&slot : pool.slots) {
+    slot = nullptr;
+  }
+  pool.context = nullptr;
+  pool.device = -1;
+}
+
+void lupine_before_context_destroy(CUcontext context) {
+  {
+    auto &pool = lupine_sync_htod_staging_pool();
+    std::lock_guard<std::mutex> lock(pool.mutex);
+    if (pool.context == context) {
+      lupine_retire_sync_htod_slots_locked(pool);
+    }
+  }
+  auto &retained = lupine_retained_staging_buffer();
+  std::lock_guard<std::mutex> lock(retained.mutex);
+  if (retained.context == context) {
+    lupine_retire_retained_staging_locked(retained);
+  }
+}
+
+static void lupine_before_primary_context_change(CUdevice device) {
+  {
+    auto &pool = lupine_sync_htod_staging_pool();
+    std::lock_guard<std::mutex> lock(pool.mutex);
+    if (pool.device == device) {
+      lupine_retire_sync_htod_slots_locked(pool);
+    }
+  }
+  auto &retained = lupine_retained_staging_buffer();
+  std::lock_guard<std::mutex> lock(retained.mutex);
+  if (retained.device == device) {
+    lupine_retire_retained_staging_locked(retained);
+  }
+}
+
+void lupine_before_primary_context_release(CUdevice device) {
+  lupine_before_primary_context_change(device);
+}
+
+void lupine_before_primary_context_reset(CUdevice device) {
+  lupine_before_primary_context_change(device);
+}
+
+static bool lupine_prepare_sync_htod_slots(lupine_sync_htod_pool &pool) {
+  if (pool.disabled) {
+    return false;
+  }
+  CUcontext current = nullptr;
+  if (cuCtxGetCurrent(&current) != CUDA_SUCCESS || current == nullptr) {
+    return false;
+  }
+  CUdevice current_device = -1;
+  if (cuCtxGetDevice(&current_device) != CUDA_SUCCESS) {
+    return false;
+  }
+  if (pool.context != current) {
+    // Pinned host allocations remain owned by their creating context even
+    // with CU_MEMHOSTALLOC_PORTABLE. Free them under a live old context; if it
+    // was destroyed, CUDA already retired both the allocations and their VAs.
+    lupine_retire_sync_htod_slots_locked(pool);
+    pool.context = current;
+    pool.device = current_device;
+  }
+  for (void *slot : pool.slots) {
+    if (slot == nullptr) {
+      continue;
+    }
+    unsigned int flags = 0;
+    if (cuMemHostGetFlags(&flags, slot) != CUDA_SUCCESS) {
+      // A primary-context reset can invalidate storage while recycling the
+      // same CUcontext handle, so handle comparison alone is insufficient.
+      for (void *&stale : pool.slots) {
+        stale = nullptr;
+      }
+      pool.context = current;
+      pool.device = current_device;
+      break;
+    }
+  }
+  for (size_t i = 0; i < LUPINE_SYNC_HTOD_SLOT_COUNT; ++i) {
+    if (pool.slots[i] != nullptr) {
+      continue;
+    }
+    if (cuMemHostAlloc(&pool.slots[i], LUPINE_SYNC_HTOD_SLOT_BYTES,
+                       CU_MEMHOSTALLOC_PORTABLE) != CUDA_SUCCESS) {
+      return false;
+    }
+  }
+  return true;
 }
 
 struct lupine_captured_stdout {
@@ -3056,6 +3246,177 @@ int handle_manual_cuGraphDestroy(conn_t *conn) {
   return 0;
 }
 
+static int lupine_copy_htod_serial(conn_t *conn, int framed,
+                                   CUdeviceptr dstDevice, size_t byteCount,
+                                   CUresult *result) {
+  size_t chunk_bytes = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount);
+  lupine_staging staging = lupine_acquire_staging(chunk_bytes);
+  void *host = staging.ptr;
+  if (chunk_bytes != 0 && host == nullptr) {
+    *result = CUDA_ERROR_OUT_OF_MEMORY;
+    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
+      return -1;
+    }
+  }
+
+  size_t offset = 0;
+  while (*result == CUDA_SUCCESS && offset < byteCount) {
+    size_t chunk = std::min(chunk_bytes, byteCount - offset);
+    if (rpc_read_payload_part(conn, framed, host, chunk) < 0) {
+      lupine_release_staging(staging);
+      return -1;
+    }
+    *result = cuMemcpyHtoD_v2(dstDevice + offset, host, chunk);
+    offset += chunk;
+    if (*result != CUDA_SUCCESS &&
+        rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
+      lupine_release_staging(staging);
+      return -1;
+    }
+  }
+
+  lupine_release_staging(staging);
+  return 0;
+}
+
+static void
+lupine_destroy_sync_htod_events(CUevent events[LUPINE_SYNC_HTOD_SLOT_COUNT]) {
+  for (size_t i = 0; i < LUPINE_SYNC_HTOD_SLOT_COUNT; ++i) {
+    if (events[i] != nullptr) {
+      cuEventDestroy(events[i]);
+    }
+  }
+}
+
+static CUresult
+lupine_wait_sync_htod_events(CUevent events[LUPINE_SYNC_HTOD_SLOT_COUNT],
+                             bool in_flight[LUPINE_SYNC_HTOD_SLOT_COUNT]) {
+  CUresult result = CUDA_SUCCESS;
+  for (size_t i = 0; i < LUPINE_SYNC_HTOD_SLOT_COUNT; ++i) {
+    if (!in_flight[i]) {
+      continue;
+    }
+    CUresult wait_result = cuEventSynchronize(events[i]);
+    if (result == CUDA_SUCCESS && wait_result != CUDA_SUCCESS) {
+      result = wait_result;
+    }
+    in_flight[i] = false;
+  }
+  return result;
+}
+
+// Returns 1 when the request payload was handled, 0 when the caller should use
+// the serial path without any bytes having been consumed, and -1 on a transport
+// failure. Explicit CU_STREAM_LEGACY preserves the default-stream ordering used
+// by synchronous CUDA copies, while the final event waits preserve their
+// host-synchronous completion behavior.
+static int lupine_copy_htod_pipelined(conn_t *conn, int framed,
+                                      CUdeviceptr dstDevice, size_t byteCount,
+                                      CUresult *result) {
+  if (byteCount <= LUPINE_SYNC_HTOD_SLOT_BYTES) {
+    return 0;
+  }
+
+  auto &pool = lupine_sync_htod_staging_pool();
+  std::unique_lock<std::mutex> lock(pool.mutex, std::try_to_lock);
+  if (!lock.owns_lock() || !lupine_prepare_sync_htod_slots(pool)) {
+    return 0;
+  }
+
+  CUevent events[LUPINE_SYNC_HTOD_SLOT_COUNT] = {};
+  for (size_t i = 0; i < LUPINE_SYNC_HTOD_SLOT_COUNT; ++i) {
+    if (cuEventCreate(&events[i], CU_EVENT_DISABLE_TIMING) != CUDA_SUCCESS) {
+      lupine_destroy_sync_htod_events(events);
+      return 0;
+    }
+  }
+
+  bool in_flight[LUPINE_SYNC_HTOD_SLOT_COUNT] = {};
+  size_t offset = 0;
+  size_t slot = 0;
+  while (offset < byteCount) {
+    if (in_flight[slot]) {
+      CUresult wait_result = cuEventSynchronize(events[slot]);
+      in_flight[slot] = false;
+      if (wait_result != CUDA_SUCCESS) {
+        *result = wait_result;
+        pool.disabled = true;
+        if (rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
+          lupine_destroy_sync_htod_events(events);
+          return -1;
+        }
+        lupine_wait_sync_htod_events(events, in_flight);
+        lupine_destroy_sync_htod_events(events);
+        return 1;
+      }
+    }
+
+    size_t chunk = std::min(LUPINE_SYNC_HTOD_SLOT_BYTES, byteCount - offset);
+    if (rpc_read_payload_part(conn, framed, pool.slots[slot], chunk) < 0) {
+      // The connection will close, but another Windows connection could still
+      // reach this process. Quarantine the retained slots rather than risk
+      // overwriting memory that a submitted DMA may still reference.
+      pool.disabled = true;
+      lupine_destroy_sync_htod_events(events);
+      return -1;
+    }
+
+    CUresult copy_result = cuMemcpyHtoDAsync_v2(
+        dstDevice + offset, pool.slots[slot], chunk, CU_STREAM_LEGACY);
+    offset += chunk;
+    if (copy_result != CUDA_SUCCESS) {
+      *result = copy_result;
+      // CUDA may surface a deferred error from earlier asynchronous work, so
+      // a non-success result is not proof that this submission did not retain
+      // the slot. Quarantine the pool rather than risk overwriting it later.
+      pool.disabled = true;
+      if (rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
+        lupine_destroy_sync_htod_events(events);
+        return -1;
+      }
+      CUresult wait_result = lupine_wait_sync_htod_events(events, in_flight);
+      if (wait_result != CUDA_SUCCESS) {
+        pool.disabled = true;
+      }
+      lupine_destroy_sync_htod_events(events);
+      return 1;
+    }
+
+    CUresult record_result = cuEventRecord(events[slot], CU_STREAM_LEGACY);
+    if (record_result != CUDA_SUCCESS) {
+      // The copy was accepted but no event tracks its use of this slot. A
+      // legacy-stream synchronization makes the slot reusable; then finish
+      // the unread suffix through the original serial path. Do not expose an
+      // internal event failure as the memcpy's CUDA result.
+      CUresult synchronize_result = cuStreamSynchronize(CU_STREAM_LEGACY);
+      if (synchronize_result != CUDA_SUCCESS) {
+        *result = synchronize_result;
+        pool.disabled = true;
+        if (rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
+          lupine_destroy_sync_htod_events(events);
+          return -1;
+        }
+      } else if (lupine_copy_htod_serial(conn, framed, dstDevice + offset,
+                                         byteCount - offset, result) < 0) {
+        lupine_destroy_sync_htod_events(events);
+        return -1;
+      }
+      lupine_destroy_sync_htod_events(events);
+      return 1;
+    }
+
+    in_flight[slot] = true;
+    slot = (slot + 1) % LUPINE_SYNC_HTOD_SLOT_COUNT;
+  }
+
+  *result = lupine_wait_sync_htod_events(events, in_flight);
+  if (*result != CUDA_SUCCESS) {
+    pool.disabled = true;
+  }
+  lupine_destroy_sync_htod_events(events);
+  return 1;
+}
+
 int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   size_t byteCount = 0;
@@ -3067,33 +3428,14 @@ int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
   }
 
   int framed = lupine_payload_framed(conn, byteCount);
-  size_t chunk_bytes = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount);
-  lupine_staging staging = lupine_acquire_staging(chunk_bytes);
-  void *host = staging.ptr;
-  if (chunk_bytes != 0 && host == nullptr) {
-    result = CUDA_ERROR_OUT_OF_MEMORY;
-    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
-      return -1;
-    }
+  int pipeline_result =
+      lupine_copy_htod_pipelined(conn, framed, dstDevice, byteCount, &result);
+  if (pipeline_result < 0 ||
+      (pipeline_result == 0 &&
+       lupine_copy_htod_serial(conn, framed, dstDevice, byteCount, &result) <
+           0)) {
+    return -1;
   }
-
-  size_t offset = 0;
-  while (result == CUDA_SUCCESS && offset < byteCount) {
-    size_t chunk = std::min(chunk_bytes, byteCount - offset);
-    if (rpc_read_payload_part(conn, framed, host, chunk) < 0) {
-      lupine_release_staging(staging);
-      return -1;
-    }
-    result = cuMemcpyHtoD_v2(dstDevice + offset, host, chunk);
-    offset += chunk;
-    if (result != CUDA_SUCCESS &&
-        rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
-      lupine_release_staging(staging);
-      return -1;
-    }
-  }
-
-  lupine_release_staging(staging);
 
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
