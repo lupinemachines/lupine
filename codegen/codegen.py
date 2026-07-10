@@ -1920,6 +1920,16 @@ def main():
                         )
                     )
 
+            # Reject invalid send buffers before rpc_write_start_request()
+            # acquires the connection's call/write locks. Conditions in the
+            # builder below may skip optional writes, but only rpc_write* calls
+            # themselves are allowed to fail the builder.
+            for operation in operations:
+                if isinstance(operation, ArrayOperation):
+                    operation.client_preflight(
+                        f, error_const(function.return_type.format())
+                    )
+
             if metadata.async_fire_forget:
                 # Fire-and-forget: send without waiting for a response.
                 f.write(

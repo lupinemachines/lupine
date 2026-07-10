@@ -172,6 +172,29 @@ class ArrayOperation:
         self.ptr.ptr_to.const = c
         return result
 
+    def client_preflight(self, f, error_return: str):
+        """Emit argument rejection before the request builder takes its locks.
+
+        Predicates inside client_rpc_write may decide whether an optional or
+        zero-length field is queued, but they must not reject the call after
+        rpc_write_start_request().
+        """
+        if (
+            self.iter
+            or not self.send
+            or isinstance(self.length, int)
+            or isinstance(self.ptr, Array)
+        ):
+            return
+        f.write(
+            "    if ({size} != 0 && {param_name} == nullptr)\n"
+            "        return {error_return};\n".format(
+                param_name=self.parameter.name,
+                size=self.transfer_size_expr(),
+                error_return=error_return,
+            )
+        )
+
     def client_rpc_write(self, f):
         if self.iter:
             loop_template = """
@@ -211,12 +234,6 @@ class ArrayOperation:
                 )
             )
         else:
-            f.write(
-                "        ({size} != 0 && {param_name} == nullptr) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
             f.write(
                 "        ({size} != 0 && {write_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
                     write_fn="rpc_write_payload" if self.compressible else "rpc_write",

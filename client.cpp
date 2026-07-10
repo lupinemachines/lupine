@@ -6026,6 +6026,9 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
     return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
                            : real(dstDevice, srcHost, ByteCount, hStream);
   }
+  if (ByteCount != 0 && srcHost == nullptr) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (conn == nullptr ||
@@ -6033,7 +6036,6 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      (ByteCount != 0 && srcHost == nullptr) ||
       (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
