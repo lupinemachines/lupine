@@ -153,6 +153,7 @@ else()
 
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
+    set_tests_properties(h2_test PROPERTIES TIMEOUT 30)
     add_test(
         NAME nvml_ecc_exports
         COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"

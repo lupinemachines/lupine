@@ -2,11 +2,15 @@
 #include "rpc.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <nghttp2/nghttp2.h>
 #include <string>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -115,6 +119,38 @@ rpc_http2_read_stats read_stats(conn_t *conn) {
   rpc_http2_read_stats stats = {};
   require(rpc_http2_get_read_stats(conn, &stats) == 0, "read stats failed");
   return stats;
+}
+
+bool raw_write_all(lupine_socket_t socket, const unsigned char *data,
+                   size_t size) {
+  while (size != 0) {
+    struct iovec iov = {const_cast<unsigned char *>(data), size};
+    ssize_t written = lupine_socket_sendv(socket, &iov, 1);
+    if (written < 0 && lupine_socket_error_is_intr()) {
+      continue;
+    }
+    if (written <= 0) {
+      return false;
+    }
+    data += written;
+    size -= static_cast<size_t>(written);
+  }
+  return true;
+}
+
+bool raw_read_exact(lupine_socket_t socket, unsigned char *data, size_t size) {
+  while (size != 0) {
+    ssize_t received = lupine_socket_recv(socket, data, size);
+    if (received < 0 && lupine_socket_error_is_intr()) {
+      continue;
+    }
+    if (received <= 0) {
+      return false;
+    }
+    data += received;
+    size -= static_cast<size_t>(received);
+  }
+  return true;
 }
 
 void test_client_to_server() {
@@ -336,6 +372,142 @@ void test_large_payload() {
   require(received == payload, "large payload mismatch");
 }
 
+void test_payload_larger_than_flow_control_window() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  constexpr size_t payload_size =
+      static_cast<size_t>(INT32_MAX) + 64 * 1024 + 1;
+
+  void *payload = mmap(nullptr, payload_size, PROT_READ,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  require(payload != MAP_FAILED, "flow-control payload mmap failed");
+
+  std::atomic<bool> read_failed{false};
+  size_t received = 0;
+  std::thread server_reader([&] {
+    std::array<unsigned char, 64 * 1024> buffer = {};
+    while (received < payload_size) {
+      size_t chunk = std::min(buffer.size(), payload_size - received);
+      if (rpc_http2_read(&pair.server, buffer.data(), chunk) !=
+          static_cast<int>(chunk)) {
+        read_failed = true;
+        break;
+      }
+      if (!std::all_of(buffer.begin(), buffer.begin() + chunk,
+                       [](unsigned char value) { return value == 0; })) {
+        read_failed = true;
+        break;
+      }
+      received += chunk;
+    }
+  });
+
+  // Production connections always have an RPC dispatch thread reading control
+  // frames. It does not receive application bytes here, but processing the
+  // peer's WINDOW_UPDATE frames is what lets a large write make progress.
+  std::thread client_control_reader([&] {
+    unsigned char unused = 0;
+    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
+  });
+
+  rpc_write_entry entry = {{payload, payload_size}, 0};
+  int write_result = rpc_http2_writev(&pair.client, &entry, 1);
+  if (write_result != 0) {
+    shutdown(pair.client.connfd, SHUT_RDWR);
+    shutdown(pair.server.connfd, SHUT_RDWR);
+  }
+  server_reader.join();
+  shutdown(pair.client.connfd, SHUT_RDWR);
+  client_control_reader.join();
+  munmap(payload, payload_size);
+
+  require(write_result == 0, "flow-controlled write failed before completion");
+  require(!read_failed, "flow-controlled read failed");
+  require(received == payload_size, "flow-controlled payload was truncated");
+}
+
+void test_reset_wakes_flow_controlled_writer() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  // Flush the client's acknowledgement of the server's initial SETTINGS and
+  // consume it through the server session before switching this test to raw
+  // HTTP/2 control frames.
+  write_all(&pair.client, {"m"});
+  require(read_string(&pair.server, 1) == "m",
+          "failed to drain initial SETTINGS acknowledgement");
+
+  std::thread client_control_reader([&] {
+    unsigned char unused = 0;
+    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
+  });
+
+  // Shrink the peer's stream window so the writer pauses after 64 KiB rather
+  // than requiring another multi-gigabyte test payload.
+  std::array<unsigned char, 15> settings = {};
+  settings[2] = 6;
+  settings[3] = NGHTTP2_SETTINGS;
+  settings[10] = NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+  settings[13] = settings[14] = 0xff;
+  require(raw_write_all(pair.server.connfd, settings.data(), settings.size()),
+          "failed to send reduced-window SETTINGS");
+  std::array<unsigned char, 9> settings_ack = {};
+  require(raw_read_exact(pair.server.connfd, settings_ack.data(),
+                         settings_ack.size()),
+          "failed to read SETTINGS acknowledgement");
+  require(settings_ack[0] == 0 && settings_ack[1] == 0 &&
+              settings_ack[2] == 0 && settings_ack[3] == NGHTTP2_SETTINGS &&
+              (settings_ack[4] & NGHTTP2_FLAG_ACK) != 0,
+          "invalid SETTINGS acknowledgement");
+
+  std::atomic<bool> reset_failed{false};
+  std::thread server_reset([&] {
+    std::array<unsigned char, 64 * 1024> buffer = {};
+    size_t received = 0;
+    bool reset_sent = false;
+    for (;;) {
+      ssize_t chunk =
+          lupine_socket_recv(pair.server.connfd, buffer.data(), buffer.size());
+      if (chunk < 0 && lupine_socket_error_is_intr()) {
+        continue;
+      }
+      if (chunk <= 0) {
+        break;
+      }
+      received += static_cast<size_t>(chunk);
+      if (!reset_sent && received >= 32 * 1024) {
+        std::array<unsigned char, 13> reset = {};
+        reset[2] = 4;
+        reset[3] = NGHTTP2_RST_STREAM;
+        reset[8] = 1;
+        reset[12] = NGHTTP2_CANCEL;
+        reset_sent =
+            raw_write_all(pair.server.connfd, reset.data(), reset.size());
+        if (!reset_sent) {
+          reset_failed = true;
+          break;
+        }
+      }
+    }
+    if (!reset_sent) {
+      reset_failed = true;
+    }
+  });
+
+  std::string payload(128 * 1024, 'x');
+  rpc_write_entry entry = {{payload.data(), payload.size()}, 0};
+  int write_result = rpc_http2_writev(&pair.client, &entry, 1);
+  shutdown(pair.client.connfd, SHUT_RDWR);
+  shutdown(pair.server.connfd, SHUT_RDWR);
+  server_reset.join();
+  client_control_reader.join();
+
+  require(write_result < 0,
+          "reset flow-controlled write unexpectedly succeeded");
+  require(!reset_failed, "failed to deliver RST_STREAM");
+}
+
 // Round-trips a multi-block LZ4-framed payload: the transport compresses it
 // lazily block by block (h2.cpp) and rpc_read_payload_part decodes it with
 // chunked, block-aligned reads (compress.cpp). The payload mixes
@@ -503,6 +675,8 @@ int main() {
   test_concurrent_response_lanes();
   test_large_payload();
   test_framed_payload_round_trip();
+  test_payload_larger_than_flow_control_window();
+  test_reset_wakes_flow_controlled_writer();
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }
