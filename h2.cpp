@@ -47,7 +47,7 @@ struct h2_transport {
   std::vector<unsigned char> compress_scratch;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
-  bool network_failed = false;
+  bool transport_failed = false;
 };
 
 // h2_write_cursor either points at caller bytes that are sent verbatim
@@ -395,6 +395,16 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   return 0;
 }
 
+int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
+                                void *user_data) {
+  auto *transport = static_cast<h2_transport *>(user_data);
+  if (stream_id == transport->stream_id) {
+    transport->transport_failed = true;
+    pthread_cond_broadcast(&transport->session_progress);
+  }
+  return 0;
+}
+
 int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
                           const uint8_t *name, size_t namelen,
                           const uint8_t *value, size_t valuelen, uint8_t,
@@ -443,9 +453,9 @@ int h2_flush_session(h2_transport *transport) {
   return result;
 }
 
-void h2_mark_network_failed(h2_transport *transport) {
+void h2_mark_transport_failed(h2_transport *transport) {
   pthread_mutex_lock(&transport->session_mutex);
-  transport->network_failed = true;
+  transport->transport_failed = true;
   pthread_cond_broadcast(&transport->session_progress);
   pthread_mutex_unlock(&transport->session_mutex);
 }
@@ -471,7 +481,7 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
       if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         continue;
       }
-      h2_mark_network_failed(transport);
+      h2_mark_transport_failed(transport);
       return -1;
     }
   } else
@@ -482,14 +492,14 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
     } while (n < 0 && lupine_socket_error_is_intr());
   }
   if (n <= 0) {
-    h2_mark_network_failed(transport);
+    h2_mark_transport_failed(transport);
     return -1;
   }
 
   size_t offset = 0;
   pthread_mutex_lock(&transport->session_mutex);
   if (transport->read_destination != nullptr) {
-    transport->network_failed = true;
+    transport->transport_failed = true;
     pthread_cond_broadcast(&transport->session_progress);
     pthread_mutex_unlock(&transport->session_mutex);
     return -1;
@@ -513,7 +523,7 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
   transport->read_destination = nullptr;
   transport->read_remaining = 0;
   if (result < 0) {
-    transport->network_failed = true;
+    transport->transport_failed = true;
   }
   // A writer may be waiting for this thread to apply WINDOW_UPDATE frames.
   pthread_cond_broadcast(&transport->session_progress);
@@ -541,6 +551,8 @@ int h2_init_direct(conn_t *conn, bool server) {
       callbacks, h2_on_data_chunk_recv_callback);
   nghttp2_session_callbacks_set_on_frame_recv_callback(
       callbacks, h2_on_frame_recv_callback);
+  nghttp2_session_callbacks_set_on_stream_close_callback(
+      callbacks, h2_on_stream_close_callback);
   nghttp2_session_callbacks_set_on_header_callback(callbacks,
                                                    h2_on_header_callback);
 
@@ -683,7 +695,7 @@ int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
     if (after == 0) {
       break;
     }
-    if (transport->network_failed) {
+    if (transport->transport_failed) {
       result = -1;
       break;
     }
