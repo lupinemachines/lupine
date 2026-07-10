@@ -237,7 +237,7 @@ void client_handler(lupine_socket_t connfd) {
     return;
   }
 
-  printf("Client connected.\n");
+  LUPINE_LOG_DEBUG("Client connected.");
 
   std::unordered_map<uint64_t, std::shared_ptr<lupine_lane>> lanes;
   while (!conn.closed) {
@@ -372,13 +372,13 @@ int main() {
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
   if (lupine_socket_init() < 0) {
-    printf("Socket initialization failed.\n");
+    LUPINE_LOG_ERROR("Socket initialization failed.");
     exit(EXIT_FAILURE);
   }
 
   lupine_socket_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd == LUPINE_INVALID_SOCKET) {
-    printf("Socket creation failed.\n");
+    LUPINE_LOG_ERROR("Socket creation failed.");
     exit(EXIT_FAILURE);
   }
 
@@ -393,7 +393,7 @@ int main() {
     char *end = nullptr;
     long parsed = strtol(p, &end, 10);
     if (end == p || *end != '\0' || parsed < 1 || parsed > 65535) {
-      printf("Invalid LUPINE_PORT '%s'; expected 1-65535.\n", p);
+      LUPINE_LOG_ERROR("Invalid LUPINE_PORT '" << p << "'; expected 1-65535.");
       exit(EXIT_FAILURE);
     }
     port = static_cast<int>(parsed);
@@ -406,21 +406,21 @@ int main() {
   servaddr.sin_port = htons(port);
 
   if (lupine_socket_set_reuseaddr(sockfd) < 0) {
-    printf("Socket bind failed.\n");
+    LUPINE_LOG_ERROR("Socket bind failed.");
     exit(EXIT_FAILURE);
   }
 
   if (bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0) {
-    printf("Socket bind failed.\n");
+    LUPINE_LOG_ERROR("Socket bind failed.");
     exit(EXIT_FAILURE);
   }
 
   if (listen(sockfd, MAX_CLIENTS) != 0) {
-    printf("Listen failed.\n");
+    LUPINE_LOG_ERROR("Listen failed.");
     exit(EXIT_FAILURE);
   }
 
-  printf("Server listening on port %d...\n", port);
+  LUPINE_LOG_DEBUG("Server listening on port " << port << "...");
 
 #ifndef _WIN32
   // reap exited connection processes automatically
