@@ -156,6 +156,12 @@ client hop, cross-server peer-access enablement, and `cuMemcpy3DPeer` are not
 implemented yet.
 Same-server operations route by handle ownership.
 
+Prefix an endpoint with `https://` when the Lupine server is behind a
+TLS-terminating proxy. Both CUDA applications and NVML tools such as
+`nvidia-smi` use the scheme and verify the proxy certificate against the
+system trust store. HTTPS defaults to port 443; plain and `http://` endpoints
+default to port 14833.
+
 For a specific CUDA version:
 
 ```bash
