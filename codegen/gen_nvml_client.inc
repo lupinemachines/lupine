@@ -67,49 +67,11 @@ extern "C" nvmlReturn_t nvmlSystemGetCudaDriverVersion_v2(int *cudaDriverVersion
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetHandleByUUID(const char *uuid, nvmlDevice_t *device) {
-  conn_t *_lupine_conn = connection();
-  nvmlReturn_t _lupine_result = rpc_error();
-  nvmlDevice_t _lupine_device = nullptr;
-  unsigned int _lupine_length =
-      uuid == nullptr ? 0 : static_cast<unsigned int>(strlen(uuid) + 1);
-  if (_lupine_conn == nullptr ||
-      rpc_write_start_request(_lupine_conn, RPC_nvmlDeviceGetHandleByUUID) < 0 ||
-      rpc_write(_lupine_conn, &_lupine_length, sizeof(_lupine_length)) < 0 ||
-      (_lupine_length != 0 &&
-       rpc_write(_lupine_conn, uuid, _lupine_length) < 0) ||
-      rpc_wait_for_response(_lupine_conn) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-      rpc_read_end(_lupine_conn) < 0) {
-    return rpc_error();
-  }
-  if (device != nullptr) {
-    *device = _lupine_device;
-  }
-  return _lupine_result;
+  return lookup_device_by_string(RPC_nvmlDeviceGetHandleByUUID, uuid, device);
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetHandleByPciBusId_v2(const char *pciBusId, nvmlDevice_t *device) {
-  conn_t *_lupine_conn = connection();
-  nvmlReturn_t _lupine_result = rpc_error();
-  nvmlDevice_t _lupine_device = nullptr;
-  unsigned int _lupine_length =
-      pciBusId == nullptr ? 0 : static_cast<unsigned int>(strlen(pciBusId) + 1);
-  if (_lupine_conn == nullptr ||
-      rpc_write_start_request(_lupine_conn, RPC_nvmlDeviceGetHandleByPciBusId_v2) < 0 ||
-      rpc_write(_lupine_conn, &_lupine_length, sizeof(_lupine_length)) < 0 ||
-      (_lupine_length != 0 &&
-       rpc_write(_lupine_conn, pciBusId, _lupine_length) < 0) ||
-      rpc_wait_for_response(_lupine_conn) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-      rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-      rpc_read_end(_lupine_conn) < 0) {
-    return rpc_error();
-  }
-  if (device != nullptr) {
-    *device = _lupine_device;
-  }
-  return _lupine_result;
+  return lookup_device_by_string(RPC_nvmlDeviceGetHandleByPciBusId_v2, pciBusId, device);
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetUUID(nvmlDevice_t device, char *uuid, unsigned int length) {

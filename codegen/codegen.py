@@ -282,26 +282,7 @@ return 0;"""
 
 
 def nvml_client_device_from_string(name, value_name):
-    return f"""conn_t *_lupine_conn = connection();
-nvmlReturn_t _lupine_result = rpc_error();
-nvmlDevice_t _lupine_device = nullptr;
-unsigned int _lupine_length =
-    {value_name} == nullptr ? 0 : static_cast<unsigned int>(strlen({value_name}) + 1);
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &_lupine_length, sizeof(_lupine_length)) < 0 ||
-    (_lupine_length != 0 &&
-     rpc_write(_lupine_conn, {value_name}, _lupine_length) < 0) ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if (device != nullptr) {{
-  *device = _lupine_device;
-}}
-return _lupine_result;"""
+    return f"""return lookup_device_by_string(RPC_{name}, {value_name}, device);"""
 
 
 def nvml_server_device_from_string(name):
