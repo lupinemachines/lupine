@@ -43,6 +43,8 @@ using pthread_t = std::thread *;
 
 #define PTHREAD_MUTEX_INITIALIZER                                              \
   {}
+#define PTHREAD_COND_INITIALIZER                                               \
+  {}
 #define LUPINE_INVALID_SOCKET INVALID_SOCKET
 #define LUPINE_STDOUT_FD _fileno(stdout)
 
