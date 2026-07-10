@@ -64,14 +64,8 @@ def _normalize_server(host: str, port: int | None = None) -> str:
 
 def _normalize_hosts(host: str | Sequence[str], port: int | None = None) -> tuple[str, ...]:
     if isinstance(host, str):
-        servers = (_normalize_server(host, port),)
-    else:
-        servers = tuple(_normalize_server(item, port) for item in host)
-    if not servers:
-        raise LupineError("at least one LUPINE host is required")
-    if len(set(servers)) != len(servers):
-        raise LupineError("LUPINE hosts must be unique")
-    return servers
+        return (_normalize_server(host, port),)
+    return tuple(_normalize_server(item, port) for item in host)
 
 
 def _set_server_env(servers: Sequence[str]) -> None:
@@ -102,36 +96,18 @@ def _servers_from_env() -> tuple[str, ...]:
     return tuple(server.strip() for server in value.split(",") if server.strip())
 
 
-def _cuda_device(index: int, *, require_available: bool = False) -> Any:
-    torch = _torch()
-    index = int(index)
-    if require_available:
-        count = int(torch.cuda.device_count())
-        if count <= 0:
-            raise LupineError(
-                "PyTorch does not see any CUDA devices. Check that the LUPINE "
-                "client library is selected and LUPINE_SERVER is configured."
-            )
-        if index < 0 or index >= count:
-            raise LupineError(f"CUDA device index {index} is out of range for {count} devices")
-    return torch.device("cuda", index)
-
-
 @dataclass
 class Session:
     """A process-local LUPINE connection declaration."""
 
     servers: tuple[str, ...]
-    require_available: bool = False
     libcuda: str | os.PathLike[str] | None = None
 
-    def __post_init__(self) -> None:
-        if not self.servers:
-            raise LupineError("at least one LUPINE host is required")
-
     def __enter__(self) -> "Session":
-        _require_mutable_config()
         self._previous_server = os.environ.get("LUPINE_SERVER")
+        if not self.servers:
+            return self
+        _require_mutable_config()
         configured = _servers_from_env()
         if configured and configured != self.servers:
             raise LupineError(
@@ -144,8 +120,7 @@ class Session:
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        if not _cuda_initialized():
-            self._restore_env()
+        self._restore_env()
         return False
 
     def _restore_env(self) -> None:
@@ -153,32 +128,21 @@ class Session:
             os.environ.pop("LUPINE_SERVER", None)
         else:
             os.environ["LUPINE_SERVER"] = self._previous_server
-    def devices(self, *, require_available: bool | None = None) -> list[Any]:
-        """Return all declared LUPINE GPUs as ``torch.device("cuda:N")``."""
 
-        check = self.require_available if require_available is None else require_available
-        return [
-            _cuda_device(index, require_available=check)
-            for index in range(len(self.servers))
-        ]
+    def devices(self) -> list[Any]:
+        """Return every GPU in LUPINE's native virtual device topology."""
 
-    def device(self, index: int = 0, *, require_available: bool | None = None) -> Any:
-        """Return one declared LUPINE GPU as ``torch.device("cuda:N")``."""
-
-        index = int(index)
-        if index < 0 or index >= len(self.servers):
-            raise LupineError(
-                f"LUPINE device index {index} is out of range for {len(self.servers)} hosts"
-            )
-        check = self.require_available if require_available is None else require_available
-        return _cuda_device(index, require_available=check)
+        if not self.servers:
+            return []
+        torch = _torch()
+        count = int(torch.cuda.device_count())
+        return [torch.device("cuda", index) for index in range(count)]
 
 
 def connect(
     *,
     host: str | Sequence[str],
     port: int | None = None,
-    require_available: bool = False,
     libcuda: str | os.PathLike[str] | None = None,
 ) -> Any:
     """Create a LUPINE session for one or more remote GPU hosts.
@@ -187,13 +151,16 @@ def connect(
 
     ``with lupine.connect(host=["a:14833", "b:14833"]) as s:``
 
-    ``s.devices()`` then returns ``[torch.device("cuda:0"), torch.device("cuda:1")]``.
+    ``s.devices()`` then returns every CUDA ordinal in LUPINE's native virtual
+    device topology.
 
     On macOS with a CPU-only PyTorch build, ``connect()`` automatically returns
     a sidecar session backed by Apple's container runtime.
     """
 
     servers = _normalize_hosts(host, port)
+    if not servers:
+        return Session(servers=servers, libcuda=libcuda)
     if not _has_native_cuda_backend():
         if sys.platform != "darwin":
             raise LupineError(
@@ -208,27 +175,16 @@ def connect(
 
     return Session(
         servers=servers,
-        require_available=require_available,
         libcuda=libcuda,
     )
 
 
-def devices(*, require_available: bool = True) -> list[Any]:
-    """Return devices for the current ``LUPINE_SERVER`` environment."""
+def devices() -> list[Any]:
+    """Return devices in PyTorch's current native CUDA topology."""
 
-    servers = _servers_from_env()
-    if not servers:
-        raise LupineError("LUPINE_SERVER is not configured")
-    return [
-        _cuda_device(index, require_available=require_available)
-        for index in range(len(servers))
-    ]
-
-
-def device(index: int = 0, *, require_available: bool = True) -> Any:
-    """Return one device for the current ``LUPINE_SERVER`` environment."""
-
-    return devices(require_available=require_available)[int(index)]
+    torch = _torch()
+    count = int(torch.cuda.device_count())
+    return [torch.device("cuda", index) for index in range(count)]
 
 
 def servers() -> tuple[str, ...]:
@@ -241,37 +197,6 @@ def is_configured() -> bool:
     """Return true when ``LUPINE_SERVER`` names at least one server."""
 
     return bool(servers())
-
-
-def is_available() -> bool:
-    """Return true when PyTorch sees at least one CUDA device."""
-
-    try:
-        torch = _torch()
-    except LupineError:
-        return False
-    return bool(torch.cuda.is_available())
-
-
-def device_count() -> int:
-    """Return PyTorch's CUDA device count."""
-
-    torch = _torch()
-    return int(torch.cuda.device_count())
-
-
-def current_device() -> int:
-    """Return PyTorch's current CUDA device index."""
-
-    torch = _torch()
-    return int(torch.cuda.current_device())
-
-
-def synchronize(index: int = 0) -> None:
-    """Synchronize a LUPINE-backed CUDA device."""
-
-    torch = _torch()
-    torch.cuda.synchronize(_cuda_device(index, require_available=False))
 
 
 def sidecar(
@@ -302,13 +227,8 @@ __all__ = [
     "LupineError",
     "Session",
     "connect",
-    "current_device",
-    "device",
-    "device_count",
     "devices",
-    "is_available",
     "is_configured",
     "sidecar",
     "servers",
-    "synchronize",
 ]
