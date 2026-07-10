@@ -10,20 +10,6 @@ from cxxheaderparser.types import Type, Pointer, Parameter, Array
 from typing import Optional, Union
 from dataclasses import dataclass
 
-
-def server_owned_buffer_declaration(name: str) -> str:
-    """Declare storage for a temporary malloc-backed RPC buffer."""
-    return f"    MallocPtr {name}_storage;\n"
-
-
-def emit_server_allocation(f, name: str, pointer_type: str, size: str) -> None:
-    """Emit allocation of a temporary RPC buffer and its typed pointer."""
-    f.write(f"    {name}_storage.reset(std::malloc({size}));\n")
-    f.write(f"    {name} = static_cast<{pointer_type}>({name}_storage.get());\n")
-    f.write(f"    if ({size} != 0 && {name} == nullptr)\n")
-    f.write("        goto ERROR_0;\n")
-
-
 @dataclass
 class NullableOperation:
     """
@@ -353,14 +339,13 @@ class ArrayOperation:
         else:
             c = self.ptr.ptr_to.const
             self.ptr.ptr_to.const = False
-            s = server_owned_buffer_declaration(self.parameter.name)
-            s += f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
+            s = f"    {self.ptr.format()} {self.parameter.name};\n"
             if self.send:
                 s += f"    size_t {self.parameter.name}_size;\n"
             self.ptr.ptr_to.const = c
         return s
 
-    def server_rpc_read(self, f):
+    def server_rpc_read(self, f, index) -> Optional[str]:
         if self.iter:
             lambda_template = """
             [=, &{param_name}]() -> bool {{
@@ -385,30 +370,44 @@ class ArrayOperation:
             # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
             if isinstance(self.ptr, Pointer):
                 f.write("        false)\n")
-                f.write("        goto ERROR_0;\n")
-                emit_server_allocation(
-                    f,
-                    self.parameter.name,
-                    self.ptr.format(),
-                    self.transfer_size_expr(),
+                f.write("        goto ERROR_{index};\n".format(index=index))
+                f.write(
+                    "    {param_name} = ({server_type})malloc({size});\n".format(
+                        param_name=self.parameter.name,
+                        server_type=self.ptr.format(),
+                        size=self.transfer_size_expr(),
+                    )
                 )
-                f.write("    if(")
+                f.write(
+                    "    if (({size} != 0 && {param_name} == nullptr) ||\n".format(
+                        param_name=self.parameter.name,
+                        size=self.transfer_size_expr(),
+                    )
+                )
+                return self.parameter.name
             return
         elif isinstance(self.ptr, Pointer):
             f.write("        false)\n")
-            f.write("        goto ERROR_0;\n")
+            f.write("        goto ERROR_{index};\n".format(index=index))
             f.write(
                 "    {param_name}_size = {size};\n".format(
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
             )
-            emit_server_allocation(
-                f,
-                self.parameter.name,
-                self.mutable_ptr_format(),
-                f"{self.parameter.name}_size",
+            f.write(
+                "    {param_name} = ({server_type})malloc({size});\n".format(
+                    param_name=self.parameter.name,
+                    server_type=self.mutable_ptr_format(),
+                    size=f"{self.parameter.name}_size",
+                )
             )
+            f.write(
+                "    if ({param_name}_size != 0 && {param_name} == nullptr)\n".format(
+                    param_name=self.parameter.name
+                )
+            )
+            f.write("        goto ERROR_{index};\n".format(index=index))
             f.write("    if(\n")
             f.write(
                 "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
@@ -417,6 +416,7 @@ class ArrayOperation:
                     size=f"{self.parameter.name}_size",
                 )
             )
+            defer = self.parameter.name
         elif isinstance(self.length, int):
             f.write(
                 "        rpc_read(conn, &{param_name}, {size}) < 0 ||\n".format(
@@ -438,6 +438,8 @@ class ArrayOperation:
                     size=self.transfer_size_expr(),
                 )
             )
+        if 'defer' in locals():
+            return defer
 
     @property
     def server_reference(self) -> str:
@@ -568,8 +570,7 @@ class OptionalArrayOperation:
     @property
     def server_declaration(self) -> str:
         return (
-            server_owned_buffer_declaration(self.parameter.name)
-            + f"    {self.element_type()} *{self.parameter.name} = nullptr;\n"
+            f"    {self.element_type()} *{self.parameter.name} = nullptr;\n"
             f"    uint8_t {self.parameter.name}_present = 0;\n"
         )
 
@@ -584,7 +585,7 @@ class OptionalArrayOperation:
             f"        rpc_write(conn, &{self.parameter.name}_present, sizeof(uint8_t)) < 0 ||\n"
         )
 
-    def server_rpc_read(self, f):
+    def server_rpc_read(self, f, index) -> Optional[str]:
         elem = self.element_type()
         name = self.parameter.name
         count = self.count.name
@@ -592,16 +593,16 @@ class OptionalArrayOperation:
             f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
         )
         f.write("        false)\n")
-        f.write("        goto ERROR_0;\n")
+        f.write(f"        goto ERROR_{index};\n")
         f.write(f"    if ({name}_present && {count}_requested != 0) {{\n")
-        emit_server_allocation(
-            f,
-            name,
-            f"{elem} *",
-            f"{count}_requested * sizeof({elem})",
+        f.write(
+            f"        {name} = ({elem} *)malloc({count}_requested * sizeof({elem}));\n"
         )
+        f.write(f"        if ({name} == nullptr)\n")
+        f.write(f"            goto ERROR_{index};\n")
         f.write("    }\n")
         f.write("    if (\n")
+        return name
 
     @property
     def server_reference(self) -> str:
@@ -779,12 +780,9 @@ class NullTerminatedOperation:
 
     @property
     def server_declaration(self) -> str:
-        storage = (
-            server_owned_buffer_declaration(self.parameter.name) if self.send else ""
-        )
-        return storage + (
-            f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
-            f"    {self.length_type} {self.parameter.name}_len;\n"
+        return (
+            f"    {self.ptr.format()} {self.parameter.name};\n"
+            + f"    {self.length_type} {self.parameter.name}_len;\n"
         )
 
     def client_unified_copy(self, f, direction, error):
@@ -795,7 +793,7 @@ class NullTerminatedOperation:
         )
         f.write("      return {error};\n".format(error=error))
 
-    def server_rpc_read(self, f):
+    def server_rpc_read(self, f, index) -> Optional[str]:
         if not self.send:
             return
         f.write(
@@ -804,19 +802,20 @@ class NullTerminatedOperation:
                 length_type=self.length_type,
             )
         )
-        f.write("        goto ERROR_0;\n")
-        emit_server_allocation(
-            f,
-            self.parameter.name,
-            self.ptr.format(),
-            f"{self.parameter.name}_len",
+        f.write("        goto ERROR_{index};\n".format(index=index))
+        f.write(
+            "    {param_name} = ({server_type})malloc({param_name}_len);\n".format(
+                param_name=self.parameter.name,
+                server_type=self.ptr.format(),
+            )
         )
         f.write(
-            "    if (({param_name}_len != 0 && "
-            "rpc_read(conn, (void *){param_name}, {param_name}_len) < 0) ||\n".format(
+            "    if (({param_name}_len != 0 && {param_name} == nullptr) ||\n"
+            "        rpc_read(conn, (void *){param_name}, {param_name}_len) < 0 ||\n".format(
                 param_name=self.parameter.name
             )
         )
+        return self.parameter.name
 
     @property
     def server_reference(self) -> str:

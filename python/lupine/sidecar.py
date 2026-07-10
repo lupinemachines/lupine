@@ -9,7 +9,6 @@ import sys
 import textwrap
 import threading
 import types
-import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,31 +24,6 @@ DEFAULT_IMAGE = "lupine-pytorch-worker:cuda-13.1.0"
 
 class SidecarError(RuntimeError):
     """Raised when the sidecar PyTorch worker fails."""
-
-
-def _result_handles(value: Any) -> set[int]:
-    if isinstance(value, dict):
-        if value.get("type") == "tensor":
-            return {int(value["handle"])}
-        handles: set[int] = set()
-        for item in value.values():
-            handles.update(_result_handles(item))
-        return handles
-    if isinstance(value, list):
-        handles = set()
-        for item in value:
-            handles.update(_result_handles(item))
-        return handles
-    return set()
-
-
-def _finalize_sidecar_handle(session_ref: Any, handle: int) -> None:
-    session = session_ref()
-    if session is not None:
-        try:
-            session._release_handle(handle, suppress_errors=True)
-        except BaseException:
-            pass
 
 
 def _dtype_name(dtype: Any) -> str:
@@ -151,13 +125,6 @@ def _ensure_registered() -> None:
 
 
 class SidecarTensor(torch.Tensor):
-    """Tensor wrapper that owns one GPU object handle in the sidecar worker.
-
-    Call :meth:`close` (or use the tensor as a context manager) for prompt
-    release. Garbage collection provides a best-effort fallback, and closing
-    the owning session releases every handle still live in that session.
-    """
-
     @staticmethod
     def __new__(
         cls,
@@ -189,44 +156,11 @@ class SidecarTensor(torch.Tensor):
     ) -> None:
         self._lupine_session = session
         self._lupine_handle = int(handle)
-        self._lupine_closed = False
-        session._adopt_handle(self._lupine_handle)
-        self._lupine_finalizer = weakref.finalize(
-            self,
-            _finalize_sidecar_handle,
-            weakref.ref(session),
-            self._lupine_handle,
-        )
-
-    @property
-    def closed(self) -> bool:
-        """Whether this wrapper no longer owns a usable worker handle."""
-
-        return self._lupine_closed or self._lupine_session.closed
-
-    def close(self) -> None:
-        """Release this tensor's worker handle. Safe to call more than once."""
-
-        if self._lupine_closed:
-            return
-        self._lupine_closed = True
-        self._lupine_finalizer.detach()
-        self._lupine_session._release_handle(self._lupine_handle)
-
-    def __enter__(self) -> "SidecarTensor":
-        if self.closed:
-            raise SidecarError(f"sidecar tensor handle {self._lupine_handle} is closed")
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        self.close()
-        return False
 
     def __repr__(self) -> str:
-        state = ", closed=True" if self.closed else ""
         return (
             f"SidecarTensor(handle={self._lupine_handle}, "
-            f"shape={tuple(self.shape)}, dtype={self.dtype}, device={self.device}{state})"
+            f"shape={tuple(self.shape)}, dtype={self.dtype}, device={self.device})"
         )
 
     @classmethod
@@ -239,10 +173,6 @@ class SidecarTensor(torch.Tensor):
     ) -> Any:
         kwargs = kwargs or {}
         if func.overloadpacket.__name__ == "detach":
-            if args[0].closed:
-                raise SidecarError(
-                    f"sidecar tensor handle {args[0]._lupine_handle} is closed"
-                )
             return args[0]
         session = _session_from((args, kwargs))
         if session is None:
@@ -279,7 +209,7 @@ objects = {}
 next_handle = 1
 
 
-def store(tensor, created_handles):
+def store(tensor):
     global next_handle
     if tensor.device.type != "cuda":
         return {
@@ -291,7 +221,6 @@ def store(tensor, created_handles):
     handle = next_handle
     next_handle += 1
     objects[handle] = tensor
-    created_handles.append(handle)
     return {
         "type": "tensor",
         "handle": handle,
@@ -306,10 +235,7 @@ def decode(value):
     if isinstance(value, dict) and "__tuple__" in value:
         return tuple(decode(item) for item in value["__tuple__"])
     if isinstance(value, dict) and "__sidecar_tensor__" in value:
-        handle = int(value["__sidecar_tensor__"])
-        if handle not in objects:
-            raise RuntimeError(f"sidecar tensor handle {handle} is released or unknown")
-        return objects[handle]
+        return objects[int(value["__sidecar_tensor__"])]
     if isinstance(value, dict) and "__dtype__" in value:
         return getattr(torch, value["__dtype__"])
     if isinstance(value, dict) and "__device__" in value:
@@ -323,28 +249,17 @@ def decode(value):
     return value
 
 
-def encode(value, created_handles):
+def encode(value):
     if isinstance(value, torch.Tensor):
-        return store(value, created_handles)
+        return store(value)
     if isinstance(value, torch.Size):
         return {"type": "tuple", "items": list(value)}
     if isinstance(value, tuple):
-        return {
-            "type": "tuple",
-            "items": [encode(item, created_handles) for item in value],
-        }
+        return {"type": "tuple", "items": [encode(item) for item in value]}
     if isinstance(value, list):
-        return {
-            "type": "list",
-            "items": [encode(item, created_handles) for item in value],
-        }
+        return {"type": "list", "items": [encode(item) for item in value]}
     if isinstance(value, dict):
-        return {
-            "type": "dict",
-            "items": {
-                key: encode(item, created_handles) for key, item in value.items()
-            },
-        }
+        return {"type": "dict", "items": {key: encode(item) for key, item in value.items()}}
     return {"type": "value", "value": value}
 
 
@@ -355,42 +270,20 @@ def resolve(packet, overload):
     return getattr(overload_packet, overload)
 
 
-def release_handles(handles):
-    released = 0
-    for handle in set(int(handle) for handle in handles):
-        if objects.pop(handle, None) is not None:
-            released += 1
-    return released
-
-
-def collect_handles(value):
-    handles = []
+def release(value):
     if isinstance(value, dict) and "__sidecar_tensor__" in value:
-        handles.append(int(value["__sidecar_tensor__"]))
-        return handles
-    if isinstance(value, dict) and value.get("type") == "tensor":
-        handles.append(int(value["handle"]))
-        return handles
+        objects.pop(int(value["__sidecar_tensor__"]), None)
+        return
     if isinstance(value, list):
         for item in value:
-            handles.extend(collect_handles(item))
-        return handles
+            release(item)
+        return
     if isinstance(value, dict):
         for item in value.values():
-            handles.extend(collect_handles(item))
-    return handles
+            release(item)
 
 
-def stats():
-    cuda_available = torch.cuda.is_available()
-    return {
-        "live_handles": len(objects),
-        "cuda_memory_allocated": torch.cuda.memory_allocated() if cuda_available else 0,
-        "cuda_memory_reserved": torch.cuda.memory_reserved() if cuda_available else 0,
-    }
-
-
-def handle(request, created_handles):
+def handle(request):
     op = request["op"]
     if op == "ping":
         return {
@@ -403,37 +296,23 @@ def handle(request, created_handles):
         func = resolve(request["packet"], request["overload"])
         args = decode(request.get("args", []))
         kwargs = decode(request.get("kwargs", {}))
-        return encode(func(*args, **kwargs), created_handles)
+        return encode(func(*args, **kwargs))
     if op == "release":
-        handles = request.get("handles")
-        if handles is None:
-            handles = collect_handles(request.get("value"))
-        return {
-            "released": release_handles(handles),
-            "live_handles": len(objects),
-        }
-    if op == "stats":
-        return stats()
+        release(request["value"])
+        return True
     raise RuntimeError(f"unknown op: {op}")
 
 
 for line in sys.stdin:
-    created_handles = []
     try:
-        response = {
-            "ok": True,
-            "result": handle(json.loads(line), created_handles),
-        }
-        serialized = json.dumps(response)
+        response = {"ok": True, "result": handle(json.loads(line))}
     except Exception as exc:
-        release_handles(created_handles)
         response = {
             "ok": False,
             "error": str(exc),
             "traceback": traceback.format_exc(),
         }
-        serialized = json.dumps(response)
-    print(serialized, flush=True)
+    print(json.dumps(response), flush=True)
 """
 
 
@@ -517,11 +396,7 @@ class ContainerRuntime:
 
 @dataclass
 class SidecarSession:
-    """Session-scoped macOS frontend for a local Linux CUDA PyTorch sidecar.
-
-    Returned ``SidecarTensor`` objects own their worker handles. Closing the
-    session releases all outstanding handles before stopping the worker.
-    """
+    """Session-scoped macOS frontend for a local Linux CUDA PyTorch sidecar."""
 
     server: str
     image: str = DEFAULT_IMAGE
@@ -529,18 +404,9 @@ class SidecarSession:
     platform: str = "linux/arm64"
     rosetta: bool = False
     env: dict[str, str] = field(default_factory=dict)
-    _proc: Any = field(init=False, default=None, repr=False)
-    _lock: Any = field(init=False, default_factory=threading.RLock, repr=False)
-    _mode: Any = field(init=False, default=None, repr=False)
-    _closed: bool = field(init=False, default=False, repr=False)
-    _live_handles: set[int] = field(init=False, default_factory=set, repr=False)
-    _atexit_registered: bool = field(init=False, default=False, repr=False)
-    info: dict[str, Any] = field(init=False, default_factory=dict)
 
     def __enter__(self) -> "SidecarSession":
         global _ACTIVE_SESSION
-        if self._closed:
-            raise SidecarError("a closed LUPINE sidecar session cannot be reopened")
         if _ACTIVE_SESSION is not None:
             raise SidecarError("a LUPINE sidecar session is already active")
         _ensure_registered()
@@ -563,19 +429,15 @@ class SidecarSession:
             text=True,
             bufsize=1,
         )
-        try:
-            self.info = self._request({"op": "ping"})
-            if not self.info.get("cuda_available"):
-                raise SidecarError(f"sidecar worker has no CUDA device: {self.info}")
-            _ACTIVE_SESSION = self
-            self._mode = SidecarDispatchMode(self)
-            self._mode.__enter__()
-            atexit.register(self.close)
-            self._atexit_registered = True
-            return self
-        except BaseException:
-            self.close()
-            raise
+        self._lock = threading.Lock()
+        self.info = self._request({"op": "ping"})
+        if not self.info.get("cuda_available"):
+            raise SidecarError(f"sidecar worker has no CUDA device: {self.info}")
+        _ACTIVE_SESSION = self
+        self._mode = SidecarDispatchMode(self)
+        self._mode.__enter__()
+        atexit.register(self.close)
+        return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         self.close()
@@ -583,88 +445,20 @@ class SidecarSession:
 
     def close(self) -> None:
         global _ACTIVE_SESSION
-        with self._lock:
-            if self._closed and self._proc is None:
-                return
-            if _ACTIVE_SESSION is self:
-                _ACTIVE_SESSION = None
-            mode = self._mode
+        if _ACTIVE_SESSION is self:
+            _ACTIVE_SESSION = None
+        mode = getattr(self, "_mode", None)
+        if mode is not None:
+            mode.__exit__(None, None, None)
             self._mode = None
-            try:
-                if mode is not None:
-                    mode.__exit__(None, None, None)
-            finally:
-                proc = self._proc
-                if self._live_handles and proc is not None and proc.poll() is None:
-                    try:
-                        self._request(
-                            {
-                                "op": "release",
-                                "handles": sorted(self._live_handles),
-                            }
-                        )
-                    except BaseException:
-                        pass
-                self._terminate_worker_locked()
-                if self._atexit_registered:
-                    atexit.unregister(self.close)
-                    self._atexit_registered = False
-
-    def _terminate_worker_locked(self) -> None:
-        proc = self._proc
+        proc = getattr(self, "_proc", None)
         if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.wait()
         self._proc = None
-        self._closed = True
-        self._live_handles.clear()
-
-    @property
-    def closed(self) -> bool:
-        """Whether the worker session has been closed."""
-
-        return self._closed
-
-    @property
-    def live_handle_count(self) -> int:
-        """Number of worker tensor handles currently owned by this session."""
-
-        with self._lock:
-            return len(self._live_handles)
-
-    def stats(self) -> dict[str, int]:
-        """Return worker handle and CUDA allocator counts for diagnostics."""
-
-        result = self._request({"op": "stats"})
-        if not isinstance(result, dict):
-            raise SidecarError(f"sidecar returned invalid stats: {result!r}")
-        return {key: int(value) for key, value in result.items()}
-
-    def _adopt_handle(self, handle: int) -> None:
-        with self._lock:
-            if self._closed:
-                raise SidecarError("sidecar session is closed")
-            if handle in self._live_handles:
-                raise SidecarError(f"sidecar tensor handle {handle} is duplicated")
-            self._live_handles.add(handle)
-
-    def _release_handle(self, handle: int, *, suppress_errors: bool = False) -> bool:
-        with self._lock:
-            if handle not in self._live_handles:
-                return False
-            try:
-                self._request({"op": "release", "handles": [handle]})
-            except BaseException:
-                self._terminate_worker_locked()
-                if suppress_errors:
-                    return False
-                raise
-            self._live_handles.discard(handle)
-            return True
 
     def device(self, index: int = 0) -> Any:
         if index != 0:
@@ -673,50 +467,21 @@ class SidecarSession:
 
     def _request(self, payload: dict[str, Any]) -> Any:
         with self._lock:
-            if self._closed:
-                raise SidecarError("sidecar session is closed")
-            try:
-                request = json.dumps(payload) + "\n"
-            except (TypeError, ValueError) as exc:
-                raise SidecarError(f"sidecar request is not JSON serializable: {exc}") from exc
-
             proc = self._proc
-            if proc is None or proc.stdin is None or proc.stdout is None:
-                self._terminate_worker_locked()
+            if proc.stdin is None or proc.stdout is None:
                 raise SidecarError("sidecar worker pipes are closed")
-            try:
-                proc.stdin.write(request)
-                proc.stdin.flush()
-                line = proc.stdout.readline()
-            except BaseException as exc:
-                self._terminate_worker_locked()
-                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                    raise
-                raise SidecarError(f"sidecar transport failed: {exc}") from exc
-
-            if not line:
-                stderr = ""
-                returncode = proc.poll()
-                if returncode is not None and proc.stderr is not None:
-                    stderr = proc.stderr.read()
-                self._terminate_worker_locked()
-                raise SidecarError(
-                    f"sidecar worker exited with code {returncode}: {stderr}"
-                )
-            try:
-                response = json.loads(line)
-            except (json.JSONDecodeError, TypeError) as exc:
-                self._terminate_worker_locked()
-                raise SidecarError(f"sidecar returned invalid JSON: {exc}") from exc
-            if not isinstance(response, dict) or "ok" not in response:
-                self._terminate_worker_locked()
-                raise SidecarError(f"sidecar returned invalid response: {response!r}")
-            if not response.get("ok"):
-                raise SidecarError(response.get("traceback") or response.get("error"))
-            if "result" not in response:
-                self._terminate_worker_locked()
-                raise SidecarError(f"sidecar returned invalid response: {response!r}")
-            return response["result"]
+            proc.stdin.write(json.dumps(payload) + "\n")
+            proc.stdin.flush()
+            line = proc.stdout.readline()
+        if not line:
+            stderr = ""
+            if proc.stderr is not None:
+                stderr = proc.stderr.read()
+            raise SidecarError(f"sidecar worker exited with code {proc.poll()}: {stderr}")
+        response = json.loads(line)
+        if not response.get("ok"):
+            raise SidecarError(response.get("traceback") or response.get("error"))
+        return response["result"]
 
     def _wrap(self, result: dict[str, Any]) -> SidecarTensor:
         return SidecarTensor(
@@ -729,12 +494,6 @@ class SidecarSession:
 
     def _encode(self, value: Any) -> Any:
         if isinstance(value, SidecarTensor):
-            if value._lupine_session is not self:
-                raise SidecarError("cannot mix tensors from different sidecar sessions")
-            if value.closed or value._lupine_handle not in self._live_handles:
-                raise SidecarError(
-                    f"sidecar tensor handle {value._lupine_handle} is closed"
-                )
             return {"__sidecar_tensor__": value._lupine_handle}
         if isinstance(value, torch.dtype):
             return {"__dtype__": _dtype_name(value)}
@@ -771,42 +530,18 @@ class SidecarSession:
             return value["value"]
         raise SidecarError(f"sidecar returned unsupported result: {value!r}")
 
-    def _discard_result_handles(self, result: Any) -> None:
-        try:
-            handles = _result_handles(result)
-            if handles:
-                self._request({"op": "release", "handles": sorted(handles)})
-                self._live_handles.difference_update(handles)
-        except BaseException:
-            self._terminate_worker_locked()
-
     def forward(self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-        with self._lock:
-            if self._closed:
-                raise SidecarError("sidecar session is closed")
-            op = _op_name(func)
-            payload = {
+        op = _op_name(func)
+        result = self._request(
+            {
                 "op": "call",
                 "packet": op["packet"],
                 "overload": op["overload"],
                 "args": self._encode(args),
                 "kwargs": self._encode(kwargs),
             }
-            no_result = object()
-            result = no_result
-            try:
-                result = self._request(payload)
-                return self._decode(result)
-            except SidecarError:
-                if result is not no_result:
-                    self._discard_result_handles(result)
-                raise
-            except BaseException:
-                if result is no_result:
-                    self._terminate_worker_locked()
-                else:
-                    self._discard_result_handles(result)
-                raise
+        )
+        return self._decode(result)
 
 
 def sidecar(

@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.18)
 
 project(LupineProject LANGUAGES C CXX)
 
-option(LUPINE_ENABLE_TSAN "Enable ThreadSanitizer for concurrency tests" OFF)
-
 if (NOT WIN32)
     enable_language(CUDA)
 endif()
@@ -93,7 +91,6 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/server_registry.h
 )
 
 set(CLIENT_OUTPUT lupine_driver)
@@ -154,25 +151,9 @@ else()
     )
     target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
 
-    add_executable(server_registry_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_registry.cpp
-    )
-    target_link_libraries(server_registry_test PRIVATE pthread)
-    if(LUPINE_ENABLE_TSAN)
-      if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(server_registry_test PRIVATE
-            -fsanitize=thread -fno-omit-frame-pointer
-        )
-        target_link_options(server_registry_test PRIVATE -fsanitize=thread)
-      else()
-        message(FATAL_ERROR "LUPINE_ENABLE_TSAN requires GCC or Clang")
-      endif()
-    endif()
-
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
     set_tests_properties(h2_test PROPERTIES TIMEOUT 30)
-    add_test(NAME server_registry_test COMMAND server_registry_test)
     add_test(
         NAME nvml_ecc_exports
         COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"

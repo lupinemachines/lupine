@@ -67,8 +67,7 @@ def lupine_module(monkeypatch):
 
 
 def test_connect_sets_env_and_returns_devices(lupine_module):
-    lupine, fake_torch = lupine_module
-    fake_torch.cuda.count = 1
+    lupine, _ = lupine_module
 
     with lupine.connect(host="host-a") as session:
         assert os.environ["LUPINE_SERVER"] == "host-a:14833"
@@ -96,49 +95,6 @@ def test_connect_accepts_multiple_hosts_in_order(lupine_module):
         assert session.servers == ("host-a:15000", "host-b:16000")
         assert session.devices() == [FakeDevice("cuda", 0), FakeDevice("cuda", 1)]
         assert session.device(1) == FakeDevice("cuda", 1)
-
-
-def test_session_devices_use_native_topology_for_multi_gpu_server(lupine_module):
-    lupine, fake_torch = lupine_module
-    fake_torch.cuda.count = 4
-
-    with lupine.connect(host="four-gpu-server") as session:
-        assert session.devices() == [
-            FakeDevice("cuda", 0),
-            FakeDevice("cuda", 1),
-            FakeDevice("cuda", 2),
-            FakeDevice("cuda", 3),
-        ]
-        assert session.device(3) == FakeDevice("cuda", 3)
-
-
-def test_session_devices_follow_native_ordinals_across_servers(lupine_module):
-    lupine, fake_torch = lupine_module
-    # Model heterogeneous servers exposing two and three GPUs respectively.
-    fake_torch.cuda.count = 5
-
-    with lupine.connect(host=["two-gpu-server", "three-gpu-server"]) as session:
-        assert session.devices() == [
-            FakeDevice("cuda", 0),
-            FakeDevice("cuda", 1),
-            FakeDevice("cuda", 2),
-            FakeDevice("cuda", 3),
-            FakeDevice("cuda", 4),
-        ]
-        assert session.device(4) == FakeDevice("cuda", 4)
-
-
-def test_session_devices_include_local_native_ordinals(lupine_module):
-    lupine, fake_torch = lupine_module
-    # Model one enabled local GPU followed by two GPUs from the remote server.
-    fake_torch.cuda.count = 3
-
-    with lupine.connect(host="two-gpu-server") as session:
-        assert session.devices() == [
-            FakeDevice("cuda", 0),
-            FakeDevice("cuda", 1),
-            FakeDevice("cuda", 2),
-        ]
 
 
 def test_connect_uses_sidecar_when_torch_has_no_cuda_backend(lupine_module, monkeypatch):
@@ -203,18 +159,8 @@ def test_connect_leaves_env_when_cuda_initialized_inside_context(lupine_module):
     assert os.environ["LUPINE_SERVER"] == "host-a:14833"
 
 
-def test_connect_leaves_env_when_native_topology_was_queried(lupine_module):
-    lupine, _ = lupine_module
-
-    with lupine.connect(host="host-a") as session:
-        session.devices()
-
-    assert os.environ["LUPINE_SERVER"] == "host-a:14833"
-
-
 def test_connect_accepts_matching_preconfigured_env(lupine_module, monkeypatch):
-    lupine, fake_torch = lupine_module
-    fake_torch.cuda.count = 1
+    lupine, _ = lupine_module
     monkeypatch.setenv("LUPINE_SERVER", "host-a:14833")
 
     with lupine.connect(host="host-a:14833") as session:
@@ -248,24 +194,11 @@ def test_devices_use_current_env(lupine_module, monkeypatch):
 
 
 def test_device_bounds_check(lupine_module):
-    lupine, fake_torch = lupine_module
-    fake_torch.cuda.count = 1
+    lupine, _ = lupine_module
 
     with lupine.connect(host="host-a") as session:
         with pytest.raises(lupine.LupineError, match="out of range"):
             session.device(1)
-
-
-def test_session_no_visible_devices_respects_require_available(lupine_module):
-    lupine, fake_torch = lupine_module
-    fake_torch.cuda.count = 0
-
-    with lupine.connect(host="host-a") as session:
-        assert session.devices() == []
-        with pytest.raises(lupine.LupineError, match="out of range for 0 devices"):
-            session.device()
-        with pytest.raises(lupine.LupineError, match="does not see any CUDA devices"):
-            session.devices(require_available=True)
 
 
 def test_duplicate_hosts_are_rejected(lupine_module):
@@ -277,7 +210,7 @@ def test_duplicate_hosts_are_rejected(lupine_module):
 
 def test_sidecar_container_runtime_defaults_to_arm64(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/container")
     monkeypatch.setattr(sidecar.sys, "platform", "darwin")
@@ -300,7 +233,7 @@ def test_sidecar_container_runtime_defaults_to_arm64(monkeypatch):
 
 def test_sidecar_container_runtime_is_macos_only(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     monkeypatch.setattr(sidecar.sys, "platform", "linux")
 
@@ -310,7 +243,7 @@ def test_sidecar_container_runtime_is_macos_only(monkeypatch):
 
 def test_sidecar_container_runtime_requires_cli(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     monkeypatch.setattr(sidecar.shutil, "which", lambda name: None)
     monkeypatch.setattr(sidecar.sys, "platform", "darwin")
@@ -321,7 +254,7 @@ def test_sidecar_container_runtime_requires_cli(monkeypatch):
 
 def test_sidecar_container_runtime_starts_services_and_pulls_missing_image(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     calls = []
 
@@ -346,7 +279,7 @@ def test_sidecar_container_runtime_starts_services_and_pulls_missing_image(monke
 
 def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     calls = []
 
@@ -377,7 +310,7 @@ def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
 def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
     pytest.importorskip("torch")
     import torch
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     sidecar._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
@@ -402,7 +335,7 @@ def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
 def test_sidecar_dispatch_mode_forwards_tensor_ops(monkeypatch):
     pytest.importorskip("torch")
     import torch
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     sidecar._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
