@@ -4730,6 +4730,7 @@ CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags);
  */
 CUresult cuCtxDisablePeerAccess(CUcontext peerContext);
 /**
+ * @disabled client - manual client translates both devices to one backend
  * @param value SEND_RECV
  * @param attrib SEND_ONLY
  * @param srcDevice SEND_ONLY

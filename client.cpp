@@ -1101,6 +1101,65 @@ extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,
 extern "C" lupine_route lupine_route_for_current_context();
 extern "C" lupine_route lupine_route_for_context(CUcontext ctx);
 
+extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
+                                            CUdevice_P2PAttribute attrib,
+                                            CUdevice srcDevice,
+                                            CUdevice dstDevice) {
+  if (value == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (srcDevice == dstDevice) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+
+  lupine_route src_route = lupine_route_for_device(&srcDevice);
+  lupine_route dst_route = lupine_route_for_device(&dstDevice);
+  if (src_route.kind == LUPINE_ROUTE_INVALID ||
+      dst_route.kind == LUPINE_ROUTE_INVALID) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+
+#if CUDA_VERSION >= 13010
+  constexpr CUdevice_P2PAttribute max_attribute =
+      CU_DEVICE_P2P_ATTRIBUTE_ONLY_PARTIAL_NATIVE_ATOMIC_SUPPORTED;
+#else
+  constexpr CUdevice_P2PAttribute max_attribute =
+      CU_DEVICE_P2P_ATTRIBUTE_CUDA_ARRAY_ACCESS_SUPPORTED;
+#endif
+  int attribute = static_cast<int>(attrib);
+  if (attribute < static_cast<int>(CU_DEVICE_P2P_ATTRIBUTE_PERFORMANCE_RANK) ||
+      attribute > static_cast<int>(max_attribute)) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  if (!lupine_routes_share_server(src_route, dst_route)) {
+    *value = 0;
+    return CUDA_SUCCESS;
+  }
+  if (lupine_route_is_local(src_route)) {
+    using real_fn_t =
+        CUresult (*)(int *, CUdevice_P2PAttribute, CUdevice, CUdevice);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuDeviceGetP2PAttribute");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(value, attrib, srcDevice, dstDevice);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(src_route);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuDeviceGetP2PAttribute) < 0 ||
+      rpc_write(conn, value, sizeof(*value)) < 0 ||
+      rpc_write(conn, &attrib, sizeof(attrib)) < 0 ||
+      rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
+      rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, value, sizeof(*value)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
 extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
                                           CUdevice peerDev) {
   if (canAccessPeer == nullptr) {
