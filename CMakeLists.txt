@@ -58,7 +58,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
