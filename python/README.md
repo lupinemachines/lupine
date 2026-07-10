@@ -43,6 +43,22 @@ Exiting the context restores `LUPINE_SERVER` only if CUDA was not initialized
 inside the block. If CUDA was initialized, the process-global LUPINE connection
 is already active and cannot be disconnected safely.
 
+On macOS, the automatic sidecar fallback returns `SidecarTensor` wrappers. Each
+wrapper owns a GPU object in the Linux worker until the wrapper is closed or
+garbage-collected. Close long-lived intermediates promptly, or use them as
+context managers:
+
+```python
+with lupine.connect(host="<server>:14833") as session:
+    with torch.zeros(1024, device=session.device()) as tensor:
+        use(tensor)
+```
+
+Calling `close()` more than once is safe. A closed wrapper cannot be used in a
+new operation, and closing the sidecar session releases every outstanding
+handle before the worker exits. `session.stats()` reports live handles and CUDA
+allocator counts for diagnostics.
+
 The adapter does not create a new PyTorch backend such as
 `torch.device("lupine")`. A true custom PyTorch device would require registering
 PrivateUse1 kernels and backend support. LUPINE already works best when PyTorch
