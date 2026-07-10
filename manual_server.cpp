@@ -1789,9 +1789,12 @@ static void CUDA_CB lupine_graph_host_callback(void *userData) {
       }
     }
   }
-  void *fn = reinterpret_cast<void *>(callback->fn);
+  CUhostFn fn = callback->fn;
+  void *client_user_data = callback->userData;
   void *response = nullptr;
-  if (rpc_write(conn, &fn, sizeof(fn)) < 0 || rpc_wait_for_response(conn) < 0 ||
+  if (rpc_write(conn, &fn, sizeof(fn)) < 0 ||
+      rpc_write(conn, &client_user_data, sizeof(client_user_data)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &response, sizeof(response)) < 0 ||
       rpc_read_end(conn) < 0) {
     return;
