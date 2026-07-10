@@ -361,7 +361,12 @@ class ArrayOperation:
                         size=self.transfer_size_expr(),
                     )
                 )
-                f.write("    if(")
+                f.write(
+                    "    if (({size} != 0 && {param_name} == nullptr) ||\n".format(
+                        param_name=self.parameter.name,
+                        size=self.transfer_size_expr(),
+                    )
+                )
                 return self.parameter.name
             return
         elif isinstance(self.ptr, Pointer):
@@ -739,13 +744,15 @@ class NullTerminatedOperation:
     recv: bool
     parameter: Parameter
     ptr: Pointer
+    length_type: str = "std::size_t"
 
     def client_rpc_write(self, f):
         if not self.send:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
+            "        rpc_write(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
                 param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
         f.write(
@@ -758,7 +765,7 @@ class NullTerminatedOperation:
     def server_declaration(self) -> str:
         return (
             f"    {self.ptr.format()} {self.parameter.name};\n"
-            + f"    std::size_t {self.parameter.name}_len;\n"
+            + f"    {self.length_type} {self.parameter.name}_len;\n"
         )
 
     def client_unified_copy(self, f, direction, error):
@@ -773,8 +780,9 @@ class NullTerminatedOperation:
         if not self.send:
             return
         f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof(std::size_t)) < 0)\n".format(
-                param_name=self.parameter.name
+            "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0)\n".format(
+                param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
         f.write("        goto ERROR_{index};\n".format(index=index))
@@ -785,7 +793,8 @@ class NullTerminatedOperation:
             )
         )
         f.write(
-            "    if (rpc_read(conn, (void *){param_name}, {param_name}_len) < 0 ||\n".format(
+            "    if (({param_name}_len != 0 && {param_name} == nullptr) ||\n"
+            "        rpc_read(conn, (void *){param_name}, {param_name}_len) < 0 ||\n".format(
                 param_name=self.parameter.name
             )
         )
@@ -799,8 +808,9 @@ class NullTerminatedOperation:
         if not self.recv:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
+            "        rpc_write(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
                 param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
         f.write(
@@ -813,8 +823,9 @@ class NullTerminatedOperation:
         if not self.recv:
             return
         f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
-                param_name=self.parameter.name
+            "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
+                param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
         f.write(

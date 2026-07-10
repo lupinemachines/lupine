@@ -274,25 +274,6 @@ nvmlReturn_t call_device_from_index_on(conn_t *c, int op, unsigned int index,
   return result;
 }
 
-nvmlReturn_t call_device_from_string_on(conn_t *c, int op, const char *value,
-                                        nvmlDevice_t *device) {
-  nvmlReturn_t result = rpc_error();
-  nvmlDevice_t temp = nullptr;
-  unsigned int length =
-      value == nullptr ? 0 : static_cast<unsigned int>(strlen(value) + 1);
-  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
-      rpc_write(c, &length, sizeof(length)) < 0 ||
-      (length != 0 && rpc_write(c, value, length) < 0) ||
-      rpc_wait_for_response(c) < 0 || rpc_read(c, &temp, sizeof(temp)) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  if (device != nullptr) {
-    *device = temp;
-  }
-  return result;
-}
-
 nvmlReturn_t ensure_devices() {
   if (open_connection() < 0) {
     return rpc_error();
@@ -328,9 +309,10 @@ nvmlReturn_t ensure_devices() {
   return NVML_SUCCESS;
 }
 
-nvmlReturn_t lookup_device_by_string(int op, const char *value,
-                                     nvmlDevice_t *device) {
-  if (value == nullptr || device == nullptr) {
+template <typename Lookup>
+nvmlReturn_t lookup_device_on_all_connections(nvmlDevice_t *device,
+                                              Lookup &&lookup) {
+  if (device == nullptr) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
 
@@ -342,7 +324,7 @@ nvmlReturn_t lookup_device_by_string(int op, const char *value,
   nvmlReturn_t first_error = NVML_ERROR_NOT_FOUND;
   for (int i = 0; i < nconns; ++i) {
     nvmlDevice_t remote = nullptr;
-    result = call_device_from_string_on(&conns[i], op, value, &remote);
+    result = lookup(&conns[i], &remote);
     if (result != NVML_SUCCESS) {
       if (first_error == NVML_ERROR_NOT_FOUND &&
           result != NVML_ERROR_NOT_FOUND) {
