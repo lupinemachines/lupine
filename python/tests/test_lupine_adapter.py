@@ -277,7 +277,7 @@ def test_duplicate_hosts_are_rejected(lupine_module):
 
 def test_sidecar_container_runtime_defaults_to_arm64(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/container")
     monkeypatch.setattr(sidecar.sys, "platform", "darwin")
@@ -300,7 +300,7 @@ def test_sidecar_container_runtime_defaults_to_arm64(monkeypatch):
 
 def test_sidecar_container_runtime_is_macos_only(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     monkeypatch.setattr(sidecar.sys, "platform", "linux")
 
@@ -310,7 +310,7 @@ def test_sidecar_container_runtime_is_macos_only(monkeypatch):
 
 def test_sidecar_container_runtime_requires_cli(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     monkeypatch.setattr(sidecar.shutil, "which", lambda name: None)
     monkeypatch.setattr(sidecar.sys, "platform", "darwin")
@@ -321,7 +321,7 @@ def test_sidecar_container_runtime_requires_cli(monkeypatch):
 
 def test_sidecar_container_runtime_starts_services_and_pulls_missing_image(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     calls = []
 
@@ -346,7 +346,7 @@ def test_sidecar_container_runtime_starts_services_and_pulls_missing_image(monke
 
 def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
     pytest.importorskip("torch")
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     calls = []
 
@@ -377,7 +377,7 @@ def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
 def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
     pytest.importorskip("torch")
     import torch
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     sidecar._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
@@ -402,7 +402,7 @@ def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
 def test_sidecar_dispatch_mode_forwards_tensor_ops(monkeypatch):
     pytest.importorskip("torch")
     import torch
-    sidecar = importlib.import_module("lupine.sidecar")
+    import lupine.sidecar as sidecar
 
     sidecar._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
