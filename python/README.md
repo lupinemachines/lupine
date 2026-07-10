@@ -23,18 +23,16 @@ with lupine.connect(host="<server>:14833", libcuda="/opt/lupine/libcuda.so.1") a
     device = s.device()
 ```
 
-For multiple LUPINE servers, pass the full host list in one call. `devices()`
-uses the native CUDA topology, so it returns every GPU exposed by every server,
-not one device per server. When local GPUs are enabled, they come first; remote
-GPUs then follow server order and each server's native device order:
+For multiple LUPINE servers, pass the full host list in one call. The order
+defines the CUDA ordinals that PyTorch sees:
 
 ```python
 import lupine
 
 with lupine.connect(host=["<server-a>:14833", "<server-b>:14833"]) as s:
-    gpus = s.devices()
-    model0 = model0.to(gpus[0])
-    model1 = model1.to(gpus[1])
+    gpu0, gpu1 = s.devices()
+    model0 = model0.to(gpu0)  # cuda:0
+    model1 = model1.to(gpu1)  # cuda:1
 ```
 
 Do not add a second host after tensors have already been moved to the first one.
@@ -42,10 +40,8 @@ LUPINE opens connections from `LUPINE_SERVER` when CUDA first initializes, and
 later changes to `LUPINE_SERVER` are not picked up by the current process.
 
 Exiting the context restores `LUPINE_SERVER` only if CUDA was not initialized
-and the native device topology was not queried inside the block. Calls to
-`devices()` and `device()` query and fix Lupine's process-global topology, so
-their server configuration remains active just like an initialized CUDA
-connection.
+inside the block. If CUDA was initialized, the process-global LUPINE connection
+is already active and cannot be disconnected safely.
 
 On macOS, the automatic sidecar fallback returns `SidecarTensor` wrappers. Each
 wrapper owns a GPU object in the Linux worker until the wrapper is closed or
