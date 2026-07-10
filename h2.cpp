@@ -2,6 +2,7 @@
 #include "rpc.h"
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <deque>
 #include <errno.h>
@@ -88,21 +89,65 @@ void queue_bytes(std::deque<h2_buffer> &queue, const unsigned char *data,
 // platform's IOV_MAX and fails with EMSGSIZE.
 constexpr int kH2MaxSendIov = 512;
 
+#ifdef LUPINE_TLS_OPENSSL
+// Generated RPCs queue many 4- and 8-byte fields. Packing consecutive small
+// fields into one bounded TLS record avoids an SSL_write per field while large
+// payload spans continue to pass directly to OpenSSL.
+constexpr size_t kH2TlsCoalesceCapacity = 4 * 1024;
+constexpr size_t kH2TlsCoalesceFragmentMax = 256;
+
+struct h2_tls_batch {
+  int count = 0;
+  size_t size = 0;
+};
+
+h2_tls_batch h2_plan_tls_batch(const struct iovec *iov, int iov_count) {
+  h2_tls_batch batch;
+  while (batch.count < iov_count) {
+    size_t size = iov[batch.count].iov_len;
+    if (size > kH2TlsCoalesceFragmentMax ||
+        size > kH2TlsCoalesceCapacity - batch.size) {
+      break;
+    }
+    batch.size += size;
+    ++batch.count;
+  }
+  if (batch.count < 2) {
+    return {};
+  }
+  return batch;
+}
+#endif
+
 int h2_write_all(h2_transport *transport, const struct iovec *iov,
                  int iov_count) {
   std::vector<struct iovec> local(iov, iov + iov_count);
   struct iovec *cursor = local.data();
   int count = iov_count;
+#ifdef LUPINE_TLS_OPENSSL
+  std::array<unsigned char, kH2TlsCoalesceCapacity> tls_scratch;
+#endif
   while (count > 0) {
     ssize_t n;
 #ifdef LUPINE_TLS_OPENSSL
     if (transport->tls != nullptr) {
-      // Byte stream: send one buffer; the cursor loop handles partial writes.
       SSL *ssl = static_cast<SSL *>(transport->tls);
-      int want = static_cast<int>(
-          std::min(cursor[0].iov_len, static_cast<size_t>(INT_MAX)));
+      const void *data = cursor[0].iov_base;
+      size_t size = cursor[0].iov_len;
+      const h2_tls_batch batch = h2_plan_tls_batch(cursor, count);
+      if (batch.count != 0) {
+        size_t offset = 0;
+        for (int i = 0; i < batch.count; ++i) {
+          memcpy(tls_scratch.data() + offset, cursor[i].iov_base,
+                 cursor[i].iov_len);
+          offset += cursor[i].iov_len;
+        }
+        data = tls_scratch.data();
+        size = batch.size;
+      }
+      int want = static_cast<int>(std::min(size, static_cast<size_t>(INT_MAX)));
       int r;
-      while ((r = SSL_write(ssl, cursor[0].iov_base, want)) <= 0) {
+      while ((r = SSL_write(ssl, data, want)) <= 0) {
         int err = SSL_get_error(ssl, r);
         if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
           return -1;
