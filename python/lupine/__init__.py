@@ -5,6 +5,8 @@ on its built-in CUDA dispatch path while LUPINE handles CUDA driver calls below
 it.
 """
 
+from __future__ import annotations
+
 import os
 import ctypes
 import sys
