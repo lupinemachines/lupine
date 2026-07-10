@@ -18,10 +18,7 @@
 
 namespace {
 
-#ifndef LUPINE_H2_INITIAL_WINDOW
-#define LUPINE_H2_INITIAL_WINDOW 0x7fffffffU
-#endif
-constexpr uint32_t kH2InitialWindow = LUPINE_H2_INITIAL_WINDOW;
+constexpr uint32_t kH2InitialWindow = 0x7fffffffU;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
 
@@ -49,6 +46,8 @@ struct h2_transport {
   // so a single buffer suffices and memory stays bounded by one block.
   std::vector<unsigned char> compress_scratch;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
+  pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
+  bool network_failed = false;
 };
 
 // h2_write_cursor either points at caller bytes that are sent verbatim
@@ -444,6 +443,13 @@ int h2_flush_session(h2_transport *transport) {
   return result;
 }
 
+void h2_mark_network_failed(h2_transport *transport) {
+  pthread_mutex_lock(&transport->session_mutex);
+  transport->network_failed = true;
+  pthread_cond_broadcast(&transport->session_progress);
+  pthread_mutex_unlock(&transport->session_mutex);
+}
+
 int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
                      size_t read_capacity, size_t *direct_bytes) {
   if (direct_bytes == nullptr) {
@@ -465,6 +471,7 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
       if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         continue;
       }
+      h2_mark_network_failed(transport);
       return -1;
     }
   } else
@@ -475,12 +482,15 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
     } while (n < 0 && lupine_socket_error_is_intr());
   }
   if (n <= 0) {
+    h2_mark_network_failed(transport);
     return -1;
   }
 
   size_t offset = 0;
   pthread_mutex_lock(&transport->session_mutex);
   if (transport->read_destination != nullptr) {
+    transport->network_failed = true;
+    pthread_cond_broadcast(&transport->session_progress);
     pthread_mutex_unlock(&transport->session_mutex);
     return -1;
   }
@@ -502,6 +512,11 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
   *direct_bytes = read_capacity - transport->read_remaining;
   transport->read_destination = nullptr;
   transport->read_remaining = 0;
+  if (result < 0) {
+    transport->network_failed = true;
+  }
+  // A writer may be waiting for this thread to apply WINDOW_UPDATE frames.
+  pthread_cond_broadcast(&transport->session_progress);
   pthread_mutex_unlock(&transport->session_mutex);
   return result;
 }
@@ -649,14 +664,37 @@ int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
   provider.source.ptr = &source;
   provider.read_callback = h2_data_source_read_callback;
   pthread_mutex_lock(&transport->session_mutex);
-  if (nghttp2_submit_data(transport->session, NGHTTP2_FLAG_NONE,
-                          transport->stream_id, &provider) != 0 ||
-      h2_flush_session_locked(transport) < 0 || source.remaining() != 0) {
-    pthread_mutex_unlock(&transport->session_mutex);
-    return -1;
+  int result = nghttp2_submit_data(transport->session, NGHTTP2_FLAG_NONE,
+                                   transport->stream_id, &provider);
+  // nghttp2 retains provider.source.ptr until the provider reaches EOF, so the
+  // stack-backed source must stay alive while flow control pauses the stream.
+  // Waiting releases session_mutex so the RPC read thread can apply the peer's
+  // WINDOW_UPDATE and signal that outbound progress is possible again.
+  while (result == 0) {
+    size_t before = source.remaining();
+    if (before == 0) {
+      break;
+    }
+    if (h2_flush_session_locked(transport) < 0) {
+      result = -1;
+      break;
+    }
+    size_t after = source.remaining();
+    if (after == 0) {
+      break;
+    }
+    if (transport->network_failed) {
+      result = -1;
+      break;
+    }
+    if (after == before && pthread_cond_wait(&transport->session_progress,
+                                             &transport->session_mutex) != 0) {
+      result = -1;
+      break;
+    }
   }
   pthread_mutex_unlock(&transport->session_mutex);
-  return 0;
+  return result == 0 ? 0 : -1;
 }
 
 int rpc_http2_compress_lz4(conn_t *conn) {
@@ -687,6 +725,7 @@ void rpc_http2_destroy(conn_t *conn) {
     nghttp2_session_del(transport->session);
     transport->session = nullptr;
   }
+  pthread_cond_destroy(&transport->session_progress);
   pthread_mutex_destroy(&transport->session_mutex);
   delete transport;
 }

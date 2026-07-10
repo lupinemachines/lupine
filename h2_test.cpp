@@ -343,15 +343,8 @@ void test_payload_larger_than_flow_control_window() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
 
-  constexpr size_t kDefaultPayloadSize = 4 * 1024 * 1024;
-  size_t payload_size = kDefaultPayloadSize;
-  if (const char *configured = getenv("LUPINE_H2_FLOW_TEST_BYTES")) {
-    char *end = nullptr;
-    unsigned long long parsed = strtoull(configured, &end, 10);
-    require(end != configured && *end == '\0' && parsed > 0,
-            "invalid LUPINE_H2_FLOW_TEST_BYTES");
-    payload_size = static_cast<size_t>(parsed);
-  }
+  constexpr size_t payload_size =
+      static_cast<size_t>(INT32_MAX) + 64 * 1024 + 1;
 
   void *payload = mmap(nullptr, payload_size, PROT_READ,
                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
@@ -557,9 +550,6 @@ void test_rpc_lz4_payload_round_trip() {
 } // namespace
 
 int main() {
-#ifdef LUPINE_H2_FLOW_CONTROL_TEST_ONLY
-  test_payload_larger_than_flow_control_window();
-#else
   test_rpc_write_queue_grows();
   test_rpc_lz4_payload_round_trip();
   test_client_to_server();
@@ -571,7 +561,7 @@ int main() {
   test_concurrent_response_lanes();
   test_large_payload();
   test_framed_payload_round_trip();
-#endif
+  test_payload_larger_than_flow_control_window();
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }
