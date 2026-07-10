@@ -19,6 +19,14 @@ struct rpc_write_entry {
   unsigned char framed;
 };
 
+struct rpc_http2_read_stats {
+  uint64_t direct_bytes;
+  uint64_t staged_bytes;
+  uint64_t staged_read_bytes;
+  uint64_t staged_buffers;
+  uint64_t peak_staged_bytes;
+};
+
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
 typedef struct conn_t conn_t;
@@ -126,6 +134,7 @@ extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
 extern int rpc_http2_client_init(conn_t *conn);
 extern int rpc_http2_server_init(conn_t *conn);
 extern int rpc_http2_compress_lz4(conn_t *conn);
+extern int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats);
 
 // Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
 extern int lupine_payload_framed(conn_t *conn, size_t total_size);

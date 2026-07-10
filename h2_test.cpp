@@ -12,6 +12,8 @@
 #include <unistd.h>
 #include <vector>
 
+extern void *_rpc_read_id_dispatch(void *);
+
 namespace {
 
 struct h2_pair {
@@ -44,6 +46,7 @@ void require(bool condition, const char *message) {
 
 void init_rpc_read(conn_t *conn);
 void init_rpc_write(conn_t *conn);
+void exchange_settings(h2_pair *pair);
 
 h2_pair make_pair() {
   int fds[2] = {-1, -1};
@@ -108,6 +111,12 @@ std::string read_string(conn_t *conn, size_t size) {
   return output;
 }
 
+rpc_http2_read_stats read_stats(conn_t *conn) {
+  rpc_http2_read_stats stats = {};
+  require(rpc_http2_get_read_stats(conn, &stats) == 0, "read stats failed");
+  return stats;
+}
+
 void test_client_to_server() {
   h2_pair pair = make_pair();
   std::string message = "hello over h2";
@@ -143,6 +152,154 @@ void test_fragmented_iovec() {
   write_all(&pair.client, chunks);
   reader.join();
   require(received == "alpha:beta:gamma", "fragmented payload mismatch");
+}
+
+void test_fragmented_frames_direct() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+  const rpc_http2_read_stats before = read_stats(&pair.server);
+  const std::string expected = "fragmented-data";
+  std::string received;
+  std::thread reader(
+      [&] { received = read_string(&pair.server, expected.size()); });
+  write_all(&pair.client, {"fragment"});
+  write_all(&pair.client, {"ed"});
+  write_all(&pair.client, {"-data"});
+  reader.join();
+  require(received == expected, "fragmented frame mismatch");
+  const rpc_http2_read_stats after = read_stats(&pair.server);
+  require(after.direct_bytes - before.direct_bytes == received.size(),
+          "fragmented frames were not read directly");
+  require(after.staged_bytes == before.staged_bytes,
+          "fragmented frames unexpectedly staged bytes");
+}
+
+void test_partial_read_stages_only_overflow() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+  std::string payload(4096, '\0');
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = static_cast<char>(i & 0x7f);
+  }
+  std::string received(payload.size(), '\0');
+  const rpc_http2_read_stats before = read_stats(&pair.server);
+  std::thread reader([&] {
+    require(rpc_http2_read(&pair.server, received.data(), 7) == 7,
+            "partial prefix read failed");
+    require(rpc_http2_read(&pair.server, received.data() + 7,
+                           received.size() - 7) ==
+                static_cast<int>(received.size() - 7),
+            "partial suffix read failed");
+  });
+  write_all(&pair.client, {payload});
+  reader.join();
+  require(received == payload, "partial read payload mismatch");
+  const rpc_http2_read_stats after = read_stats(&pair.server);
+  require(after.direct_bytes - before.direct_bytes == 7,
+          "partial read direct byte count mismatch");
+  require(after.staged_bytes - before.staged_bytes == payload.size() - 7,
+          "partial read staged byte count mismatch");
+  require(after.staged_read_bytes - before.staged_read_bytes ==
+              payload.size() - 7,
+          "partial read staged-copy count mismatch");
+  require(after.staged_buffers - before.staged_buffers == 1,
+          "partial read staging allocation count mismatch");
+  require(after.peak_staged_bytes >= payload.size() - 7,
+          "partial read peak staging mismatch");
+}
+
+void test_truncated_read_clears_direct_destination() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+  std::vector<unsigned char> guarded(48, 0xa5);
+  const std::string prefix = "truncated";
+  int read_result = 0;
+  std::thread reader([&] {
+    read_result = rpc_http2_read(&pair.server, guarded.data() + 8, 32);
+  });
+  write_all(&pair.client, {prefix});
+  require(shutdown(pair.client.connfd, SHUT_WR) == 0,
+          "truncated writer shutdown failed");
+  reader.join();
+  require(read_result == -1, "truncated read unexpectedly succeeded");
+  require(std::memcmp(guarded.data() + 8, prefix.data(), prefix.size()) == 0,
+          "truncated read lost received prefix");
+  for (size_t i = 0; i < guarded.size(); ++i) {
+    if (i >= 8 && i < 8 + prefix.size()) {
+      continue;
+    }
+    require(guarded[i] == 0xa5, "truncated read wrote outside prefix");
+  }
+}
+
+void test_concurrent_response_lanes() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  constexpr int kFirstId = 200;
+  constexpr int kSecondId = 202;
+  std::vector<unsigned char> first(1024 * 1024);
+  std::vector<unsigned char> second(1024 * 1024);
+  for (size_t i = 0; i < first.size(); ++i) {
+    first[i] = static_cast<unsigned char>(i & 0xff);
+    second[i] = static_cast<unsigned char>((i * 17 + 3) & 0xff);
+  }
+  std::vector<unsigned char> received_first(first.size());
+  std::vector<unsigned char> received_second(second.size());
+
+  pthread_t dispatcher = {};
+  require(pthread_create(&dispatcher, nullptr, _rpc_read_id_dispatch,
+                         &pair.client) == 0,
+          "response dispatcher start failed");
+  pair.client.rpc_thread = dispatcher;
+  int first_result = -1;
+  int second_result = -1;
+  std::thread first_reader([&] {
+    if (rpc_read_start(&pair.client, kFirstId) == 0 &&
+        rpc_read(&pair.client, received_first.data(), received_first.size()) ==
+            static_cast<int>(received_first.size())) {
+      first_result = rpc_read_end(&pair.client);
+    }
+  });
+  std::thread second_reader([&] {
+    if (rpc_read_start(&pair.client, kSecondId) == 0 &&
+        rpc_read(&pair.client, received_second.data(),
+                 received_second.size()) ==
+            static_cast<int>(received_second.size())) {
+      second_result = rpc_read_end(&pair.client);
+    }
+  });
+
+  const rpc_http2_read_stats before = read_stats(&pair.client);
+  pair.server.read_lane_id = 2;
+  require(rpc_write_start_response(&pair.server, kSecondId) == 0,
+          "second response start failed");
+  require(rpc_write(&pair.server, second.data(), second.size()) == 0,
+          "second response payload failed");
+  require(rpc_write_end(&pair.server) == kSecondId,
+          "second response end failed");
+  pair.server.read_lane_id = 1;
+  require(rpc_write_start_response(&pair.server, kFirstId) == 0,
+          "first response start failed");
+  require(rpc_write(&pair.server, first.data(), first.size()) == 0,
+          "first response payload failed");
+  require(rpc_write_end(&pair.server) == kFirstId, "first response end failed");
+
+  first_reader.join();
+  second_reader.join();
+  require(first_result == kFirstId && second_result == kSecondId,
+          "concurrent response id mismatch");
+  require(received_first == first && received_second == second,
+          "concurrent response payload mismatch");
+  const rpc_http2_read_stats after = read_stats(&pair.client);
+  require(after.direct_bytes > before.direct_bytes,
+          "concurrent responses did not use direct receive");
+  require(after.peak_staged_bytes <= 64 * 1024,
+          "concurrent response read-ahead was not bounded");
+
+  shutdown(pair.client.connfd, SHUT_RDWR);
+  pthread_join(dispatcher, nullptr);
+  pair.client.rpc_thread = 0;
 }
 
 void exchange_settings(h2_pair *pair) {
@@ -293,6 +450,7 @@ void test_rpc_lz4_payload_round_trip() {
   std::string received_prefix(prefix.size(), '\0');
   std::string received_suffix(suffix.size(), '\0');
   std::vector<char> received(payload.size());
+  const rpc_http2_read_stats before = read_stats(&pair.server);
   std::thread reader([&] {
     read_rpc_prefix(&pair.server);
     require(pair.server.read_id == 23, "lz4 payload request id mismatch");
@@ -326,6 +484,9 @@ void test_rpc_lz4_payload_round_trip() {
   require(received_prefix == prefix, "lz4 payload prefix mismatch");
   require(received == payload, "lz4 payload payload mismatch");
   require(received_suffix == suffix, "lz4 payload suffix mismatch");
+  const rpc_http2_read_stats after = read_stats(&pair.server);
+  require(after.direct_bytes > before.direct_bytes,
+          "lz4 payload did not use direct receive");
 }
 
 } // namespace
@@ -336,6 +497,10 @@ int main() {
   test_client_to_server();
   test_server_to_client_after_request_headers();
   test_fragmented_iovec();
+  test_fragmented_frames_direct();
+  test_partial_read_stages_only_overflow();
+  test_truncated_read_clears_direct_destination();
+  test_concurrent_response_lanes();
   test_large_payload();
   test_framed_payload_round_trip();
   std::cout << "h2_test: PASS" << std::endl;

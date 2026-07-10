@@ -37,6 +37,10 @@ struct h2_transport {
   int response_status = 0;
   nghttp2_session *session = nullptr;
   std::deque<h2_buffer> local_out;
+  unsigned char *read_destination = nullptr;
+  size_t read_remaining = 0;
+  rpc_http2_read_stats read_stats = {};
+  uint64_t staged_bytes = 0;
   // Reusable scratch holding the one LZ4-framed payload block currently in
   // flight (see h2_materialize_block). Writes are serialized per connection,
   // so a single buffer suffices and memory stays bounded by one block.
@@ -73,14 +77,31 @@ struct h2_write_source {
   }
 };
 
-void queue_bytes(std::deque<h2_buffer> &queue, const unsigned char *data,
-                 size_t len) {
+void receive_bytes(h2_transport *transport, const unsigned char *data,
+                   size_t len) {
+  if (len == 0) {
+    return;
+  }
+  size_t direct = std::min(len, transport->read_remaining);
+  if (direct != 0) {
+    memcpy(transport->read_destination, data, direct);
+    transport->read_destination += direct;
+    transport->read_remaining -= direct;
+    transport->read_stats.direct_bytes += direct;
+    data += direct;
+    len -= direct;
+  }
   if (len == 0) {
     return;
   }
   h2_buffer buffer;
   buffer.data.assign(data, data + len);
-  queue.push_back(std::move(buffer));
+  transport->local_out.push_back(std::move(buffer));
+  transport->read_stats.staged_bytes += len;
+  ++transport->read_stats.staged_buffers;
+  transport->staged_bytes += len;
+  transport->read_stats.peak_staged_bytes = std::max(
+      transport->read_stats.peak_staged_bytes, transport->staged_bytes);
 }
 
 // Maximum buffers per vectored send. Frames carry far fewer iovecs than this
@@ -299,11 +320,14 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
   return 0;
 }
 
-int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t, int32_t,
-                                   const uint8_t *data, size_t len,
-                                   void *user_data) {
+int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
+                                   int32_t stream_id, const uint8_t *data,
+                                   size_t len, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  queue_bytes(transport->local_out, data, len);
+  if (stream_id != transport->stream_id) {
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  receive_bytes(transport, data, len);
   return 0;
 }
 
@@ -417,7 +441,12 @@ int h2_flush_session(h2_transport *transport) {
   return result;
 }
 
-int h2_read_from_net(h2_transport *transport) {
+int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
+                     size_t read_capacity, size_t *direct_bytes) {
+  if (direct_bytes == nullptr) {
+    return -1;
+  }
+  *direct_bytes = 0;
   unsigned char buffer[64 * 1024];
   ssize_t n = 0;
 #ifdef LUPINE_TLS_OPENSSL
@@ -448,16 +477,28 @@ int h2_read_from_net(h2_transport *transport) {
 
   size_t offset = 0;
   pthread_mutex_lock(&transport->session_mutex);
+  if (transport->read_destination != nullptr) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return -1;
+  }
+  transport->read_destination = read_destination;
+  transport->read_remaining = read_capacity;
+  int result = 0;
   while (offset < static_cast<size_t>(n)) {
     ssize_t consumed = nghttp2_session_mem_recv(
         transport->session, buffer + offset, static_cast<size_t>(n) - offset);
     if (consumed <= 0) {
-      pthread_mutex_unlock(&transport->session_mutex);
-      return -1;
+      result = -1;
+      break;
     }
     offset += static_cast<size_t>(consumed);
   }
-  int result = h2_flush_session_locked(transport);
+  if (result == 0) {
+    result = h2_flush_session_locked(transport);
+  }
+  *direct_bytes = read_capacity - transport->read_remaining;
+  transport->read_destination = nullptr;
+  transport->read_remaining = 0;
   pthread_mutex_unlock(&transport->session_mutex);
   return result;
 }
@@ -554,6 +595,8 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
       memcpy(out + copied, front.data.data() + front.offset, chunk);
       front.offset += chunk;
       copied += chunk;
+      transport->read_stats.staged_read_bytes += chunk;
+      transport->staged_bytes -= chunk;
       if (front.offset == front.data.size()) {
         transport->local_out.pop_front();
       }
@@ -561,9 +604,14 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
     if (copied == size) {
       return static_cast<int>(size);
     }
-    if ((transport->response_status != 0 &&
-         transport->response_status != 200) ||
-        h2_read_from_net(transport) < 0) {
+    if (transport->response_status != 0 && transport->response_status != 200) {
+      return -1;
+    }
+    size_t direct_bytes = 0;
+    int read_result =
+        h2_read_from_net(transport, out + copied, size - copied, &direct_bytes);
+    copied += direct_bytes;
+    if (read_result < 0) {
       return -1;
     }
   }
@@ -611,6 +659,15 @@ int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
 int rpc_http2_compress_lz4(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   return transport != nullptr && transport->compress_lz4 ? 1 : 0;
+}
+
+int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats) {
+  if (conn == nullptr || conn->http2 == nullptr || stats == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  *stats = transport->read_stats;
+  return 0;
 }
 
 int rpc_http2_client_init(conn_t *conn) { return h2_init_direct(conn, false); }
