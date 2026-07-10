@@ -75,6 +75,7 @@ extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);
 extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);
 extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);
 extern "C" void lupine_invalidate_current_context_cache();
+extern "C" void lupine_invalidate_kernel_param_layout_cache();
 extern "C" CUresult
 lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
                                          int *active);
@@ -460,6 +461,8 @@ CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
           route, "cuDevicePrimaryCtxRelease_v2", &return_value, dev)) {
     if (return_value == CUDA_SUCCESS)
       lupine_invalidate_primary_context_state(dev);
+    if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -472,6 +475,8 @@ CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_primary_context_state(dev);
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_kernel_param_layout_cache();
   return return_value;
 }
 
@@ -512,6 +517,8 @@ CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
           route, "cuDevicePrimaryCtxReset_v2", &return_value, dev)) {
     if (return_value == CUDA_SUCCESS)
       lupine_invalidate_primary_context_state(dev);
+    if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -524,6 +531,8 @@ CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_primary_context_state(dev);
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_kernel_param_layout_cache();
   return return_value;
 }
 
@@ -535,6 +544,8 @@ CUresult cuCtxDestroy_v2(CUcontext ctx) {
                                                   &return_value, ctx)) {
     if (return_value == CUDA_SUCCESS)
       lupine_invalidate_current_context_cache();
+    if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -547,6 +558,8 @@ CUresult cuCtxDestroy_v2(CUcontext ctx) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_current_context_cache();
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_kernel_param_layout_cache();
   return return_value;
 }
 
@@ -767,6 +780,8 @@ CUresult cuCtxDetach(CUcontext ctx) {
   using real_fn_t = CUresult (*)(CUcontext);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxDetach",
                                                   &return_value, ctx)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -776,6 +791,8 @@ CUresult cuCtxDetach(CUcontext ctx) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_kernel_param_layout_cache();
   return return_value;
 }
 
@@ -823,6 +840,8 @@ CUresult cuModuleUnload(CUmodule hmod) {
   using real_fn_t = CUresult (*)(CUmodule);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuModuleUnload",
                                                   &return_value, hmod)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -833,6 +852,8 @@ CUresult cuModuleUnload(CUmodule hmod) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_kernel_param_layout_cache();
   return return_value;
 }
 
@@ -1019,6 +1040,8 @@ CUresult cuLibraryUnload(CUlibrary library) {
   using real_fn_t = CUresult (*)(CUlibrary);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuLibraryUnload",
                                                   &return_value, library)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_kernel_param_layout_cache();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1029,6 +1052,8 @@ CUresult cuLibraryUnload(CUlibrary library) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_kernel_param_layout_cache();
   return return_value;
 }
 

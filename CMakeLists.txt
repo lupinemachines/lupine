@@ -56,6 +56,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
@@ -79,6 +80,7 @@ set(NVML_CLIENT_SOURCES
 )
 
 set(CLIENT_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
 )
@@ -144,6 +146,7 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
     )
     target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
+
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
     add_test(

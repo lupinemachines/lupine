@@ -93,6 +93,15 @@ MANUAL_REMAPPINGS = [
     ("cuMemAllocFromPoolAsync_ptsz", "cuMemAllocFromPoolAsync"),
 ]
 
+KERNEL_PARAM_LAYOUT_INVALIDATORS = {
+    "cuCtxDestroy_v2",
+    "cuCtxDetach",
+    "cuDevicePrimaryCtxRelease_v2",
+    "cuDevicePrimaryCtxReset_v2",
+    "cuLibraryUnload",
+    "cuModuleUnload",
+}
+
 MANUAL_REMAPPING_GUARDS = {
     "cuGraphExecUpdate": "CUDA_VERSION >= 12000",
 }
@@ -1454,6 +1463,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
     if function.name.format() == "cuCtxDestroy_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
+    if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_kernel_param_layout_cache();\n")
     if function.name.format() == "cuModuleGetFunction":
         f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) lupine_record_module_function(*hfunc, hmod, name, route);\n")
     if function.name.format() == "cuLibraryGetKernel":
@@ -1733,6 +1744,7 @@ def main():
             'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
+            'extern "C" void lupine_invalidate_kernel_param_layout_cache();\n'
             'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
             'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
             'extern "C" void lupine_note_primary_context_flags(CUdevice dev, unsigned int flags);\n'

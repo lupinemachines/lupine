@@ -48,6 +48,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "cache.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
@@ -105,30 +106,6 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
 static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
     static_cast<CUmemLocationType>(2);
 #endif
-
-struct lupine_kernel_param_layout {
-  uint32_t count = 0;
-  size_t offsets[64] = {};
-  size_t sizes[64] = {};
-};
-
-struct lupine_kernel_param_layout_key {
-  int route_id = -2;
-  CUfunction function = nullptr;
-
-  bool operator==(const lupine_kernel_param_layout_key &other) const {
-    return route_id == other.route_id && function == other.function;
-  }
-};
-
-struct lupine_kernel_param_layout_key_hash {
-  size_t operator()(const lupine_kernel_param_layout_key &key) const {
-    size_t hash = std::hash<int>{}(key.route_id);
-    hash ^= std::hash<uintptr_t>{}(reinterpret_cast<uintptr_t>(key.function)) +
-            0x9e3779b9 + (hash << 6) + (hash >> 2);
-    return hash;
-  }
-};
 
 struct lupine_private_node_mapping {
   CUfunction server_function = nullptr;
@@ -239,22 +216,6 @@ lupine_private_node_map() {
 static std::unordered_map<CUfunction, CUfunction> &lupine_host_function_map() {
   static std::unordered_map<CUfunction, CUfunction> mappings;
   return mappings;
-}
-
-static std::unordered_map<lupine_kernel_param_layout_key,
-                          lupine_kernel_param_layout,
-                          lupine_kernel_param_layout_key_hash> &
-lupine_kernel_param_layout_cache() {
-  static std::unordered_map<lupine_kernel_param_layout_key,
-                            lupine_kernel_param_layout,
-                            lupine_kernel_param_layout_key_hash>
-      cache;
-  return cache;
-}
-
-static std::mutex &lupine_kernel_param_layout_cache_mutex() {
-  static std::mutex mutex;
-  return mutex;
 }
 
 static std::vector<CUmodule> &lupine_loaded_modules() {
@@ -5509,10 +5470,7 @@ lupine_fetch_kernel_param_layout(CUfunction f,
 }
 
 extern "C" void lupine_invalidate_kernel_param_layout_cache() {
-  {
-    std::lock_guard<std::mutex> lock(lupine_kernel_param_layout_cache_mutex());
-    lupine_kernel_param_layout_cache().clear();
-  }
+  lupine_kernel_param_layout_cache_invalidate();
   {
     std::lock_guard<std::mutex> lock(lupine_kernel_function_cache_mutex());
     lupine_kernel_function_cache().clear();
@@ -5531,21 +5489,16 @@ lupine_get_kernel_param_layout_cached(CUfunction f,
   }
   f = lupine_translate_private_function(f);
   lupine_route route = lupine_route_for_function(f);
-  lupine_kernel_param_layout_key key{lupine_route_identity(route), f};
-  {
-    std::lock_guard<std::mutex> lock(lupine_kernel_param_layout_cache_mutex());
-    auto it = lupine_kernel_param_layout_cache().find(key);
-    if (it != lupine_kernel_param_layout_cache().end()) {
-      *layout = it->second;
-      return CUDA_SUCCESS;
-    }
+  uint64_t epoch = 0;
+  int route_id = lupine_route_identity(route);
+  if (lupine_kernel_param_layout_cache_lookup(route_id, f, layout, &epoch)) {
+    return CUDA_SUCCESS;
   }
 
   lupine_kernel_param_layout fetched = {};
   CUresult result = lupine_fetch_kernel_param_layout(f, &fetched);
   if (result == CUDA_SUCCESS) {
-    std::lock_guard<std::mutex> lock(lupine_kernel_param_layout_cache_mutex());
-    lupine_kernel_param_layout_cache()[key] = fetched;
+    lupine_kernel_param_layout_cache_insert(route_id, f, fetched, epoch);
     *layout = fetched;
   }
   return result;
