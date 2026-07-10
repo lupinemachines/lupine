@@ -34,7 +34,13 @@ jobs:
           ../.venv-codegen/bin/python ./codegen.py
 
       - name: Format generated C++
-        run: clang-format -i codegen/gen_client.cpp codegen/gen_server.cpp
+        run: |
+          clang-format -i \
+            codegen/gen_client.cpp \
+            codegen/gen_nvml_client.inc \
+            codegen/gen_nvml_server.h \
+            codegen/gen_nvml_server.inc \
+            codegen/gen_server.cpp
 
       - name: Verify generated files are current
         run: git diff --exit-code -- codegen

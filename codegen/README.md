@@ -21,6 +21,13 @@ owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
 the routing key is not the first matching parameter.
 
+NVML wrappers use the same mechanism. A by-value `nvmlDevice_t` parameter
+infers `NVML_DEVICE` routing: the generated client resolves its owning server
+and substitutes the remote handle before marshalling the request. Device lookup
+APIs without an input handle use `@routingkey ALL` together with
+`@recordowner NVML_DEVICE <output>` to search every server and translate the
+returned remote handle back to the client's virtual device handle.
+
 Generated wrappers can record ownership for handles returned by an API with
 `@recordowner <kind> <param>`. Supported owner kinds are `CONTEXT`, `MODULE`,
 `FUNCTION`, `STREAM`, `EVENT`, `MEMORY_POOL`, `GRAPH`, `GRAPH_NODE`,

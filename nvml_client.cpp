@@ -375,6 +375,51 @@ nvmlReturn_t ensure_devices() {
   return NVML_SUCCESS;
 }
 
+template <typename Lookup>
+nvmlReturn_t lookup_device_on_all_connections(nvmlDevice_t *device,
+                                              Lookup &&lookup) {
+  if (device == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+
+  nvmlReturn_t result = ensure_devices();
+  if (result != NVML_SUCCESS) {
+    return result;
+  }
+
+  nvmlReturn_t first_error = NVML_ERROR_NOT_FOUND;
+  for (int i = 0; i < nconns; ++i) {
+    nvmlDevice_t remote = nullptr;
+    result = lookup(&conns[i], &remote);
+    if (result != NVML_SUCCESS) {
+      if (first_error == NVML_ERROR_NOT_FOUND &&
+          result != NVML_ERROR_NOT_FOUND) {
+        first_error = result;
+      }
+      continue;
+    }
+
+    auto mapped = std::find_if(
+        devices.begin(), devices.end(), [&](const auto &candidate) {
+          return candidate.conn_index == static_cast<unsigned int>(i) &&
+                 candidate.remote_device == remote;
+        });
+    if (mapped == devices.end()) {
+      // The server returned a handle that was not part of the device table
+      // built from nvmlDeviceGetCount/GetHandleByIndex. Never expose that raw
+      // process-local pointer to the caller.
+      if (first_error == NVML_ERROR_NOT_FOUND) {
+        first_error = rpc_error();
+      }
+      continue;
+    }
+
+    *device = reinterpret_cast<nvmlDevice_t>(&*mapped);
+    return NVML_SUCCESS;
+  }
+  return first_error;
+}
+
 conn_t *connection_for_device(nvmlDevice_t *device) {
   if (device == nullptr || ensure_devices() != NVML_SUCCESS) {
     return nullptr;

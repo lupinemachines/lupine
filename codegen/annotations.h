@@ -13,14 +13,23 @@
 #include <nvml.h>
 #endif
 
+typedef struct {
+  unsigned int version;
+  nvmlTemperatureSensors_t sensorType;
+  int temperature;
+} lupine_nvmlTemperature_t;
+
 /**
+ * @disabled client - manually initialized on every server connection
  */
 nvmlReturn_t nvmlInit_v2();
 /**
+ * @disabled client - manually initialized on every server connection
  * @param flags SEND_ONLY
  */
 nvmlReturn_t nvmlInitWithFlags(unsigned int flags);
 /**
+ * @disabled client - manually shut down on every server connection
  */
 nvmlReturn_t nvmlShutdown();
 /**
@@ -104,6 +113,7 @@ nvmlReturn_t nvmlUnitGetDevices(nvmlUnit_t unit, unsigned int *deviceCount,
 nvmlReturn_t nvmlSystemGetHicVersion(unsigned int *hwbcCount,
                                      nvmlHwbcEntry_t *hwbcEntries);
 /**
+ * @disabled client - manual client aggregates every server's device count
  * @param deviceCount RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetCount_v2(unsigned int *deviceCount);
@@ -114,6 +124,7 @@ nvmlReturn_t nvmlDeviceGetCount_v2(unsigned int *deviceCount);
 nvmlReturn_t nvmlDeviceGetAttributes_v2(nvmlDevice_t device,
                                         nvmlDeviceAttributes_t *attributes);
 /**
+ * @disabled client - manual client maps the global ordinal to a virtual device handle
  * @param index SEND_ONLY
  * @param device RECV_ONLY
  */
@@ -126,17 +137,22 @@ nvmlReturn_t nvmlDeviceGetHandleByIndex_v2(unsigned int index,
 nvmlReturn_t nvmlDeviceGetHandleBySerial(const char *serial,
                                          nvmlDevice_t *device);
 /**
+ * @routingkey ALL
+ * @recordowner NVML_DEVICE device
  * @param uuid SEND_ONLY NULL_TERMINATED
  * @param device RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetHandleByUUID(const char *uuid, nvmlDevice_t *device);
 /**
+ * @routingkey ALL
+ * @recordowner NVML_DEVICE device
  * @param pciBusId SEND_ONLY NULL_TERMINATED
  * @param device RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetHandleByPciBusId_v2(const char *pciBusId,
                                               nvmlDevice_t *device);
 /**
+ * @disabled client - manual client appends the server label to disambiguate devices
  * @param device SEND_ONLY
  * @param length SEND_ONLY
  * @param name RECV_ONLY LENGTH:length
@@ -149,6 +165,7 @@ nvmlReturn_t nvmlDeviceGetName(nvmlDevice_t device, char *name,
  */
 nvmlReturn_t nvmlDeviceGetBrand(nvmlDevice_t device, nvmlBrandType_t *type);
 /**
+ * @disabled client - manual client returns the virtual global device index
  * @param device SEND_ONLY
  * @param index RECV_ONLY
  */
@@ -506,6 +523,12 @@ nvmlReturn_t nvmlDeviceGetNumFans(nvmlDevice_t device, unsigned int *numFans);
 nvmlReturn_t nvmlDeviceGetTemperature(nvmlDevice_t device,
                                       nvmlTemperatureSensors_t sensorType,
                                       unsigned int *temp);
+/**
+ * @param device SEND_ONLY
+ * @param temperature SEND_RECV
+ */
+nvmlReturn_t nvmlDeviceGetTemperatureV(
+    nvmlDevice_t device, lupine_nvmlTemperature_t *temperature);
 /**
  * @param device SEND_ONLY
  * @param thresholdType SEND_ONLY
@@ -1167,10 +1190,12 @@ nvmlReturn_t nvmlDeviceGetNvLinkRemoteDeviceType(
     nvmlDevice_t device, unsigned int link,
     nvmlIntNvLinkDeviceType_t *pNvLinkDeviceType);
 /**
+ * @disabled client - manual client tracks the server owning the event set
  * @param set RECV_ONLY
  */
 nvmlReturn_t nvmlEventSetCreate(nvmlEventSet_t *set);
 /**
+ * @disabled client - manual client routes through the device owning the registration
  * @param device SEND_ONLY
  * @param eventTypes SEND_ONLY
  * @param set SEND_ONLY
@@ -1185,6 +1210,7 @@ nvmlReturn_t nvmlDeviceRegisterEvents(nvmlDevice_t device,
 nvmlReturn_t nvmlDeviceGetSupportedEventTypes(nvmlDevice_t device,
                                               unsigned long long *eventTypes);
 /**
+ * @disabled client - manual client tracks the server owning the event set
  * @param set SEND_ONLY
  * @param data RECV_ONLY
  * @param timeoutms SEND_ONLY
@@ -1192,6 +1218,7 @@ nvmlReturn_t nvmlDeviceGetSupportedEventTypes(nvmlDevice_t device,
 nvmlReturn_t nvmlEventSetWait_v2(nvmlEventSet_t set, nvmlEventData_t *data,
                                  unsigned int timeoutms);
 /**
+ * @disabled client - manual client tracks the server owning the event set
  * @param set SEND_ONLY
  */
 nvmlReturn_t nvmlEventSetFree(nvmlEventSet_t set);
