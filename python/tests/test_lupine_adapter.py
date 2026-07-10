@@ -1,6 +1,9 @@
 import importlib
 import os
+import subprocess
 import sys
+import textwrap
+import threading
 import types
 
 import pytest
@@ -361,3 +364,61 @@ def test_sidecar_dispatch_mode_forwards_tensor_ops(monkeypatch):
     assert calls[0]["packet"] == "add"
     assert calls[0]["overload"] == "Tensor"
     assert calls[0]["args"]["__tuple__"][0] == {"__sidecar_tensor__": 1}
+
+
+@pytest.mark.parametrize(
+    "tensor",
+    [
+        pytest.param("float32", id="float32"),
+        pytest.param("int64", id="int64"),
+        pytest.param("bool", id="bool"),
+        pytest.param("complex64", id="complex64"),
+        pytest.param("empty", id="empty"),
+        pytest.param("scalar", id="scalar"),
+    ],
+)
+def test_sidecar_cpu_tensor_round_trip(tensor):
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    values = {
+        "float32": torch.tensor([[1.25, -2.5], [3.0, 4.5]], dtype=torch.float32),
+        "int64": torch.tensor([1, -2, 2**40], dtype=torch.int64),
+        "bool": torch.tensor([[True, False], [False, True]], dtype=torch.bool),
+        "complex64": torch.tensor([1 + 2j, -3 + 0.5j], dtype=torch.complex64),
+        "empty": torch.empty((0, 3), dtype=torch.float32),
+        "scalar": torch.tensor(7.5, dtype=torch.float64),
+    }
+    expected = values[tensor]
+
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-c", textwrap.dedent(sidecar._WORKER)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    session = sidecar.SidecarSession(server="host-a:14833")
+    session._proc = proc
+    session._lock = threading.Lock()
+    try:
+        result = session.forward(torch.ops.aten.clone.default, (expected,), {})
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+    assert result.dtype == expected.dtype
+    assert result.shape == expected.shape
+    assert torch.equal(result, expected)
+
+
+def test_sidecar_cpu_tensor_rejects_noncontiguous_input():
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    session = sidecar.SidecarSession(server="host-a:14833")
+    tensor = torch.arange(12).reshape(3, 4).transpose(0, 1)
+
+    with pytest.raises(sidecar.SidecarError, match="must be contiguous"):
+        session._encode(tensor)

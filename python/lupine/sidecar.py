@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import atexit
+import base64
+import ctypes
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -32,6 +35,70 @@ def _dtype_name(dtype: Any) -> str:
 
 def _dtype_from_name(name: str) -> Any:
     return getattr(torch, name)
+
+
+def _encode_cpu_tensor(tensor: Any) -> dict[str, Any]:
+    if tensor.device.type != "cpu":
+        raise SidecarError(
+            "sidecar arguments must be CPU tensors or SidecarTensor objects, "
+            f"got {tensor.device}"
+        )
+    if tensor.layout != torch.strided:
+        raise SidecarError(
+            f"sidecar CPU tensor arguments require strided layout, got {tensor.layout}"
+        )
+    if tensor.is_quantized:
+        raise SidecarError("quantized CPU tensor arguments are not supported")
+    if not tensor.is_contiguous():
+        raise SidecarError(
+            "sidecar CPU tensor arguments must be contiguous; call contiguous() first"
+        )
+
+    bytes_view = tensor.detach().contiguous().reshape(-1).view(torch.uint8)
+    raw = ctypes.string_at(bytes_view.data_ptr(), bytes_view.numel())
+    return {
+        "__cpu_tensor__": {
+            "shape": list(tensor.shape),
+            "dtype": _dtype_name(tensor.dtype),
+            "layout": "strided",
+            "device": "cpu",
+            "byteorder": sys.byteorder,
+            "data": base64.b64encode(raw).decode("ascii"),
+        }
+    }
+
+
+def _decode_cpu_tensor(payload: Mapping[str, Any]) -> Any:
+    if payload.get("device") != "cpu" or payload.get("layout") != "strided":
+        raise SidecarError("sidecar returned an invalid CPU tensor description")
+    if payload.get("byteorder") != sys.byteorder:
+        raise SidecarError(
+            "sidecar CPU tensor byte order does not match the local process"
+        )
+
+    try:
+        shape = tuple(int(dimension) for dimension in payload["shape"])
+        dtype = _dtype_from_name(payload["dtype"])
+        raw = base64.b64decode(payload["data"], validate=True)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise SidecarError("sidecar returned malformed CPU tensor data") from exc
+    if any(dimension < 0 for dimension in shape):
+        raise SidecarError("sidecar returned a CPU tensor with a negative dimension")
+
+    element_count = math.prod(shape)
+    expected_bytes = element_count * torch.empty((), dtype=dtype).element_size()
+    if len(raw) != expected_bytes:
+        raise SidecarError(
+            "sidecar returned the wrong number of bytes for a CPU tensor: "
+            f"expected {expected_bytes}, got {len(raw)}"
+        )
+    if element_count == 0:
+        return torch.empty(shape, dtype=dtype)
+    return (
+        torch.frombuffer(bytearray(raw), dtype=dtype, count=element_count)
+        .clone()
+        .reshape(shape)
+    )
 
 
 def _normalize_device(device: Any = None) -> str:
@@ -199,7 +266,10 @@ class SidecarDispatchMode(torch.utils._python_dispatch.TorchDispatchMode):
 
 
 _WORKER = r"""
+import base64
+import ctypes
 import json
+import math
 import sys
 import traceback
 
@@ -209,15 +279,53 @@ objects = {}
 next_handle = 1
 
 
+def dtype_name(dtype):
+    return str(dtype).removeprefix("torch.")
+
+
+def encode_cpu_tensor(tensor):
+    bytes_view = tensor.detach().contiguous().reshape(-1).view(torch.uint8)
+    raw = ctypes.string_at(bytes_view.data_ptr(), bytes_view.numel())
+    return {
+        "type": "tensor_data",
+        "shape": list(tensor.shape),
+        "dtype": dtype_name(tensor.dtype),
+        "layout": "strided",
+        "device": "cpu",
+        "byteorder": sys.byteorder,
+        "data": base64.b64encode(raw).decode("ascii"),
+    }
+
+
+def decode_cpu_tensor(payload):
+    if payload.get("device") != "cpu" or payload.get("layout") != "strided":
+        raise ValueError("invalid CPU tensor description")
+    if payload.get("byteorder") != sys.byteorder:
+        raise ValueError("CPU tensor byte order does not match the worker")
+    shape = tuple(int(dimension) for dimension in payload["shape"])
+    if any(dimension < 0 for dimension in shape):
+        raise ValueError("CPU tensor shape contains a negative dimension")
+    dtype = getattr(torch, payload["dtype"])
+    element_count = math.prod(shape)
+    raw = base64.b64decode(payload["data"], validate=True)
+    expected_bytes = element_count * torch.empty((), dtype=dtype).element_size()
+    if len(raw) != expected_bytes:
+        raise ValueError(
+            f"wrong CPU tensor byte count: expected {expected_bytes}, got {len(raw)}"
+        )
+    if element_count == 0:
+        return torch.empty(shape, dtype=dtype)
+    return (
+        torch.frombuffer(bytearray(raw), dtype=dtype, count=element_count)
+        .clone()
+        .reshape(shape)
+    )
+
+
 def store(tensor):
     global next_handle
     if tensor.device.type != "cuda":
-        return {
-            "type": "tensor_data",
-            "shape": list(tensor.shape),
-            "dtype": str(tensor.dtype).removeprefix("torch."),
-            "data": tensor.tolist(),
-        }
+        return encode_cpu_tensor(tensor)
     handle = next_handle
     next_handle += 1
     objects[handle] = tensor
@@ -236,6 +344,8 @@ def decode(value):
         return tuple(decode(item) for item in value["__tuple__"])
     if isinstance(value, dict) and "__sidecar_tensor__" in value:
         return objects[int(value["__sidecar_tensor__"])]
+    if isinstance(value, dict) and "__cpu_tensor__" in value:
+        return decode_cpu_tensor(value["__cpu_tensor__"])
     if isinstance(value, dict) and "__dtype__" in value:
         return getattr(torch, value["__dtype__"])
     if isinstance(value, dict) and "__device__" in value:
@@ -495,6 +605,8 @@ class SidecarSession:
     def _encode(self, value: Any) -> Any:
         if isinstance(value, SidecarTensor):
             return {"__sidecar_tensor__": value._lupine_handle}
+        if isinstance(value, torch.Tensor):
+            return _encode_cpu_tensor(value)
         if isinstance(value, torch.dtype):
             return {"__dtype__": _dtype_name(value)}
         if isinstance(value, torch.device):
@@ -519,7 +631,7 @@ class SidecarSession:
         if kind == "tensor":
             return self._wrap(value)
         if kind == "tensor_data":
-            return torch.tensor(value["data"], dtype=_dtype_from_name(value["dtype"]))
+            return _decode_cpu_tensor(value)
         if kind == "tuple":
             return tuple(self._decode(item) for item in value["items"])
         if kind == "list":
