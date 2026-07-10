@@ -14,6 +14,8 @@
 
 #include "gen_server.h"
 
+#include "manual_server.h"
+
 #include <cstdio>
 
 #include "rpc.h"
@@ -467,8 +469,11 @@ int handle_cuDevicePrimaryCtxRetain(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_server_begin_lifecycle_transaction(conn);
   lupine_intercept_result = cuDevicePrimaryCtxRetain(&pctx, dev);
 
+  lupine_server_note_primary_context(conn, dev, pctx, lupine_intercept_result);
+  lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pctx, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -490,8 +495,13 @@ int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_server_begin_lifecycle_transaction(conn);
+  lupine_server_prepare_primary_context(conn, dev);
   lupine_intercept_result = cuDevicePrimaryCtxRelease_v2(dev);
 
+  lupine_server_finish_primary_context(conn, dev, false,
+                                       lupine_intercept_result);
+  lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -562,8 +572,13 @@ int handle_cuDevicePrimaryCtxReset_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_server_begin_lifecycle_transaction(conn);
+  lupine_server_prepare_primary_context(conn, dev);
   lupine_intercept_result = cuDevicePrimaryCtxReset_v2(dev);
 
+  lupine_server_finish_primary_context(conn, dev, true,
+                                       lupine_intercept_result);
+  lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -584,8 +599,12 @@ int handle_cuCtxDestroy_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_server_begin_lifecycle_transaction(conn);
+  lupine_server_prepare_context_destroy(conn, ctx);
   lupine_intercept_result = cuCtxDestroy_v2(ctx);
 
+  lupine_server_finish_context_destroy(conn, ctx, lupine_intercept_result);
+  lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -955,8 +974,10 @@ int handle_cuCtxAttach(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_server_begin_lifecycle_transaction(conn);
   lupine_intercept_result = cuCtxAttach(&pctx, flags);
 
+  lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pctx, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -978,8 +999,12 @@ int handle_cuCtxDetach(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  lupine_server_begin_lifecycle_transaction(conn);
+  lupine_server_prepare_context_destroy(conn, ctx);
   lupine_intercept_result = cuCtxDetach(ctx);
 
+  lupine_server_finish_context_detach(conn, ctx, lupine_intercept_result);
+  lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)

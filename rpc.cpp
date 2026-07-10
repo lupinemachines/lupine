@@ -131,6 +131,8 @@ uint64_t rpc_thread_lane_id(conn_t *conn) {
 
 } // namespace
 
+void rpc_set_thread_lane_id(uint64_t lane_id) { rpc_tls_lane.id = lane_id; }
+
 void *_rpc_read_id_dispatch(void *p) {
   conn_t *conn = (conn_t *)p;
 
@@ -179,8 +181,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
     return -1;
   }
 
-  while (!conn->closed &&
-         (conn->read_id < 2 || conn->read_id % 2 != parity)) {
+  while (!conn->closed && (conn->read_id < 2 || conn->read_id % 2 != parity)) {
     pthread_cond_wait(&conn->read_cond, &conn->read_mutex);
   }
 
@@ -198,8 +199,11 @@ int rpc_dispatch(conn_t *conn, int parity) {
     pthread_mutex_unlock(&conn->read_mutex);
     return -1;
   }
+  uint64_t lane_id = conn->read_lane_id;
+  int op = conn->read_op;
   pthread_mutex_unlock(&conn->read_mutex);
-  return conn->read_op;
+  rpc_set_thread_lane_id(lane_id);
+  return op;
 }
 
 // rpc_read_start waits for a response with a specific request id on the
@@ -227,7 +231,7 @@ int rpc_read_start(conn_t *conn, int write_id) {
   if (rpc_http2_read(conn, &conn->read_lane_id, sizeof(conn->read_lane_id)) !=
           sizeof(conn->read_lane_id) ||
       rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) !=
-              sizeof(conn->read_op) ||
+          sizeof(conn->read_op) ||
       conn->read_op != -1) {
     conn->closed = 1;
     pthread_cond_broadcast(&conn->read_cond);
@@ -340,7 +344,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
   }
   conn->write_id = read_id;
   conn->write_op = -1;
-  conn->write_lane_id = conn->read_lane_id;
+  conn->write_lane_id = rpc_thread_lane_id(conn);
   return 0;
 }
 
@@ -689,8 +693,8 @@ int rpc_write_end(conn_t *conn) {
   int result = -1;
   if (conn->write_queue_count >= 3) {
     conn->write_queue[0] = {{&conn->write_id, sizeof(conn->write_id)}, 0};
-    conn->write_queue[1] = {
-        {&conn->write_lane_id, sizeof(conn->write_lane_id)}, 0};
+    conn->write_queue[1] = {{&conn->write_lane_id, sizeof(conn->write_lane_id)},
+                            0};
     conn->write_queue[2] = {{&conn->write_op, sizeof(conn->write_op)}, 0};
     result = rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
   }

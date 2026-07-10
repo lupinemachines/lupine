@@ -1460,6 +1460,52 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) lupine_record_library_kernel(*pKernel, library, name, route);\n")
 
 
+SERVER_LIFECYCLE_FUNCTIONS = {
+    "cuDevicePrimaryCtxRetain",
+    "cuDevicePrimaryCtxRelease_v2",
+    "cuDevicePrimaryCtxReset_v2",
+    "cuCtxAttach",
+    "cuCtxDestroy_v2",
+    "cuCtxDetach",
+}
+
+
+def write_server_pre_call(f, function: Function):
+    name = function.name.format()
+    if name in SERVER_LIFECYCLE_FUNCTIONS:
+        f.write("    lupine_server_begin_lifecycle_transaction(conn);\n")
+    if name in {"cuDevicePrimaryCtxRelease_v2", "cuDevicePrimaryCtxReset_v2"}:
+        f.write("    lupine_server_prepare_primary_context(conn, dev);\n")
+    if name in {"cuCtxDestroy_v2", "cuCtxDetach"}:
+        f.write("    lupine_server_prepare_context_destroy(conn, ctx);\n")
+
+
+def write_server_post_call(f, function: Function):
+    name = function.name.format()
+    if name == "cuDevicePrimaryCtxRetain":
+        f.write(
+            "    lupine_server_note_primary_context(conn, dev, pctx, lupine_intercept_result);\n"
+        )
+    if name == "cuCtxDestroy_v2":
+        f.write(
+            "    lupine_server_finish_context_destroy(conn, ctx, lupine_intercept_result);\n"
+        )
+    if name == "cuCtxDetach":
+        f.write(
+            "    lupine_server_finish_context_detach(conn, ctx, lupine_intercept_result);\n"
+        )
+    if name == "cuDevicePrimaryCtxRelease_v2":
+        f.write(
+            "    lupine_server_finish_primary_context(conn, dev, false, lupine_intercept_result);\n"
+        )
+    if name == "cuDevicePrimaryCtxReset_v2":
+        f.write(
+            "    lupine_server_finish_primary_context(conn, dev, true, lupine_intercept_result);\n"
+        )
+    if name in SERVER_LIFECYCLE_FUNCTIONS:
+        f.write("    lupine_server_end_lifecycle_transaction(conn);\n")
+
+
 def error_const(return_type: str) -> str:
     if return_type == "nvmlReturn_t":
         return "NVML_ERROR_GPU_IS_LOST"
@@ -2064,6 +2110,7 @@ def main():
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "gen_server.h"\n\n'
+            '#include "manual_server.h"\n\n'
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
@@ -2124,6 +2171,8 @@ def main():
                     if op.parameter.name == param.name:
                         params.append(op.server_reference)
 
+            write_server_pre_call(f, function)
+
             if function.return_type.format() != "void":
                 f.write(
                     "    lupine_intercept_result = {name}({params});\n\n".format(
@@ -2138,6 +2187,8 @@ def main():
                         params=", ".join(params),
                     )
                 )
+
+            write_server_post_call(f, function)
 
             if metadata.async_fire_forget:
                 # Fire-and-forget: no response is sent.

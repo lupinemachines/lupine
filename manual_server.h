@@ -10,6 +10,25 @@ struct lupine_kernel_param_layout;
 CUresult lupine_get_kernel_param_layout(CUfunction f,
                                         lupine_kernel_param_layout *layout);
 
+// Connection setup and context-lifecycle hooks keep retained staging tied to
+// the CUDA context that owns it.
+bool lupine_server_initialize_connection(conn_t *conn);
+void lupine_server_cleanup_connection(conn_t *conn);
+void lupine_server_begin_lifecycle_transaction(conn_t *conn);
+void lupine_server_end_lifecycle_transaction(conn_t *conn);
+void lupine_server_note_primary_context(conn_t *conn, CUdevice device,
+                                        CUcontext context, CUresult result);
+void lupine_server_note_created_context(conn_t *conn, CUcontext context,
+                                        CUresult result);
+void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device);
+void lupine_server_finish_primary_context(conn_t *conn, CUdevice device,
+                                          bool reset, CUresult result);
+void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context);
+void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,
+                                          CUresult result);
+void lupine_server_finish_context_detach(conn_t *conn, CUcontext context,
+                                         CUresult result);
+
 int handle_manual_cuGetExportTableMetadata(conn_t *conn);
 int handle_manual_cuPrivateGetModuleNode(conn_t *conn);
 int handle_manual_cuModuleLoad(conn_t *conn);

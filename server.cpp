@@ -1,6 +1,6 @@
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
-#include <condition_variable>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -236,6 +236,12 @@ void client_handler(lupine_socket_t connfd) {
     LUPINE_LOG_ERROR("Error initializing mutex.");
     return;
   }
+  if (!lupine_server_initialize_connection(&conn)) {
+    LUPINE_LOG_ERROR("Error initializing per-connection staging state.");
+    lupine_socket_close(connfd);
+    rpc_conn_destroy(&conn);
+    return;
+  }
 
   printf("Client connected.\n");
 
@@ -301,9 +307,8 @@ void client_handler(lupine_socket_t connfd) {
             lane->ready = false;
           }
 
-          conn.read_lane_id = lane->id;
-          conn.read_op = op;
-          if (conn.read_id == -1 || op == LUPINE_RPC_TERMINATE_LANE ||
+          rpc_set_thread_lane_id(lane->id);
+          if (op == LUPINE_RPC_TERMINATE_LANE ||
               lupine_handle_rpc_request(&conn, op) < 0) {
             rpc_read_end(&conn);
             return;
@@ -365,6 +370,7 @@ void client_handler(lupine_socket_t connfd) {
     pthread_join(conn.rpc_thread, nullptr);
     conn.rpc_thread = 0;
   }
+  lupine_server_cleanup_connection(&conn);
   rpc_conn_destroy(&conn);
 }
 
