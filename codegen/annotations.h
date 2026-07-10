@@ -2146,12 +2146,14 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev);
  */
 CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @recordowner CONTEXT pctx
  * @param pctx RECV_ONLY
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
@@ -2168,6 +2170,7 @@ CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
                                     int *active);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev);
@@ -2188,6 +2191,7 @@ CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice dev);
 CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
                         int numParams, unsigned int flags, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxDestroy_v2(CUcontext ctx);
@@ -2273,11 +2277,13 @@ CUresult cuCtxResetPersistingL2Cache();
 CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
                               CUexecAffinityType type);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param pctx RECV_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxDetach(CUcontext ctx);
@@ -2654,6 +2660,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
                       size_t ByteCount);
 /**
+ * @disabled - manual client/server pipeline large host-to-device copies
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY

@@ -459,52 +459,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuDevicePrimaryCtxRetain(conn_t *conn) {
-  CUcontext pctx;
-  CUdevice dev;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuDevicePrimaryCtxRetain(&pctx, dev);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pctx, sizeof(CUcontext)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn) {
-  CUdevice dev;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuDevicePrimaryCtxRelease_v2(dev);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuDevicePrimaryCtxSetFlags_v2(conn_t *conn) {
   CUdevice dev;
   unsigned int flags;
@@ -546,50 +500,6 @@ int handle_cuDevicePrimaryCtxGetState(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &active, sizeof(int)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuDevicePrimaryCtxReset_v2(conn_t *conn) {
-  CUdevice dev;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuDevicePrimaryCtxReset_v2(dev);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuCtxDestroy_v2(conn_t *conn) {
-  CUcontext ctx;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuCtxDestroy_v2(ctx);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -938,52 +848,6 @@ int handle_cuCtxGetExecAffinity(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pExecAffinity, sizeof(CUexecAffinityParam)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuCtxAttach(conn_t *conn) {
-  CUcontext pctx;
-  unsigned int flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuCtxAttach(&pctx, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pctx, sizeof(CUcontext)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuCtxDetach(conn_t *conn) {
-  CUcontext ctx;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuCtxDetach(ctx);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2308,43 +2172,6 @@ int handle_cuMemcpyPeer(conn_t *conn) {
 
   return 0;
 ERROR_0:
-  return -1;
-}
-
-int handle_cuMemcpyHtoD_v2(conn_t *conn) {
-  CUdeviceptr dstDevice;
-  size_t ByteCount;
-  void *srcHost = nullptr;
-  size_t srcHost_size;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  srcHost_size = ByteCount;
-  srcHost = (void *)malloc(srcHost_size);
-  if (srcHost_size != 0 && srcHost == nullptr)
-    goto ERROR_0;
-  if ((srcHost_size != 0 &&
-       rpc_read_payload(conn, srcHost, srcHost_size) < 0) ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuMemcpyHtoD_v2(
-      dstDevice, (ByteCount == 0 ? nullptr : srcHost), ByteCount);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  free((void *)srcHost);
-  return 0;
-ERROR_0:
-  free((void *)srcHost);
   return -1;
 }
 
@@ -8556,12 +8383,8 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuFlushGPUDirectRDMAWrites, handle_cuFlushGPUDirectRDMAWrites},
     {RPC_cuDeviceGetProperties, handle_cuDeviceGetProperties},
     {RPC_cuDeviceComputeCapability, handle_cuDeviceComputeCapability},
-    {RPC_cuDevicePrimaryCtxRetain, handle_cuDevicePrimaryCtxRetain},
-    {RPC_cuDevicePrimaryCtxRelease_v2, handle_cuDevicePrimaryCtxRelease_v2},
     {RPC_cuDevicePrimaryCtxSetFlags_v2, handle_cuDevicePrimaryCtxSetFlags_v2},
     {RPC_cuDevicePrimaryCtxGetState, handle_cuDevicePrimaryCtxGetState},
-    {RPC_cuDevicePrimaryCtxReset_v2, handle_cuDevicePrimaryCtxReset_v2},
-    {RPC_cuCtxDestroy_v2, handle_cuCtxDestroy_v2},
     {RPC_cuCtxPushCurrent_v2, handle_cuCtxPushCurrent_v2},
     {RPC_cuCtxPopCurrent_v2, handle_cuCtxPopCurrent_v2},
     {RPC_cuCtxSetCurrent, handle_cuCtxSetCurrent},
@@ -8577,8 +8400,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuCtxGetStreamPriorityRange, handle_cuCtxGetStreamPriorityRange},
     {RPC_cuCtxResetPersistingL2Cache, handle_cuCtxResetPersistingL2Cache},
     {RPC_cuCtxGetExecAffinity, handle_cuCtxGetExecAffinity},
-    {RPC_cuCtxAttach, handle_cuCtxAttach},
-    {RPC_cuCtxDetach, handle_cuCtxDetach},
     {RPC_cuCtxGetSharedMemConfig, handle_cuCtxGetSharedMemConfig},
     {RPC_cuCtxSetSharedMemConfig, handle_cuCtxSetSharedMemConfig},
     {RPC_cuModuleUnload, handle_cuModuleUnload},
@@ -8622,7 +8443,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuIpcCloseMemHandle, handle_cuIpcCloseMemHandle},
     {RPC_cuMemcpy, handle_cuMemcpy},
     {RPC_cuMemcpyPeer, handle_cuMemcpyPeer},
-    {RPC_cuMemcpyHtoD_v2, handle_cuMemcpyHtoD_v2},
     {RPC_cuMemcpyDtoD_v2, handle_cuMemcpyDtoD_v2},
     {RPC_cuMemcpyDtoA_v2, handle_cuMemcpyDtoA_v2},
     {RPC_cuMemcpyAtoD_v2, handle_cuMemcpyAtoD_v2},

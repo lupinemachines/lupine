@@ -4830,65 +4830,6 @@ lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_safe(
       numBlocks, func, blockSize, dynamicSMemSize, flags);
 }
 
-extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
-                                    size_t ByteCount) {
-  lupine_route route = lupine_route_for_deviceptr(srcDevice);
-  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  using real_fn_t = CUresult (*)(void *, CUdeviceptr, size_t);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuMemcpyDtoH_v2",
-                                                  &return_value, dstHost,
-                                                  srcDevice, ByteCount)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
-      rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  int request_id = rpc_write_end(conn);
-  if (request_id < 0 || rpc_read_start(conn, request_id) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-
-  lupine_prepare_host_range_write(dstHost, ByteCount);
-  auto *copy_dst = static_cast<unsigned char *>(dstHost);
-  size_t offset = 0;
-  do {
-    size_t chunk =
-        std::min(ByteCount - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
-    if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-        (return_value == CUDA_SUCCESS && chunk != 0 &&
-         rpc_read_payload(conn, copy_dst + offset, chunk) < 0)) {
-      rpc_read_end(conn);
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    bool final_chunk =
-        return_value != CUDA_SUCCESS || offset + chunk == ByteCount;
-    if (rpc_read_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    if (return_value != CUDA_SUCCESS) {
-      return return_value;
-    }
-    offset += chunk;
-    if (!final_chunk && rpc_read_start(conn, request_id) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  } while (offset < ByteCount);
-  lupine_mark_host_range_clean(dstHost, ByteCount);
-  return return_value;
-}
-
-#ifdef cuMemcpyDtoH
-#undef cuMemcpyDtoH
-#endif
-extern "C" CUresult cuMemcpyDtoH(void *dstHost, CUdeviceptr srcDevice,
-                                 size_t ByteCount) {
-  return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
-}
-
 extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
                                     size_t srcOffset, size_t ByteCount) {
   lupine_route route = lupine_route_for_default();
@@ -4947,44 +4888,6 @@ extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
 extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
                                  size_t srcOffset, size_t ByteCount) {
   return cuMemcpyAtoH_v2(dstHost, srcArray, srcOffset, ByteCount);
-}
-
-extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
-                                         const void *srcHost, size_t ByteCount,
-                                         CUstream hStream) {
-  lupine_route route = lupine_route_for_deviceptr(dstDevice);
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUdeviceptr, const void *, size_t, CUstream);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemcpyHtoDAsync_v2");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(dstDevice, srcHost, ByteCount, hStream);
-  }
-  if (ByteCount != 0 && srcHost == nullptr) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
-#ifdef cuMemcpyHtoDAsync
-#undef cuMemcpyHtoDAsync
-#endif
-extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
-                                      const void *srcHost, size_t ByteCount,
-                                      CUstream hStream) {
-  return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
 }
 
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
@@ -8282,6 +8185,8 @@ lupine_manual_function_map() {
       {"cuArray3DCreate_v2", (void *)cuArray3DCreate_v2},
       {"cuArray3DGetDescriptor", (void *)cuArray3DGetDescriptor_v2},
       {"cuArray3DGetDescriptor_v2", (void *)cuArray3DGetDescriptor_v2},
+      {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
+      {"cuMemcpyHtoD_v2", (void *)cuMemcpyHtoD_v2},
       {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
       {"cuMemcpyDtoH_v2", (void *)cuMemcpyDtoH_v2},
       {"cuMemcpyDtoA", (void *)cuMemcpyDtoA_v2},

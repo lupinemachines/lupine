@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -42,6 +43,7 @@
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "manual_server.h"
+#include "copy_pipeline.h"
 #include "rpc.h"
 
 #if CUDA_VERSION < 12020
@@ -64,17 +66,6 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
-static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
-
-// cuMemAllocHost / cuMemFreeHost page-lock and unlock host memory on every
-// call, which costs on the order of a millisecond even for a tiny transfer and
-// dominates the latency of small, frequent copies. The server forks one
-// process per connection and runs handlers serially on that connection, so a
-// single process-global staging buffer can be reused across memcpy calls.
-// Buffers up to LUPINE_STAGING_RETAIN_BYTES are kept page-locked and reused;
-// larger requests fall back to a per-call allocation (whose cost is amortized
-// over the large transfer) so a process never pins a huge buffer indefinitely.
-static constexpr size_t LUPINE_STAGING_RETAIN_BYTES = 8 * 1024 * 1024;
 
 static std::unordered_map<CUlibrary, std::vector<unsigned char>> &
 lupine_preserved_library_images() {
@@ -980,7 +971,10 @@ int handle_manual_cuCtxCreate_v2(conn_t *conn) {
     return -1;
   }
 
+  lupine_server_begin_lifecycle_transaction(conn);
   result = cuCtxCreate_v2(&ctx, flags, dev);
+  lupine_server_note_created_context(conn, ctx, result);
+  lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -3183,56 +3177,6 @@ int handle_manual_cuGraphDestroy(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
-  CUdeviceptr dstDevice = 0;
-  size_t byteCount = 0;
-  CUresult result = CUDA_SUCCESS;
-
-  if (rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
-    return -1;
-  }
-
-  int framed = lupine_payload_framed(conn, byteCount);
-  size_t chunk_bytes = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount);
-  lupine_staging staging = lupine_acquire_staging(chunk_bytes);
-  void *host = staging.ptr;
-  if (chunk_bytes != 0 && host == nullptr) {
-    result = CUDA_ERROR_OUT_OF_MEMORY;
-    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
-      return -1;
-    }
-  }
-
-  size_t offset = 0;
-  while (result == CUDA_SUCCESS && offset < byteCount) {
-    size_t chunk = std::min(chunk_bytes, byteCount - offset);
-    if (rpc_read_payload_part(conn, framed, host, chunk) < 0) {
-      lupine_release_staging(staging);
-      return -1;
-    }
-    result = cuMemcpyHtoD_v2(dstDevice + offset, host, chunk);
-    offset += chunk;
-    if (result != CUDA_SUCCESS &&
-        rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
-      lupine_release_staging(staging);
-      return -1;
-    }
-  }
-
-  lupine_release_staging(staging);
-
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   size_t byteCount = 0;
@@ -3249,10 +3193,16 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
 
   int framed = lupine_payload_framed(conn, byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+  CUresult capture_query_result = CUDA_SUCCESS;
   if (stream != nullptr) {
-    cuStreamIsCapturing(stream, &capture_status);
+    capture_query_result = cuStreamIsCapturing(stream, &capture_status);
   }
-  if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
+  if (capture_query_result != CUDA_SUCCESS) {
+    result = capture_query_result;
+    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
+      return -1;
+    }
+  } else if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
     auto &stream_resources = lupine_stream_capture_resource_map();
     auto &resources = stream_resources[stream];
     if (!resources) {
@@ -3320,7 +3270,8 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     return -1;
   }
 
-  if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE &&
+  if (capture_query_result == CUDA_SUCCESS &&
+      capture_status != CU_STREAM_CAPTURE_STATUS_NONE &&
       result != CUDA_ERROR_OUT_OF_MEMORY) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, capture_host, byteCount, stream);
   }
@@ -3360,61 +3311,6 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
   }
   return 0;
 }
-
-int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
-  CUdeviceptr srcDevice = 0;
-  size_t byteCount = 0;
-  int request_id = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  std::vector<unsigned char> dstHost;
-
-  if (rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
-    return -1;
-  }
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  size_t staging_size =
-      std::min(byteCount, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
-  if (staging_size != 0) {
-    try {
-      dstHost.resize(staging_size);
-    } catch (...) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &result, sizeof(result)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        return -1;
-      }
-      return 0;
-    }
-  }
-
-  size_t offset = 0;
-  do {
-    size_t chunk = std::min(byteCount - offset, staging_size);
-    void *chunk_dst = chunk == 0 ? nullptr : dstHost.data();
-    result = cuMemcpyDtoH_v2(chunk_dst, srcDevice + offset, chunk);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS && chunk != 0 &&
-         rpc_write_payload(conn, dstHost.data(), chunk) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    if (result != CUDA_SUCCESS) {
-      return 0;
-    }
-    offset += chunk;
-  } while (offset < byteCount);
-
-  return 0;
-}
-
 int handle_manual_cuMemcpyAtoH_v2(conn_t *conn) {
   CUarray srcArray = nullptr;
   size_t srcOffset = 0;

@@ -20,6 +20,7 @@
 #include "codegen/gen_server.h"
 #include "lupine_log.h"
 #include "manual_server.h"
+#include "copy_pipeline.h"
 #include "rpc.h"
 
 #define DEFAULT_PORT 14833
@@ -50,6 +51,17 @@ lupine_manual_handlers() {
       {RPC_cuLibraryLoadData,
        {handle_manual_cuLibraryLoadData, "cuLibraryLoadData"}},
       {RPC_cuCtxCreate_v2, {handle_manual_cuCtxCreate_v2, "cuCtxCreate_v2"}},
+      {RPC_cuDevicePrimaryCtxRetain,
+       {handle_manual_cuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain"}},
+      {RPC_cuDevicePrimaryCtxRelease_v2,
+       {handle_manual_cuDevicePrimaryCtxRelease_v2,
+        "cuDevicePrimaryCtxRelease_v2"}},
+      {RPC_cuDevicePrimaryCtxReset_v2,
+       {handle_manual_cuDevicePrimaryCtxReset_v2,
+        "cuDevicePrimaryCtxReset_v2"}},
+      {RPC_cuCtxAttach, {handle_manual_cuCtxAttach, "cuCtxAttach"}},
+      {RPC_cuCtxDestroy_v2, {handle_manual_cuCtxDestroy_v2, "cuCtxDestroy_v2"}},
+      {RPC_cuCtxDetach, {handle_manual_cuCtxDetach, "cuCtxDetach"}},
       {RPC_cuMemPoolSetAttribute,
        {handle_manual_cuMemPoolSetAttribute, "cuMemPoolSetAttribute"}},
       {RPC_cuMemPoolGetAttribute,
@@ -238,6 +250,12 @@ void client_handler(lupine_socket_t connfd) {
     LUPINE_LOG_ERROR("Error initializing mutex.");
     return;
   }
+  if (!lupine_server_initialize_connection(&conn)) {
+    LUPINE_LOG_ERROR("Error initializing per-connection staging state.");
+    lupine_socket_close(connfd);
+    rpc_conn_destroy(&conn);
+    return;
+  }
 
   LUPINE_LOG_DEBUG("Client connected.");
 
@@ -367,6 +385,7 @@ void client_handler(lupine_socket_t connfd) {
     pthread_join(conn.rpc_thread, nullptr);
     conn.rpc_thread = 0;
   }
+  lupine_server_cleanup_connection(&conn);
   rpc_conn_destroy(&conn);
 }
 
