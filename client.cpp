@@ -84,9 +84,6 @@ void rpc_destroy_thread_lane(uint64_t lane_id) {
 
 const char *DEFAULT_PORT = "14833";
 
-std::map<void *, void *> host_funcs;
-
-void add_host_node(void *fn, void *udata);
 void *rpc_client_dispatch_thread(void *arg);
 
 struct lupine_server_endpoint {
@@ -7027,8 +7024,6 @@ cuGraphAddHostNode(CUgraphNode *phGraphNode, CUgraph hGraph,
     }
     return local_result;
   }
-  add_host_node(reinterpret_cast<void *>(nodeParams->fn), nodeParams->userData);
-
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
@@ -7513,7 +7508,6 @@ cuGraphHostNodeSetParams(CUgraphNode hNode,
           nodeParams)) {
     return local_result;
   }
-  add_host_node(reinterpret_cast<void *>(nodeParams->fn), nodeParams->userData);
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
@@ -7543,7 +7537,6 @@ cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
           hNode, nodeParams)) {
     return local_result;
   }
-  add_host_node(reinterpret_cast<void *>(nodeParams->fn), nodeParams->userData);
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
@@ -7580,8 +7573,6 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
           route, "cuLaunchHostFunc", &local_result, hStream, fn, userData)) {
     return local_result;
   }
-  add_host_node(reinterpret_cast<void *>(fn), userData);
-
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
@@ -8997,21 +8988,6 @@ __attribute__((destructor)) static void lupine_rpc_destructor() {
   lupine_rpc_shutdown();
 }
 
-typedef void (*func_t)(void *);
-
-void add_host_node(void *fn, void *udata) { host_funcs[fn] = udata; }
-
-void invoke_host_func(void *fn) {
-  for (const auto &pair : host_funcs) {
-    if (pair.first == fn) {
-      func_t func = reinterpret_cast<func_t>(pair.first);
-      std::cout << "Invoking function at: " << pair.first << std::endl;
-      func(pair.second);
-      return;
-    }
-  }
-}
-
 void *rpc_client_dispatch_thread(void *arg) {
   conn_t *conn = (conn_t *)arg;
   int op;
@@ -9058,21 +9034,24 @@ void *rpc_client_dispatch_thread(void *arg) {
         free(host_data);
       }
 
-      void *temp_mem;
-      if (rpc_read(conn, &temp_mem, sizeof(void *)) <= 0) {
-        LUPINE_LOG_ERROR("rpc_read failed for mem. Closing connection.");
+      CUhostFn callback = nullptr;
+      void *user_data = nullptr;
+      if (rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
+        LUPINE_LOG_ERROR("Failed to read host callback request.");
         break;
       }
 
       int request_id = rpc_read_end(conn);
-      void *mem = temp_mem;
-
-      if (mem == nullptr) {
+      if (request_id < 0) {
+        break;
+      }
+      if (callback == nullptr) {
         LUPINE_LOG_ERROR("Invalid function pointer!");
         continue;
       }
 
-      invoke_host_func(mem);
+      callback(user_data);
 
       void *res = nullptr;
       if (rpc_write_start_response(conn, request_id) < 0 ||
