@@ -18,7 +18,10 @@
 
 namespace {
 
-constexpr uint32_t kH2InitialWindow = 0x7fffffffU;
+#ifndef LUPINE_H2_INITIAL_WINDOW
+#define LUPINE_H2_INITIAL_WINDOW 0x7fffffffU
+#endif
+constexpr uint32_t kH2InitialWindow = LUPINE_H2_INITIAL_WINDOW;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
 

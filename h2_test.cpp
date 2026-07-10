@@ -2,11 +2,14 @@
 #include "rpc.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -336,6 +339,68 @@ void test_large_payload() {
   require(received == payload, "large payload mismatch");
 }
 
+void test_payload_larger_than_flow_control_window() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  constexpr size_t kDefaultPayloadSize = 4 * 1024 * 1024;
+  size_t payload_size = kDefaultPayloadSize;
+  if (const char *configured = getenv("LUPINE_H2_FLOW_TEST_BYTES")) {
+    char *end = nullptr;
+    unsigned long long parsed = strtoull(configured, &end, 10);
+    require(end != configured && *end == '\0' && parsed > 0,
+            "invalid LUPINE_H2_FLOW_TEST_BYTES");
+    payload_size = static_cast<size_t>(parsed);
+  }
+
+  void *payload = mmap(nullptr, payload_size, PROT_READ,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  require(payload != MAP_FAILED, "flow-control payload mmap failed");
+
+  std::atomic<bool> read_failed{false};
+  size_t received = 0;
+  std::thread server_reader([&] {
+    std::array<unsigned char, 64 * 1024> buffer = {};
+    while (received < payload_size) {
+      size_t chunk = std::min(buffer.size(), payload_size - received);
+      if (rpc_http2_read(&pair.server, buffer.data(), chunk) !=
+          static_cast<int>(chunk)) {
+        read_failed = true;
+        break;
+      }
+      if (!std::all_of(buffer.begin(), buffer.begin() + chunk,
+                       [](unsigned char value) { return value == 0; })) {
+        read_failed = true;
+        break;
+      }
+      received += chunk;
+    }
+  });
+
+  // Production connections always have an RPC dispatch thread reading control
+  // frames. It does not receive application bytes here, but processing the
+  // peer's WINDOW_UPDATE frames is what lets a large write make progress.
+  std::thread client_control_reader([&] {
+    unsigned char unused = 0;
+    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
+  });
+
+  rpc_write_entry entry = {{payload, payload_size}, 0};
+  int write_result = rpc_http2_writev(&pair.client, &entry, 1);
+  if (write_result != 0) {
+    shutdown(pair.client.connfd, SHUT_RDWR);
+    shutdown(pair.server.connfd, SHUT_RDWR);
+  }
+  server_reader.join();
+  shutdown(pair.client.connfd, SHUT_RDWR);
+  client_control_reader.join();
+  munmap(payload, payload_size);
+
+  require(write_result == 0, "flow-controlled write failed before completion");
+  require(!read_failed, "flow-controlled read failed");
+  require(received == payload_size, "flow-controlled payload was truncated");
+}
+
 // Round-trips a multi-block LZ4-framed payload: the transport compresses it
 // lazily block by block (h2.cpp) and rpc_read_payload_part decodes it with
 // chunked, block-aligned reads (compress.cpp). The payload mixes
@@ -492,6 +557,9 @@ void test_rpc_lz4_payload_round_trip() {
 } // namespace
 
 int main() {
+#ifdef LUPINE_H2_FLOW_CONTROL_TEST_ONLY
+  test_payload_larger_than_flow_control_window();
+#else
   test_rpc_write_queue_grows();
   test_rpc_lz4_payload_round_trip();
   test_client_to_server();
@@ -503,6 +571,7 @@ int main() {
   test_concurrent_response_lanes();
   test_large_payload();
   test_framed_payload_round_trip();
+#endif
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }
