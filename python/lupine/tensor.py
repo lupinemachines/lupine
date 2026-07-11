@@ -7,6 +7,7 @@ import math
 import sys
 import types
 from collections.abc import Mapping, Sequence
+from functools import cache
 from typing import Any
 
 import torch
@@ -14,7 +15,6 @@ import torch
 
 _BACKEND_NAME = "lupine"
 _ACTIVE_SESSION: Any | None = None
-_REGISTERED = False
 _TENSOR_CHUNK_BYTES = 8 * 1024 * 1024
 
 
@@ -195,11 +195,8 @@ def _session_from(value: Any) -> Any:
     return None
 
 
+@cache
 def _ensure_registered() -> None:
-    global _REGISTERED
-    if _REGISTERED:
-        return
-
     try:
         torch.utils.rename_privateuse1_backend(_BACKEND_NAME)
     except RuntimeError as exc:
@@ -219,7 +216,6 @@ def _ensure_registered() -> None:
         if "already" not in str(exc):
             raise
     torch.utils.generate_methods_for_privateuse1_backend()
-    _REGISTERED = True
 
 
 class SidecarTensor(torch.Tensor):
