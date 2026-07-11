@@ -2,9 +2,9 @@ import importlib
 import os
 import subprocess
 import sys
-import textwrap
 import threading
 import types
+from io import BytesIO
 
 import pytest
 
@@ -341,9 +341,15 @@ def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
     session = sidecar.SidecarSession(server="host-a:14833")
     calls = []
 
-    def fake_request(payload):
+    def fake_request(payload, input_tensors=(), *, decode_result=False):
         calls.append(payload)
-        return {"type": "tensor", "handle": 1, "shape": [2, 3], "dtype": "float32"}
+        result = {
+            "type": "tensor",
+            "handle": 1,
+            "shape": [2, 3],
+            "dtype": "float32",
+        }
+        return session._decode(result, []) if decode_result else result
 
     monkeypatch.setattr(session, "_request", fake_request)
 
@@ -366,9 +372,10 @@ def test_sidecar_dispatch_mode_forwards_tensor_ops(monkeypatch):
     session = sidecar.SidecarSession(server="host-a:14833")
     calls = []
 
-    def fake_request(payload):
+    def fake_request(payload, input_tensors=(), *, decode_result=False):
         calls.append(payload)
-        return {"type": "tensor", "handle": 2, "shape": [2], "dtype": "float32"}
+        result = {"type": "tensor", "handle": 2, "shape": [2], "dtype": "float32"}
+        return session._decode(result, []) if decode_result else result
 
     monkeypatch.setattr(session, "_request", fake_request)
     tensor = sidecar.SidecarTensor(
@@ -388,51 +395,111 @@ def test_sidecar_dispatch_mode_forwards_tensor_ops(monkeypatch):
     assert calls[0]["args"]["__tuple__"][0] == {"__sidecar_tensor__": 1}
 
 
-@pytest.mark.parametrize(
-    "tensor",
-    [
-        pytest.param("float32", id="float32"),
-        pytest.param("int64", id="int64"),
-        pytest.param("bool", id="bool"),
-        pytest.param("complex64", id="complex64"),
-        pytest.param("empty", id="empty"),
-        pytest.param("scalar", id="scalar"),
-    ],
-)
-def test_sidecar_cpu_tensor_round_trip(tensor):
+def test_sidecar_dispatch_mode_keeps_cpu_ops_local(monkeypatch):
     torch = pytest.importorskip("torch")
     import lupine.sidecar as sidecar
 
-    values = {
-        "float32": torch.tensor([[1.25, -2.5], [3.0, 4.5]], dtype=torch.float32),
-        "int64": torch.tensor([1, -2, 2**40], dtype=torch.int64),
-        "bool": torch.tensor([[True, False], [False, True]], dtype=torch.bool),
-        "complex64": torch.tensor([1 + 2j, -3 + 0.5j], dtype=torch.complex64),
-        "empty": torch.empty((0, 3), dtype=torch.float32),
-        "scalar": torch.tensor(7.5, dtype=torch.float64),
-    }
-    expected = values[tensor]
-
-    proc = subprocess.Popen(
-        [sys.executable, "-u", "-c", textwrap.dedent(sidecar._WORKER)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
     session = sidecar.SidecarSession(server="host-a:14833")
-    session._proc = proc
-    session._lock = threading.Lock()
-    try:
-        result = session.forward(torch.ops.aten.clone.default, (expected,), {})
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+    requests = []
+    monkeypatch.setattr(
+        session, "_request", lambda *args, **kwargs: requests.append(args)
+    )
+    tensor = torch.arange(8)
 
-    assert result.dtype == expected.dtype
-    assert result.shape == expected.shape
-    assert torch.equal(result, expected)
+    with sidecar.SidecarDispatchMode(session):
+        result = tensor + 1
+
+    assert torch.equal(result, torch.arange(1, 9))
+    assert requests == []
+
+
+def test_sidecar_to_copy_uses_direct_cpu_upload(monkeypatch):
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    sidecar._ensure_registered()
+    session = sidecar.SidecarSession(server="host-a:14833")
+    source = torch.arange(8, dtype=torch.float32)
+    sentinel = object()
+    calls = []
+
+    def upload(tensor, dtype):
+        calls.append((tensor, dtype))
+        return sentinel
+
+    monkeypatch.setattr(session, "_upload_cpu_tensor", upload)
+
+    result = session.forward(
+        torch.ops.aten._to_copy.default,
+        (source,),
+        {"device": session.device(), "dtype": torch.float64},
+    )
+
+    assert result is sentinel
+    assert calls == [(source, torch.float64)]
+
+
+def test_sidecar_to_copy_uses_direct_gpu_download(monkeypatch):
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    sidecar._ensure_registered()
+    session = sidecar.SidecarSession(server="host-a:14833")
+    source = sidecar.SidecarTensor(
+        session=session,
+        handle=1,
+        shape=(8,),
+        dtype=torch.float32,
+        device=session.device(),
+    )
+    sentinel = object()
+    calls = []
+
+    def download(tensor, dtype):
+        calls.append((tensor, dtype))
+        return sentinel
+
+    monkeypatch.setattr(session, "_download_tensor", download)
+
+    result = session.forward(
+        torch.ops.aten._to_copy.default,
+        (source,),
+        {"device": torch.device("cpu"), "dtype": torch.float64},
+    )
+
+    assert result is sentinel
+    assert calls == [(source, torch.float64)]
+
+
+def test_sidecar_copy_uses_direct_cpu_stream(monkeypatch):
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    sidecar._ensure_registered()
+    session = sidecar.SidecarSession(server="host-a:14833")
+    destination = sidecar.SidecarTensor(
+        session=session,
+        handle=1,
+        shape=(8,),
+        dtype=torch.float32,
+        device=session.device(),
+    )
+    source = torch.arange(8, dtype=torch.float32)
+    calls = []
+    monkeypatch.setattr(
+        session,
+        "_copy_from_cpu",
+        lambda dst, src: calls.append((dst, src)),
+    )
+
+    result = session.forward(
+        torch.ops.aten.copy_.default,
+        (destination, source),
+        {},
+    )
+
+    assert result is destination
+    assert calls == [(destination, source)]
 
 
 def test_sidecar_cpu_tensor_rejects_noncontiguous_input():
@@ -443,4 +510,196 @@ def test_sidecar_cpu_tensor_rejects_noncontiguous_input():
     tensor = torch.arange(12).reshape(3, 4).transpose(0, 1)
 
     with pytest.raises(sidecar.SidecarError, match="must be contiguous"):
-        session._encode(tensor)
+        session._encode(tensor, [])
+
+
+@pytest.mark.parametrize(
+    "tensor, error",
+    [
+        pytest.param(
+            lambda torch: torch.tensor([1 + 2j]).conj(),
+            "resolve_conj",
+            id="conjugate",
+        ),
+        pytest.param(
+            lambda torch: torch.tensor([1.0])._neg_view(),
+            "resolve_neg",
+            id="negative",
+        ),
+    ],
+)
+def test_sidecar_cpu_tensor_rejects_lazy_views(tensor, error):
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    with pytest.raises(sidecar.SidecarError, match=error):
+        sidecar._cpu_tensor_metadata(tensor(torch))
+
+
+class _ShortWriter:
+    def __init__(self, stream, limit):
+        self._stream = stream
+        self._limit = limit
+        self.requests = []
+
+    def write(self, data):
+        view = memoryview(data)
+        self.requests.append(len(view))
+        return self._stream.write(view[: self._limit])
+
+
+class _ShortReader:
+    def __init__(self, stream, limit):
+        self._stream = stream
+        self._limit = limit
+        self.requests = []
+
+    def readinto(self, buffer):
+        view = memoryview(buffer)
+        self.requests.append(len(view))
+        return self._stream.readinto(view[: self._limit])
+
+
+def test_sidecar_cpu_tensor_transport_uses_bounded_binary_chunks():
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    tensor = torch.arange(2 * sidecar._TENSOR_CHUNK_BYTES + 37, dtype=torch.uint8)
+    stream = BytesIO()
+    writer = _ShortWriter(stream, limit=997)
+
+    sidecar._write_tensor(writer, tensor)
+    stream.seek(0)
+    reader = _ShortReader(stream, limit=991)
+    result = sidecar._decode_cpu_tensor(sidecar._cpu_tensor_metadata(tensor), reader)
+
+    assert torch.equal(result, tensor)
+    assert max(writer.requests) <= sidecar._TENSOR_CHUNK_BYTES
+    assert max(reader.requests) <= sidecar._TENSOR_CHUNK_BYTES
+    assert len(writer.requests) > 3
+    assert len(reader.requests) > 3
+
+
+@pytest.mark.parametrize(
+    "tensor",
+    [
+        pytest.param(lambda torch: torch.tensor([1.25, -2.5]), id="float32"),
+        pytest.param(lambda torch: torch.tensor([1, -2, 2**40]), id="int64"),
+        pytest.param(lambda torch: torch.tensor([True, False]), id="bool"),
+        pytest.param(
+            lambda torch: torch.tensor([1 + 2j, -3 + 0.5j]), id="complex64"
+        ),
+        pytest.param(
+            lambda torch: torch.tensor([1.5, -2.25], dtype=torch.bfloat16),
+            id="bfloat16",
+        ),
+        pytest.param(lambda torch: torch.empty((0, 3)), id="empty"),
+        pytest.param(lambda torch: torch.tensor(7.5), id="scalar"),
+    ],
+)
+def test_sidecar_cpu_tensor_binary_round_trip(tensor):
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    expected = tensor(torch)
+    stream = BytesIO()
+    sidecar._write_tensor(stream, expected)
+    stream.seek(0)
+
+    result = sidecar._decode_cpu_tensor(
+        sidecar._cpu_tensor_metadata(expected), stream
+    )
+
+    assert result.dtype == expected.dtype
+    assert result.shape == expected.shape
+    assert torch.equal(result, expected)
+
+
+def test_sidecar_worker_consumes_tensor_stream_before_operation_error():
+    torch = pytest.importorskip("torch")
+    import lupine.sidecar as sidecar
+
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-c", sidecar._worker_source()],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    session = sidecar.SidecarSession(server="host-a:14833")
+    session._proc = proc
+    session._lock = threading.Lock()
+    tensor = torch.arange(2 * sidecar._TENSOR_CHUNK_BYTES + 37, dtype=torch.uint8)
+    streams = [(tensor, sidecar._cpu_tensor_metadata(tensor))]
+    request = {
+        "op": "call",
+        "packet": "missing_operation",
+        "overload": "default",
+        "args": {"__tuple__": [{"__cpu_tensor__": 0}]},
+        "kwargs": {},
+    }
+    try:
+        with pytest.raises(sidecar.SidecarError):
+            session._request(request, streams, decode_result=True)
+
+        assert "torch" in session._request({"op": "ping"})
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_sidecar_worker_streams_cpu_cuda_transfers_in_chunks():
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    import lupine.sidecar as sidecar
+
+    sidecar._ensure_registered()
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-c", sidecar._worker_source()],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    session = sidecar.SidecarSession(server="host-a:14833")
+    session._proc = proc
+    session._lock = threading.Lock()
+    source = torch.arange(
+        sidecar._TENSOR_CHUNK_BYTES // 4 + 37,
+        dtype=torch.float32,
+    )
+    try:
+        uploaded = session._upload_cpu_tensor(source, torch.float64)
+        downloaded = session._download_tensor(uploaded, torch.float64)
+        assert torch.equal(downloaded, source.to(torch.float64))
+
+        destination = session._upload_cpu_tensor(torch.zeros_like(source), source.dtype)
+        session._copy_from_cpu(destination, source)
+        copied = session._download_tensor(destination, source.dtype)
+        assert torch.equal(copied, source)
+
+        empty = torch.empty((0, 3), dtype=torch.float32)
+        remote_empty = session._upload_cpu_tensor(empty, empty.dtype)
+        downloaded_empty = session._download_tensor(remote_empty, empty.dtype)
+        assert downloaded_empty.shape == empty.shape
+
+        broadcast_destination = session._upload_cpu_tensor(
+            torch.zeros(4, dtype=torch.float32), torch.float32
+        )
+        session._copy_from_cpu(broadcast_destination, torch.tensor(3.0))
+        broadcast = session._download_tensor(broadcast_destination, torch.float32)
+        assert torch.equal(broadcast, torch.full((4,), 3.0))
+
+        with pytest.raises(sidecar.SidecarError):
+            session._copy_from_cpu(broadcast_destination, torch.zeros(3))
+        assert "torch" in session._request({"op": "ping"})
+
+        matrix = session._upload_cpu_tensor(torch.arange(6).reshape(2, 3), torch.int64)
+        transposed = session.forward(torch.ops.aten.t.default, (matrix,), {})
+        with pytest.raises(sidecar.SidecarError, match="must be contiguous"):
+            session._download_tensor(transposed, transposed.dtype)
+        assert "torch" in session._request({"op": "ping"})
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        proc.wait(timeout=5)

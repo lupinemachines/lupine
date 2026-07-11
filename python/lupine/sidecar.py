@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import atexit
-import base64
 import ctypes
 import json
 import math
@@ -9,11 +8,11 @@ import os
 import shutil
 import subprocess
 import sys
-import textwrap
 import threading
 import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -22,6 +21,7 @@ import torch
 _BACKEND_NAME = "lupine"
 _ACTIVE_SESSION: "SidecarSession | None" = None
 _REGISTERED = False
+_TENSOR_CHUNK_BYTES = 8 * 1024 * 1024
 DEFAULT_IMAGE = "lupine-pytorch-worker:cuda-13.1.0"
 
 
@@ -37,7 +37,52 @@ def _dtype_from_name(name: str) -> Any:
     return getattr(torch, name)
 
 
-def _encode_cpu_tensor(tensor: Any) -> dict[str, Any]:
+def _tensor_nbytes(tensor: Any) -> int:
+    return int(tensor.numel()) * int(tensor.element_size())
+
+
+def _tensor_bytes(tensor: Any) -> memoryview:
+    size = _tensor_nbytes(tensor)
+    if size == 0:
+        return memoryview(b"")
+    storage = (ctypes.c_ubyte * size).from_address(tensor.data_ptr())
+    return memoryview(storage).cast("B")
+
+
+def _write_all(stream: Any, data: Any) -> None:
+    view = memoryview(data).cast("B")
+    offset = 0
+    while offset < len(view):
+        written = stream.write(view[offset:])
+        if written is None or written <= 0:
+            raise SidecarError("sidecar stream stopped accepting data")
+        offset += written
+
+
+def _write_tensor(
+    stream: Any, tensor: Any, *, chunk_size: int = _TENSOR_CHUNK_BYTES
+) -> None:
+    data = _tensor_bytes(tensor)
+    for offset in range(0, len(data), chunk_size):
+        _write_all(stream, data[offset : offset + chunk_size])
+
+
+def _read_tensor(
+    stream: Any, tensor: Any, *, chunk_size: int = _TENSOR_CHUNK_BYTES
+) -> None:
+    data = _tensor_bytes(tensor)
+    offset = 0
+    while offset < len(data):
+        end = min(offset + chunk_size, len(data))
+        read = stream.readinto(data[offset:end])
+        if read is None or read <= 0:
+            raise SidecarError(
+                "sidecar tensor stream ended before the tensor was complete"
+            )
+        offset += read
+
+
+def _cpu_tensor_metadata(tensor: Any) -> dict[str, Any]:
     if tensor.device.type != "cpu":
         raise SidecarError(
             "sidecar arguments must be CPU tensors or SidecarTensor objects, "
@@ -49,26 +94,32 @@ def _encode_cpu_tensor(tensor: Any) -> dict[str, Any]:
         )
     if tensor.is_quantized:
         raise SidecarError("quantized CPU tensor arguments are not supported")
+    if tensor.is_conj():
+        raise SidecarError(
+            "sidecar CPU tensor arguments cannot be lazy conjugate views; "
+            "call resolve_conj() first"
+        )
+    if tensor.is_neg():
+        raise SidecarError(
+            "sidecar CPU tensor arguments cannot be lazy negative views; "
+            "call resolve_neg() first"
+        )
     if not tensor.is_contiguous():
         raise SidecarError(
             "sidecar CPU tensor arguments must be contiguous; call contiguous() first"
         )
 
-    bytes_view = tensor.detach().contiguous().reshape(-1).view(torch.uint8)
-    raw = ctypes.string_at(bytes_view.data_ptr(), bytes_view.numel())
     return {
-        "__cpu_tensor__": {
-            "shape": list(tensor.shape),
-            "dtype": _dtype_name(tensor.dtype),
-            "layout": "strided",
-            "device": "cpu",
-            "byteorder": sys.byteorder,
-            "data": base64.b64encode(raw).decode("ascii"),
-        }
+        "shape": list(tensor.shape),
+        "dtype": _dtype_name(tensor.dtype),
+        "layout": "strided",
+        "device": "cpu",
+        "byteorder": sys.byteorder,
+        "nbytes": _tensor_nbytes(tensor),
     }
 
 
-def _decode_cpu_tensor(payload: Mapping[str, Any]) -> Any:
+def _decode_cpu_tensor(payload: Mapping[str, Any], stream: Any) -> Any:
     if payload.get("device") != "cpu" or payload.get("layout") != "strided":
         raise SidecarError("sidecar returned an invalid CPU tensor description")
     if payload.get("byteorder") != sys.byteorder:
@@ -79,7 +130,7 @@ def _decode_cpu_tensor(payload: Mapping[str, Any]) -> Any:
     try:
         shape = tuple(int(dimension) for dimension in payload["shape"])
         dtype = _dtype_from_name(payload["dtype"])
-        raw = base64.b64decode(payload["data"], validate=True)
+        size = int(payload["nbytes"])
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise SidecarError("sidecar returned malformed CPU tensor data") from exc
     if any(dimension < 0 for dimension in shape):
@@ -87,18 +138,14 @@ def _decode_cpu_tensor(payload: Mapping[str, Any]) -> Any:
 
     element_count = math.prod(shape)
     expected_bytes = element_count * torch.empty((), dtype=dtype).element_size()
-    if len(raw) != expected_bytes:
+    if size != expected_bytes:
         raise SidecarError(
             "sidecar returned the wrong number of bytes for a CPU tensor: "
-            f"expected {expected_bytes}, got {len(raw)}"
+            f"expected {expected_bytes}, got {size}"
         )
-    if element_count == 0:
-        return torch.empty(shape, dtype=dtype)
-    return (
-        torch.frombuffer(bytearray(raw), dtype=dtype, count=element_count)
-        .clone()
-        .reshape(shape)
-    )
+    tensor = torch.empty(shape, dtype=dtype)
+    _read_tensor(stream, tensor)
+    return tensor
 
 
 def _normalize_device(device: Any = None) -> str:
@@ -265,165 +312,11 @@ class SidecarDispatchMode(torch.utils._python_dispatch.TorchDispatchMode):
         return func(*args, **kwargs)
 
 
-_WORKER = r"""
-import base64
-import ctypes
-import json
-import math
-import sys
-import traceback
-
-import torch
-
-objects = {}
-next_handle = 1
+_WORKER_PATH = Path(__file__).with_name("_sidecar_worker.py")
 
 
-def dtype_name(dtype):
-    return str(dtype).removeprefix("torch.")
-
-
-def encode_cpu_tensor(tensor):
-    bytes_view = tensor.detach().contiguous().reshape(-1).view(torch.uint8)
-    raw = ctypes.string_at(bytes_view.data_ptr(), bytes_view.numel())
-    return {
-        "type": "tensor_data",
-        "shape": list(tensor.shape),
-        "dtype": dtype_name(tensor.dtype),
-        "layout": "strided",
-        "device": "cpu",
-        "byteorder": sys.byteorder,
-        "data": base64.b64encode(raw).decode("ascii"),
-    }
-
-
-def decode_cpu_tensor(payload):
-    if payload.get("device") != "cpu" or payload.get("layout") != "strided":
-        raise ValueError("invalid CPU tensor description")
-    if payload.get("byteorder") != sys.byteorder:
-        raise ValueError("CPU tensor byte order does not match the worker")
-    shape = tuple(int(dimension) for dimension in payload["shape"])
-    if any(dimension < 0 for dimension in shape):
-        raise ValueError("CPU tensor shape contains a negative dimension")
-    dtype = getattr(torch, payload["dtype"])
-    element_count = math.prod(shape)
-    raw = base64.b64decode(payload["data"], validate=True)
-    expected_bytes = element_count * torch.empty((), dtype=dtype).element_size()
-    if len(raw) != expected_bytes:
-        raise ValueError(
-            f"wrong CPU tensor byte count: expected {expected_bytes}, got {len(raw)}"
-        )
-    if element_count == 0:
-        return torch.empty(shape, dtype=dtype)
-    return (
-        torch.frombuffer(bytearray(raw), dtype=dtype, count=element_count)
-        .clone()
-        .reshape(shape)
-    )
-
-
-def store(tensor):
-    global next_handle
-    if tensor.device.type != "cuda":
-        return encode_cpu_tensor(tensor)
-    handle = next_handle
-    next_handle += 1
-    objects[handle] = tensor
-    return {
-        "type": "tensor",
-        "handle": handle,
-        "shape": list(tensor.shape),
-        "dtype": str(tensor.dtype).removeprefix("torch."),
-    }
-
-
-def decode(value):
-    if isinstance(value, list):
-        return [decode(item) for item in value]
-    if isinstance(value, dict) and "__tuple__" in value:
-        return tuple(decode(item) for item in value["__tuple__"])
-    if isinstance(value, dict) and "__sidecar_tensor__" in value:
-        return objects[int(value["__sidecar_tensor__"])]
-    if isinstance(value, dict) and "__cpu_tensor__" in value:
-        return decode_cpu_tensor(value["__cpu_tensor__"])
-    if isinstance(value, dict) and "__dtype__" in value:
-        return getattr(torch, value["__dtype__"])
-    if isinstance(value, dict) and "__device__" in value:
-        return torch.device(value["__device__"])
-    if isinstance(value, dict) and "__layout__" in value:
-        return getattr(torch, value["__layout__"])
-    if isinstance(value, dict) and "__memory_format__" in value:
-        return getattr(torch, value["__memory_format__"])
-    if isinstance(value, dict):
-        return {key: decode(item) for key, item in value.items()}
-    return value
-
-
-def encode(value):
-    if isinstance(value, torch.Tensor):
-        return store(value)
-    if isinstance(value, torch.Size):
-        return {"type": "tuple", "items": list(value)}
-    if isinstance(value, tuple):
-        return {"type": "tuple", "items": [encode(item) for item in value]}
-    if isinstance(value, list):
-        return {"type": "list", "items": [encode(item) for item in value]}
-    if isinstance(value, dict):
-        return {"type": "dict", "items": {key: encode(item) for key, item in value.items()}}
-    return {"type": "value", "value": value}
-
-
-def resolve(packet, overload):
-    overload_packet = getattr(torch.ops.aten, packet)
-    if overload == "default":
-        return overload_packet.default
-    return getattr(overload_packet, overload)
-
-
-def release(value):
-    if isinstance(value, dict) and "__sidecar_tensor__" in value:
-        objects.pop(int(value["__sidecar_tensor__"]), None)
-        return
-    if isinstance(value, list):
-        for item in value:
-            release(item)
-        return
-    if isinstance(value, dict):
-        for item in value.values():
-            release(item)
-
-
-def handle(request):
-    op = request["op"]
-    if op == "ping":
-        return {
-            "torch": torch.__version__,
-            "cuda_available": torch.cuda.is_available(),
-            "device_count": torch.cuda.device_count(),
-            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-        }
-    if op == "call":
-        func = resolve(request["packet"], request["overload"])
-        args = decode(request.get("args", []))
-        kwargs = decode(request.get("kwargs", {}))
-        return encode(func(*args, **kwargs))
-    if op == "release":
-        release(request["value"])
-        return True
-    raise RuntimeError(f"unknown op: {op}")
-
-
-for line in sys.stdin:
-    try:
-        response = {"ok": True, "result": handle(json.loads(line))}
-    except Exception as exc:
-        response = {
-            "ok": False,
-            "error": str(exc),
-            "traceback": traceback.format_exc(),
-        }
-    print(json.dumps(response), flush=True)
-"""
+def _worker_source() -> str:
+    return _WORKER_PATH.read_text(encoding="utf-8")
 
 
 @dataclass
@@ -532,12 +425,10 @@ class SidecarSession:
         )
         launcher.prepare()
         self._proc = subprocess.Popen(
-            launcher.command(textwrap.dedent(_WORKER)),
+            launcher.command(_worker_source()),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
         )
         self._lock = threading.Lock()
         self.info = self._request({"op": "ping"})
@@ -575,23 +466,55 @@ class SidecarSession:
             raise SidecarError("sidecar prototype exposes one LUPINE device")
         return torch.device(f"{_BACKEND_NAME}:0")
 
-    def _request(self, payload: dict[str, Any]) -> Any:
+    def _request(
+        self,
+        payload: dict[str, Any],
+        input_tensors: Sequence[tuple[Any, Mapping[str, Any]]] = (),
+        *,
+        decode_result: bool = False,
+    ) -> Any:
         with self._lock:
-            proc = self._proc
+            proc = getattr(self, "_proc", None)
+            if proc is None:
+                raise SidecarError("sidecar worker pipes are closed")
             if proc.stdin is None or proc.stdout is None:
                 raise SidecarError("sidecar worker pipes are closed")
-            proc.stdin.write(json.dumps(payload) + "\n")
-            proc.stdin.flush()
-            line = proc.stdout.readline()
-        if not line:
-            stderr = ""
-            if proc.stderr is not None:
-                stderr = proc.stderr.read()
-            raise SidecarError(f"sidecar worker exited with code {proc.poll()}: {stderr}")
-        response = json.loads(line)
-        if not response.get("ok"):
-            raise SidecarError(response.get("traceback") or response.get("error"))
-        return response["result"]
+            request = dict(payload)
+            request["tensor_streams"] = [metadata for _, metadata in input_tensors]
+            try:
+                header = json.dumps(request).encode("utf-8") + b"\n"
+                _write_all(proc.stdin, header)
+                for tensor, _ in input_tensors:
+                    _write_tensor(proc.stdin, tensor)
+                proc.stdin.flush()
+                line = proc.stdout.readline()
+                if not line:
+                    raise SidecarError("sidecar worker closed its response stream")
+                response = json.loads(line)
+                output_tensors = [
+                    _decode_cpu_tensor(metadata, proc.stdout)
+                    for metadata in response.pop("tensor_streams", [])
+                ]
+            except Exception as exc:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                self._proc = None
+                stderr = b""
+                if proc.stderr is not None:
+                    stderr = proc.stderr.read()
+                detail = stderr.decode("utf-8", errors="replace").strip()
+                suffix = f": {detail}" if detail else ""
+                raise SidecarError(f"sidecar tensor transport failed{suffix}") from exc
+            if not response.get("ok"):
+                raise SidecarError(response.get("traceback") or response.get("error"))
+            if decode_result:
+                return self._decode(response["result"], output_tensors)
+            return response["result"]
 
     def _wrap(self, result: dict[str, Any]) -> SidecarTensor:
         return SidecarTensor(
@@ -602,11 +525,45 @@ class SidecarSession:
             device=self.device(),
         )
 
-    def _encode(self, value: Any) -> Any:
+    def _upload_cpu_tensor(self, tensor: Any, dtype: Any) -> SidecarTensor:
+        metadata = _cpu_tensor_metadata(tensor)
+        result = self._request(
+            {
+                "op": "upload",
+                "dtype": _dtype_name(dtype),
+                "device": "cuda:0",
+            },
+            [(tensor, metadata)],
+        )
+        return self._wrap(result)
+
+    def _copy_from_cpu(self, destination: SidecarTensor, source: Any) -> None:
+        metadata = _cpu_tensor_metadata(source)
+        self._request(
+            {
+                "op": "copy_from_cpu",
+                "handle": destination._lupine_handle,
+            },
+            [(source, metadata)],
+        )
+
+    def _download_tensor(self, tensor: SidecarTensor, dtype: Any) -> Any:
+        return self._request(
+            {
+                "op": "download",
+                "handle": tensor._lupine_handle,
+                "dtype": _dtype_name(dtype),
+            },
+            decode_result=True,
+        )
+
+    def _encode(self, value: Any, tensors: list[tuple[Any, Mapping[str, Any]]]) -> Any:
         if isinstance(value, SidecarTensor):
             return {"__sidecar_tensor__": value._lupine_handle}
         if isinstance(value, torch.Tensor):
-            return _encode_cpu_tensor(value)
+            stream_index = len(tensors)
+            tensors.append((value, _cpu_tensor_metadata(value)))
+            return {"__cpu_tensor__": stream_index}
         if isinstance(value, torch.dtype):
             return {"__dtype__": _dtype_name(value)}
         if isinstance(value, torch.device):
@@ -617,43 +574,93 @@ class SidecarSession:
         if isinstance(value, torch.memory_format):
             return {"__memory_format__": str(value).removeprefix("torch.")}
         if isinstance(value, torch.Size):
-            return {"__tuple__": [self._encode(item) for item in value]}
+            return {"__tuple__": [self._encode(item, tensors) for item in value]}
         if isinstance(value, tuple):
-            return {"__tuple__": [self._encode(item) for item in value]}
+            return {"__tuple__": [self._encode(item, tensors) for item in value]}
         if isinstance(value, list):
-            return [self._encode(item) for item in value]
+            return [self._encode(item, tensors) for item in value]
         if isinstance(value, Mapping):
-            return {key: self._encode(item) for key, item in value.items()}
+            return {key: self._encode(item, tensors) for key, item in value.items()}
         return value
 
-    def _decode(self, value: Any) -> Any:
+    def _decode(self, value: Any, tensors: Sequence[Any]) -> Any:
         kind = value.get("type") if isinstance(value, dict) else None
         if kind == "tensor":
             return self._wrap(value)
         if kind == "tensor_data":
-            return _decode_cpu_tensor(value)
+            stream_index = int(value.get("stream", -1))
+            if stream_index < 0 or stream_index >= len(tensors):
+                raise SidecarError(
+                    f"sidecar returned invalid CPU tensor stream {stream_index}"
+                )
+            return tensors[stream_index]
         if kind == "tuple":
-            return tuple(self._decode(item) for item in value["items"])
+            return tuple(self._decode(item, tensors) for item in value["items"])
         if kind == "list":
-            return [self._decode(item) for item in value["items"]]
+            return [self._decode(item, tensors) for item in value["items"]]
         if kind == "dict":
-            return {key: self._decode(item) for key, item in value["items"].items()}
+            return {
+                key: self._decode(item, tensors) for key, item in value["items"].items()
+            }
         if kind == "value":
             return value["value"]
         raise SidecarError(f"sidecar returned unsupported result: {value!r}")
 
     def forward(self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         op = _op_name(func)
-        result = self._request(
+        if op["packet"] == "_to_copy" and len(args) == 1:
+            source = args[0]
+            device = kwargs.get("device")
+            target = torch.device(device) if device is not None else None
+            layout = kwargs.get("layout", torch.strided)
+            memory_format = kwargs.get("memory_format")
+            direct_layout = layout == torch.strided and memory_format in (
+                None,
+                torch.preserve_format,
+                torch.contiguous_format,
+            )
+            if (
+                direct_layout
+                and isinstance(source, torch.Tensor)
+                and not isinstance(source, SidecarTensor)
+                and target is not None
+                and target.type == _BACKEND_NAME
+            ):
+                return self._upload_cpu_tensor(
+                    source, kwargs.get("dtype") or source.dtype
+                )
+            if (
+                direct_layout
+                and isinstance(source, SidecarTensor)
+                and target is not None
+                and target.type == "cpu"
+                and not kwargs.get("pin_memory", False)
+            ):
+                return self._download_tensor(
+                    source, kwargs.get("dtype") or source.dtype
+                )
+        if (
+            op["packet"] == "copy_"
+            and len(args) >= 2
+            and isinstance(args[0], SidecarTensor)
+            and isinstance(args[1], torch.Tensor)
+            and not isinstance(args[1], SidecarTensor)
+        ):
+            self._copy_from_cpu(args[0], args[1])
+            return args[0]
+
+        input_tensors: list[tuple[Any, Mapping[str, Any]]] = []
+        return self._request(
             {
                 "op": "call",
                 "packet": op["packet"],
                 "overload": op["overload"],
-                "args": self._encode(args),
-                "kwargs": self._encode(kwargs),
-            }
+                "args": self._encode(args, input_tensors),
+                "kwargs": self._encode(kwargs, input_tensors),
+            },
+            input_tensors,
+            decode_result=True,
         )
-        return self._decode(result)
 
 
 def sidecar(
