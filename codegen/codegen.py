@@ -933,13 +933,18 @@ def write_nvml_client_wrapper(f, function, operations, metadata):
     f.write("}\n\n")
 
 
+def write_server_buffer_cleanup(f, owned_buffers, indent):
+    for buffer_name in reversed(owned_buffers):
+        f.write(f"{indent}free((void *){buffer_name});\n")
+
+
 def write_nvml_server_handler(f, function, operations):
     name = function.name.format()
     fn_params = ", ".join(
         parameter.type.format() for parameter in function.parameters
     )
     f.write(f"int handle_{name}(conn_t *conn) {{\n")
-    defers = []
+    owned_buffers = []
     for operation in operations:
         f.write(operation.server_declaration)
         if (
@@ -954,19 +959,13 @@ def write_nvml_server_handler(f, function, operations):
     f.write("  fn_t fn = nullptr;\n")
     f.write("  if (\n")
     for operation in operations:
-        if isinstance(
-            operation,
-            (NullTerminatedOperation, ArrayOperation, OptionalArrayOperation),
-        ):
-            if error := operation.server_rpc_read(f, len(defers)):
-                defers.append(error)
-        else:
-            operation.server_rpc_read(f)
+        if owned_buffer := operation.server_rpc_read(f):
+            owned_buffers.append(owned_buffer)
     f.write("      false)\n")
-    f.write(f"    goto ERROR_{len(defers)};\n\n")
+    f.write("    goto ERROR_0;\n\n")
     f.write("  request_id = rpc_read_end(conn);\n")
     f.write("  if (request_id < 0)\n")
-    f.write(f"    goto ERROR_{len(defers)};\n\n")
+    f.write("    goto ERROR_0;\n\n")
 
     call_args = []
     for parameter in function.parameters:
@@ -984,14 +983,11 @@ def write_nvml_server_handler(f, function, operations):
         operation.server_rpc_write(f)
     f.write("      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     f.write("      rpc_write_end(conn) < 0)\n")
-    f.write(f"    goto ERROR_{len(defers)};\n")
-    for defer in reversed(defers):
-        f.write(f"  free((void *){defer});\n")
+    f.write("    goto ERROR_0;\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return 0;\n")
-    for index, defer in enumerate(reversed(defers), start=1):
-        f.write(f"ERROR_{len(defers) - index + 1}:\n")
-        f.write(f"  free((void *){defer});\n")
     f.write("ERROR_0:\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return -1;\n")
     f.write("}\n\n")
 
@@ -1572,7 +1568,7 @@ def main():
             )
             f.write("{\n")
 
-            defers = []
+            owned_buffers = []
 
             for operation in operations:
                 f.write(operation.server_declaration)
@@ -1591,23 +1587,16 @@ def main():
 
             f.write("    if (\n")
             for operation in operations:
-                if (
-                    isinstance(operation, NullTerminatedOperation)
-                    or isinstance(operation, ArrayOperation)
-                    or isinstance(operation, OptionalArrayOperation)
-                ):
-                    if error := operation.server_rpc_read(f, len(defers)):
-                        defers.append(error)
-                else:
-                    operation.server_rpc_read(f)
+                if owned_buffer := operation.server_rpc_read(f):
+                    owned_buffers.append(owned_buffer)
             f.write("        false)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+            f.write("        goto ERROR_0;\n")
 
             f.write("\n")
 
             f.write("    request_id = rpc_read_end(conn);\n")
             f.write("    if (request_id < 0)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+            f.write("        goto ERROR_0;\n")
 
             params: list[str] = []
             # these need to be in function param order, not operation order.
@@ -1635,6 +1624,7 @@ def main():
                 # Fire-and-forget: no response is sent.
                 f.write("    (void) lupine_intercept_result;\n")
                 f.write("\n")
+                write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return 0;\n")
             else:
                 f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
@@ -1648,14 +1638,13 @@ def main():
                     )
                 )
                 f.write("        rpc_write_end(conn) < 0)\n")
-                f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+                f.write("        goto ERROR_0;\n")
                 f.write("\n")
+                write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return 0;\n")
 
-            for i, defer in enumerate(defers):
-                f.write("ERROR_{index}:\n".format(index=len(defers) - i))
-                f.write("    free((void *) {param_name});\n".format(param_name=defer))
             f.write("ERROR_0:\n")
+            write_server_buffer_cleanup(f, owned_buffers, "    ")
             f.write("    return -1;\n")
             f.write("}\n\n")
 

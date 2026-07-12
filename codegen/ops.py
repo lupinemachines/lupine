@@ -339,13 +339,13 @@ class ArrayOperation:
         else:
             c = self.ptr.ptr_to.const
             self.ptr.ptr_to.const = False
-            s = f"    {self.ptr.format()} {self.parameter.name};\n"
+            s = f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
             if self.send:
                 s += f"    size_t {self.parameter.name}_size;\n"
             self.ptr.ptr_to.const = c
         return s
 
-    def server_rpc_read(self, f, index) -> Optional[str]:
+    def server_rpc_read(self, f) -> Optional[str]:
         if self.iter:
             lambda_template = """
             [=, &{param_name}]() -> bool {{
@@ -370,7 +370,7 @@ class ArrayOperation:
             # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
             if isinstance(self.ptr, Pointer):
                 f.write("        false)\n")
-                f.write("        goto ERROR_{index};\n".format(index=index))
+                f.write("        goto ERROR_0;\n")
                 f.write(
                     "    {param_name} = ({server_type})malloc({size});\n".format(
                         param_name=self.parameter.name,
@@ -388,7 +388,7 @@ class ArrayOperation:
             return
         elif isinstance(self.ptr, Pointer):
             f.write("        false)\n")
-            f.write("        goto ERROR_{index};\n".format(index=index))
+            f.write("        goto ERROR_0;\n")
             f.write(
                 "    {param_name}_size = {size};\n".format(
                     param_name=self.parameter.name,
@@ -407,7 +407,7 @@ class ArrayOperation:
                     param_name=self.parameter.name
                 )
             )
-            f.write("        goto ERROR_{index};\n".format(index=index))
+            f.write("        goto ERROR_0;\n")
             f.write("    if(\n")
             f.write(
                 "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
@@ -416,7 +416,7 @@ class ArrayOperation:
                     size=f"{self.parameter.name}_size",
                 )
             )
-            defer = self.parameter.name
+            return self.parameter.name
         elif isinstance(self.length, int):
             f.write(
                 "        rpc_read(conn, &{param_name}, {size}) < 0 ||\n".format(
@@ -438,8 +438,6 @@ class ArrayOperation:
                     size=self.transfer_size_expr(),
                 )
             )
-        if 'defer' in locals():
-            return defer
 
     @property
     def server_reference(self) -> str:
@@ -585,7 +583,7 @@ class OptionalArrayOperation:
             f"        rpc_write(conn, &{self.parameter.name}_present, sizeof(uint8_t)) < 0 ||\n"
         )
 
-    def server_rpc_read(self, f, index) -> Optional[str]:
+    def server_rpc_read(self, f) -> Optional[str]:
         elem = self.element_type()
         name = self.parameter.name
         count = self.count.name
@@ -593,13 +591,13 @@ class OptionalArrayOperation:
             f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
         )
         f.write("        false)\n")
-        f.write(f"        goto ERROR_{index};\n")
+        f.write("        goto ERROR_0;\n")
         f.write(f"    if ({name}_present && {count}_requested != 0) {{\n")
         f.write(
             f"        {name} = ({elem} *)malloc({count}_requested * sizeof({elem}));\n"
         )
         f.write(f"        if ({name} == nullptr)\n")
-        f.write(f"            goto ERROR_{index};\n")
+        f.write("            goto ERROR_0;\n")
         f.write("    }\n")
         f.write("    if (\n")
         return name
@@ -781,7 +779,7 @@ class NullTerminatedOperation:
     @property
     def server_declaration(self) -> str:
         return (
-            f"    {self.ptr.format()} {self.parameter.name};\n"
+            f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
             + f"    {self.length_type} {self.parameter.name}_len;\n"
         )
 
@@ -793,7 +791,7 @@ class NullTerminatedOperation:
         )
         f.write("      return {error};\n".format(error=error))
 
-    def server_rpc_read(self, f, index) -> Optional[str]:
+    def server_rpc_read(self, f) -> Optional[str]:
         if not self.send:
             return
         f.write(
@@ -802,7 +800,7 @@ class NullTerminatedOperation:
                 length_type=self.length_type,
             )
         )
-        f.write("        goto ERROR_{index};\n".format(index=index))
+        f.write("        goto ERROR_0;\n")
         f.write(
             "    {param_name} = ({server_type})malloc({param_name}_len);\n".format(
                 param_name=self.parameter.name,
