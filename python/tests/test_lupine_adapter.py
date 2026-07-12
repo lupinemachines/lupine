@@ -48,7 +48,7 @@ def lupine_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.delenv("LUPINE_SERVER", raising=False)
     monkeypatch.setattr("ctypes.CDLL", lambda *args, **kwargs: None)
-    import lupine
+    lupine = importlib.import_module("lupine")
 
     yield importlib.reload(lupine), fake_torch
     importlib.reload(lupine)

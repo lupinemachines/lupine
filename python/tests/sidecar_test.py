@@ -4,11 +4,12 @@ import threading
 
 import pytest
 
+torch = pytest.importorskip("torch")
+sidecar = pytest.importorskip("lupine.sidecar")
+tensor_support = pytest.importorskip("lupine.tensor")
+
 
 def test_sidecar_container_runtime_defaults_to_arm64(monkeypatch):
-    pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-
     monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/container")
     monkeypatch.setattr(sidecar.sys, "platform", "darwin")
 
@@ -29,9 +30,6 @@ def test_sidecar_container_runtime_defaults_to_arm64(monkeypatch):
 
 
 def test_sidecar_container_runtime_is_macos_only(monkeypatch):
-    pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-
     monkeypatch.setattr(sidecar.sys, "platform", "linux")
 
     with pytest.raises(sidecar.SidecarError, match="only supported on macOS"):
@@ -39,9 +37,6 @@ def test_sidecar_container_runtime_is_macos_only(monkeypatch):
 
 
 def test_sidecar_container_runtime_requires_cli(monkeypatch):
-    pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-
     monkeypatch.setattr(sidecar.shutil, "which", lambda name: None)
     monkeypatch.setattr(sidecar.sys, "platform", "darwin")
 
@@ -50,9 +45,6 @@ def test_sidecar_container_runtime_requires_cli(monkeypatch):
 
 
 def test_sidecar_container_runtime_starts_services_and_pulls_missing_image(monkeypatch):
-    pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-
     calls = []
 
     def fake_run(args, **kwargs):
@@ -77,9 +69,6 @@ def test_sidecar_container_runtime_starts_services_and_pulls_missing_image(monke
 
 
 def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
-    pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-
     calls = []
 
     def fake_run(args, **kwargs):
@@ -107,11 +96,6 @@ def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
 
 
 def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
-    pytest.importorskip("torch")
-    import torch
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
     tensor_support._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
     calls = []
@@ -140,11 +124,6 @@ def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
 
 
 def test_sidecar_dispatch_mode_forwards_tensor_ops(monkeypatch):
-    pytest.importorskip("torch")
-    import torch
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
     tensor_support._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
     calls = []
@@ -173,10 +152,6 @@ def test_sidecar_dispatch_mode_forwards_tensor_ops(monkeypatch):
 
 
 def test_sidecar_dispatch_mode_keeps_cpu_ops_local(monkeypatch):
-    torch = pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
     session = sidecar.SidecarSession(server="host-a:14833")
     requests = []
     monkeypatch.setattr(
@@ -192,10 +167,6 @@ def test_sidecar_dispatch_mode_keeps_cpu_ops_local(monkeypatch):
 
 
 def test_sidecar_to_copy_uses_direct_cpu_upload(monkeypatch):
-    torch = pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
     tensor_support._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
     source = torch.arange(8, dtype=torch.float32)
@@ -219,10 +190,6 @@ def test_sidecar_to_copy_uses_direct_cpu_upload(monkeypatch):
 
 
 def test_sidecar_to_copy_uses_direct_gpu_download(monkeypatch):
-    torch = pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
     tensor_support._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
     source = tensor_support.SidecarTensor(
@@ -252,10 +219,6 @@ def test_sidecar_to_copy_uses_direct_gpu_download(monkeypatch):
 
 
 def test_sidecar_copy_uses_direct_cpu_stream(monkeypatch):
-    torch = pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
     tensor_support._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
     destination = tensor_support.SidecarTensor(
@@ -283,16 +246,25 @@ def test_sidecar_copy_uses_direct_cpu_stream(monkeypatch):
     assert calls == [(destination, source)]
 
 
-def test_sidecar_worker_consumes_tensor_stream_before_operation_error():
-    torch = pytest.importorskip("torch")
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
+def test_sidecar_worker_consumes_tensor_stream_before_operation_error(tmp_path):
+    worker_source = sidecar._worker_source()
+    isolated_source = (
+        "import importlib.abc\n"
+        "import sys\n\n"
+        "class RejectLupineImports(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname == 'lupine' or fullname.startswith('lupine.'):\n"
+        "            raise ImportError(f'unexpected external import: {fullname}')\n"
+        "        return None\n\n"
+        "sys.meta_path.insert(0, RejectLupineImports())\n"
+        f"exec(compile({worker_source!r}, '<worker-bootstrap>', 'exec'))\n"
+    )
     proc = subprocess.Popen(
-        [sys.executable, "-u", "-c", sidecar._worker_source()],
+        [sys.executable, "-u", "-c", isolated_source],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        cwd=tmp_path,
     )
     session = sidecar.SidecarSession(server="host-a:14833")
     session._proc = proc

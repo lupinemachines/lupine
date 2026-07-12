@@ -22,6 +22,10 @@ class SidecarError(RuntimeError):
     """Raised when the sidecar PyTorch worker fails."""
 
 
+class TensorStreamError(SidecarError):
+    """Raised when a framed tensor stream cannot be read completely."""
+
+
 def _get_active_session() -> Any:
     return _ACTIVE_SESSION
 
@@ -78,10 +82,36 @@ def _read_tensor(
         end = min(offset + chunk_size, len(data))
         read = stream.readinto(data[offset:end])
         if read is None or read <= 0:
-            raise SidecarError(
+            raise TensorStreamError(
                 "sidecar tensor stream ended before the tensor was complete"
             )
         offset += read
+
+
+def _discard_bytes(stream: Any, size: int) -> None:
+    buffer = bytearray(min(size, _TENSOR_CHUNK_BYTES))
+    view = memoryview(buffer)
+    remaining = size
+    while remaining:
+        count = min(remaining, len(view))
+        read = stream.readinto(view[:count])
+        if read is None or read <= 0:
+            raise TensorStreamError(
+                "sidecar tensor stream ended before the tensor was complete"
+            )
+        remaining -= read
+
+
+def _tensor_stream_metadata(tensor: Any, dtype: Any) -> dict[str, Any]:
+    element_size = torch.empty((), dtype=dtype).element_size()
+    return {
+        "shape": list(tensor.shape),
+        "dtype": _dtype_name(dtype),
+        "layout": "strided",
+        "device": "cpu",
+        "byteorder": sys.byteorder,
+        "nbytes": int(tensor.numel()) * int(element_size),
+    }
 
 
 def _cpu_tensor_metadata(tensor: Any) -> dict[str, Any]:
@@ -111,21 +141,29 @@ def _cpu_tensor_metadata(tensor: Any) -> dict[str, Any]:
             "sidecar CPU tensor arguments must be contiguous; call contiguous() first"
         )
 
-    return {
-        "shape": list(tensor.shape),
-        "dtype": _dtype_name(tensor.dtype),
-        "layout": "strided",
-        "device": "cpu",
-        "byteorder": sys.byteorder,
-        "nbytes": _tensor_nbytes(tensor),
-    }
+    return _tensor_stream_metadata(tensor, tensor.dtype)
 
 
-def _decode_cpu_tensor(payload: Mapping[str, Any], stream: Any) -> Any:
+def _validate_cpu_result_tensor(tensor: Any) -> None:
+    if tensor.device.type != "cpu":
+        raise ValueError(f"cannot return a tensor on {tensor.device} from the sidecar")
+    if tensor.layout != torch.strided or tensor.is_quantized:
+        raise ValueError(
+            "sidecar CPU tensor results require unquantized strided layout"
+        )
+    if tensor.is_conj() or tensor.is_neg():
+        raise ValueError("sidecar CPU tensor results cannot be lazy views")
+    if not tensor.is_contiguous():
+        raise ValueError("sidecar CPU tensor results must be contiguous")
+
+
+def _parse_tensor_metadata(
+    payload: Mapping[str, Any],
+) -> tuple[tuple[int, ...], Any, int, int, int]:
     if payload.get("device") != "cpu" or payload.get("layout") != "strided":
-        raise SidecarError("sidecar returned an invalid CPU tensor description")
+        raise TensorStreamError("sidecar returned an invalid CPU tensor description")
     if payload.get("byteorder") != sys.byteorder:
-        raise SidecarError(
+        raise TensorStreamError(
             "sidecar CPU tensor byte order does not match the local process"
         )
 
@@ -134,20 +172,100 @@ def _decode_cpu_tensor(payload: Mapping[str, Any], stream: Any) -> Any:
         dtype = _dtype_from_name(payload["dtype"])
         size = int(payload["nbytes"])
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
-        raise SidecarError("sidecar returned malformed CPU tensor data") from exc
+        raise TensorStreamError("sidecar returned malformed CPU tensor data") from exc
     if any(dimension < 0 for dimension in shape):
-        raise SidecarError("sidecar returned a CPU tensor with a negative dimension")
+        raise TensorStreamError(
+            "sidecar returned a CPU tensor with a negative dimension"
+        )
 
     element_count = math.prod(shape)
-    expected_bytes = element_count * torch.empty((), dtype=dtype).element_size()
+    element_size = torch.empty((), dtype=dtype).element_size()
+    expected_bytes = element_count * element_size
     if size != expected_bytes:
-        raise SidecarError(
+        raise TensorStreamError(
             "sidecar returned the wrong number of bytes for a CPU tensor: "
             f"expected {expected_bytes}, got {size}"
         )
-    tensor = torch.empty(shape, dtype=dtype)
+    return shape, dtype, element_count, element_size, size
+
+
+def _decode_cpu_tensor(payload: Mapping[str, Any], stream: Any) -> Any:
+    shape, dtype, _, _, size = _parse_tensor_metadata(payload)
+    try:
+        tensor = torch.empty(shape, dtype=dtype)
+    except Exception:
+        _discard_bytes(stream, size)
+        raise
     _read_tensor(stream, tensor)
     return tensor
+
+
+def _read_cuda_tensor(
+    stream: Any,
+    payload: Mapping[str, Any],
+    *,
+    dtype: Any = None,
+    device: Any = "cuda:0",
+    destination: Any = None,
+) -> Any:
+    shape, source_dtype, element_count, element_size, size = _parse_tensor_metadata(
+        payload
+    )
+    consumed = 0
+    try:
+        direct = (
+            destination is not None
+            and tuple(destination.shape) == shape
+            and destination.is_contiguous()
+        )
+        if direct:
+            tensor = destination
+        else:
+            target_dtype = source_dtype if dtype is None else dtype
+            tensor = torch.empty(shape, dtype=target_dtype, device=device)
+
+        flat = tensor.reshape(-1)
+        chunk_elements = max(1, _TENSOR_CHUNK_BYTES // element_size)
+        staging = bytearray(min(size, chunk_elements * element_size))
+        staging_view = memoryview(staging)
+        for element_offset in range(0, element_count, chunk_elements):
+            count = min(chunk_elements, element_count - element_offset)
+            chunk_bytes = count * element_size
+            offset = 0
+            while offset < chunk_bytes:
+                read = stream.readinto(staging_view[offset:chunk_bytes])
+                if read is None or read <= 0:
+                    raise TensorStreamError(
+                        "sidecar tensor stream ended before the tensor was complete"
+                    )
+                offset += read
+            consumed += chunk_bytes
+            source = torch.frombuffer(staging, dtype=source_dtype, count=count)
+            flat[element_offset : element_offset + count].copy_(source)
+
+        if destination is not None and not direct:
+            destination.copy_(tensor)
+            return destination
+        return tensor
+    except TensorStreamError:
+        raise
+    except Exception:
+        _discard_bytes(stream, size - consumed)
+        raise
+
+
+def _write_cuda_tensor(stream: Any, tensor: Any, dtype: Any) -> None:
+    source = tensor.detach().reshape(-1)
+    element_size = torch.empty((), dtype=dtype).element_size()
+    chunk_elements = max(1, _TENSOR_CHUNK_BYTES // element_size)
+    staging = torch.empty(
+        min(source.numel(), chunk_elements), dtype=dtype, device="cpu"
+    )
+    for offset in range(0, source.numel(), chunk_elements):
+        count = min(chunk_elements, source.numel() - offset)
+        chunk = staging[:count]
+        chunk.copy_(source[offset : offset + count])
+        _write_tensor(stream, chunk)
 
 
 def _normalize_device(device: Any = None) -> str:

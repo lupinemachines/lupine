@@ -52,11 +52,31 @@ def _system_running(output: str) -> bool:
     return payload.get("status") == "running"
 
 
-_WORKER_PATH = Path(__file__).with_name("_sidecar_worker.py")
+_TENSOR_PATH = Path(__file__).with_name("tensor.py")
+_WORKER_PATH = Path(__file__).with_name("worker.py")
 
 
 def _worker_source() -> str:
-    return _WORKER_PATH.read_text(encoding="utf-8")
+    tensor_source = _TENSOR_PATH.read_text(encoding="utf-8")
+    worker_source = _WORKER_PATH.read_text(encoding="utf-8")
+    return (
+        "import sys\n"
+        "import types\n\n"
+        "package = types.ModuleType('lupine')\n"
+        "package.__path__ = []\n"
+        "sys.modules['lupine'] = package\n\n"
+        "def load_module(name, source):\n"
+        "    module = types.ModuleType(name)\n"
+        "    module.__file__ = name.replace('.', '/') + '.py'\n"
+        "    module.__package__ = 'lupine'\n"
+        "    sys.modules[name] = module\n"
+        "    setattr(package, name.rsplit('.', 1)[-1], module)\n"
+        "    exec(compile(source, module.__file__, 'exec'), module.__dict__)\n"
+        "    return module\n\n"
+        f"tensor = load_module('lupine.tensor', {tensor_source!r})\n"
+        f"worker = load_module('lupine.worker', {worker_source!r})\n"
+        "worker.main()\n"
+    )
 
 
 @dataclass
@@ -105,7 +125,15 @@ class ContainerRuntime:
             return
 
         pulled = self._run(
-            ["image", "pull", "--progress", "none", "--platform", self.platform, self.image]
+            [
+                "image",
+                "pull",
+                "--progress",
+                "none",
+                "--platform",
+                self.platform,
+                self.image,
+            ]
         )
         if pulled.returncode != 0:
             raise SidecarError(
@@ -152,7 +180,11 @@ class SidecarSession:
         if _get_active_session() is not None:
             raise SidecarError("a LUPINE sidecar session is already active")
         _ensure_registered()
-        runtime = "container" if self.runtime == "auto" and sys.platform == "darwin" else self.runtime
+        runtime = (
+            "container"
+            if self.runtime == "auto" and sys.platform == "darwin"
+            else self.runtime
+        )
         if runtime != "container":
             raise SidecarError("only runtime='container' is implemented")
         launcher = ContainerRuntime(

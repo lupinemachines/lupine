@@ -5,11 +5,12 @@ from io import BytesIO
 
 import pytest
 
+torch = pytest.importorskip("torch")
+sidecar = pytest.importorskip("lupine.sidecar")
+tensor_support = pytest.importorskip("lupine.tensor")
+
 
 def test_cpu_tensor_rejects_noncontiguous_input():
-    torch = pytest.importorskip("torch")
-    import lupine.tensor as tensor_support
-
     value = torch.arange(12).reshape(3, 4).transpose(0, 1)
 
     with pytest.raises(tensor_support.SidecarError, match="must be contiguous"):
@@ -32,9 +33,6 @@ def test_cpu_tensor_rejects_noncontiguous_input():
     ],
 )
 def test_cpu_tensor_rejects_lazy_views(value, error):
-    torch = pytest.importorskip("torch")
-    import lupine.tensor as tensor_support
-
     with pytest.raises(tensor_support.SidecarError, match=error):
         tensor_support._cpu_tensor_metadata(value(torch))
 
@@ -64,9 +62,6 @@ class _ShortReader:
 
 
 def test_cpu_tensor_transport_uses_bounded_binary_chunks():
-    torch = pytest.importorskip("torch")
-    import lupine.tensor as tensor_support
-
     value = torch.arange(2 * tensor_support._TENSOR_CHUNK_BYTES + 37, dtype=torch.uint8)
     stream = BytesIO()
     writer = _ShortWriter(stream, limit=997)
@@ -101,9 +96,6 @@ def test_cpu_tensor_transport_uses_bounded_binary_chunks():
     ],
 )
 def test_cpu_tensor_binary_round_trip(value):
-    torch = pytest.importorskip("torch")
-    import lupine.tensor as tensor_support
-
     expected = value(torch)
     stream = BytesIO()
     tensor_support._write_tensor(stream, expected)
@@ -119,12 +111,8 @@ def test_cpu_tensor_binary_round_trip(value):
 
 
 def test_worker_streams_cpu_cuda_transfers_in_chunks():
-    torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    import lupine.sidecar as sidecar
-    import lupine.tensor as tensor_support
-
     tensor_support._ensure_registered()
     proc = subprocess.Popen(
         [sys.executable, "-u", "-c", sidecar._worker_source()],
