@@ -1,6 +1,6 @@
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
-#include <condition_variable>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -177,6 +177,8 @@ lupine_manual_handlers() {
       {RPC_cuMemcpyHtoD_v2, {handle_manual_cuMemcpyHtoD_v2, "cuMemcpyHtoD_v2"}},
       {RPC_cuMemcpyHtoDAsync_v2,
        {handle_manual_cuMemcpyHtoDAsync_v2, "cuMemcpyHtoDAsync_v2"}},
+      {LUPINE_RPC_lupineManagedHostFlush,
+       {handle_manual_lupineManagedHostFlush, "lupineManagedHostFlush"}},
       {RPC_cuMemcpyDtoHAsync_v2,
        {handle_manual_cuMemcpyDtoHAsync_v2, "cuMemcpyDtoHAsync_v2"}},
       {RPC_cuCtxSynchronize,

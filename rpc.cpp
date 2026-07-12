@@ -187,8 +187,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
     return -1;
   }
 
-  while (!conn->closed &&
-         (conn->read_id < 2 || conn->read_id % 2 != parity)) {
+  while (!conn->closed && (conn->read_id < 2 || conn->read_id % 2 != parity)) {
     pthread_cond_wait(&conn->read_cond, &conn->read_mutex);
   }
 
@@ -354,6 +353,26 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
   return rpc_write_queue_push(conn, data, size, 0);
+}
+
+int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
+  if (count == 0) {
+    return 0;
+  }
+  if (conn == nullptr || iovecs == nullptr ||
+      count > static_cast<size_t>(INT_MAX - conn->write_queue_count) ||
+      rpc_write_queue_reserve(conn, conn->write_queue_count +
+                                        static_cast<int>(count)) < 0) {
+    return -1;
+  }
+
+  for (size_t i = 0; i < count; ++i) {
+    if (iovecs[i].iov_base == nullptr && iovecs[i].iov_len != 0) {
+      return -1;
+    }
+    conn->write_queue[conn->write_queue_count++] = {iovecs[i], 0};
+  }
+  return 0;
 }
 
 int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
@@ -697,8 +716,8 @@ int rpc_write_end(conn_t *conn) {
   int result = -1;
   if (conn->write_queue_count >= 3) {
     conn->write_queue[0] = {{&conn->write_id, sizeof(conn->write_id)}, 0};
-    conn->write_queue[1] = {
-        {&conn->write_lane_id, sizeof(conn->write_lane_id)}, 0};
+    conn->write_queue[1] = {{&conn->write_lane_id, sizeof(conn->write_lane_id)},
+                            0};
     conn->write_queue[2] = {{&conn->write_op, sizeof(conn->write_op)}, 0};
     result = rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
   }

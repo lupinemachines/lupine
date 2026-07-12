@@ -59,6 +59,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
 )
 
@@ -83,6 +84,7 @@ set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
 )
 
 set(SERVER_HEADERS

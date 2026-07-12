@@ -1059,17 +1059,41 @@ class CrossServerCopyAnnotation:
 
 
 @dataclass
+class DevicePtrTranslationAnnotation:
+    parameter: Parameter
+
+
+@dataclass
+class RoutingFallbackAnnotation:
+    kind: str
+    parameter: Parameter
+
+
+@dataclass
+class SynchronizeAnnotation:
+    deferred_dtoh: bool = False
+    stdout: bool = False
+
+
+@dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
     disabled_client: bool = False
     disabled_server: bool = False
     # @async: fire-and-forget op; client does not wait, server sends no response.
     async_fire_forget: bool = False
+    # Optional response fields are emitted by the corresponding manual server
+    # handler before the generated CUDA result.
+    synchronize: Optional[SynchronizeAnnotation] = None
     routing_kind: Optional[str] = None
     routing_parameter: Optional[Parameter] = None
+    routing_fallback: Optional[RoutingFallbackAnnotation] = None
     record_owners: list[OwnerAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
+    translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
+        if self.translate_deviceptrs is None:
+            self.translate_deviceptrs = []

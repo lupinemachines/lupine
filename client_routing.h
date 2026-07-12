@@ -34,6 +34,10 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);
 
 extern "C" bool lupine_route_is_local(lupine_route route);
 extern "C" conn_t *lupine_route_remote_conn(lupine_route route);
+extern "C" int lupine_route_identity(lupine_route route);
+extern "C" lupine_route lupine_route_from_identity(int route_id);
+extern "C" bool lupine_routes_share_server(lupine_route first,
+                                           lupine_route second);
 
 using lupine_device_lookup_callback = CUresult (*)(void *context,
                                                    lupine_route route,
@@ -82,6 +86,7 @@ extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,
 extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                        size_t size,
                                                        lupine_route route);
+extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
 
 template <typename Fn> static Fn lupine_real_cuda_fn(const char *name) {
   return reinterpret_cast<Fn>(lupine_real_cuda_symbol(name));

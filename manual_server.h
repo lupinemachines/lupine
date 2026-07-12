@@ -74,6 +74,7 @@ int handle_manual_cuGraphExecDestroy(conn_t *conn);
 int handle_manual_cuGraphDestroy(conn_t *conn);
 int handle_manual_cuMemcpyHtoD_v2(conn_t *conn);
 int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn);
+int handle_manual_lupineManagedHostFlush(conn_t *conn);
 int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn);
 int handle_manual_cuCtxSynchronize(conn_t *conn);
 int handle_manual_cuStreamSynchronize(conn_t *conn);

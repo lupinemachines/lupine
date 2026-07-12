@@ -3332,6 +3332,35 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
+int handle_manual_lupineManagedHostFlush(conn_t *conn) {
+  uint32_t count = 0;
+  CUresult result = CUDA_SUCCESS;
+
+  if (rpc_read(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+
+  for (uint32_t i = 0; i < count; ++i) {
+    void *server_host_ptr = nullptr;
+    size_t bytes = 0;
+    if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
+        rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+        rpc_read(conn, server_host_ptr, bytes) < 0) {
+      return -1;
+    }
+  }
+
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;

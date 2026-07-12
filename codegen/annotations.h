@@ -2221,7 +2221,9 @@ CUresult cuCtxGetFlags(unsigned int *flags);
  */
 CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey CURRENT_CONTEXT
  */
 CUresult cuCtxSynchronize();
 /**
@@ -2545,25 +2547,25 @@ CUresult cuMemFree_v2(CUdeviceptr dptr);
 CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
                                  CUdeviceptr dptr);
 /**
- * @disabled - client-local host allocation
- * @param pp RECV_ONLY
+ * @disabled client - manual client substitutes a local faulting address
+ * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  */
 CUresult cuMemAllocHost_v2(void **pp, size_t bytesize);
 /**
- * @disabled - client-local host allocation
+ * @disabled client - manual client frees the substituted local address
  * @param p SEND_ONLY
  */
 CUresult cuMemFreeHost(void *p);
 /**
- * @disabled - client-local host allocation
- * @param pp RECV_ONLY
+ * @disabled client - manual client substitutes a local faulting address
+ * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  * @param Flags SEND_ONLY
  */
 CUresult cuMemHostAlloc(void **pp, size_t bytesize, unsigned int Flags);
 /**
- * @disabled - client-local host allocation
+ * @disabled client - manual client translates local host pointers
  * @param pdptr SEND_RECV
  * @param p SEND_ONLY
  * @param Flags SEND_ONLY
@@ -3415,20 +3417,24 @@ CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
                                            unsigned int flags);
 /**
  * @routingkey STREAM hStream
+ * @routingfallback DEVICEPTR dptr
  * @param hStream SEND_ONLY
- * @param dptr SEND_ONLY
+ * @param dptr SEND_ONLY TRANSLATE_DEVICEPTR
  * @param length SEND_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags);
 /**
+ * @synchronize
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamQuery(CUstream hStream);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamSynchronize(CUstream hStream);
@@ -3481,13 +3487,16 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags);
 /**
- * @disabled - manual client/server handle deferred DtoH copies
+ * @disabled server
+ * @synchronize DEFERRED_DTOH
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
 CUresult cuEventQuery(CUevent hEvent);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
 CUresult cuEventSynchronize(CUevent hEvent);
