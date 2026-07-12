@@ -16,23 +16,16 @@ extern int rpc_open();
 extern int rpc_size();
 extern conn_t *rpc_client_get_connection(unsigned int index);
 
-struct lupine_owner {
-  bool local = false;
-  unsigned int conn_index = 0;
-};
-
 struct lupine_deviceptr_allocation_record {
   CUdeviceptr base = 0;
   size_t size = 0;
-  lupine_owner owner;
+  int route_id = -2;
 };
 
 struct lupine_device_entry {
   bool local = false;
-  int local_ordinal = -1;
   CUdevice local_device = -1;
   unsigned int conn_index = 0;
-  int remote_ordinal = 0;
   CUdevice remote_device = 0;
 };
 
@@ -51,62 +44,9 @@ static bool &lupine_device_table_ready() {
   return ready;
 }
 
-static std::unordered_map<CUcontext, lupine_owner> &lupine_context_owners() {
-  static auto *owners = new std::unordered_map<CUcontext, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUmodule, lupine_owner> &lupine_module_owners() {
-  static auto *owners = new std::unordered_map<CUmodule, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUlibrary, lupine_owner> &lupine_library_owners() {
-  static auto *owners = new std::unordered_map<CUlibrary, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUfunction, lupine_owner> &lupine_function_owners() {
-  static auto *owners = new std::unordered_map<CUfunction, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUstream, lupine_owner> &lupine_stream_owners() {
-  static auto *owners = new std::unordered_map<CUstream, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUevent, lupine_owner> &lupine_event_owners() {
-  static auto *owners = new std::unordered_map<CUevent, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUmemoryPool, lupine_owner> &
-lupine_memory_pool_owners() {
-  static auto *owners = new std::unordered_map<CUmemoryPool, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUgraph, lupine_owner> &lupine_graph_owners() {
-  static auto *owners = new std::unordered_map<CUgraph, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUgraphNode, lupine_owner> &
-lupine_graph_node_owners() {
-  static auto *owners = new std::unordered_map<CUgraphNode, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUgraphExec, lupine_owner> &
-lupine_graph_exec_owners() {
-  static auto *owners = new std::unordered_map<CUgraphExec, lupine_owner>();
-  return *owners;
-}
-
-static std::unordered_map<CUdeviceptr, lupine_owner> &
-lupine_deviceptr_owners() {
-  static auto *owners = new std::unordered_map<CUdeviceptr, lupine_owner>();
+template <typename Handle>
+static std::unordered_map<Handle, int> &lupine_owners() {
+  static auto *owners = new std::unordered_map<Handle, int>();
   return *owners;
 }
 
@@ -165,14 +105,6 @@ static lupine_route lupine_local_route() {
   return lupine_route{LUPINE_ROUTE_LOCAL, nullptr};
 }
 
-static lupine_route lupine_route_for_owner(const lupine_owner &owner) {
-  if (owner.local) {
-    return lupine_local_route();
-  }
-  return lupine_remote_route_for_conn(
-      lupine_thread_conn_by_index(owner.conn_index));
-}
-
 int lupine_route_identity(lupine_route route) {
   if (route.kind == LUPINE_ROUTE_LOCAL) {
     return -1;
@@ -211,9 +143,9 @@ int lupine_known_deviceptr_route_id(CUdeviceptr ptr) {
     return -2;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto it = lupine_deviceptr_owners().find(ptr);
-  if (it != lupine_deviceptr_owners().end()) {
-    return it->second.local ? -1 : static_cast<int>(it->second.conn_index);
+  auto it = lupine_owners<CUdeviceptr>().find(ptr);
+  if (it != lupine_owners<CUdeviceptr>().end()) {
+    return it->second;
   }
   for (const auto &entry : lupine_deviceptr_allocations()) {
     const auto &allocation = entry.second;
@@ -222,9 +154,7 @@ int lupine_known_deviceptr_route_id(CUdeviceptr ptr) {
     }
     uint64_t offset = static_cast<uint64_t>(ptr - allocation.base);
     if (offset < allocation.size) {
-      return allocation.owner.local
-                 ? -1
-                 : static_cast<int>(allocation.owner.conn_index);
+      return allocation.route_id;
     }
   }
   return -2;
@@ -306,7 +236,6 @@ static CUresult lupine_ensure_device_table() {
         if (local_get_fn(&local_device, ordinal) == CUDA_SUCCESS) {
           lupine_device_entry entry;
           entry.local = true;
-          entry.local_ordinal = ordinal;
           entry.local_device = local_device;
           devices.push_back(entry);
         }
@@ -334,7 +263,6 @@ static CUresult lupine_ensure_device_table() {
         lupine_device_entry entry;
         entry.local = false;
         entry.conn_index = static_cast<unsigned int>(i);
-        entry.remote_ordinal = ordinal;
         entry.remote_device = remote_device;
         devices.push_back(entry);
       }
@@ -433,8 +361,8 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
   for (int i = has_local_device ? -1 : 0; i < connection_count; ++i) {
     lupine_route route =
         i < 0 ? lupine_local_route()
-              : lupine_remote_route_for_conn(rpc_client_get_connection(
-                    static_cast<unsigned int>(i)));
+              : lupine_remote_route_for_conn(
+                    rpc_client_get_connection(static_cast<unsigned int>(i)));
     CUdevice route_device = 0;
     result = lookup(context, route, &route_device);
     if (result != CUDA_SUCCESS) {
@@ -461,23 +389,7 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
 }
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device) {
-  if (device == nullptr || lupine_ensure_device_table() != CUDA_SUCCESS) {
-    return nullptr;
-  }
-
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  int local = static_cast<int>(*device);
-  auto &devices = lupine_device_table();
-  if (local < 0 || local >= static_cast<int>(devices.size())) {
-    return nullptr;
-  }
-  const lupine_device_entry &mapped = devices[local];
-  if (mapped.local) {
-    *device = mapped.local_device;
-    return nullptr;
-  }
-  *device = mapped.remote_device;
-  return lupine_thread_conn_by_index(mapped.conn_index);
+  return lupine_route_remote_conn(lupine_route_for_device(device));
 }
 
 extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
@@ -537,126 +449,70 @@ extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,
                                          remote_device);
 }
 
-extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn) {
+template <typename Handle>
+static void lupine_note_owner(Handle handle, conn_t *conn) {
   int index = lupine_conn_index(conn);
-  if (ctx == nullptr || index < 0) {
+  if (handle == Handle{} || index < 0) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_context_owners()[ctx] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_owners<Handle>()[handle] = index;
+}
+
+extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn) {
+  lupine_note_owner(ctx, conn);
 }
 
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (module == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_module_owners()[module] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(module, conn);
 }
 
 extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (library == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_library_owners()[library] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(library, conn);
 }
 
 extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (function == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_function_owners()[function] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(function, conn);
 }
 
 extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (stream == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_stream_owners()[stream] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(stream, conn);
 }
 
 extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (event == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_event_owners()[event] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(event, conn);
 }
 
 extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (pool == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_memory_pool_owners()[pool] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(pool, conn);
 }
 
 extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (graph == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_graph_owners()[graph] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(graph, conn);
 }
 
 extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (node == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_graph_node_owners()[node] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(node, conn);
 }
 
 extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (exec == nullptr || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_graph_exec_owners()[exec] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(exec, conn);
 }
 
 extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (ptr == 0 || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_deviceptr_owners()[ptr] =
-      lupine_owner{false, static_cast<unsigned int>(index)};
+  lupine_note_owner(ptr, conn);
 }
 
 static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
                                                           size_t size,
-                                                          lupine_owner owner) {
-  lupine_deviceptr_owners()[ptr] = owner;
+                                                          int route_id) {
+  lupine_owners<CUdeviceptr>()[ptr] = route_id;
   if (size == 0) {
     lupine_deviceptr_allocations().erase(ptr);
     return;
   }
   lupine_deviceptr_allocations()[ptr] =
-      lupine_deviceptr_allocation_record{ptr, size, owner};
+      lupine_deviceptr_allocation_record{ptr, size, route_id};
 }
 
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
@@ -666,151 +522,72 @@ extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_note_deviceptr_allocation_owner_locked(
-      ptr, size, lupine_owner{false, static_cast<unsigned int>(index)});
+  lupine_note_deviceptr_allocation_owner_locked(ptr, size, index);
+}
+
+template <typename Handle>
+static void lupine_note_owner_route(Handle handle, lupine_route route) {
+  int route_id = lupine_route_identity(route);
+  if (handle == Handle{} || route_id < -1) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  lupine_owners<Handle>()[handle] = route_id;
 }
 
 extern "C" void lupine_note_context_owner_route(CUcontext ctx,
                                                 lupine_route route) {
-  if (ctx == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_context_owner(ctx, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_context_owners()[ctx] = lupine_owner{true, 0};
+  lupine_note_owner_route(ctx, route);
 }
 
 extern "C" void lupine_note_module_owner_route(CUmodule module,
                                                lupine_route route) {
-  if (module == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_module_owner(module, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_module_owners()[module] = lupine_owner{true, 0};
+  lupine_note_owner_route(module, route);
 }
 
 extern "C" void lupine_note_library_owner_route(CUlibrary library,
                                                 lupine_route route) {
-  if (library == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_library_owner(library, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_library_owners()[library] = lupine_owner{true, 0};
+  lupine_note_owner_route(library, route);
 }
 
 extern "C" void lupine_note_function_owner_route(CUfunction function,
                                                  lupine_route route) {
-  if (function == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_function_owner(function, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_function_owners()[function] = lupine_owner{true, 0};
+  lupine_note_owner_route(function, route);
 }
 
 extern "C" void lupine_note_stream_owner_route(CUstream stream,
                                                lupine_route route) {
-  if (stream == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_stream_owner(stream, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_stream_owners()[stream] = lupine_owner{true, 0};
+  lupine_note_owner_route(stream, route);
 }
 
 extern "C" void lupine_note_event_owner_route(CUevent event,
                                               lupine_route route) {
-  if (event == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_event_owner(event, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_event_owners()[event] = lupine_owner{true, 0};
+  lupine_note_owner_route(event, route);
 }
 
 extern "C" void lupine_note_memory_pool_owner_route(CUmemoryPool pool,
                                                     lupine_route route) {
-  if (pool == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_memory_pool_owner(pool, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_memory_pool_owners()[pool] = lupine_owner{true, 0};
+  lupine_note_owner_route(pool, route);
 }
 
 extern "C" void lupine_note_graph_owner_route(CUgraph graph,
                                               lupine_route route) {
-  if (graph == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_graph_owner(graph, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_graph_owners()[graph] = lupine_owner{true, 0};
+  lupine_note_owner_route(graph, route);
 }
 
 extern "C" void lupine_note_graph_node_owner_route(CUgraphNode node,
                                                    lupine_route route) {
-  if (node == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_graph_node_owner(node, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_graph_node_owners()[node] = lupine_owner{true, 0};
+  lupine_note_owner_route(node, route);
 }
 
 extern "C" void lupine_note_graph_exec_owner_route(CUgraphExec exec,
                                                    lupine_route route) {
-  if (exec == nullptr || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_graph_exec_owner(exec, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_graph_exec_owners()[exec] = lupine_owner{true, 0};
+  lupine_note_owner_route(exec, route);
 }
 
 extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,
                                                   lupine_route route) {
-  if (ptr == 0 || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_deviceptr_owner(ptr, route.conn);
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_deviceptr_owners()[ptr] = lupine_owner{true, 0};
+  lupine_note_owner_route(ptr, route);
 }
 
 extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
@@ -824,152 +601,82 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_note_deviceptr_allocation_owner_locked(ptr, size,
-                                                lupine_owner{true, 0});
+  lupine_note_deviceptr_allocation_owner_locked(ptr, size, -1);
 }
 
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_deviceptr_owners().erase(ptr);
+  lupine_owners<CUdeviceptr>().erase(ptr);
   lupine_deviceptr_allocations().erase(ptr);
 }
 
-static lupine_route lupine_route_for_context_if_known(CUcontext ctx) {
-  if (ctx == nullptr) {
+template <typename Handle>
+static lupine_route lupine_route_for_known_owner(Handle handle) {
+  if (handle == Handle{}) {
     return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
   }
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  auto &owners = lupine_owners<Handle>();
+  auto owner = owners.find(handle);
+  return owner == owners.end() ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
+                               : lupine_route_from_identity(owner->second);
+}
 
-  lupine_owner owner;
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_context_owners().find(ctx);
-    if (it == lupine_context_owners().end()) {
-      return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
-    }
-    owner = it->second;
+template <typename Handle>
+static lupine_route lupine_route_for_owner_or_default(Handle handle) {
+  lupine_route route = lupine_route_for_known_owner(handle);
+  if (route.kind == LUPINE_ROUTE_INVALID) {
+    return lupine_route_for_default();
   }
-  return lupine_route_for_owner(owner);
+  return route;
 }
 
 extern "C" lupine_route lupine_route_for_context(CUcontext ctx) {
-  if (ctx == nullptr) {
-    return lupine_route_for_default();
-  }
-  lupine_route route = lupine_route_for_context_if_known(ctx);
-  if (route.kind != LUPINE_ROUTE_INVALID) {
-    return route;
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(ctx);
 }
 
 extern "C" lupine_route lupine_route_for_module(CUmodule module) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_module_owners().find(module);
-    if (it != lupine_module_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(module);
 }
 
 extern "C" lupine_route lupine_route_for_library(CUlibrary library) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_library_owners().find(library);
-    if (it != lupine_library_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(library);
 }
 
 extern "C" lupine_route lupine_route_for_function(CUfunction function) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_function_owners().find(function);
-    if (it != lupine_function_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(function);
 }
 
 extern "C" lupine_route lupine_route_for_stream(CUstream stream) {
-  if (stream == nullptr) {
-    return lupine_route_for_default();
-  }
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_stream_owners().find(stream);
-    if (it != lupine_stream_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(stream);
 }
 
 extern "C" lupine_route lupine_route_for_event(CUevent event) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_event_owners().find(event);
-    if (it != lupine_event_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(event);
 }
 
 extern "C" lupine_route lupine_route_for_memory_pool(CUmemoryPool pool) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_memory_pool_owners().find(pool);
-    if (it != lupine_memory_pool_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(pool);
 }
 
 extern "C" lupine_route lupine_route_for_graph(CUgraph graph) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_graph_owners().find(graph);
-    if (it != lupine_graph_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(graph);
 }
 
 extern "C" lupine_route lupine_route_for_graph_node(CUgraphNode node) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_graph_node_owners().find(node);
-    if (it != lupine_graph_node_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(node);
 }
 
 extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec) {
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_graph_exec_owners().find(exec);
-    if (it != lupine_graph_exec_owners().end()) {
-      return lupine_route_for_owner(it->second);
-    }
-  }
-  return lupine_route_for_default();
+  return lupine_route_for_owner_or_default(exec);
 }
 
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
   {
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    auto it = lupine_deviceptr_owners().find(ptr);
-    if (it != lupine_deviceptr_owners().end()) {
-      return lupine_route_for_owner(it->second);
+    auto it = lupine_owners<CUdeviceptr>().find(ptr);
+    if (it != lupine_owners<CUdeviceptr>().end()) {
+      return lupine_route_from_identity(it->second);
     }
     for (const auto &entry : lupine_deviceptr_allocations()) {
       const auto &allocation = entry.second;
@@ -979,7 +686,7 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
       }
       uint64_t offset = static_cast<uint64_t>(ptr - allocation.base);
       if (offset < allocation.size) {
-        return lupine_route_for_owner(allocation.owner);
+        return lupine_route_from_identity(allocation.route_id);
       }
     }
   }
@@ -1021,7 +728,7 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
     return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
   }
 
-  lupine_route route = lupine_route_for_context_if_known(ctx);
+  lupine_route route = lupine_route_for_known_owner(ctx);
   if (route.kind == LUPINE_ROUTE_INVALID) {
     return route;
   }
