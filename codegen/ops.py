@@ -439,6 +439,8 @@ class ArrayOperation:
                 )
             )
 
+        return None
+
     @property
     def server_reference(self) -> str:
         if self.iter:
@@ -793,7 +795,7 @@ class NullTerminatedOperation:
 
     def server_rpc_read(self, f) -> Optional[str]:
         if not self.send:
-            return
+            return None
         f.write(
             "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0)\n".format(
                 param_name=self.parameter.name,
