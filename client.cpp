@@ -86,7 +86,6 @@ void rpc_destroy_thread_lane(uint64_t lane_id) {
 const char *DEFAULT_PORT = "14833";
 
 void *rpc_client_dispatch_thread(void *arg);
-extern "C" void lupine_invalidate_current_context_cache();
 
 struct lupine_server_endpoint {
   std::string host;
@@ -731,7 +730,8 @@ static int lupine_route_identity(lupine_route route) {
     return -1;
   }
   if (route.kind == LUPINE_ROUTE_REMOTE) {
-    return lupine_conn_index(route.conn);
+    int index = lupine_conn_index(route.conn);
+    return index >= 0 ? index : -2;
   }
   return -2;
 }
@@ -3263,112 +3263,6 @@ static thread_local CUcontext lupine_current_context = nullptr;
 static thread_local CUcontext lupine_default_context_hint = nullptr;
 static std::atomic<CUcontext> lupine_global_default_context_hint{nullptr};
 static thread_local auto *lupine_context_stack = new std::vector<CUcontext>();
-static std::atomic<unsigned long long> lupine_context_cache_generation{0};
-static std::atomic<unsigned long long> lupine_lane_context_cache_generation{0};
-static thread_local bool lupine_ctx_get_device_cache_valid = false;
-static thread_local unsigned long long lupine_ctx_get_device_cache_generation =
-    0;
-static thread_local CUcontext lupine_ctx_get_device_cache_context = nullptr;
-static thread_local CUdevice lupine_ctx_get_device_cache_device = -1;
-
-// Each client thread maps to a persistent server worker lane. CUDA current
-// context is thread-local on that worker, so mirror it per connection here.
-struct lupine_lane_context_cache_entry {
-  CUcontext context = nullptr;
-  unsigned long long generation = 0;
-  bool valid = false;
-};
-
-struct lupine_lane_context_cache {
-  lupine_lane_context_cache_entry local;
-  lupine_lane_context_cache_entry remote[sizeof(conns) / sizeof(conns[0])] = {};
-};
-
-static thread_local lupine_lane_context_cache lupine_lane_contexts;
-
-static void lupine_invalidate_current_context_device_cache() {
-  lupine_context_cache_generation.fetch_add(1, std::memory_order_acq_rel);
-  lupine_ctx_get_device_cache_valid = false;
-}
-
-extern "C" void lupine_invalidate_current_context_cache() {
-  lupine_invalidate_current_context_device_cache();
-  lupine_lane_context_cache_generation.fetch_add(1, std::memory_order_acq_rel);
-}
-
-static lupine_lane_context_cache_entry *
-lupine_lane_context_entry(lupine_route route) {
-  if (lupine_route_is_local(route)) {
-    return &lupine_lane_contexts.local;
-  }
-  if (route.kind != LUPINE_ROUTE_REMOTE) {
-    return nullptr;
-  }
-  int index = lupine_conn_index(route.conn);
-  if (index < 0) {
-    return nullptr;
-  }
-  return &lupine_lane_contexts.remote[index];
-}
-
-static void lupine_note_lane_current_context(lupine_route route,
-                                             CUcontext context,
-                                             unsigned long long generation) {
-  auto *entry = lupine_lane_context_entry(route);
-  if (entry == nullptr) {
-    return;
-  }
-  if (generation !=
-      lupine_lane_context_cache_generation.load(std::memory_order_acquire)) {
-    entry->valid = false;
-    return;
-  }
-  entry->context = context;
-  entry->generation = generation;
-  entry->valid = true;
-}
-
-static void lupine_note_lane_current_context(lupine_route route,
-                                             CUcontext context) {
-  lupine_note_lane_current_context(
-      route, context,
-      lupine_lane_context_cache_generation.load(std::memory_order_acquire));
-}
-
-static void lupine_forget_lane_current_context(lupine_route route) {
-  auto *entry = lupine_lane_context_entry(route);
-  if (entry != nullptr) {
-    entry->valid = false;
-  }
-}
-
-static bool lupine_lane_has_current_context(lupine_route route,
-                                            CUcontext context) {
-  auto *entry = lupine_lane_context_entry(route);
-  return entry != nullptr && entry->valid && entry->context == context &&
-         entry->generation == lupine_lane_context_cache_generation.load(
-                                  std::memory_order_acquire);
-}
-
-static void lupine_cache_current_context_device(CUdevice device) {
-  lupine_ctx_get_device_cache_generation =
-      lupine_context_cache_generation.load(std::memory_order_acquire);
-  lupine_ctx_get_device_cache_context = lupine_current_context;
-  lupine_ctx_get_device_cache_device = device;
-  lupine_ctx_get_device_cache_valid = true;
-}
-
-static bool lupine_cached_current_context_device(CUdevice *device) {
-  unsigned long long generation =
-      lupine_context_cache_generation.load(std::memory_order_acquire);
-  if (device == nullptr || !lupine_ctx_get_device_cache_valid ||
-      lupine_ctx_get_device_cache_generation != generation ||
-      lupine_ctx_get_device_cache_context != lupine_current_context) {
-    return false;
-  }
-  *device = lupine_ctx_get_device_cache_device;
-  return true;
-}
 
 extern "C" lupine_route lupine_route_for_current_context() {
   return lupine_route_for_context(lupine_current_context);
@@ -3379,8 +3273,7 @@ static CUresult lupine_set_current_context_on_route(lupine_route route,
   if (route.kind == LUPINE_ROUTE_INVALID) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  unsigned long long generation =
-      lupine_lane_context_cache_generation.load(std::memory_order_acquire);
+  uint64_t epoch = lupine_lane_context_cache_epoch();
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(CUcontext);
@@ -3396,11 +3289,8 @@ static CUresult lupine_set_current_context_on_route(lupine_route route,
       result = CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
-  if (result == CUDA_SUCCESS) {
-    lupine_note_lane_current_context(route, ctx, generation);
-  } else {
-    lupine_forget_lane_current_context(route);
-  }
+  lupine_lane_context_cache_update(lupine_route_identity(route), ctx, epoch,
+                                   result == CUDA_SUCCESS);
   return result;
 }
 
@@ -3424,7 +3314,7 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
     return route;
   }
 
-  if (!lupine_lane_has_current_context(route, ctx)) {
+  if (!lupine_lane_context_cache_matches(lupine_route_identity(route), ctx)) {
     CUresult result = lupine_set_current_context_on_route(route, ctx);
     if (result != CUDA_SUCCESS) {
       return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
@@ -3432,7 +3322,7 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
   }
   if (lupine_current_context != ctx) {
     lupine_current_context = ctx;
-    lupine_invalidate_current_context_device_cache();
+    lupine_current_context_device_cache_invalidate();
   }
   return route;
 }
@@ -3481,27 +3371,28 @@ static CUresult lupine_set_remote_current_context(CUcontext ctx) {
 
 extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
   lupine_note_context_owner(ctx, conn);
-  lupine_note_lane_current_context(lupine_remote_route_for_conn(conn), ctx);
+  lupine_lane_context_cache_store(
+      lupine_route_identity(lupine_remote_route_for_conn(conn)), ctx);
   lupine_context_stack->push_back(lupine_current_context);
   lupine_current_context = ctx;
   if (ctx != nullptr) {
     lupine_default_context_hint = ctx;
     lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
   }
-  lupine_invalidate_current_context_device_cache();
+  lupine_current_context_device_cache_invalidate();
 }
 
 extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
                                              lupine_route route) {
   lupine_note_context_owner_route(ctx, route);
-  lupine_note_lane_current_context(route, ctx);
+  lupine_lane_context_cache_store(lupine_route_identity(route), ctx);
   lupine_context_stack->push_back(lupine_current_context);
   lupine_current_context = ctx;
   if (ctx != nullptr) {
     lupine_default_context_hint = ctx;
     lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
   }
-  lupine_invalidate_current_context_device_cache();
+  lupine_current_context_device_cache_invalidate();
 }
 
 extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
@@ -3513,7 +3404,7 @@ extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
       lupine_default_context_hint = ctx;
       lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
     }
-    lupine_invalidate_current_context_device_cache();
+    lupine_current_context_device_cache_invalidate();
   } else {
     lupine_context_stack->pop_back();
   }
@@ -3538,7 +3429,7 @@ extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx) {
       lupine_global_default_context_hint.store(previous,
                                                std::memory_order_relaxed);
     }
-    lupine_invalidate_current_context_device_cache();
+    lupine_current_context_device_cache_invalidate();
   } else {
     lupine_context_stack->push_back(previous);
   }
@@ -3553,7 +3444,7 @@ extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx) {
       lupine_default_context_hint = ctx;
       lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
     }
-    lupine_invalidate_current_context_device_cache();
+    lupine_current_context_device_cache_invalidate();
   }
   return result;
 }
@@ -3570,7 +3461,8 @@ extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  if (lupine_cached_current_context_device(device)) {
+  if (lupine_current_context_device_cache_lookup(lupine_current_context,
+                                                 device)) {
     return CUDA_SUCCESS;
   }
 
@@ -3583,7 +3475,8 @@ extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device) {
     }
     CUresult result = real(device);
     if (result == CUDA_SUCCESS) {
-      lupine_cache_current_context_device(*device);
+      lupine_current_context_device_cache_insert(lupine_current_context,
+                                                 *device);
     }
     return result;
   }
@@ -3600,7 +3493,7 @@ extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device) {
   }
   if (return_value == CUDA_SUCCESS) {
     *device = lupine_local_device_for_remote(conn, remote_device);
-    lupine_cache_current_context_device(*device);
+    lupine_current_context_device_cache_insert(lupine_current_context, *device);
   }
   return return_value;
 }
