@@ -1,9 +1,12 @@
-// Exercises remote cuLaunchKernelEx attribute forwarding and preflight.
+// Exercises remote cuLaunchKernelEx attribute forwarding.
 // Auto-discovered by test/run_custom_tests.sh via the test_*.cu glob.
 #include <cuda.h>
 
 #include <stdint.h>
 #include <stdio.h>
+
+#include <string>
+#include <vector>
 
 #if !defined(CUDA_VERSION) || CUDA_VERSION < 11080
 int main() {
@@ -64,6 +67,27 @@ static const char kProgrammaticDependencyPtx[] =
     "  st.global.u32 [%rd1], %r1;\n"
     "  ret;\n"
     "}\n";
+
+static std::string many_parameter_ptx() {
+  std::string ptx = ".version 6.4\n"
+                    ".target sm_52\n"
+                    ".address_size 64\n"
+                    ".visible .entry many_params(\n"
+                    "  .param .u64 output";
+  for (int i = 1; i <= 64; ++i) {
+    ptx += ",\n  .param .u32 value" + std::to_string(i);
+  }
+  ptx += "\n)\n"
+         "{\n"
+         "  .reg .b64 %rd<2>;\n"
+         "  .reg .b32 %r<2>;\n"
+         "  ld.param.u64 %rd1, [output];\n"
+         "  ld.param.u32 %r1, [value64];\n"
+         "  st.global.u32 [%rd1], %r1;\n"
+         "  ret;\n"
+         "}\n";
+  return ptx;
+}
 
 static const char *error_name(CUresult result) {
   const char *name = nullptr;
@@ -128,6 +152,29 @@ int main() {
       !output_is(output, value)) {
     return 1;
   }
+
+  CUmodule many_module = nullptr;
+  CUfunction many_function = nullptr;
+  std::string many_ptx = many_parameter_ptx();
+  uint32_t many_values[64] = {};
+  std::vector<void *> many_params(65);
+  many_params[0] = &output;
+  for (uint32_t i = 0; i < 64; ++i) {
+    many_values[i] = i + 1;
+    many_params[i + 1] = &many_values[i];
+  }
+  if (!check(cuModuleLoadData(&many_module, many_ptx.c_str()),
+             "cuModuleLoadData(65 params)") ||
+      !check(cuModuleGetFunction(&many_function, many_module, "many_params"),
+             "cuModuleGetFunction(65 params)") ||
+      !check(cuLaunchKernelEx(&legacy_config, many_function, many_params.data(),
+                              nullptr),
+             "cuLaunchKernelEx(65 params)") ||
+      !check(cuCtxSynchronize(), "sync 65-param launch") ||
+      !output_is(output, many_values[63])) {
+    return 1;
+  }
+  cuModuleUnload(many_module);
 
   // A zero cluster dimension is invalid. The old wrapper silently discarded
   // it, launched set_value through cuLaunchKernel, and returned success.
@@ -246,7 +293,7 @@ int main() {
 
   cuMemFree(output);
   cuModuleUnload(module);
-  printf("PASS: cuLaunchKernelEx forwards and validates launch attributes\n");
+  printf("PASS: cuLaunchKernelEx forwards launch attributes\n");
   return 0;
 }
 #endif

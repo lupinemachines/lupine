@@ -494,10 +494,15 @@ static void lupine_mark_mapped_device_dirty(void *host) {
 }
 
 CUresult lupine_sync_mapped_host_to_device_for_launch(
-    unsigned char *packed, const size_t *offsets, const size_t *sizes,
-    uint32_t count, bool *used_managed_mapping) {
-  if (packed == nullptr || offsets == nullptr || sizes == nullptr) {
+    void *const *kernel_params, const size_t *sizes, uint32_t count,
+    CUdeviceptr *translated_params, void **rpc_params,
+    bool *used_managed_mapping) {
+  if (kernel_params == nullptr || sizes == nullptr ||
+      translated_params == nullptr || rpc_params == nullptr) {
     return count == 0 ? CUDA_SUCCESS : CUDA_ERROR_INVALID_VALUE;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    rpc_params[i] = kernel_params[i];
   }
   if (used_managed_mapping != nullptr) {
     *used_managed_mapping = false;
@@ -511,10 +516,11 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
         continue;
       }
       CUdeviceptr arg = 0;
-      memcpy(&arg, packed + offsets[i], sizeof(arg));
+      memcpy(&arg, kernel_params[i], sizeof(arg));
       CUdeviceptr translated = 0;
       if (lupine_host_ptr_in_mapping(arg, mapping, &translated)) {
-        memcpy(packed + offsets[i], &translated, sizeof(translated));
+        translated_params[i] = translated;
+        rpc_params[i] = &translated_params[i];
         lupine_mark_mapped_device_dirty(mapping.host);
         used_managed = used_managed || mapping.managed;
         break;

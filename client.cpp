@@ -3430,9 +3430,7 @@ lupine_fetch_kernel_param_layout(CUfunction f,
   if (conn == nullptr ||
       rpc_write_start_request(conn, LUPINE_RPC_cuFuncGetParamLayout) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 || rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &layout->count, sizeof(layout->count)) < 0 ||
-      rpc_read(conn, layout->offsets, sizeof(layout->offsets)) < 0 ||
-      rpc_read(conn, layout->sizes, sizeof(layout->sizes)) < 0 ||
+      rpc_read_kernel_param_layout(conn, layout) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3540,11 +3538,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   if (status != CUDA_SUCCESS) {
     return status;
   }
-  if (layout.count > 64) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
 
-  size_t total_size = 0;
+  size_t payload_size = 0;
   for (uint32_t i = 0; i < layout.count; ++i) {
     if (kernelParams == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
@@ -3552,16 +3547,11 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     if (kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    total_size = std::max(total_size, layout.offsets[i] + layout.sizes[i]);
-  }
-
-  std::vector<unsigned char> packed(total_size);
-  for (uint32_t i = 0; i < layout.count; ++i) {
-    memcpy(packed.data() + layout.offsets[i], kernelParams[i], layout.sizes[i]);
+    payload_size += layout.sizes[i];
   }
 
   lupine_route arg_route = lupine_route_from_known_kernel_deviceptr_args(
-      packed.data(), packed.size(), layout, launch_route);
+      kernelParams, layout, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
     status = lupine_resolve_launch_function_for_route(
@@ -3575,29 +3565,23 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     if (status != CUDA_SUCCESS) {
       return status;
     }
-    if (layout.count > 64) {
-      return CUDA_ERROR_NOT_SUPPORTED;
-    }
-    total_size = 0;
+    payload_size = 0;
     for (uint32_t i = 0; i < layout.count; ++i) {
       if (kernelParams == nullptr || kernelParams[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
-      total_size = std::max(total_size, layout.offsets[i] + layout.sizes[i]);
-    }
-    packed.assign(total_size, 0);
-    for (uint32_t i = 0; i < layout.count; ++i) {
-      memcpy(packed.data() + layout.offsets[i], kernelParams[i],
-             layout.sizes[i]);
+      payload_size += layout.sizes[i];
     }
     LUPINE_TRACE_LOG("LUPINE cuLaunchKernel rerouted by args f="
                      << f << " route=" << lupine_route_identity(route));
   }
 
   bool used_managed_mapping = false;
+  std::vector<CUdeviceptr> translated_params(layout.count);
+  std::vector<void *> rpc_params(layout.count);
   status = lupine_sync_mapped_host_to_device_for_launch(
-      packed.data(), layout.offsets, layout.sizes, layout.count,
-      &used_managed_mapping);
+      kernelParams, layout.sizes.data(), layout.count, translated_params.data(),
+      rpc_params.data(), &used_managed_mapping);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -3627,8 +3611,9 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
-      rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
-      rpc_write(conn, packed.data(), packed.size()) < 0 ||
+      rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
+      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+                                    rpc_params.data()) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -3674,11 +3659,8 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (status != CUDA_SUCCESS) {
     return status;
   }
-  if (layout.count > 64) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
 
-  size_t total_size = 0;
+  size_t payload_size = 0;
   for (uint32_t i = 0; i < layout.count; ++i) {
     if (kernelParams == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
@@ -3686,16 +3668,11 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     if (kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    total_size = std::max(total_size, layout.offsets[i] + layout.sizes[i]);
-  }
-
-  std::vector<unsigned char> packed(total_size);
-  for (uint32_t i = 0; i < layout.count; ++i) {
-    memcpy(packed.data() + layout.offsets[i], kernelParams[i], layout.sizes[i]);
+    payload_size += layout.sizes[i];
   }
 
   lupine_route arg_route = lupine_route_from_known_kernel_deviceptr_args(
-      packed.data(), packed.size(), layout, launch_route);
+      kernelParams, layout, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
     status = lupine_resolve_launch_function_for_route(
@@ -3709,27 +3686,21 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     if (status != CUDA_SUCCESS) {
       return status;
     }
-    if (layout.count > 64) {
-      return CUDA_ERROR_NOT_SUPPORTED;
-    }
-    total_size = 0;
+    payload_size = 0;
     for (uint32_t i = 0; i < layout.count; ++i) {
       if (kernelParams == nullptr || kernelParams[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
-      total_size = std::max(total_size, layout.offsets[i] + layout.sizes[i]);
-    }
-    packed.assign(total_size, 0);
-    for (uint32_t i = 0; i < layout.count; ++i) {
-      memcpy(packed.data() + layout.offsets[i], kernelParams[i],
-             layout.sizes[i]);
+      payload_size += layout.sizes[i];
     }
   }
 
   bool used_managed_mapping = false;
+  std::vector<CUdeviceptr> translated_params(layout.count);
+  std::vector<void *> rpc_params(layout.count);
   status = lupine_sync_mapped_host_to_device_for_launch(
-      packed.data(), layout.offsets, layout.sizes, layout.count,
-      &used_managed_mapping);
+      kernelParams, layout.sizes.data(), layout.count, translated_params.data(),
+      rpc_params.data(), &used_managed_mapping);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -3746,38 +3717,15 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
-  for (uint32_t i = 0; config->attrs != nullptr && i < config->numAttrs; ++i) {
-    const CUlaunchAttribute &attribute = config->attrs[i];
-    if (attribute.id == CU_LAUNCH_ATTRIBUTE_ACCESS_POLICY_WINDOW) {
-      CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(
-          attribute.value.accessPolicyWindow.base_ptr);
-      if (base_ptr != 0 && !lupine_routes_share_server(
-                               route, lupine_route_for_deviceptr(base_ptr))) {
-        return CUDA_ERROR_INVALID_VALUE;
-      }
-    } else if (attribute.id == CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_EVENT) {
-      CUevent event = attribute.value.programmaticEvent.event;
-      if (event != nullptr &&
-          !lupine_routes_share_server(route, lupine_route_for_event(event))) {
-        return CUDA_ERROR_INVALID_VALUE;
-      }
-    } else if (attribute.id == CU_LAUNCH_ATTRIBUTE_LAUNCH_COMPLETION_EVENT) {
-      CUevent event = attribute.value.launchCompletionEvent.event;
-      if (event != nullptr &&
-          !lupine_routes_share_server(route, lupine_route_for_event(event))) {
-        return CUDA_ERROR_INVALID_VALUE;
-      }
-    }
-  }
-
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
       rpc_write_launch_config(conn, config) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
-      rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
-      rpc_write(conn, packed.data(), packed.size()) < 0 ||
+      rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
+      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+                                    rpc_params.data()) < 0 ||
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -3822,25 +3770,20 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   if (status != CUDA_SUCCESS) {
     return status;
   }
-  if (layout.count > 64) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
 
-  size_t total_size = 0;
+  size_t payload_size = 0;
   for (uint32_t i = 0; i < layout.count; ++i) {
     if (kernelParams == nullptr || kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    total_size = std::max(total_size, layout.offsets[i] + layout.sizes[i]);
+    payload_size += layout.sizes[i];
   }
 
-  std::vector<unsigned char> packed(total_size);
-  for (uint32_t i = 0; i < layout.count; ++i) {
-    memcpy(packed.data() + layout.offsets[i], kernelParams[i], layout.sizes[i]);
-  }
-
+  std::vector<CUdeviceptr> translated_params(layout.count);
+  std::vector<void *> rpc_params(layout.count);
   status = lupine_sync_mapped_host_to_device_for_launch(
-      packed.data(), layout.offsets, layout.sizes, layout.count);
+      kernelParams, layout.sizes.data(), layout.count, translated_params.data(),
+      rpc_params.data());
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -3859,8 +3802,9 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
-      rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
-      rpc_write(conn, packed.data(), packed.size()) < 0 ||
+      rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
+      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+                                    rpc_params.data()) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -4456,9 +4400,6 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
   if (status != CUDA_SUCCESS) {
     return status;
   }
-  if (layout->count > 64) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
   if (layout->count != 0 && nodeParams->kernelParams == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4482,7 +4423,7 @@ lupine_write_kernel_param_values(conn_t *conn,
                                  const CUDA_KERNEL_NODE_PARAMS *nodeParams,
                                  const lupine_kernel_param_layout &layout) {
   if (nodeParams == nullptr ||
-      rpc_write_kernel_param_values(conn, layout.count, layout.sizes,
+      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
                                     nodeParams->kernelParams) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -4492,7 +4433,7 @@ lupine_write_kernel_param_values(conn_t *conn,
 static CUresult lupine_read_kernel_param_values(
     conn_t *conn, const lupine_kernel_param_layout &layout, size_t payloadSize,
     std::vector<unsigned char> *storage) {
-  if (storage == nullptr || layout.count > 64) {
+  if (storage == nullptr) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   size_t storage_size = 0;
@@ -4501,9 +4442,9 @@ static CUresult lupine_read_kernel_param_values(
   }
   storage->assign(storage_size, 0);
   std::vector<void *> values(layout.count);
-  if (rpc_read_kernel_param_values(conn, layout.count, layout.offsets,
-                                   layout.sizes, payloadSize, storage->data(),
-                                   storage->size(), values.data()) < 0) {
+  if (rpc_read_kernel_param_values(
+          conn, layout.count, layout.offsets.data(), layout.sizes.data(),
+          payloadSize, storage->data(), storage->size(), values.data()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return CUDA_SUCCESS;
@@ -4607,7 +4548,7 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &serial_params, sizeof(serial_params)) < 0 ||
-      rpc_read(conn, &layout, sizeof(layout)) < 0 ||
+      rpc_read_kernel_param_layout(conn, &layout) < 0 ||
       rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }

@@ -421,6 +421,40 @@ int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
   return 0;
 }
 
+int rpc_write_kernel_param_layout(conn_t *conn,
+                                  const lupine_kernel_param_layout *layout) {
+  if (conn == nullptr || layout == nullptr ||
+      layout->offsets.size() != layout->count ||
+      layout->sizes.size() != layout->count) {
+    return -1;
+  }
+  if (rpc_write(conn, &layout->count, sizeof(layout->count)) < 0 ||
+      rpc_write(conn, layout->offsets.data(),
+                layout->offsets.size() * sizeof(layout->offsets[0])) < 0 ||
+      rpc_write(conn, layout->sizes.data(),
+                layout->sizes.size() * sizeof(layout->sizes[0])) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int rpc_read_kernel_param_layout(conn_t *conn,
+                                 lupine_kernel_param_layout *layout) {
+  if (conn == nullptr || layout == nullptr ||
+      rpc_read(conn, &layout->count, sizeof(layout->count)) < 0) {
+    return -1;
+  }
+  layout->offsets.resize(layout->count);
+  layout->sizes.resize(layout->count);
+  if (rpc_read(conn, layout->offsets.data(),
+               layout->offsets.size() * sizeof(layout->offsets[0])) < 0 ||
+      rpc_read(conn, layout->sizes.data(),
+               layout->sizes.size() * sizeof(layout->sizes[0])) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config) {
   if (conn == nullptr || config == nullptr) {
     return -1;

@@ -5,11 +5,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 struct lupine_kernel_param_layout {
   uint32_t count = 0;
-  size_t offsets[64] = {};
-  size_t sizes[64] = {};
+  std::vector<size_t> offsets;
+  std::vector<size_t> sizes;
 };
 
 bool lupine_kernel_param_layout_cache_lookup(int route_id, CUfunction function,

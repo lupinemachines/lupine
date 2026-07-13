@@ -161,16 +161,16 @@ int lupine_known_deviceptr_route_id(CUdeviceptr ptr) {
 }
 
 lupine_route lupine_route_from_known_kernel_deviceptr_args(
-    const unsigned char *packed, size_t packed_size,
-    const lupine_kernel_param_layout &layout, lupine_route fallback) {
+    void *const *kernel_params, const lupine_kernel_param_layout &layout,
+    lupine_route fallback) {
   int route_id = -2;
   for (uint32_t i = 0; i < layout.count; ++i) {
-    if (layout.sizes[i] != sizeof(CUdeviceptr) ||
-        layout.offsets[i] + sizeof(CUdeviceptr) > packed_size) {
+    if (layout.sizes[i] != sizeof(CUdeviceptr) || kernel_params == nullptr ||
+        kernel_params[i] == nullptr) {
       continue;
     }
     CUdeviceptr ptr = 0;
-    memcpy(&ptr, packed + layout.offsets[i], sizeof(ptr));
+    memcpy(&ptr, kernel_params[i], sizeof(ptr));
     int ptr_route_id = lupine_known_deviceptr_route_id(ptr);
     if (ptr_route_id == -2) {
       continue;
