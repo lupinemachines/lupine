@@ -2034,6 +2034,7 @@ CUresult cuGetErrorString(CUresult error, const char **pStr);
  */
 CUresult cuGetErrorName(CUresult error, const char **pStr);
 /**
+ * @disabled client - manual client initializes every configured route
  * @param Flags SEND_ONLY
  */
 CUresult cuInit(unsigned int Flags);
@@ -2042,11 +2043,13 @@ CUresult cuInit(unsigned int Flags);
  */
 CUresult cuDriverGetVersion(int *driverVersion);
 /**
+ * @disabled client - manual client maps the virtual device ordinal
  * @param device RECV_ONLY
  * @param ordinal SEND_ONLY
  */
 CUresult cuDeviceGet(CUdevice *device, int ordinal);
 /**
+ * @disabled client - manual client reports the virtual device table size
  * @param count RECV_ONLY
  */
 CUresult cuDeviceGetCount(int *count);
@@ -2143,12 +2146,14 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev);
  */
 CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @recordowner CONTEXT pctx
  * @param pctx RECV_ONLY
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
@@ -2165,6 +2170,7 @@ CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
                                     int *active);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev);
@@ -2185,6 +2191,7 @@ CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice dev);
 CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
                         int numParams, unsigned int flags, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxDestroy_v2(CUcontext ctx);
@@ -2218,7 +2225,9 @@ CUresult cuCtxGetFlags(unsigned int *flags);
  */
 CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey CURRENT_CONTEXT
  */
 CUresult cuCtxSynchronize();
 /**
@@ -2268,11 +2277,13 @@ CUresult cuCtxResetPersistingL2Cache();
 CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
                               CUexecAffinityType type);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param pctx RECV_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxDetach(CUcontext ctx);
@@ -2542,25 +2553,25 @@ CUresult cuMemFree_v2(CUdeviceptr dptr);
 CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
                                  CUdeviceptr dptr);
 /**
- * @disabled - client-local host allocation
- * @param pp RECV_ONLY
+ * @disabled client - manual client substitutes a local faulting address
+ * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  */
 CUresult cuMemAllocHost_v2(void **pp, size_t bytesize);
 /**
- * @disabled - client-local host allocation
+ * @disabled client - manual client frees the substituted local address
  * @param p SEND_ONLY
  */
 CUresult cuMemFreeHost(void *p);
 /**
- * @disabled - client-local host allocation
- * @param pp RECV_ONLY
+ * @disabled client - manual client substitutes a local faulting address
+ * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  * @param Flags SEND_ONLY
  */
 CUresult cuMemHostAlloc(void **pp, size_t bytesize, unsigned int Flags);
 /**
- * @disabled - client-local host allocation
+ * @disabled client - manual client translates local host pointers
  * @param pdptr SEND_RECV
  * @param p SEND_ONLY
  * @param Flags SEND_ONLY
@@ -2582,6 +2593,7 @@ CUresult cuMemHostGetFlags(unsigned int *pFlags, void *p);
 CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
                            unsigned int flags);
 /**
+ * @routingkey ALL dev
  * @param dev RECV_ONLY NULLABLE
  * @param pciBusId SEND_ONLY NULL_TERMINATED
  */
@@ -2648,6 +2660,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
                       size_t ByteCount);
 /**
+ * @disabled server - manual server pipelines large host-to-device copies
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
@@ -3411,20 +3424,24 @@ CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
                                            unsigned int flags);
 /**
  * @routingkey STREAM hStream
+ * @routingfallback DEVICEPTR dptr
  * @param hStream SEND_ONLY
- * @param dptr SEND_ONLY
+ * @param dptr SEND_ONLY TRANSLATE_DEVICEPTR
  * @param length SEND_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags);
 /**
+ * @synchronize
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamQuery(CUstream hStream);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamSynchronize(CUstream hStream);
@@ -3477,13 +3494,16 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags);
 /**
- * @disabled - manual client/server handle deferred DtoH copies
+ * @disabled server
+ * @synchronize DEFERRED_DTOH
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
 CUresult cuEventQuery(CUevent hEvent);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
 CUresult cuEventSynchronize(CUevent hEvent);
@@ -4707,6 +4727,7 @@ CUresult cuTensorMapEncodeIm2col(
  */
 CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 /**
+ * @disabled client - manual client handles cross-route peer devices
  * @param canAccessPeer SEND_RECV
  * @param dev SEND_ONLY
  * @param peerDev SEND_ONLY
@@ -4714,15 +4735,18 @@ CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
                                CUdevice peerDev);
 /**
+ * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
  * @param Flags SEND_ONLY
  */
 CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags);
 /**
+ * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
  */
 CUresult cuCtxDisablePeerAccess(CUcontext peerContext);
 /**
+ * @disabled client - manual client translates both devices to one backend
  * @param value SEND_RECV
  * @param attrib SEND_ONLY
  * @param srcDevice SEND_ONLY

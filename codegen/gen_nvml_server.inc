@@ -75,7 +75,7 @@ ERROR_0:
 
 int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
   unsigned int length;
-  char *version;
+  char *version = nullptr;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(char *, unsigned int);
@@ -84,11 +84,11 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
     goto ERROR_0;
   version = (char *)malloc(length * sizeof(char));
   if ((length * sizeof(char) != 0 && version == nullptr) || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlSystemGetDriverVersion");
   return_value =
@@ -101,18 +101,17 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
        rpc_write(conn, version, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)version);
   return 0;
-ERROR_1:
-  free((void *)version);
 ERROR_0:
+  free((void *)version);
   return -1;
 }
 
 int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
   unsigned int length;
-  char *version;
+  char *version = nullptr;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(char *, unsigned int);
@@ -121,11 +120,11 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
     goto ERROR_0;
   version = (char *)malloc(length * sizeof(char));
   if ((length * sizeof(char) != 0 && version == nullptr) || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlSystemGetNVMLVersion");
   return_value =
@@ -138,12 +137,11 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
        rpc_write(conn, version, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)version);
   return 0;
-ERROR_1:
-  free((void *)version);
 ERROR_0:
+  free((void *)version);
   return -1;
 }
 
@@ -257,7 +255,7 @@ ERROR_0:
 }
 
 int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
-  const char *uuid;
+  const char *uuid = nullptr;
   unsigned int uuid_len;
   nvmlDevice_t device;
   device = {};
@@ -270,11 +268,11 @@ int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
   uuid = (const char *)malloc(uuid_len);
   if ((uuid_len != 0 && uuid == nullptr) ||
       rpc_read(conn, (void *)uuid, uuid_len) < 0 || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByUUID");
   return_value = fn == nullptr ? function_not_found() : fn(uuid, &device);
@@ -283,17 +281,16 @@ int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)uuid);
   return 0;
-ERROR_1:
-  free((void *)uuid);
 ERROR_0:
+  free((void *)uuid);
   return -1;
 }
 
 int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
-  const char *pciBusId;
+  const char *pciBusId = nullptr;
   unsigned int pciBusId_len;
   nvmlDevice_t device;
   device = {};
@@ -306,11 +303,11 @@ int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
   pciBusId = (const char *)malloc(pciBusId_len);
   if ((pciBusId_len != 0 && pciBusId == nullptr) ||
       rpc_read(conn, (void *)pciBusId, pciBusId_len) < 0 || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByPciBusId_v2");
   return_value = fn == nullptr ? function_not_found() : fn(pciBusId, &device);
@@ -319,19 +316,18 @@ int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)pciBusId);
   return 0;
-ERROR_1:
-  free((void *)pciBusId);
 ERROR_0:
+  free((void *)pciBusId);
   return -1;
 }
 
 int handle_nvmlDeviceGetName(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
-  char *name;
+  char *name = nullptr;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
@@ -341,11 +337,11 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
     goto ERROR_0;
   name = (char *)malloc(length * sizeof(char));
   if ((length * sizeof(char) != 0 && name == nullptr) || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetName");
   return_value =
@@ -358,19 +354,18 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
        rpc_write(conn, name, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)name);
   return 0;
-ERROR_1:
-  free((void *)name);
 ERROR_0:
+  free((void *)name);
   return -1;
 }
 
 int handle_nvmlDeviceGetUUID(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
-  char *uuid;
+  char *uuid = nullptr;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
@@ -380,11 +375,11 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
     goto ERROR_0;
   uuid = (char *)malloc(length * sizeof(char));
   if ((length * sizeof(char) != 0 && uuid == nullptr) || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetUUID");
   return_value =
@@ -397,12 +392,11 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
        rpc_write(conn, uuid, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)uuid);
   return 0;
-ERROR_1:
-  free((void *)uuid);
 ERROR_0:
+  free((void *)uuid);
   return -1;
 }
 
@@ -842,7 +836,7 @@ ERROR_0:
 int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
-  char *version;
+  char *version = nullptr;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
@@ -852,11 +846,11 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
     goto ERROR_0;
   version = (char *)malloc(length * sizeof(char));
   if ((length * sizeof(char) != 0 && version == nullptr) || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetVbiosVersion");
   return_value =
@@ -870,19 +864,18 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
        rpc_write(conn, version, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)version);
   return 0;
-ERROR_1:
-  free((void *)version);
 ERROR_0:
+  free((void *)version);
   return -1;
 }
 
 int handle_nvmlDeviceGetSerial(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
-  char *serial;
+  char *serial = nullptr;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
@@ -892,11 +885,11 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
     goto ERROR_0;
   serial = (char *)malloc(length * sizeof(char));
   if ((length * sizeof(char) != 0 && serial == nullptr) || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetSerial");
   return_value =
@@ -909,19 +902,18 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
        rpc_write(conn, serial, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)serial);
   return 0;
-ERROR_1:
-  free((void *)serial);
 ERROR_0:
+  free((void *)serial);
   return -1;
 }
 
 int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
-  char *partNumber;
+  char *partNumber = nullptr;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
@@ -931,11 +923,11 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
     goto ERROR_0;
   partNumber = (char *)malloc(length * sizeof(char));
   if ((length * sizeof(char) != 0 && partNumber == nullptr) || false)
-    goto ERROR_1;
+    goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_1;
+    goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetBoardPartNumber");
   return_value =
@@ -949,12 +941,11 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
        rpc_write(conn, partNumber, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_1;
+    goto ERROR_0;
   free((void *)partNumber);
   return 0;
-ERROR_1:
-  free((void *)partNumber);
 ERROR_0:
+  free((void *)partNumber);
   return -1;
 }
 
