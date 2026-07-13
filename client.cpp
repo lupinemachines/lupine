@@ -3540,17 +3540,6 @@ extern "C" void lupine_invalidate_function_caches() {
   }
 }
 
-extern "C" CUresult
-lupine_get_kernel_param_layout(CUfunction f,
-                               lupine_kernel_param_layout *layout) {
-  if (layout == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  return lupine_kernel_param_layout_cache_lookup(f, layout)
-             ? CUDA_SUCCESS
-             : CUDA_ERROR_INVALID_HANDLE;
-}
-
 static CUresult lupine_resolve_launch_function_for_route(
     CUfunction requested_function, lupine_route route,
     CUfunction *route_function, CUfunction *launch_function) {
@@ -3612,9 +3601,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   lupine_kernel_param_layout layout;
-  status = lupine_get_kernel_param_layout(f, &layout);
-  if (status != CUDA_SUCCESS) {
-    return status;
+  if (!lupine_kernel_param_layout_cache_lookup(f, &layout)) {
+    return CUDA_ERROR_INVALID_HANDLE;
   }
 
   size_t payload_size = 0;
@@ -3639,9 +3627,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     }
     route = lupine_route_for_function(f);
 
-    status = lupine_get_kernel_param_layout(f, &layout);
-    if (status != CUDA_SUCCESS) {
-      return status;
+    if (!lupine_kernel_param_layout_cache_lookup(f, &layout)) {
+      return CUDA_ERROR_INVALID_HANDLE;
     }
     payload_size = 0;
     for (uint32_t i = 0; i < layout.count; ++i) {
@@ -3733,9 +3720,8 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   lupine_kernel_param_layout layout;
-  status = lupine_get_kernel_param_layout(f, &layout);
-  if (status != CUDA_SUCCESS) {
-    return status;
+  if (!lupine_kernel_param_layout_cache_lookup(f, &layout)) {
+    return CUDA_ERROR_INVALID_HANDLE;
   }
 
   size_t payload_size = 0;
@@ -3760,9 +3746,8 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     }
     route = lupine_route_for_function(f);
 
-    status = lupine_get_kernel_param_layout(f, &layout);
-    if (status != CUDA_SUCCESS) {
-      return status;
+    if (!lupine_kernel_param_layout_cache_lookup(f, &layout)) {
+      return CUDA_ERROR_INVALID_HANDLE;
     }
     payload_size = 0;
     for (uint32_t i = 0; i < layout.count; ++i) {
@@ -3844,9 +3829,8 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   }
 
   lupine_kernel_param_layout layout;
-  CUresult status = lupine_get_kernel_param_layout(f, &layout);
-  if (status != CUDA_SUCCESS) {
-    return status;
+  if (!lupine_kernel_param_layout_cache_lookup(f, &layout)) {
+    return CUDA_ERROR_INVALID_HANDLE;
   }
 
   size_t payload_size = 0;
@@ -3859,7 +3843,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
 
   std::vector<CUdeviceptr> translated_params(layout.count);
   std::vector<void *> rpc_params(layout.count);
-  status = lupine_sync_mapped_host_to_device_for_launch(
+  CUresult status = lupine_sync_mapped_host_to_device_for_launch(
       kernelParams, layout.sizes.data(), layout.count, translated_params.data(),
       rpc_params.data());
   if (status != CUDA_SUCCESS) {
@@ -4474,9 +4458,8 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUfunction func = lupine_kernel_node_function(nodeParams);
-  CUresult status = lupine_get_kernel_param_layout(func, layout);
-  if (status != CUDA_SUCCESS) {
-    return status;
+  if (!lupine_kernel_param_layout_cache_lookup(func, layout)) {
+    return CUDA_ERROR_INVALID_HANDLE;
   }
   if (layout->count != 0 && nodeParams->kernelParams == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
