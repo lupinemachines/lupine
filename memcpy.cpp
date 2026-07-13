@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -46,6 +47,9 @@ struct lupine_host_allocation {
   CUdeviceptr device_ptr = 0;
   bool device_dirty = false;
   bool tracking_enabled = false;
+  int fault_slot = -1;
+  std::vector<unsigned long> dirty_pages;
+  std::vector<unsigned long> dirty_snapshot;
   CUdeviceptr device_alloc_base = 0;
   int route_id = -2;
 };
@@ -74,26 +78,17 @@ static lupine_host_allocation_map &lupine_mutable_host_allocations_locked() {
 static lupine_host_allocation_map::iterator
 lupine_find_host_allocation_locked(void *p);
 
-static constexpr uint32_t LUPINE_MAX_MANAGED_HOST_FLUSH_RANGES = 64 * 1024;
 // Large managed allocations receive an aligned real base that the client can
 // map directly while preserving base-pointer APIs such as stream attachment.
 static constexpr size_t LUPINE_MANAGED_ALLOCATION_MIN_BYTES = 2 * 1024 * 1024;
 static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES =
     sizeof(CUdeviceptr) + sizeof(size_t);
 
-struct lupine_managed_host_flush_queue {
-  std::mutex mutex;
-  unsigned char headers[LUPINE_MAX_MANAGED_HOST_FLUSH_RANGES]
-                       [LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES];
-  struct iovec iovecs[LUPINE_MAX_MANAGED_HOST_FLUSH_RANGES * 2];
-  unsigned char ready[LUPINE_MAX_MANAGED_HOST_FLUSH_RANGES];
-  uint32_t next = 0;
-  uint32_t start = 0;
-};
-
 static constexpr size_t LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES = 16;
-static lupine_managed_host_flush_queue
-    lupine_managed_host_flush_queues[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
+static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES = 1024;
+static constexpr size_t LUPINE_DIRTY_WORD_BITS = sizeof(unsigned long) * 8;
+static std::mutex
+    lupine_managed_host_flush_mutexes[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
 
 struct lupine_fault_entry {
   uintptr_t base = 0;
@@ -103,7 +98,8 @@ struct lupine_fault_entry {
 
 static constexpr size_t LUPINE_MAX_FAULT_ENTRIES = 1024;
 static lupine_fault_entry lupine_fault_entries[LUPINE_MAX_FAULT_ENTRIES];
-static volatile sig_atomic_t lupine_fault_entry_count = 0;
+static volatile sig_atomic_t lupine_fault_entry_high_water = 0;
+static volatile sig_atomic_t lupine_active_fault_handlers = 0;
 static struct sigaction lupine_previous_sigsegv_action;
 static bool lupine_sigsegv_handler_installed = false;
 
@@ -134,77 +130,36 @@ static void lupine_call_previous_sigsegv(int sig, siginfo_t *info, void *uctx) {
   raise(sig);
 }
 
-static bool
-lupine_reserve_dirty_host_pages(lupine_managed_host_flush_queue &queue,
-                                size_t count, uint32_t *first) {
-  if (count > LUPINE_MAX_MANAGED_HOST_FLUSH_RANGES) {
-    return false;
-  }
-  uint32_t slot = __atomic_load_n(&queue.next, __ATOMIC_RELAXED);
-  while (count <= LUPINE_MAX_MANAGED_HOST_FLUSH_RANGES - slot &&
-         !__atomic_compare_exchange_n(
-             &queue.next, &slot, slot + static_cast<uint32_t>(count), false,
-             __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-  }
-  if (count > LUPINE_MAX_MANAGED_HOST_FLUSH_RANGES - slot) {
-    return false;
-  }
-  *first = slot;
-  return true;
-}
-
-static void lupine_queue_dirty_host_page(lupine_managed_host_flush_queue &queue,
-                                         lupine_host_allocation *allocation,
-                                         uintptr_t base, size_t page_index,
-                                         uint32_t slot) {
-  size_t offset = page_index * allocation->page_size;
-  size_t bytes = std::min(allocation->page_size, allocation->size - offset);
-  void *page = reinterpret_cast<void *>(base + offset);
-  CUdeviceptr dst = allocation->server_host_ptr + offset;
-  unsigned char *header = queue.headers[slot];
-  memcpy(header, &dst, sizeof(dst));
-  memcpy(header + sizeof(dst), &bytes, sizeof(bytes));
-  queue.iovecs[slot * 2] = {header, LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES};
-  queue.iovecs[slot * 2 + 1] = {page, bytes};
-  __atomic_store_n(&queue.ready[slot], 1, __ATOMIC_RELEASE);
-}
-
 static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
+  __atomic_add_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_ACQUIRE);
   uintptr_t addr = reinterpret_cast<uintptr_t>(info->si_addr);
-  sig_atomic_t count = lupine_fault_entry_count;
+  sig_atomic_t count =
+      __atomic_load_n(&lupine_fault_entry_high_water, __ATOMIC_ACQUIRE);
   for (sig_atomic_t i = 0; i < count; ++i) {
     const lupine_fault_entry &entry = lupine_fault_entries[i];
-    if (addr < entry.base || addr >= entry.end || entry.allocation == nullptr) {
+    lupine_host_allocation *allocation =
+        __atomic_load_n(&entry.allocation, __ATOMIC_ACQUIRE);
+    if (addr < entry.base || addr >= entry.end || allocation == nullptr) {
       continue;
     }
 
-    lupine_host_allocation *allocation = entry.allocation;
     size_t page_size = allocation->page_size;
     size_t page_index = (addr - entry.base) / page_size;
     if (page_index >= allocation->page_count) {
       break;
     }
 
-    int route_id = allocation->route_id;
-    if (route_id < 0 ||
-        route_id >= static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
-      lupine_call_previous_sigsegv(sig, info, uctx);
-      return;
-    }
-    auto &queue = lupine_managed_host_flush_queues[route_id];
-    uint32_t slot = 0;
-    if (!lupine_reserve_dirty_host_pages(queue, 1, &slot)) {
-      lupine_call_previous_sigsegv(sig, info, uctx);
-      return;
-    }
-    lupine_queue_dirty_host_page(queue, allocation, entry.base, page_index,
-                                 slot);
+    size_t word = page_index / LUPINE_DIRTY_WORD_BITS;
+    unsigned long bit = 1UL << (page_index % LUPINE_DIRTY_WORD_BITS);
+    __atomic_fetch_or(&allocation->dirty_pages[word], bit, __ATOMIC_RELEASE);
 
     void *page = reinterpret_cast<void *>(entry.base + page_index * page_size);
     mprotect(page, page_size, PROT_READ | PROT_WRITE);
+    __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
     return;
   }
 
+  __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
   lupine_call_previous_sigsegv(sig, info, uctx);
 }
 
@@ -229,34 +184,38 @@ static void lupine_install_sigsegv_handler() {
   }
 }
 
-static bool lupine_add_fault_entry(void *base, size_t size,
-                                   lupine_host_allocation *allocation) {
-  if (lupine_fault_entry_count >=
-      static_cast<sig_atomic_t>(LUPINE_MAX_FAULT_ENTRIES)) {
-    return false;
-  }
-  sig_atomic_t index = lupine_fault_entry_count;
-  lupine_fault_entries[index] = {
-      reinterpret_cast<uintptr_t>(base),
-      reinterpret_cast<uintptr_t>(base) + size,
-      allocation,
-  };
-  lupine_fault_entry_count = index + 1;
-  return true;
-}
-
-static void lupine_remove_fault_entry(void *base) {
-  uintptr_t target = reinterpret_cast<uintptr_t>(base);
-  sig_atomic_t count = lupine_fault_entry_count;
-  for (sig_atomic_t i = 0; i < count; ++i) {
-    if (lupine_fault_entries[i].base != target) {
+static int lupine_add_fault_entry(void *base, size_t size,
+                                  lupine_host_allocation *allocation) {
+  sig_atomic_t high_water =
+      __atomic_load_n(&lupine_fault_entry_high_water, __ATOMIC_ACQUIRE);
+  for (sig_atomic_t index = 0;
+       index < static_cast<sig_atomic_t>(LUPINE_MAX_FAULT_ENTRIES); ++index) {
+    if (__atomic_load_n(&lupine_fault_entries[index].allocation,
+                        __ATOMIC_ACQUIRE) != nullptr) {
       continue;
     }
-    for (sig_atomic_t j = i + 1; j < count; ++j) {
-      lupine_fault_entries[j - 1] = lupine_fault_entries[j];
+    lupine_fault_entries[index].base = reinterpret_cast<uintptr_t>(base);
+    lupine_fault_entries[index].end =
+        reinterpret_cast<uintptr_t>(base) + size;
+    __atomic_store_n(&lupine_fault_entries[index].allocation, allocation,
+                     __ATOMIC_RELEASE);
+    if (index >= high_water) {
+      __atomic_store_n(&lupine_fault_entry_high_water, index + 1,
+                       __ATOMIC_RELEASE);
     }
-    lupine_fault_entry_count = count - 1;
+    return index;
+  }
+  return -1;
+}
+
+static void lupine_remove_fault_entry(int slot) {
+  if (slot < 0 || slot >= static_cast<int>(LUPINE_MAX_FAULT_ENTRIES)) {
     return;
+  }
+  __atomic_store_n(&lupine_fault_entries[slot].allocation, nullptr,
+                   __ATOMIC_RELEASE);
+  while (__atomic_load_n(&lupine_active_fault_handlers, __ATOMIC_ACQUIRE) !=
+         0) {
   }
 }
 
@@ -295,14 +254,22 @@ lupine_enable_dirty_tracking_locked(void *host,
   }
 
   allocation->tracking_enabled = true;
+  size_t dirty_words =
+      (allocation->page_count + LUPINE_DIRTY_WORD_BITS - 1) /
+      LUPINE_DIRTY_WORD_BITS;
+  allocation->dirty_pages.assign(dirty_words, 0);
+  allocation->dirty_snapshot.assign(dirty_words, 0);
 
   lupine_install_sigsegv_handler();
-  if (!lupine_add_fault_entry(host, allocation->storage_size, allocation)) {
+  allocation->fault_slot =
+      lupine_add_fault_entry(host, allocation->storage_size, allocation);
+  if (allocation->fault_slot < 0) {
     allocation->tracking_enabled = false;
     return false;
   }
   if (!lupine_protect_host_range(host, allocation->storage_size, PROT_READ)) {
-    lupine_remove_fault_entry(host);
+    lupine_remove_fault_entry(allocation->fault_slot);
+    allocation->fault_slot = -1;
     allocation->tracking_enabled = false;
     return false;
   }
@@ -316,7 +283,8 @@ static void lupine_disable_dirty_tracking(void *host,
   }
   lupine_protect_host_range(host, allocation.storage_size,
                             PROT_READ | PROT_WRITE);
-  lupine_remove_fault_entry(host);
+  lupine_remove_fault_entry(allocation.fault_slot);
+  allocation.fault_slot = -1;
   allocation.tracking_enabled = false;
 }
 
@@ -389,50 +357,112 @@ extern "C" void lupine_prepare_host_range_write(void *host, size_t size) {
 }
 
 static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
-  auto &queue = lupine_managed_host_flush_queues[route_id];
-  std::lock_guard<std::mutex> lock(queue.mutex);
-  uint32_t reserved = __atomic_load_n(&queue.next, __ATOMIC_ACQUIRE);
-  uint32_t end = queue.start;
-  while (end < reserved &&
-         __atomic_load_n(&queue.ready[end], __ATOMIC_ACQUIRE) != 0) {
-    ++end;
-  }
-  uint32_t count = end - queue.start;
-  if (count == 0) {
-    return CUDA_SUCCESS;
+  std::lock_guard<std::mutex> route_lock(
+      lupine_managed_host_flush_mutexes[route_id]);
+  std::lock_guard<std::mutex> allocation_lock(lupine_host_allocation_mutex());
+  conn_t *conn = lupine_route_remote_conn(
+      lupine_route_from_identity(static_cast<int>(route_id)));
+  if (conn == nullptr) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
-  for (uint32_t i = queue.start; i < end; ++i) {
-    const auto &payload = queue.iovecs[i * 2 + 1];
-    if (!lupine_protect_host_range(payload.iov_base, payload.iov_len,
+  std::array<std::array<unsigned char,
+                        LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES>,
+             LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES>
+      headers;
+  std::array<struct iovec, LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES * 2>
+      iovecs;
+
+  auto send_batch = [&](uint32_t count) {
+    if (count == 0) {
+      return CUDA_SUCCESS;
+    }
+    CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_write_start_request(conn, LUPINE_RPC_lupineManagedHostFlush) < 0 ||
+        rpc_write(conn, &count, sizeof(count)) < 0 ||
+        rpc_write_iovecs(conn, iovecs.data(), count * 2) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return result;
+  };
+
+  for (auto &entry : lupine_mutable_host_allocations_locked()) {
+    auto &allocation = entry.second;
+    if (!allocation.tracking_enabled || allocation.route_id !=
+                                               static_cast<int>(route_id)) {
+      continue;
+    }
+    if (!lupine_protect_host_range(entry.first, allocation.storage_size,
                                    PROT_READ)) {
       return CUDA_ERROR_UNKNOWN;
     }
-  }
 
-  conn_t *conn = lupine_route_remote_conn(
-      lupine_route_from_identity(static_cast<int>(route_id)));
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, LUPINE_RPC_lupineManagedHostFlush) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write_iovecs(conn, &queue.iovecs[queue.start * 2], count * 2) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
+    bool any_dirty = false;
+    for (size_t word = 0; word < allocation.dirty_pages.size(); ++word) {
+      allocation.dirty_snapshot[word] = __atomic_exchange_n(
+          &allocation.dirty_pages[word], 0UL, __ATOMIC_ACQ_REL);
+      any_dirty |= allocation.dirty_snapshot[word] != 0;
+    }
+    if (!any_dirty) {
+      continue;
+    }
 
-  for (uint32_t i = queue.start; i < end; ++i) {
-    __atomic_store_n(&queue.ready[i], 0, __ATOMIC_RELEASE);
-  }
-  queue.start = end;
-  uint32_t expected = end;
-  if (__atomic_compare_exchange_n(&queue.next, &expected, 0, false,
-                                  __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-    queue.start = 0;
+    auto restore_snapshot = [&]() {
+      for (size_t word = 0; word < allocation.dirty_snapshot.size(); ++word) {
+        __atomic_fetch_or(&allocation.dirty_pages[word],
+                          allocation.dirty_snapshot[word], __ATOMIC_RELEASE);
+        allocation.dirty_snapshot[word] = 0;
+      }
+    };
+    auto page_is_dirty = [&](size_t page) {
+      return (allocation.dirty_snapshot[page / LUPINE_DIRTY_WORD_BITS] &
+              (1UL << (page % LUPINE_DIRTY_WORD_BITS))) != 0;
+    };
+
+    uint32_t count = 0;
+    size_t page = 0;
+    while (page < allocation.page_count) {
+      if (!page_is_dirty(page)) {
+        ++page;
+        continue;
+      }
+      size_t first_page = page++;
+      while (page < allocation.page_count && page_is_dirty(page)) {
+        ++page;
+      }
+      size_t offset = first_page * allocation.page_size;
+      if (offset >= allocation.size) {
+        continue;
+      }
+      size_t bytes = std::min((page - first_page) * allocation.page_size,
+                              allocation.size - offset);
+      CUdeviceptr dst = allocation.server_host_ptr + offset;
+      memcpy(headers[count].data(), &dst, sizeof(dst));
+      memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
+      iovecs[count * 2] = {headers[count].data(),
+                           LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES};
+      iovecs[count * 2 + 1] = {
+          reinterpret_cast<unsigned char *>(entry.first) + offset, bytes};
+      ++count;
+      if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
+        CUresult result = send_batch(count);
+        if (result != CUDA_SUCCESS) {
+          restore_snapshot();
+          return result;
+        }
+        count = 0;
+      }
+    }
+    CUresult result = send_batch(count);
+    if (result != CUDA_SUCCESS) {
+      restore_snapshot();
+      return result;
+    }
+    std::fill(allocation.dirty_snapshot.begin(),
+              allocation.dirty_snapshot.end(), 0UL);
   }
   return CUDA_SUCCESS;
 }
@@ -1098,20 +1128,8 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
       lupine_remote_cuMemFreeHost(server_host, route);
       return CUDA_ERROR_INVALID_VALUE;
     }
-    auto &queue = lupine_managed_host_flush_queues[route_id];
-    uint32_t first = 0;
-    if (!lupine_reserve_dirty_host_pages(
-            queue, inserted.first->second.page_count, &first)) {
-      lupine_disable_dirty_tracking(p, inserted.first->second);
-      allocations.erase(inserted.first);
-      lupine_remote_cuMemFreeHost(server_host, route);
-      return CUDA_ERROR_OUT_OF_MEMORY;
-    }
-    for (size_t page = 0; page < inserted.first->second.page_count; ++page) {
-      lupine_queue_dirty_host_page(queue, &inserted.first->second,
-                                   reinterpret_cast<uintptr_t>(p), page,
-                                   first + static_cast<uint32_t>(page));
-    }
+    std::fill(inserted.first->second.dirty_pages.begin(),
+              inserted.first->second.dirty_pages.end(), ~0UL);
   }
   if (server_host != nullptr) {
     lupine_note_deviceptr_allocation_route(
