@@ -2932,9 +2932,6 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
   {
     std::lock_guard<std::mutex> lock(lupine_jit_client_mutex());
     auto &jit_state = lupine_jit_client_states()[state];
-    if (cubin_size > (256ull << 20)) {
-      return CUDA_ERROR_INVALID_VALUE;
-    }
     jit_state.cubin.resize(cubin_size);
     if (cubin_size != 0 &&
         rpc_read(conn, jit_state.cubin.data(), cubin_size) < 0) {
