@@ -3262,6 +3262,233 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
+struct lupine_mapped_device_shadow {
+  unsigned char *host = nullptr;
+  size_t size = 0;
+  size_t page_size = 0;
+  std::vector<std::vector<unsigned char>> pages;
+};
+
+static std::mutex &lupine_mapped_device_shadow_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+static std::unordered_map<CUdeviceptr, lupine_mapped_device_shadow> &
+lupine_mapped_device_shadows() {
+  static std::unordered_map<CUdeviceptr, lupine_mapped_device_shadow> shadows;
+  return shadows;
+}
+
+static CUresult lupine_update_mapped_device_shadow(void *host, size_t bytes) {
+  if (host == nullptr || bytes == 0) {
+    return CUDA_SUCCESS;
+  }
+  uintptr_t start = reinterpret_cast<uintptr_t>(host);
+  if (start > UINTPTR_MAX - bytes) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  uintptr_t end = start + bytes;
+
+  std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+  for (auto &entry : lupine_mapped_device_shadows()) {
+    auto &shadow = entry.second;
+    uintptr_t base = reinterpret_cast<uintptr_t>(shadow.host);
+    if (start < base || start >= base + shadow.size ||
+        end > base + shadow.size) {
+      continue;
+    }
+
+    size_t first_page = (start - base) / shadow.page_size;
+    size_t last_page = (end - 1 - base) / shadow.page_size;
+    try {
+      for (size_t page_index = first_page; page_index <= last_page;
+           ++page_index) {
+        auto &page = shadow.pages[page_index];
+        if (page.empty()) {
+          page.assign(shadow.page_size, 0);
+        }
+        size_t page_offset = page_index * shadow.page_size;
+        size_t copy_start = std::max(start - base, page_offset);
+        size_t copy_end = std::min(end - base, page_offset + shadow.page_size);
+        memcpy(page.data() + copy_start - page_offset, shadow.host + copy_start,
+               copy_end - copy_start);
+      }
+    } catch (...) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    return CUDA_SUCCESS;
+  }
+  return CUDA_ERROR_INVALID_VALUE;
+}
+
+int handle_manual_lupineMappedDeviceRegister(conn_t *conn) {
+  CUdeviceptr server_host_ptr = 0;
+  CUdeviceptr device_ptr = 0;
+  size_t size = 0;
+  size_t page_size = 0;
+  if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
+      rpc_read(conn, &device_ptr, sizeof(device_ptr)) < 0 ||
+      rpc_read(conn, &size, sizeof(size)) < 0 ||
+      rpc_read(conn, &page_size, sizeof(page_size)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  if (server_host_ptr != 0 && device_ptr != 0 && size != 0 && page_size != 0 &&
+      (page_size & (page_size - 1)) == 0 &&
+      size <= SIZE_MAX - (page_size - 1)) {
+    try {
+      lupine_mapped_device_shadow shadow;
+      shadow.host = reinterpret_cast<unsigned char *>(server_host_ptr);
+      shadow.size = size;
+      shadow.page_size = page_size;
+      shadow.pages.resize((size + page_size - 1) / page_size);
+      memset(shadow.host, 0, size);
+      std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+      lupine_mapped_device_shadows()[device_ptr] = std::move(shadow);
+      result = CUDA_SUCCESS;
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_lupineMappedDeviceUnregister(conn_t *conn) {
+  CUdeviceptr device_ptr = 0;
+  if (rpc_read(conn, &device_ptr, sizeof(device_ptr)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+    lupine_mapped_device_shadows().erase(device_ptr);
+  }
+  CUresult result = CUDA_SUCCESS;
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_lupineMappedDeviceSync(conn_t *conn) {
+  CUdeviceptr device_ptr = 0;
+  if (rpc_read(conn, &device_ptr, sizeof(device_ptr)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = CUDA_SUCCESS;
+  uint32_t range_count = 0;
+  auto scan_started = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+  auto shadow_it = lupine_mapped_device_shadows().find(device_ptr);
+  if (shadow_it == lupine_mapped_device_shadows().end()) {
+    result = CUDA_ERROR_INVALID_VALUE;
+  }
+
+  std::vector<size_t> dirty_pages;
+  std::vector<std::pair<size_t, size_t>> ranges;
+  if (result == CUDA_SUCCESS) {
+    auto &shadow = shadow_it->second;
+    std::vector<unsigned char> zero_page;
+    try {
+      zero_page.assign(shadow.page_size, 0);
+      dirty_pages.reserve(shadow.pages.size());
+      for (size_t page_index = 0; page_index < shadow.pages.size();
+           ++page_index) {
+        size_t offset = page_index * shadow.page_size;
+        size_t bytes = std::min(shadow.page_size, shadow.size - offset);
+        const auto &page = shadow.pages[page_index];
+        const unsigned char *baseline =
+            page.empty() ? zero_page.data() : page.data();
+        if (memcmp(shadow.host + offset, baseline, bytes) != 0) {
+          dirty_pages.push_back(page_index);
+        }
+      }
+
+      for (size_t page_index : dirty_pages) {
+        auto &page = shadow.pages[page_index];
+        if (page.empty()) {
+          page.assign(shadow.page_size, 0);
+        }
+        size_t offset = page_index * shadow.page_size;
+        size_t bytes = std::min(shadow.page_size, shadow.size - offset);
+        if (ranges.empty() ||
+            ranges.back().first + ranges.back().second != offset) {
+          ranges.push_back({offset, bytes});
+        } else {
+          ranges.back().second += bytes;
+        }
+      }
+      if (ranges.size() > UINT32_MAX) {
+        result = CUDA_ERROR_OUT_OF_MEMORY;
+      } else {
+        range_count = static_cast<uint32_t>(ranges.size());
+      }
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+      range_count = 0;
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      rpc_write(conn, &range_count, sizeof(range_count)) < 0) {
+    return -1;
+  }
+  if (result == CUDA_SUCCESS) {
+    auto &shadow = shadow_it->second;
+    size_t dirty_bytes = 0;
+    for (const auto &range : ranges) {
+      dirty_bytes += range.second;
+    }
+    auto scan_micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                           std::chrono::steady_clock::now() - scan_started)
+                           .count();
+    LUPINE_TRACE_LOG("LUPINE mapped device sync ptr="
+                     << reinterpret_cast<void *>(device_ptr) << " scan_bytes="
+                     << shadow.size << " dirty_bytes=" << dirty_bytes
+                     << " ranges=" << range_count
+                     << " scan_us=" << scan_micros);
+    for (const auto &range : ranges) {
+      if (rpc_write(conn, &range.first, sizeof(range.first)) < 0 ||
+          rpc_write(conn, &range.second, sizeof(range.second)) < 0 ||
+          rpc_write_payload(conn, shadow.host + range.first, range.second) <
+              0) {
+        return -1;
+      }
+    }
+    if (rpc_write_end(conn) < 0) {
+      return -1;
+    }
+    for (size_t page_index : dirty_pages) {
+      size_t offset = page_index * shadow.page_size;
+      size_t bytes = std::min(shadow.page_size, shadow.size - offset);
+      memcpy(shadow.pages[page_index].data(), shadow.host + offset, bytes);
+    }
+    return 0;
+  }
+  return rpc_write_end(conn) < 0 ? -1 : 0;
+}
+
 int handle_manual_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
   CUresult result = CUDA_SUCCESS;
@@ -3277,6 +3504,9 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
         rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
         rpc_read(conn, server_host_ptr, bytes) < 0) {
       return -1;
+    }
+    if (result == CUDA_SUCCESS) {
+      result = lupine_update_mapped_device_shadow(server_host_ptr, bytes);
     }
   }
 

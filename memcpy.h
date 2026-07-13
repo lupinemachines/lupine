@@ -28,7 +28,7 @@ extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
 extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
                                                   CUdeviceptr *translated);
-extern "C" CUresult lupine_sync_mapped_device_to_host();
+extern "C" CUresult lupine_sync_mapped_device_to_host_for_route(int route_id);
 
 CUresult lupine_sync_mapped_host_to_device_for_launch(
     void *const *kernel_params, const size_t *sizes, uint32_t count,
