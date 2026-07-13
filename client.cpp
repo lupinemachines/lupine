@@ -323,13 +323,6 @@ lupine_module_functions() {
   return *functions;
 }
 
-static std::unordered_map<CUfunction, lupine_kernel_param_layout> &
-lupine_kernel_param_layouts() {
-  static auto *layouts =
-      new std::unordered_map<CUfunction, lupine_kernel_param_layout>();
-  return *layouts;
-}
-
 static std::unordered_map<int, lupine_primary_context_state> &
 lupine_primary_context_states() {
   static auto *states =
@@ -844,14 +837,14 @@ extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
   if (result != CUDA_SUCCESS) {
     return result;
   }
+  lupine_kernel_param_layout_cache_insert(reinterpret_cast<CUfunction>(kernel),
+                                          std::move(layout));
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto &record = lupine_library_kernels()[kernel];
     record.library = library;
     record.name = name;
     record.kernels_by_route[route_id] = kernel;
-    lupine_kernel_param_layouts()[reinterpret_cast<CUfunction>(kernel)] =
-        std::move(layout);
   }
   lupine_note_function_owner_route(reinterpret_cast<CUfunction>(kernel), route);
   return CUDA_SUCCESS;
@@ -871,13 +864,13 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
   if (result != CUDA_SUCCESS) {
     return result;
   }
+  lupine_kernel_param_layout_cache_insert(function, std::move(layout));
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto &record = lupine_module_functions()[function];
     record.module = module;
     record.name = name;
     record.functions_by_route[route_id] = function;
-    lupine_kernel_param_layouts()[function] = std::move(layout);
   }
   lupine_note_function_owner_route(function, route);
   return CUDA_SUCCESS;
@@ -885,13 +878,12 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
 
 static CUresult lupine_record_kernel_function(CUfunction function,
                                               CUkernel kernel) {
-  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto layout =
-      lupine_kernel_param_layouts().find(reinterpret_cast<CUfunction>(kernel));
-  if (layout == lupine_kernel_param_layouts().end()) {
+  lupine_kernel_param_layout layout;
+  if (!lupine_kernel_param_layout_cache_lookup(
+          reinterpret_cast<CUfunction>(kernel), &layout)) {
     return CUDA_ERROR_INVALID_HANDLE;
   }
-  lupine_kernel_param_layouts()[function] = layout->second;
+  lupine_kernel_param_layout_cache_insert(function, std::move(layout));
   return CUDA_SUCCESS;
 }
 
@@ -1163,6 +1155,11 @@ static CUresult lupine_resolve_library_kernel_for_route(CUfunction function,
     return result;
   }
 
+  lupine_kernel_param_layout layout;
+  if (lupine_kernel_param_layout_cache_lookup(function, &layout)) {
+    lupine_kernel_param_layout_cache_insert(
+        reinterpret_cast<CUfunction>(kernel), std::move(layout));
+  }
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     lupine_library_kernels()[reinterpret_cast<CUkernel>(function)]
@@ -1171,11 +1168,6 @@ static CUresult lupine_resolve_library_kernel_for_route(CUfunction function,
     new_record.library = library;
     new_record.name = record.name;
     new_record.kernels_by_route[route_id] = kernel;
-    auto layout = lupine_kernel_param_layouts().find(function);
-    if (layout != lupine_kernel_param_layouts().end()) {
-      lupine_kernel_param_layouts()[reinterpret_cast<CUfunction>(kernel)] =
-          layout->second;
-    }
   }
   lupine_note_function_owner_route(reinterpret_cast<CUfunction>(kernel), route);
   *resolved = reinterpret_cast<CUfunction>(kernel);
@@ -1242,6 +1234,10 @@ static CUresult lupine_resolve_module_function_for_route(CUfunction function,
     return result;
   }
 
+  lupine_kernel_param_layout layout;
+  if (lupine_kernel_param_layout_cache_lookup(function, &layout)) {
+    lupine_kernel_param_layout_cache_insert(route_function, std::move(layout));
+  }
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     lupine_module_functions()[function].functions_by_route[route_id] =
@@ -1250,10 +1246,6 @@ static CUresult lupine_resolve_module_function_for_route(CUfunction function,
     new_record.module = module;
     new_record.name = record.name;
     new_record.functions_by_route[route_id] = route_function;
-    auto layout = lupine_kernel_param_layouts().find(function);
-    if (layout != lupine_kernel_param_layouts().end()) {
-      lupine_kernel_param_layouts()[route_function] = layout->second;
-    }
   }
   lupine_note_function_owner_route(route_function, route);
   *resolved = route_function;
@@ -1799,8 +1791,7 @@ static CUresult lupine_get_remote_private_module_node(CUcontext context,
     lupine_kernel_param_layout layout;
     result = lupine_fetch_kernel_param_layout(*server_node, route, &layout);
     if (result == CUDA_SUCCESS) {
-      std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-      lupine_kernel_param_layouts()[*server_node] = std::move(layout);
+      lupine_kernel_param_layout_cache_insert(*server_node, std::move(layout));
     }
   }
   return result;
@@ -3555,13 +3546,9 @@ lupine_get_kernel_param_layout(CUfunction f,
   if (layout == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto stored = lupine_kernel_param_layouts().find(f);
-  if (stored == lupine_kernel_param_layouts().end()) {
-    return CUDA_ERROR_INVALID_HANDLE;
-  }
-  *layout = stored->second;
-  return CUDA_SUCCESS;
+  return lupine_kernel_param_layout_cache_lookup(f, layout)
+             ? CUDA_SUCCESS
+             : CUDA_ERROR_INVALID_HANDLE;
 }
 
 static CUresult lupine_resolve_launch_function_for_route(
