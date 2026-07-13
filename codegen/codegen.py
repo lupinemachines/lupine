@@ -97,10 +97,6 @@ MANUAL_REMAPPINGS = [
 ]
 
 KERNEL_PARAM_LAYOUT_INVALIDATORS = {
-    "cuCtxDestroy_v2",
-    "cuCtxDetach",
-    "cuDevicePrimaryCtxRelease_v2",
-    "cuDevicePrimaryCtxReset_v2",
     "cuLibraryUnload",
     "cuModuleUnload",
 }
@@ -184,7 +180,6 @@ NVML_MANUAL_SERVER_FUNCTIONS = {
 }
 
 PRIVATE_RPC_FUNCTIONS = [
-    "cuFuncGetParamLayout",
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
     "cuGraphConditionalHandleCreate",
@@ -1280,6 +1275,8 @@ def main():
             'extern "C" void lupine_invalidate_primary_context_state(CUdevice dev);\n'
             'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
+            'extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
+            'extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
             'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
@@ -1321,6 +1318,8 @@ def main():
                 "cuCtxGetCurrent": "lupine_cuCtxGetCurrent_virtual(pctx)",
                 "cuCtxGetDevice": "lupine_cuCtxGetDevice_cached(device)",
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
+                "cuKernelGetParamInfo": "lupine_cuKernelGetParamInfo_cached(kernel, paramIndex, paramOffset, paramSize)",
+                "cuFuncGetParamInfo": "lupine_cuFuncGetParamInfo_cached(func, paramIndex, paramOffset, paramSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
             }

@@ -44,6 +44,8 @@ extern "C" {
 CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode, CUDA_KERNEL_NODE_PARAMS *);
 CUresult cuGraphExecKernelNodeSetParams_v2(CUgraphExec, CUgraphNode,
                                            const CUDA_KERNEL_NODE_PARAMS *);
+CUresult cuKernelGetParamInfo(CUkernel, size_t, size_t *, size_t *);
+CUresult cuFuncGetParamInfo(CUfunction, size_t, size_t *, size_t *);
 #ifdef __cplusplus
 }
 #endif

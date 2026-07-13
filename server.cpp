@@ -96,8 +96,6 @@ lupine_manual_handlers() {
       {RPC_cuLibraryUnload, {handle_manual_cuLibraryUnload, "cuLibraryUnload"}},
       {RPC_cuModuleGetGlobal_v2,
        {handle_manual_cuModuleGetGlobal_v2, "cuModuleGetGlobal_v2"}},
-      {LUPINE_RPC_cuFuncGetParamLayout,
-       {handle_manual_cuFuncGetParamLayout, "cuFuncGetParamLayout"}},
       {RPC_cuOccupancyMaxPotentialBlockSize,
        {[](conn_t *conn) {
           return handle_manual_cuOccupancyMaxPotentialBlockSize(conn, false);

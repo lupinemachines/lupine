@@ -2,25 +2,10 @@
 
 #include <array>
 #include <atomic>
-#include <mutex>
-#include <unordered_map>
-#include <utility>
 
 namespace {
 
 constexpr size_t kLaneContextCacheSlots = 32;
-
-std::mutex &kernel_param_layout_cache_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-std::unordered_map<CUfunction, lupine_kernel_param_layout> &
-kernel_param_layout_cache() {
-  static auto *cache =
-      new std::unordered_map<CUfunction, lupine_kernel_param_layout>();
-  return *cache;
-}
 
 struct current_context_device_cache_entry {
   uint64_t epoch = 0;
@@ -68,26 +53,6 @@ lane_context_cache_entry *lane_context_cache_entry_for(int route_id) {
 }
 
 } // namespace
-
-bool lupine_kernel_param_layout_cache_lookup(
-    CUfunction function, lupine_kernel_param_layout *layout) {
-  if (layout == nullptr) {
-    return false;
-  }
-  std::lock_guard<std::mutex> lock(kernel_param_layout_cache_mutex());
-  auto stored = kernel_param_layout_cache().find(function);
-  if (stored == kernel_param_layout_cache().end()) {
-    return false;
-  }
-  *layout = stored->second;
-  return true;
-}
-
-void lupine_kernel_param_layout_cache_insert(
-    CUfunction function, lupine_kernel_param_layout layout) {
-  std::lock_guard<std::mutex> lock(kernel_param_layout_cache_mutex());
-  kernel_param_layout_cache()[function] = std::move(layout);
-}
 
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device) {

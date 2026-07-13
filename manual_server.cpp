@@ -1637,29 +1637,6 @@ CUresult lupine_get_kernel_param_layout(CUfunction f,
   return CUDA_SUCCESS;
 }
 
-int handle_manual_cuFuncGetParamLayout(conn_t *conn) {
-  CUfunction f = nullptr;
-  int request_id;
-  lupine_kernel_param_layout layout;
-  CUresult result;
-
-  if (rpc_read(conn, &f, sizeof(f)) < 0) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = lupine_get_kernel_param_layout(f, &layout);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_kernel_param_layout(conn, &layout) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_manual_cuLaunchKernel(conn_t *conn) {
   CUfunction f = nullptr;
   CUcontext ctx = nullptr;

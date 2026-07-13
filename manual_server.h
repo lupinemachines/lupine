@@ -36,7 +36,6 @@ int handle_manual_cuDeviceSetGraphMemAttribute(conn_t *conn);
 int handle_manual_cuLibraryGetModule(conn_t *conn);
 int handle_manual_cuLibraryUnload(conn_t *conn);
 int handle_manual_cuModuleGetGlobal_v2(conn_t *conn);
-int handle_manual_cuFuncGetParamLayout(conn_t *conn);
 int handle_manual_cuLaunchKernel(conn_t *conn);
 int handle_manual_cuLaunchKernelEx(conn_t *conn);
 int handle_manual_cuLaunchCooperativeKernel(conn_t *conn);

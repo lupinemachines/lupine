@@ -13,11 +13,6 @@ struct lupine_kernel_param_layout {
   std::vector<size_t> sizes;
 };
 
-bool lupine_kernel_param_layout_cache_lookup(
-    CUfunction function, lupine_kernel_param_layout *layout);
-void lupine_kernel_param_layout_cache_insert(CUfunction function,
-                                             lupine_kernel_param_layout layout);
-
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device);
 void lupine_current_context_device_cache_insert(CUcontext context,

@@ -2466,6 +2466,24 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
  */
 CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
 /**
+ * @routingkey FUNCTION kernel
+ * @param kernel SEND_ONLY
+ * @param paramIndex SEND_ONLY
+ * @param paramOffset RECV_ONLY
+ * @param paramSize RECV_ONLY
+ */
+CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
+                              size_t *paramOffset, size_t *paramSize);
+/**
+ * @routingkey FUNCTION func
+ * @param func SEND_ONLY
+ * @param paramIndex SEND_ONLY
+ * @param paramOffset RECV_ONLY
+ * @param paramSize RECV_ONLY
+ */
+CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
+                            size_t *paramOffset, size_t *paramSize);
+/**
  * @routingkey LIBRARY library
  * @param dptr RECV_ONLY
  * @param bytes RECV_ONLY
