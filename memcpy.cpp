@@ -48,8 +48,10 @@ struct lupine_host_allocation {
   bool device_dirty = false;
   bool tracking_enabled = false;
   int fault_slot = -1;
-  std::vector<unsigned long> dirty_pages;
-  std::vector<unsigned long> dirty_snapshot;
+  volatile sig_atomic_t full_dirty = 0;
+  volatile sig_atomic_t retiring = 0;
+  uint32_t pending_dirty_ranges = 0;
+  uintptr_t host_base = 0;
   CUdeviceptr device_alloc_base = 0;
   int route_id = -2;
 };
@@ -86,9 +88,25 @@ static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES =
 
 static constexpr size_t LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES = 16;
 static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES = 1024;
-static constexpr size_t LUPINE_DIRTY_WORD_BITS = sizeof(unsigned long) * 8;
-static std::mutex
-    lupine_managed_host_flush_mutexes[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
+static constexpr uint32_t LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES = 64 * 1024;
+
+struct lupine_dirty_host_range {
+  lupine_host_allocation *allocation = nullptr;
+  uintptr_t start = 0;
+  uintptr_t end = 0;
+};
+
+struct lupine_dirty_host_range_queue {
+  std::mutex mutex;
+  lupine_dirty_host_range ranges[LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES];
+  unsigned char ready[LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES];
+  uint32_t next = 0;
+  uint32_t start = 0;
+  volatile sig_atomic_t full_dirty_pending = 0;
+};
+
+static lupine_dirty_host_range_queue
+    lupine_dirty_host_range_queues[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
 
 struct lupine_fault_entry {
   uintptr_t base = 0;
@@ -130,6 +148,21 @@ static void lupine_call_previous_sigsegv(int sig, siginfo_t *info, void *uctx) {
   raise(sig);
 }
 
+static bool lupine_reserve_dirty_host_range(
+    lupine_dirty_host_range_queue &queue, uint32_t *slot) {
+  uint32_t next = __atomic_load_n(&queue.next, __ATOMIC_RELAXED);
+  while (next < LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES &&
+         !__atomic_compare_exchange_n(&queue.next, &next, next + 1, false,
+                                      __ATOMIC_RELAXED,
+                                      __ATOMIC_RELAXED)) {
+  }
+  if (next >= LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES) {
+    return false;
+  }
+  *slot = next;
+  return true;
+}
+
 static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   __atomic_add_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_ACQUIRE);
   uintptr_t addr = reinterpret_cast<uintptr_t>(info->si_addr);
@@ -149,12 +182,37 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
       break;
     }
 
-    size_t word = page_index / LUPINE_DIRTY_WORD_BITS;
-    unsigned long bit = 1UL << (page_index % LUPINE_DIRTY_WORD_BITS);
-    __atomic_fetch_or(&allocation->dirty_pages[word], bit, __ATOMIC_RELEASE);
+    int route_id = allocation->route_id;
+    if (route_id < 0 ||
+        route_id >= static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
+      __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
+      lupine_call_previous_sigsegv(sig, info, uctx);
+      return;
+    }
 
-    void *page = reinterpret_cast<void *>(entry.base + page_index * page_size);
-    mprotect(page, page_size, PROT_READ | PROT_WRITE);
+    auto &queue = lupine_dirty_host_range_queues[route_id];
+    uintptr_t page = entry.base + page_index * page_size;
+    if (__atomic_load_n(&allocation->retiring, __ATOMIC_ACQUIRE) != 0) {
+      mprotect(reinterpret_cast<void *>(page), page_size,
+               PROT_READ | PROT_WRITE);
+      __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
+      return;
+    }
+    uint32_t slot = 0;
+    __atomic_add_fetch(&allocation->pending_dirty_ranges, 1,
+                       __ATOMIC_ACQ_REL);
+    if (lupine_reserve_dirty_host_range(queue, &slot)) {
+      queue.ranges[slot] = {allocation, page, page + page_size};
+      __atomic_store_n(&queue.ready[slot], 1, __ATOMIC_RELEASE);
+    } else {
+      __atomic_sub_fetch(&allocation->pending_dirty_ranges, 1,
+                         __ATOMIC_RELEASE);
+      __atomic_store_n(&allocation->full_dirty, 1, __ATOMIC_RELEASE);
+      __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
+    }
+
+    mprotect(reinterpret_cast<void *>(page), page_size,
+             PROT_READ | PROT_WRITE);
     __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
     return;
   }
@@ -254,11 +312,7 @@ lupine_enable_dirty_tracking_locked(void *host,
   }
 
   allocation->tracking_enabled = true;
-  size_t dirty_words =
-      (allocation->page_count + LUPINE_DIRTY_WORD_BITS - 1) /
-      LUPINE_DIRTY_WORD_BITS;
-  allocation->dirty_pages.assign(dirty_words, 0);
-  allocation->dirty_snapshot.assign(dirty_words, 0);
+  allocation->host_base = base;
 
   lupine_install_sigsegv_handler();
   allocation->fault_slot =
@@ -357,15 +411,109 @@ extern "C" void lupine_prepare_host_range_write(void *host, size_t size) {
 }
 
 static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
-  std::lock_guard<std::mutex> route_lock(
-      lupine_managed_host_flush_mutexes[route_id]);
-  std::lock_guard<std::mutex> allocation_lock(lupine_host_allocation_mutex());
+  auto &queue = lupine_dirty_host_range_queues[route_id];
+  std::lock_guard<std::mutex> route_lock(queue.mutex);
+
+  uint32_t reserved = __atomic_load_n(&queue.next, __ATOMIC_ACQUIRE);
+  uint32_t end = queue.start;
+  while (end < reserved &&
+         __atomic_load_n(&queue.ready[end], __ATOMIC_ACQUIRE) != 0) {
+    ++end;
+  }
+  bool has_full_dirty =
+      __atomic_load_n(&queue.full_dirty_pending, __ATOMIC_ACQUIRE) != 0;
+  if (end == queue.start && !has_full_dirty) {
+    return CUDA_SUCCESS;
+  }
+
+  std::vector<lupine_dirty_host_range> ranges;
+  ranges.reserve(end - queue.start);
+  for (uint32_t slot = queue.start; slot < end; ++slot) {
+    ranges.push_back(queue.ranges[slot]);
+    __atomic_store_n(&queue.ready[slot], 0, __ATOMIC_RELEASE);
+  }
+  queue.start = end;
+  uint32_t expected = end;
+  if (__atomic_compare_exchange_n(&queue.next, &expected, 0, false,
+                                  __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    queue.start = 0;
+  }
+
+  if (has_full_dirty &&
+      __atomic_exchange_n(&queue.full_dirty_pending, 0, __ATOMIC_ACQ_REL) !=
+          0) {
+    std::lock_guard<std::mutex> allocation_lock(
+        lupine_host_allocation_mutex());
+    for (auto &entry : lupine_mutable_host_allocations_locked()) {
+      auto &allocation = entry.second;
+      if (!allocation.tracking_enabled ||
+          allocation.route_id != static_cast<int>(route_id) ||
+          __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0 ||
+          __atomic_exchange_n(&allocation.full_dirty, 0,
+                              __ATOMIC_ACQ_REL) == 0) {
+        continue;
+      }
+      __atomic_add_fetch(&allocation.pending_dirty_ranges, 1,
+                         __ATOMIC_ACQ_REL);
+      ranges.push_back({&allocation, allocation.host_base,
+                        allocation.host_base + allocation.storage_size});
+    }
+  }
+
+  if (ranges.empty()) {
+    return CUDA_SUCCESS;
+  }
+
+  auto release_ranges = [&](bool restore) {
+    for (const auto &range : ranges) {
+      if (restore &&
+          __atomic_load_n(&range.allocation->retiring, __ATOMIC_ACQUIRE) ==
+              0) {
+        __atomic_store_n(&range.allocation->full_dirty, 1, __ATOMIC_RELEASE);
+        __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
+      }
+      __atomic_sub_fetch(&range.allocation->pending_dirty_ranges, 1,
+                         __ATOMIC_RELEASE);
+    }
+  };
+
+  std::sort(ranges.begin(), ranges.end(),
+            [](const lupine_dirty_host_range &a,
+               const lupine_dirty_host_range &b) {
+              if (a.allocation != b.allocation) {
+                return a.allocation->host_base < b.allocation->host_base;
+              }
+              if (a.start != b.start) {
+                return a.start < b.start;
+              }
+              return a.end < b.end;
+            });
+  std::vector<lupine_dirty_host_range> merged;
+  merged.reserve(ranges.size());
+  for (const auto &range : ranges) {
+    if (merged.empty() ||
+        merged.back().allocation != range.allocation ||
+        merged.back().end < range.start) {
+      merged.push_back(range);
+    } else {
+      merged.back().end = std::max(merged.back().end, range.end);
+    }
+  }
+
+  for (const auto &range : merged) {
+    if (!lupine_protect_host_range(reinterpret_cast<void *>(range.start),
+                                   range.end - range.start, PROT_READ)) {
+      release_ranges(true);
+      return CUDA_ERROR_UNKNOWN;
+    }
+  }
+
   conn_t *conn = lupine_route_remote_conn(
       lupine_route_from_identity(static_cast<int>(route_id)));
   if (conn == nullptr) {
+    release_ranges(true);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-
   std::array<std::array<unsigned char,
                         LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES>,
              LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES>
@@ -389,102 +537,36 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     return result;
   };
 
-  for (auto &entry : lupine_mutable_host_allocations_locked()) {
-    auto &allocation = entry.second;
-    if (!allocation.tracking_enabled || allocation.route_id !=
-                                               static_cast<int>(route_id)) {
+  uint32_t count = 0;
+  for (const auto &range : merged) {
+    auto &allocation = *range.allocation;
+    size_t offset = range.start - allocation.host_base;
+    if (offset >= allocation.size) {
       continue;
     }
-    if (!lupine_protect_host_range(entry.first, allocation.storage_size,
-                                   PROT_READ)) {
-      return CUDA_ERROR_UNKNOWN;
-    }
-
-    bool any_dirty = false;
-    for (size_t word = 0; word < allocation.dirty_pages.size(); ++word) {
-      allocation.dirty_snapshot[word] = __atomic_exchange_n(
-          &allocation.dirty_pages[word], 0UL, __ATOMIC_ACQ_REL);
-      any_dirty |= allocation.dirty_snapshot[word] != 0;
-    }
-    if (!any_dirty) {
-      continue;
-    }
-
-    auto restore_snapshot = [&]() {
-      for (size_t word = 0; word < allocation.dirty_snapshot.size(); ++word) {
-        __atomic_fetch_or(&allocation.dirty_pages[word],
-                          allocation.dirty_snapshot[word], __ATOMIC_RELEASE);
-        allocation.dirty_snapshot[word] = 0;
-      }
-    };
-    uint32_t count = 0;
-    auto append_range = [&](size_t first_page, size_t end_page) -> CUresult {
-      size_t offset = first_page * allocation.page_size;
-      if (offset >= allocation.size) {
-        return CUDA_SUCCESS;
-      }
-      size_t bytes = std::min((end_page - first_page) * allocation.page_size,
-                              allocation.size - offset);
-      CUdeviceptr dst = allocation.server_host_ptr + offset;
-      memcpy(headers[count].data(), &dst, sizeof(dst));
-      memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
-      iovecs[count * 2] = {headers[count].data(),
-                           LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES};
-      iovecs[count * 2 + 1] = {
-          reinterpret_cast<unsigned char *>(entry.first) + offset, bytes};
-      ++count;
-      if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
-        CUresult result = send_batch(count);
-        if (result != CUDA_SUCCESS) {
-          return result;
-        }
-        count = 0;
-      }
-      return CUDA_SUCCESS;
-    };
-
-    size_t first_page = allocation.page_count;
-    size_t end_page = 0;
-    for (size_t word = 0; word < allocation.dirty_snapshot.size(); ++word) {
-      unsigned long dirty = allocation.dirty_snapshot[word];
-      while (dirty != 0) {
-        size_t page = word * LUPINE_DIRTY_WORD_BITS +
-                      static_cast<size_t>(__builtin_ctzl(dirty));
-        dirty &= dirty - 1;
-        if (page >= allocation.page_count) {
-          continue;
-        }
-        if (first_page == allocation.page_count) {
-          first_page = page;
-          end_page = page + 1;
-        } else if (page == end_page) {
-          ++end_page;
-        } else {
-          CUresult result = append_range(first_page, end_page);
-          if (result != CUDA_SUCCESS) {
-            restore_snapshot();
-            return result;
-          }
-          first_page = page;
-          end_page = page + 1;
-        }
-      }
-    }
-    if (first_page != allocation.page_count) {
-      CUresult result = append_range(first_page, end_page);
+    size_t bytes = std::min(range.end - range.start, allocation.size - offset);
+    CUdeviceptr dst = allocation.server_host_ptr + offset;
+    memcpy(headers[count].data(), &dst, sizeof(dst));
+    memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
+    iovecs[count * 2] = {headers[count].data(),
+                         LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES};
+    iovecs[count * 2 + 1] = {reinterpret_cast<void *>(range.start), bytes};
+    ++count;
+    if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
+      CUresult result = send_batch(count);
       if (result != CUDA_SUCCESS) {
-        restore_snapshot();
+        release_ranges(true);
         return result;
       }
+      count = 0;
     }
-    CUresult result = send_batch(count);
-    if (result != CUDA_SUCCESS) {
-      restore_snapshot();
-      return result;
-    }
-    std::fill(allocation.dirty_snapshot.begin(),
-              allocation.dirty_snapshot.end(), 0UL);
   }
+  CUresult result = send_batch(count);
+  if (result != CUDA_SUCCESS) {
+    release_ranges(true);
+    return result;
+  }
+  release_ranges(false);
   return CUDA_SUCCESS;
 }
 
@@ -495,6 +577,24 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server() {
     if (result != CUDA_SUCCESS) {
       return result;
     }
+  }
+  return CUDA_SUCCESS;
+}
+
+static CUresult lupine_drain_retiring_dirty_ranges(
+    lupine_host_allocation *allocation) {
+  if (allocation == nullptr || allocation->route_id < 0 ||
+      allocation->route_id >=
+          static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
+    return CUDA_SUCCESS;
+  }
+  CUresult result = lupine_flush_dirty_host_pages_to_route(
+      static_cast<size_t>(allocation->route_id));
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  while (__atomic_load_n(&allocation->pending_dirty_ranges,
+                         __ATOMIC_ACQUIRE) != 0) {
   }
   return CUDA_SUCCESS;
 }
@@ -856,6 +956,7 @@ extern "C" CUresult cuMemFreeHost(void *p) {
   size_t storage_size = 0;
   CUdeviceptr server_host_ptr = 0;
   CUdeviceptr device_ptr = 0;
+  lupine_host_allocation *retiring_allocation = nullptr;
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     auto &allocations = lupine_mutable_host_allocations_locked();
@@ -869,7 +970,21 @@ extern "C" CUresult cuMemFreeHost(void *p) {
     storage_size = it->second.storage_size;
     server_host_ptr = it->second.server_host_ptr;
     device_ptr = it->second.device_ptr;
+    __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
     lupine_disable_dirty_tracking(p, it->second);
+    retiring_allocation = &it->second;
+  }
+  flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
+  if (flush_result != CUDA_SUCCESS) {
+    return flush_result;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    auto &allocations = lupine_mutable_host_allocations_locked();
+    auto it = allocations.find(p);
+    if (it == allocations.end() || &it->second != retiring_allocation) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
     allocations.erase(it);
   }
   if (local_cuda) {
@@ -1149,8 +1264,10 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
       lupine_remote_cuMemFreeHost(server_host, route);
       return CUDA_ERROR_INVALID_VALUE;
     }
-    std::fill(inserted.first->second.dirty_pages.begin(),
-              inserted.first->second.dirty_pages.end(), ~0UL);
+    __atomic_store_n(&inserted.first->second.full_dirty, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(
+        &lupine_dirty_host_range_queues[route_id].full_dirty_pending, 1,
+        __ATOMIC_RELEASE);
   }
   if (server_host != nullptr) {
     lupine_note_deviceptr_allocation_route(
@@ -1184,6 +1301,7 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
   bool local_cuda = false;
   CUdeviceptr server_host_ptr = 0;
   CUdeviceptr device_ptr = 0;
+  lupine_host_allocation *retiring_allocation = nullptr;
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     auto &allocations = lupine_mutable_host_allocations_locked();
@@ -1194,7 +1312,21 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
     local_cuda = it->second.local_cuda;
     server_host_ptr = it->second.server_host_ptr;
     device_ptr = it->second.device_ptr;
+    __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
     lupine_disable_dirty_tracking(p, it->second);
+    retiring_allocation = &it->second;
+  }
+  flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
+  if (flush_result != CUDA_SUCCESS) {
+    return flush_result;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    auto &allocations = lupine_mutable_host_allocations_locked();
+    auto it = allocations.find(p);
+    if (it == allocations.end() || &it->second != retiring_allocation) {
+      return CUDA_ERROR_HOST_MEMORY_NOT_REGISTERED;
+    }
     allocations.erase(it);
   }
   if (local_cuda) {
@@ -1319,15 +1451,16 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
 
   void *host = reinterpret_cast<void *>(dptr);
   lupine_host_allocation allocation;
+  lupine_host_allocation *retiring_allocation = nullptr;
   bool found = false;
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     auto it = lupine_find_host_allocation_locked(host);
     if (it != lupine_mutable_host_allocations_locked().end() &&
         reinterpret_cast<void *>(dptr) == it->first && it->second.managed) {
-      allocation = std::move(it->second);
-      lupine_disable_dirty_tracking(it->first, allocation);
-      lupine_mutable_host_allocations_locked().erase(it);
+      __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
+      lupine_disable_dirty_tracking(it->first, it->second);
+      retiring_allocation = &it->second;
       found = true;
     }
   }
@@ -1359,6 +1492,21 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
       lupine_forget_deviceptr_owner(dptr);
     }
     return return_value;
+  }
+
+  flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
+  if (flush_result != CUDA_SUCCESS) {
+    return flush_result;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    auto it = lupine_mutable_host_allocations_locked().find(host);
+    if (it == lupine_mutable_host_allocations_locked().end() ||
+        &it->second != retiring_allocation) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+    allocation = std::move(it->second);
+    lupine_mutable_host_allocations_locked().erase(it);
   }
 
   CUresult result = CUDA_SUCCESS;
