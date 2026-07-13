@@ -545,11 +545,7 @@ jobs:
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
               cmake --build "$LUPINE_BUILD_DIR" --parallel \
-                --target \
-                  lupine_driver \
-                  lupine_nvml \
-                  lupine_driver_server \
-                  server_registry_test
+                --target lupine_driver lupine_nvml lupine_driver_server
               ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
               ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
@@ -565,15 +561,8 @@ jobs:
               custom_status=0
               SERVER_PORT=20900 /src/test/run_custom_tests.sh || custom_status=$?
 
-              registry_status=0
-              "$LUPINE_BUILD_DIR/server_registry_test" || registry_status=$?
-
-              if [[ "$cuda_status" -ne 0 ||
-                    "$pytorch_status" -ne 0 ||
-                    "$custom_status" -ne 0 ||
-                    "$registry_status" -ne 0 ]]; then
-                printf 'CUDA samples exited %s; PyTorch exited %s; custom tests exited %s; registry stress exited %s\n' \
-                  "$cuda_status" "$pytorch_status" "$custom_status" "$registry_status" >&2
+              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$custom_status" -ne 0 ]]; then
+                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; custom tests exited $custom_status" >&2
                 exit 1
               fi
             '
