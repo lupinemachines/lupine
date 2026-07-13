@@ -52,7 +52,6 @@
 #include "codegen/gen_client.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
-#include "lupine_launch_attributes.h"
 #include "lupine_log.h"
 #include "memcpy.h"
 #include "rpc.h"
@@ -3641,27 +3640,25 @@ static CUresult lupine_launch_kernel(
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
-  std::vector<lupine_launch_attribute_wire> wire_attributes;
 #if CUDA_VERSION >= 11080
   if (extended) {
-    wire_attributes.resize(launch_attribute_count);
     for (uint32_t i = 0; i < launch_attribute_count; ++i) {
-      status = lupine_encode_launch_attribute(launch_attributes[i],
-                                              &wire_attributes[i]);
-      if (status != CUDA_SUCCESS) {
-        return status;
-      }
-
-      if (wire_attributes[i].id == 1) {
-        CUdeviceptr base_ptr = 0;
-        memcpy(&base_ptr, wire_attributes[i].value, sizeof(base_ptr));
+      const CUlaunchAttribute &attribute = launch_attributes[i];
+      if (attribute.id == CU_LAUNCH_ATTRIBUTE_ACCESS_POLICY_WINDOW) {
+        CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(
+            attribute.value.accessPolicyWindow.base_ptr);
         if (base_ptr != 0 && !lupine_routes_share_server(
                                  route, lupine_route_for_deviceptr(base_ptr))) {
           return CUDA_ERROR_INVALID_VALUE;
         }
-      } else if (wire_attributes[i].id == 7 || wire_attributes[i].id == 12) {
-        CUevent event = nullptr;
-        memcpy(&event, wire_attributes[i].value, sizeof(event));
+      } else if (attribute.id == CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_EVENT) {
+        CUevent event = attribute.value.programmaticEvent.event;
+        if (event != nullptr &&
+            !lupine_routes_share_server(route, lupine_route_for_event(event))) {
+          return CUDA_ERROR_INVALID_VALUE;
+        }
+      } else if (attribute.id == CU_LAUNCH_ATTRIBUTE_LAUNCH_COMPLETION_EVENT) {
+        CUevent event = attribute.value.launchCompletionEvent.event;
         if (event != nullptr &&
             !lupine_routes_share_server(route, lupine_route_for_event(event))) {
           return CUDA_ERROR_INVALID_VALUE;
@@ -3692,17 +3689,14 @@ static CUresult lupine_launch_kernel(
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
       rpc_write(conn, packed.data(), packed.size()) < 0 ||
-      (extended &&
-       (rpc_write(conn, &launch_attribute_count,
-                  sizeof(launch_attribute_count)) < 0 ||
-        rpc_write(conn, wire_attributes.data(),
-                  wire_attributes.size() * sizeof(wire_attributes[0])) < 0)) ||
+      (extended && rpc_write_launch_attributes(conn, &launch_attribute_count,
+                                               launch_attributes) < 0) ||
       (extended ? rpc_wait_for_response(conn) : rpc_write_end(conn)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (extended) {
-    if (rpc_read(conn, wire_attributes.data(),
-                 wire_attributes.size() * sizeof(wire_attributes[0])) < 0 ||
+    std::vector<CUlaunchAttribute> returned_attributes;
+    if (rpc_read_launch_attributes(conn, &returned_attributes) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3710,15 +3704,11 @@ static CUresult lupine_launch_kernel(
     if (return_value != CUDA_SUCCESS) {
       return return_value;
     }
-#if CUDA_VERSION >= 11080
-    for (uint32_t i = 0; i < launch_attribute_count; ++i) {
-      status = lupine_decode_launch_attribute(wire_attributes[i],
-                                              &launch_attributes[i]);
-      if (status != CUDA_SUCCESS) {
-        return status;
-      }
+    if (returned_attributes.size() != launch_attribute_count) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-#endif
+    memcpy(launch_attributes, returned_attributes.data(),
+           returned_attributes.size() * sizeof(returned_attributes[0]));
   }
   if (sync_after_launch) {
     return cuStreamSynchronize(hStream);
@@ -3755,17 +3745,9 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (config->numAttrs > LUPINE_MAX_LAUNCH_ATTRIBUTES) {
     return CUDA_ERROR_NOT_SUPPORTED;
   }
-#if CUDA_VERSION >= 11080
-  for (uint32_t i = 0; i < config->numAttrs; ++i) {
-    lupine_launch_attribute_wire wire;
-    CUresult status = lupine_encode_launch_attribute(config->attrs[i], &wire);
-    if (status != CUDA_SUCCESS) {
-      return status;
-    }
+  if (rpc_validate_launch_attributes(config->numAttrs, config->attrs) != 0) {
+    return CUDA_ERROR_NOT_SUPPORTED;
   }
-#else
-  return CUDA_ERROR_NOT_SUPPORTED;
-#endif
   return lupine_launch_kernel(
       f, config->gridDimX, config->gridDimY, config->gridDimZ,
       config->blockDimX, config->blockDimY, config->blockDimZ,
