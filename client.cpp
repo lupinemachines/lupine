@@ -1863,10 +1863,7 @@ static bool lupine_is_private_function(CUfunction function) {
          lupine_private_node_map().end();
 }
 
-static bool lupine_is_kernel_handle(CUfunction function) {
-  if (lupine_is_private_function(function)) {
-    return true;
-  }
+static bool lupine_is_library_kernel(CUfunction function) {
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
   return lupine_library_kernels().find(reinterpret_cast<CUkernel>(function)) !=
          lupine_library_kernels().end();
@@ -1907,8 +1904,7 @@ static CUresult lupine_get_remote_private_module_node(CUcontext context,
   }
   if (result == CUDA_SUCCESS && *server_node != nullptr) {
     lupine_note_function_owner_route(*server_node, route);
-    result =
-        lupine_warm_kernel_param_info(reinterpret_cast<CUkernel>(*server_node));
+    result = lupine_warm_func_param_info(*server_node);
   }
   return result;
 }
@@ -3708,7 +3704,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUfunction requested_function = f;
-  bool kernel_handle = lupine_is_kernel_handle(requested_function);
+  bool kernel_handle = lupine_is_library_kernel(requested_function);
   lupine_route launch_route = hStream != nullptr
                                   ? lupine_route_for_stream(hStream)
                                   : lupine_route_for_default();
@@ -3844,7 +3840,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUfunction requested_function = f;
-  bool kernel_handle = lupine_is_kernel_handle(requested_function);
+  bool kernel_handle = lupine_is_library_kernel(requested_function);
   lupine_route launch_route = config->hStream != nullptr
                                   ? lupine_route_for_stream(config->hStream)
                                   : lupine_route_for_default();
@@ -3965,7 +3961,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
                           unsigned int blockDimX, unsigned int blockDimY,
                           unsigned int blockDimZ, unsigned int sharedMemBytes,
                           CUstream hStream, void **kernelParams) {
-  bool kernel_handle = lupine_is_kernel_handle(f);
+  bool kernel_handle = lupine_is_library_kernel(f);
   f = lupine_translate_private_function(f);
 
   lupine_route route = lupine_route_for_function(f);
