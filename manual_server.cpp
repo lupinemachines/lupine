@@ -1667,7 +1667,7 @@ int handle_manual_cuFuncGetParamLayout(conn_t *conn) {
   return 0;
 }
 
-static int handle_manual_cuLaunchKernel_impl(conn_t *conn, bool extended) {
+int handle_manual_cuLaunchKernel(conn_t *conn) {
   CUfunction f = nullptr;
   CUcontext ctx = nullptr;
   unsigned int gridDimX = 0;
@@ -1682,18 +1682,6 @@ static int handle_manual_cuLaunchKernel_impl(conn_t *conn, bool extended) {
   size_t packed_size = 0;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  CUresult attribute_status = CUDA_SUCCESS;
-
-  std::vector<CUlaunchAttribute> attributes;
-  if (extended) {
-    if (rpc_read_launch_attributes(conn, &attributes) < 0) {
-      return -1;
-    }
-#if CUDA_VERSION < 11080
-    attribute_status = CUDA_ERROR_NOT_SUPPORTED;
-    attributes.clear();
-#endif
-  }
 
   if (rpc_read(conn, &f, sizeof(f)) < 0 ||
       rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
@@ -1719,9 +1707,7 @@ static int handle_manual_cuLaunchKernel_impl(conn_t *conn, bool extended) {
     return -1;
   }
 
-  if (attribute_status != CUDA_SUCCESS) {
-    result = attribute_status;
-  } else if (ctx != nullptr) {
+  if (ctx != nullptr) {
     CUcontext previous = nullptr;
     result = cuCtxGetCurrent(&previous);
     if (result == CUDA_SUCCESS && previous != ctx) {
@@ -1745,65 +1731,109 @@ static int handle_manual_cuLaunchKernel_impl(conn_t *conn, bool extended) {
       params[i] = packed.data() + layout.offsets[i];
     }
     if (result == CUDA_SUCCESS) {
-#if CUDA_VERSION >= 11080
-      if (extended) {
-        CUlaunchConfig config = {};
-        config.gridDimX = gridDimX;
-        config.gridDimY = gridDimY;
-        config.gridDimZ = gridDimZ;
-        config.blockDimX = blockDimX;
-        config.blockDimY = blockDimY;
-        config.blockDimZ = blockDimZ;
-        config.sharedMemBytes = sharedMemBytes;
-        config.hStream = hStream;
-        config.attrs = attributes.empty() ? nullptr : attributes.data();
-        config.numAttrs = static_cast<unsigned int>(attributes.size());
-        result = cuLaunchKernelEx(
-            &config, f, param_count == 0 ? nullptr : params.data(), nullptr);
-      } else {
-        result =
-            cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
-                           blockDimY, blockDimZ, sharedMemBytes, hStream,
-                           param_count == 0 ? nullptr : params.data(), nullptr);
-      }
-#else
-      if (extended) {
-        result = CUDA_ERROR_NOT_SUPPORTED;
-      } else {
-        result =
-            cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
-                           blockDimY, blockDimZ, sharedMemBytes, hStream,
-                           param_count == 0 ? nullptr : params.data(), nullptr);
-      }
-#endif
+      result =
+          cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
+                         blockDimZ, sharedMemBytes, hStream,
+                         param_count == 0 ? nullptr : params.data(), nullptr);
     }
   }
 
-  if (extended) {
-    uint32_t response_attribute_count =
-        static_cast<uint32_t>(attributes.size());
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write_launch_attributes(conn, &response_attribute_count,
-                                    attributes.data()) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-
-  // Legacy launches remain fire-and-forget; launch errors are sticky.
   (void)request_id;
   (void)result;
   return 0;
 }
 
-int handle_manual_cuLaunchKernel(conn_t *conn) {
-  return handle_manual_cuLaunchKernel_impl(conn, false);
-}
-
 int handle_manual_cuLaunchKernelEx(conn_t *conn) {
-  return handle_manual_cuLaunchKernel_impl(conn, true);
+  CUfunction f = nullptr;
+  CUcontext ctx = nullptr;
+  unsigned int gridDimX = 0;
+  unsigned int gridDimY = 0;
+  unsigned int gridDimZ = 0;
+  unsigned int blockDimX = 0;
+  unsigned int blockDimY = 0;
+  unsigned int blockDimZ = 0;
+  unsigned int sharedMemBytes = 0;
+  CUstream hStream = nullptr;
+  uint32_t param_count = 0;
+  size_t packed_size = 0;
+  int request_id;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+
+  std::vector<CUlaunchAttribute> attributes;
+  if (rpc_read_launch_attributes(conn, &attributes) < 0 ||
+      rpc_read(conn, &f, sizeof(f)) < 0 ||
+      rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
+      rpc_read(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
+      rpc_read(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
+      rpc_read(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
+      rpc_read(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
+      rpc_read(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
+      rpc_read(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
+      rpc_read(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
+      rpc_read(conn, &packed_size, sizeof(packed_size)) < 0) {
+    return -1;
+  }
+
+  std::vector<unsigned char> packed(packed_size);
+  if ((packed_size != 0 && rpc_read(conn, packed.data(), packed_size) < 0) ||
+      (request_id = rpc_read_end(conn)) < 0) {
+    return -1;
+  }
+
+#if CUDA_VERSION < 11080
+  result = CUDA_ERROR_NOT_SUPPORTED;
+#else
+  if (ctx != nullptr) {
+    CUcontext previous = nullptr;
+    result = cuCtxGetCurrent(&previous);
+    if (result == CUDA_SUCCESS && previous != ctx) {
+      result = cuCtxSetCurrent(ctx);
+    }
+  } else {
+    result = CUDA_SUCCESS;
+  }
+
+  lupine_kernel_param_layout layout;
+  if (result == CUDA_SUCCESS) {
+    result = lupine_get_kernel_param_layout(f, &layout);
+  }
+  if (result == CUDA_SUCCESS && layout.count == param_count) {
+    std::vector<void *> params(param_count);
+    for (uint32_t i = 0; i < param_count; ++i) {
+      if (layout.offsets[i] + layout.sizes[i] > packed.size()) {
+        result = CUDA_ERROR_INVALID_VALUE;
+        break;
+      }
+      params[i] = packed.data() + layout.offsets[i];
+    }
+    if (result == CUDA_SUCCESS) {
+      CUlaunchConfig config = {};
+      config.gridDimX = gridDimX;
+      config.gridDimY = gridDimY;
+      config.gridDimZ = gridDimZ;
+      config.blockDimX = blockDimX;
+      config.blockDimY = blockDimY;
+      config.blockDimZ = blockDimZ;
+      config.sharedMemBytes = sharedMemBytes;
+      config.hStream = hStream;
+      config.attrs = attributes.empty() ? nullptr : attributes.data();
+      config.numAttrs = static_cast<unsigned int>(attributes.size());
+      result = cuLaunchKernelEx(
+          &config, f, param_count == 0 ? nullptr : params.data(), nullptr);
+    }
+  }
+#endif
+
+  uint32_t response_attribute_count = static_cast<uint32_t>(attributes.size());
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_launch_attributes(conn, &response_attribute_count,
+                                  attributes.data()) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
 }
 
 int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {
