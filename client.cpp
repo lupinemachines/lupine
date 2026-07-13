@@ -3672,26 +3672,45 @@ static CUresult lupine_launch_kernel(
   }
 #endif
 
-  // Attribute-free launches retain the legacy fire-and-forget protocol.
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, extended ? RPC_cuLaunchKernelEx
-                                             : RPC_cuLaunchKernel) < 0 ||
-      rpc_write(conn, &f, sizeof(f)) < 0 ||
-      rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
-      rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
-      rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
-      rpc_write(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
-      rpc_write(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
-      rpc_write(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
-      rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
-      rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
-      rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
-      rpc_write(conn, packed.data(), packed.size()) < 0 ||
-      (extended && rpc_write_launch_attributes(conn, &launch_attribute_count,
-                                               launch_attributes) < 0) ||
-      (extended ? rpc_wait_for_response(conn) : rpc_write_end(conn)) < 0) {
+  if (conn == nullptr) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+
+  if (extended) {
+    if (rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
+        rpc_write_launch_attributes(conn, &launch_attribute_count,
+                                    launch_attributes) < 0 ||
+        rpc_write(conn, &f, sizeof(f)) < 0 ||
+        rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
+        rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
+        rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
+        rpc_write(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
+        rpc_write(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
+        rpc_write(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
+        rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
+        rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
+        rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+        rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+        rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
+        rpc_write(conn, packed.data(), packed.size()) < 0 ||
+        rpc_wait_for_response(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  } else if (rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
+             rpc_write(conn, &f, sizeof(f)) < 0 ||
+             rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
+             rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
+             rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
+             rpc_write(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
+             rpc_write(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
+             rpc_write(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
+             rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
+             rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
+             rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+             rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+             rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
+             rpc_write(conn, packed.data(), packed.size()) < 0 ||
+             rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (extended) {

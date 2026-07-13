@@ -1684,6 +1684,17 @@ static int handle_manual_cuLaunchKernel_impl(conn_t *conn, bool extended) {
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   CUresult attribute_status = CUDA_SUCCESS;
 
+  std::vector<CUlaunchAttribute> attributes;
+  if (extended) {
+    if (rpc_read_launch_attributes(conn, &attributes) < 0) {
+      return -1;
+    }
+#if CUDA_VERSION < 11080
+    attribute_status = CUDA_ERROR_NOT_SUPPORTED;
+    attributes.clear();
+#endif
+  }
+
   if (rpc_read(conn, &f, sizeof(f)) < 0 ||
       rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
@@ -1702,16 +1713,6 @@ static int handle_manual_cuLaunchKernel_impl(conn_t *conn, bool extended) {
   std::vector<unsigned char> packed(packed_size);
   if (packed_size != 0 && rpc_read(conn, packed.data(), packed_size) < 0) {
     return -1;
-  }
-  std::vector<CUlaunchAttribute> attributes;
-  if (extended) {
-    if (rpc_read_launch_attributes(conn, &attributes) < 0) {
-      return -1;
-    }
-#if CUDA_VERSION < 11080
-    attribute_status = CUDA_ERROR_NOT_SUPPORTED;
-    attributes.clear();
-#endif
   }
   request_id = rpc_read_end(conn);
   if (request_id < 0) {
