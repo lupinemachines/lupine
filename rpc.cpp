@@ -421,59 +421,13 @@ int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
   return 0;
 }
 
-static bool rpc_launch_attribute_id_is_supported(uint32_t id) {
-  switch (id) {
-  case 0:  // CU_LAUNCH_ATTRIBUTE_IGNORE
-  case 1:  // CU_LAUNCH_ATTRIBUTE_ACCESS_POLICY_WINDOW
-  case 2:  // CU_LAUNCH_ATTRIBUTE_COOPERATIVE
-  case 3:  // CU_LAUNCH_ATTRIBUTE_SYNCHRONIZATION_POLICY
-  case 4:  // CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION
-  case 5:  // CU_LAUNCH_ATTRIBUTE_CLUSTER_SCHEDULING_POLICY_PREFERENCE
-  case 6:  // CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION
-  case 7:  // CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_EVENT
-  case 8:  // CU_LAUNCH_ATTRIBUTE_PRIORITY
-  case 9:  // CU_LAUNCH_ATTRIBUTE_MEM_SYNC_DOMAIN_MAP
-  case 10: // CU_LAUNCH_ATTRIBUTE_MEM_SYNC_DOMAIN
-  case 11: // CU_LAUNCH_ATTRIBUTE_PREFERRED_CLUSTER_DIMENSION
-  case 12: // CU_LAUNCH_ATTRIBUTE_LAUNCH_COMPLETION_EVENT
-  case 13: // CU_LAUNCH_ATTRIBUTE_DEVICE_UPDATABLE_KERNEL_NODE
-  case 14: // CU_LAUNCH_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT
-  case 16: // CU_LAUNCH_ATTRIBUTE_NVLINK_UTIL_CENTRIC_SCHEDULING
-    return true;
-  default:
-    return false;
-  }
-}
-
-int rpc_validate_launch_attributes(uint32_t count,
-                                   const CUlaunchAttribute *attributes) {
-  if (count > LUPINE_MAX_LAUNCH_ATTRIBUTES ||
-      (count != 0 && attributes == nullptr)) {
-    return LUPINE_RPC_UNSUPPORTED;
-  }
-#if CUDA_VERSION >= 11080
-  for (uint32_t i = 0; i < count; ++i) {
-    if (!rpc_launch_attribute_id_is_supported(
-            static_cast<uint32_t>(attributes[i].id))) {
-      return LUPINE_RPC_UNSUPPORTED;
-    }
-  }
-  return 0;
-#else
-  return count == 0 ? 0 : LUPINE_RPC_UNSUPPORTED;
-#endif
-}
-
 int rpc_write_launch_attributes(conn_t *conn, const uint32_t *count,
                                 const CUlaunchAttribute *attributes) {
   if (count == nullptr) {
     return -1;
   }
-  int status = rpc_validate_launch_attributes(*count, attributes);
-  if (status != 0) {
-    return status;
-  }
-  if (conn == nullptr) {
+  if (conn == nullptr || *count > LUPINE_MAX_LAUNCH_ATTRIBUTES ||
+      (*count != 0 && attributes == nullptr)) {
     return -1;
   }
   if (rpc_write(conn, count, sizeof(*count)) < 0 ||
@@ -499,7 +453,7 @@ int rpc_read_launch_attributes(conn_t *conn,
                              count * sizeof((*attributes)[0])) < 0) {
     return -1;
   }
-  return rpc_validate_launch_attributes(count, attributes->data());
+  return 0;
 }
 
 int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,

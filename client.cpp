@@ -3745,9 +3745,9 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (config->numAttrs > LUPINE_MAX_LAUNCH_ATTRIBUTES) {
     return CUDA_ERROR_NOT_SUPPORTED;
   }
-  if (rpc_validate_launch_attributes(config->numAttrs, config->attrs) != 0) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
+#if CUDA_VERSION < 11080
+  return CUDA_ERROR_NOT_SUPPORTED;
+#endif
   return lupine_launch_kernel(
       f, config->gridDimX, config->gridDimY, config->gridDimZ,
       config->blockDimX, config->blockDimY, config->blockDimZ,

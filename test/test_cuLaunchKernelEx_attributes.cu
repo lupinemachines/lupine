@@ -152,16 +152,25 @@ int main() {
     return 1;
   }
 
-  // ID 15 is deliberately unassigned. It must be rejected by the client
-  // before any launch or RPC can silently erase it.
+  // Native attributes are forwarded without an ID whitelist. The server's
+  // CUDA driver owns validation of IDs it does not recognize.
   CUlaunchAttribute unknown = {};
   unknown.id = static_cast<CUlaunchAttributeID>(15);
   config = config_for(&unknown);
   result = cuLaunchKernelEx(&config, function, params, nullptr);
   printf("unknown attribute result: %s (%d)\n", error_name(result),
          static_cast<int>(result));
+  if (result == CUDA_SUCCESS || !output_is(output, 0)) {
+    fprintf(stderr, "CUDA accepted unknown launch attribute ID 15\n");
+    return 1;
+  }
+
+  // An attribute array too large for the bounded RPC representation is
+  // rejected before launch.
+  config.numAttrs = 1024;
+  result = cuLaunchKernelEx(&config, function, params, nullptr);
   if (result != CUDA_ERROR_NOT_SUPPORTED || !output_is(output, 0)) {
-    fprintf(stderr, "unknown attribute returned %s (%d), expected %d\n",
+    fprintf(stderr, "oversized attribute array returned %s (%d), expected %d\n",
             error_name(result), static_cast<int>(result),
             static_cast<int>(CUDA_ERROR_NOT_SUPPORTED));
     return 1;
