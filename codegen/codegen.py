@@ -18,7 +18,10 @@ from ops import (
     Operation,
     OwnerAnnotation,
     CrossServerCopyAnnotation,
+    DevicePtrTranslationAnnotation,
     FunctionAnnotationMetadata,
+    RoutingFallbackAnnotation,
+    SynchronizeAnnotation,
 )
 
 # this table is manually generated from the cuda.h headers
@@ -189,6 +192,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",
     "cuStreamGetCaptureInfo_v3",
+    "lupineManagedHostFlush",
 ]
 
 
@@ -298,6 +302,19 @@ def parse_annotation(
         if line.strip().startswith("@async"):
             metadata.async_fire_forget = True
             continue
+        if line.strip().startswith("@synchronize"):
+            parts = line.split()
+            options = set(parts[1:])
+            unknown = options - {"DEFERRED_DTOH", "STDOUT"}
+            if unknown:
+                raise NotImplementedError(
+                    "Unknown @synchronize option(s): " + ", ".join(sorted(unknown))
+                )
+            metadata.synchronize = SynchronizeAnnotation(
+                deferred_dtoh="DEFERRED_DTOH" in options,
+                stdout="STDOUT" in options,
+            )
+            continue
         if line.startswith("@routingkey"):
             parts = line.split()
             if len(parts) < 2:
@@ -305,6 +322,15 @@ def parse_annotation(
             metadata.routing_kind = parts[1].upper()
             if len(parts) >= 3:
                 metadata.routing_parameter = annotation_param(params, parts[2])
+            continue
+        if line.startswith("@routingfallback"):
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            metadata.routing_fallback = RoutingFallbackAnnotation(
+                kind=parts[1].upper(),
+                parameter=annotation_param(params, parts[2]),
+            )
             continue
         if line.startswith("@recordowner"):
             parts = line.split()
@@ -349,6 +375,10 @@ def parse_annotation(
             send = parts[2] == "SEND_ONLY" or parts[2] == "SEND_RECV"
             recv = parts[2] == "RECV_ONLY" or parts[2] == "SEND_RECV"
 
+            if "TRANSLATE_DEVICEPTR" in args:
+                metadata.translate_deviceptrs.append(
+                    DevicePtrTranslationAnnotation(parameter=param)
+                )
             # if there's a length or size arg, use the type, otherwise use the ptr_to type
             length_arg = next((arg for arg in args if arg.startswith("LENGTH:")), None)
 
@@ -631,16 +661,28 @@ def parse_annotation(
     return metadata
 
 
-def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
-    kind = metadata.routing_kind
-    param = metadata.routing_parameter
+def client_translated_deviceptr_names(
+    metadata: FunctionAnnotationMetadata,
+) -> set[str]:
+    return {translation.parameter.name for translation in metadata.translate_deviceptrs}
+
+
+def client_param_expr(metadata: FunctionAnnotationMetadata, param: Parameter) -> str:
+    if param.name in client_translated_deviceptr_names(metadata):
+        return f"{param.name}_rpc"
+    return param.name
+
+
+def client_routing_key_expr(
+    kind: Optional[str], param: Optional[Parameter], metadata: FunctionAnnotationMetadata
+) -> str:
     if kind is None:
         return "lupine_route_for_default()"
     if kind == "CURRENT_CONTEXT":
         return "lupine_route_for_current_context()"
     if param is None:
         raise NotImplementedError(f"Routing key {kind} requires a parameter")
-    name = param.name
+    name = client_param_expr(metadata, param)
     if kind == "DEVICE":
         return f"lupine_route_for_device(&{name})"
     if kind == "CONTEXT":
@@ -652,6 +694,13 @@ def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
     if kind == "FUNCTION":
         return f"lupine_route_for_function({name})"
     if kind == "STREAM":
+        if metadata.routing_fallback is not None:
+            fallback = client_routing_key_expr(
+                metadata.routing_fallback.kind,
+                metadata.routing_fallback.parameter,
+                metadata,
+            )
+            return f"({name} != nullptr ? lupine_route_for_stream({name}) : {fallback})"
         return f"({name} != nullptr ? lupine_route_for_stream({name}) : lupine_route_for_default())"
     if kind == "EVENT":
         return f"lupine_route_for_event({name})"
@@ -666,6 +715,36 @@ def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
     if kind == "DEVICEPTR":
         return f"lupine_route_for_deviceptr({name})"
     raise NotImplementedError(f"Unknown routing key kind: {kind}")
+
+
+def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
+    return client_routing_key_expr(
+        metadata.routing_kind, metadata.routing_parameter, metadata
+    )
+
+
+def client_call_args(function: Function, metadata: FunctionAnnotationMetadata) -> list[str]:
+    return [
+        client_param_expr(metadata, param)
+        for param in function.parameters
+        if param.name
+    ]
+
+
+def write_client_rpc_write(f, operation: Operation, metadata: FunctionAnnotationMetadata):
+    if (
+        isinstance(operation, OpaqueTypeOperation)
+        and operation.send
+        and operation.parameter.name in client_translated_deviceptr_names(metadata)
+    ):
+        f.write(
+            "        rpc_write(conn, &{param_name}_rpc, sizeof({param_type})) < 0 ||\n".format(
+                param_name=operation.parameter.name,
+                param_type=operation.type_.format(),
+            )
+        )
+        return
+    operation.client_rpc_write(f)
 
 
 def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
@@ -727,6 +806,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);\n")
     if function.name.format() == "cuMemFreeAsync":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_deviceptr_owner(dptr);\n")
+    if metadata.synchronize:
+        f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
 
     if function.name.format() == "cuDevicePrimaryCtxRetain":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_active(dev);\n")
@@ -736,7 +817,12 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_flags(dev, flags);\n")
     if function.name.format() == "cuDevicePrimaryCtxReset_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
-    if function.name.format() == "cuCtxDestroy_v2":
+    if function.name.format() in {
+        "cuCtxDestroy_v2",
+        "cuCtxDetach",
+        "cuDevicePrimaryCtxRelease_v2",
+        "cuDevicePrimaryCtxReset_v2",
+    }:
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
     if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_kernel_param_layout_cache();\n")
@@ -933,13 +1019,18 @@ def write_nvml_client_wrapper(f, function, operations, metadata):
     f.write("}\n\n")
 
 
+def write_server_buffer_cleanup(f, owned_buffers, indent):
+    for buffer_name in reversed(owned_buffers):
+        f.write(f"{indent}free((void *){buffer_name});\n")
+
+
 def write_nvml_server_handler(f, function, operations):
     name = function.name.format()
     fn_params = ", ".join(
         parameter.type.format() for parameter in function.parameters
     )
     f.write(f"int handle_{name}(conn_t *conn) {{\n")
-    defers = []
+    owned_buffers = []
     for operation in operations:
         f.write(operation.server_declaration)
         if (
@@ -954,19 +1045,13 @@ def write_nvml_server_handler(f, function, operations):
     f.write("  fn_t fn = nullptr;\n")
     f.write("  if (\n")
     for operation in operations:
-        if isinstance(
-            operation,
-            (NullTerminatedOperation, ArrayOperation, OptionalArrayOperation),
-        ):
-            if error := operation.server_rpc_read(f, len(defers)):
-                defers.append(error)
-        else:
-            operation.server_rpc_read(f)
+        if owned_buffer := operation.server_rpc_read(f):
+            owned_buffers.append(owned_buffer)
     f.write("      false)\n")
-    f.write(f"    goto ERROR_{len(defers)};\n\n")
+    f.write("    goto ERROR_0;\n\n")
     f.write("  request_id = rpc_read_end(conn);\n")
     f.write("  if (request_id < 0)\n")
-    f.write(f"    goto ERROR_{len(defers)};\n\n")
+    f.write("    goto ERROR_0;\n\n")
 
     call_args = []
     for parameter in function.parameters:
@@ -984,14 +1069,11 @@ def write_nvml_server_handler(f, function, operations):
         operation.server_rpc_write(f)
     f.write("      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     f.write("      rpc_write_end(conn) < 0)\n")
-    f.write(f"    goto ERROR_{len(defers)};\n")
-    for defer in reversed(defers):
-        f.write(f"  free((void *){defer});\n")
+    f.write("    goto ERROR_0;\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return 0;\n")
-    for index, defer in enumerate(reversed(defers), start=1):
-        f.write(f"ERROR_{len(defers) - index + 1}:\n")
-        f.write(f"  free((void *){defer});\n")
     f.write("ERROR_0:\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return -1;\n")
     f.write("}\n\n")
 
@@ -1152,9 +1234,6 @@ def main():
             'extern "C" void lupine_deep_cache_reset(const void *key);\n'
             'extern "C" void *lupine_deep_cache_add(const void *key, '
             "size_t bytes);\n\n"
-            'extern "C" CUresult lupine_cuInit_multi(unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count);\n'
-            'extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
             'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'
@@ -1182,6 +1261,7 @@ def main():
             'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
             'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
+            'extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr, CUdeviceptr *translated);\n'
             'extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,\n'
             '                                                   CUdeviceptr srcDevice,\n'
             '                                                   size_t ByteCount,\n'
@@ -1202,9 +1282,10 @@ def main():
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer, CUdevice dev, CUdevice peerDev);\n'
-            'extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);\n\n'
+            'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
+            'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
+            'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
+            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1223,18 +1304,14 @@ def main():
             )
             f.write("{\n")
 
-            if function.name.format() == "cuInit":
-                f.write("    return lupine_cuInit_multi(Flags);\n")
-                f.write("}\n\n")
-                continue
-            if function.name.format() == "cuDeviceGet":
-                f.write("    return lupine_cuDeviceGet_multi(device, ordinal);\n")
-                f.write("}\n\n")
-                continue
-            if function.name.format() == "cuDeviceGetCount":
-                f.write("    return lupine_cuDeviceGetCount_multi(count);\n")
-                f.write("}\n\n")
-                continue
+            if metadata.synchronize:
+                f.write(
+                    "    CUresult lupine_sync_result = "
+                    "lupine_flush_dirty_host_pages_to_server();\n"
+                    "    if (lupine_sync_result != CUDA_SUCCESS) {\n"
+                    "        return lupine_sync_result;\n"
+                    "    }\n"
+                )
             direct_wrappers = {
                 "cuDeviceGetAttribute": "lupine_cuDeviceGetAttribute_cached(pi, attrib, dev)",
                 "cuDevicePrimaryCtxGetState": "lupine_cuDevicePrimaryCtxGetState_cached(dev, flags, active)",
@@ -1246,9 +1323,6 @@ def main():
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
-                "cuDeviceCanAccessPeer": "lupine_cuDeviceCanAccessPeer_multi(canAccessPeer, dev, peerDev)",
-                "cuCtxEnablePeerAccess": "lupine_cuCtxEnablePeerAccess_multi(peerContext, Flags)",
-                "cuCtxDisablePeerAccess": "lupine_cuCtxDisablePeerAccess_multi(peerContext)",
             }
             if function.name.format() in direct_wrappers:
                 f.write("    return {call};\n".format(call=direct_wrappers[function.name.format()]))
@@ -1298,26 +1372,94 @@ def main():
                 f.write("}\n\n")
                 continue
 
-            f.write(
-                "    lupine_route route = {route_expr};\n".format(
-                    route_expr=client_routing_route_expr(metadata)
+            for translation in metadata.translate_deviceptrs:
+                name = translation.parameter.name
+                f.write("    CUdeviceptr {name}_rpc = {name};\n".format(name=name))
+                f.write(
+                    "    bool {name}_is_managed_host = "
+                    "lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n".format(
+                        name=name
+                    )
                 )
-            )
+            if metadata.translate_deviceptrs:
+                translated_condition = " || ".join(
+                    "{name}_is_managed_host".format(name=item.parameter.name)
+                    for item in metadata.translate_deviceptrs
+                )
+                f.write("    if ({condition}) {{\n".format(condition=translated_condition))
+                f.write(
+                    "        CUresult managed_result = "
+                    "lupine_flush_dirty_host_pages_to_server();\n"
+                )
+                f.write("        if (managed_result != CUDA_SUCCESS) {\n")
+                f.write("            return managed_result;\n")
+                f.write("        }\n")
+                f.write("    }\n")
+
+            all_output = metadata.routing_parameter
+            if metadata.routing_kind == "ALL":
+                if (
+                    function.return_type.format() != "CUresult"
+                    or all_output is None
+                    or not isinstance(all_output.type, Pointer)
+                    or all_output.type.ptr_to.format() != "CUdevice"
+                ):
+                    raise RuntimeError(
+                        f"{function.name.format()}: ALL routing requires a CUdevice * output"
+                    )
+                if metadata.async_fire_forget:
+                    raise RuntimeError(
+                        f"{function.name.format()}: ALL routing cannot be fire-and-forget"
+                    )
+
+                output_name = all_output.name
+                checks = [f"{output_name} == nullptr"]
+                for operation in operations:
+                    if isinstance(operation, NullTerminatedOperation) and operation.send:
+                        checks.append(f"{operation.parameter.name} == nullptr")
+                    elif (
+                        isinstance(operation, DereferenceOperation)
+                        and operation.parameter.name != output_name
+                    ):
+                        checks.append(f"{operation.parameter.name} == nullptr")
+                    elif isinstance(operation, ArrayOperation):
+                        checks.append(
+                            f"({operation.transfer_size_expr()} != 0 && "
+                            f"{operation.parameter.name} == nullptr)"
+                        )
+                f.write("    if (" + " || ".join(checks) + ") {\n")
+                f.write("        return CUDA_ERROR_INVALID_VALUE;\n")
+                f.write("    }\n")
+                f.write(
+                    f"    return lupine_lookup_device_on_all_routes({output_name},\n"
+                    "        [&](lupine_route route, CUdevice *route_output) {\n"
+                    f"            {all_output.type.format()} {output_name} = route_output;\n"
+                )
+            else:
+                f.write(
+                    "    lupine_route route = {route_expr};\n".format(
+                        route_expr=client_routing_route_expr(metadata)
+                    )
+                )
             if metadata.cross_server_copy is not None:
                 copy = metadata.cross_server_copy
-                stream_arg = copy.stream.name if copy.stream is not None else "nullptr"
+                stream_arg = (
+                    client_param_expr(metadata, copy.stream)
+                    if copy.stream is not None
+                    else "nullptr"
+                )
                 async_arg = "true" if copy.async_ else "false"
                 f.write(
                     "    if (!lupine_deviceptrs_share_route({dst}, {src})) {{\n".format(
-                        dst=copy.dst.name,
-                        src=copy.src.name,
+                        dst=client_param_expr(metadata, copy.dst),
+                        src=client_param_expr(metadata, copy.src),
                     )
                 )
                 f.write(
                     "        return lupine_cuMemcpyDtoD_via_client({dst}, {src}, {bytes}, {stream}, {async_});\n".format(
-                        dst=copy.dst.name,
-                        src=copy.src.name,
-                        bytes=copy.bytes.name,
+                        dst=client_param_expr(metadata, copy.dst),
+                        src=client_param_expr(metadata, copy.src),
+                        bytes=client_param_expr(metadata, copy.bytes),
                         stream=stream_arg,
                         async_=async_arg,
                     )
@@ -1334,7 +1476,7 @@ def main():
                     params=", ".join([param.type.format() for param in function.parameters]),
                 )
             )
-            call_args = ", ".join(format_call_args(function))
+            call_args = ", ".join(client_call_args(function, metadata))
             helper_args = f", {call_args}" if call_args else ""
             f.write(
                 "    if (lupine_call_local_cuda_if_routed<real_fn_t>(\n"
@@ -1400,7 +1542,7 @@ def main():
                     )
                 )
                 for operation in operations:
-                    operation.client_rpc_write(f)
+                    write_client_rpc_write(f, operation, metadata)
                 f.write("        rpc_write_end(conn) < 0) {\n")
                 f.write(
                     "        return {error_return};\n".format(
@@ -1420,9 +1562,14 @@ def main():
             )
 
             for operation in operations:
-                operation.client_rpc_write(f)
+                write_client_rpc_write(f, operation, metadata)
 
             f.write("        rpc_wait_for_response(conn) < 0 ||\n")
+
+            if metadata.synchronize and metadata.synchronize.deferred_dtoh:
+                f.write("        lupine_read_deferred_dtoh_copies(conn) < 0 ||\n")
+            if metadata.synchronize and metadata.synchronize.stdout:
+                f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
 
             for operation in operations:
                 if isinstance(operation, ArrayOperation):
@@ -1449,6 +1596,8 @@ def main():
                     operation.client_post_rpc_read_success(f)
 
             f.write("    return return_value;\n")
+            if metadata.routing_kind == "ALL":
+                f.write("        });\n")
             f.write("}\n\n")
 
         function_by_name = {
@@ -1487,7 +1636,7 @@ def main():
 
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
-            if metadata.disabled_client:
+            if metadata.disabled_client and metadata.disabled_server:
                 continue
 
             f.write(
@@ -1551,7 +1700,7 @@ def main():
             )
             f.write("{\n")
 
-            defers = []
+            owned_buffers = []
 
             for operation in operations:
                 f.write(operation.server_declaration)
@@ -1570,23 +1719,16 @@ def main():
 
             f.write("    if (\n")
             for operation in operations:
-                if (
-                    isinstance(operation, NullTerminatedOperation)
-                    or isinstance(operation, ArrayOperation)
-                    or isinstance(operation, OptionalArrayOperation)
-                ):
-                    if error := operation.server_rpc_read(f, len(defers)):
-                        defers.append(error)
-                else:
-                    operation.server_rpc_read(f)
+                if owned_buffer := operation.server_rpc_read(f):
+                    owned_buffers.append(owned_buffer)
             f.write("        false)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+            f.write("        goto ERROR_0;\n")
 
             f.write("\n")
 
             f.write("    request_id = rpc_read_end(conn);\n")
             f.write("    if (request_id < 0)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+            f.write("        goto ERROR_0;\n")
 
             params: list[str] = []
             # these need to be in function param order, not operation order.
@@ -1614,6 +1756,7 @@ def main():
                 # Fire-and-forget: no response is sent.
                 f.write("    (void) lupine_intercept_result;\n")
                 f.write("\n")
+                write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return 0;\n")
             else:
                 f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
@@ -1627,14 +1770,13 @@ def main():
                     )
                 )
                 f.write("        rpc_write_end(conn) < 0)\n")
-                f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+                f.write("        goto ERROR_0;\n")
                 f.write("\n")
+                write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return 0;\n")
 
-            for i, defer in enumerate(defers):
-                f.write("ERROR_{index}:\n".format(index=len(defers) - i))
-                f.write("    free((void *) {param_name});\n".format(param_name=defer))
             f.write("ERROR_0:\n")
+            write_server_buffer_cleanup(f, owned_buffers, "    ")
             f.write("    return -1;\n")
             f.write("}\n\n")
 

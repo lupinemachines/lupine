@@ -28,6 +28,14 @@ APIs without an input handle use `@routingkey ALL` together with
 `@recordowner NVML_DEVICE <output>` to search every server and translate the
 returned remote handle back to the client's virtual device handle.
 
+Inverse CUDA device lookups use `@routingkey ALL <output>`. The generated
+client tries each local and remote route, then translates the successful
+route-local device back to its virtual client ordinal before returning it.
+
+`@disabled client` leaves server/RPC generation enabled while requiring a
+manual client implementation with the original API name. These manual symbols
+remain part of the generated client function map.
+
 Generated wrappers can record ownership for handles returned by an API with
 `@recordowner <kind> <param>`. Supported owner kinds are `CONTEXT`, `MODULE`,
 `FUNCTION`, `STREAM`, `EVENT`, `MEMORY_POOL`, `GRAPH`, `GRAPH_NODE`,
@@ -41,6 +49,17 @@ Currently, `@crossservercopy <dst> <src> <bytes> [STREAM:<param>] [ASYNC]` adds
 a generated client fallback for device-to-device copies whose source and
 destination pointers are owned by different server connections. The fallback
 routes through the client-side cross-server copy helper.
+
+`@param <name> ... TRANSLATE_DEVICEPTR` makes the generated client wrapper
+translate a client-visible managed host alias to the server-visible
+`CUdeviceptr` before routing, local CUDA forwarding, or RPC serialization. If
+translation occurs, the wrapper first flushes all client-dirty managed pages.
+`@routingfallback <kind> <param>` can be paired with stream routing for APIs
+that route by stream when a stream is supplied and by another object otherwise.
+`@synchronize [DEFERRED_DTOH] [STDOUT]` flushes client-dirty mapped host pages
+before dispatch and refreshes mapped host allocations after a successful call.
+The optional flags consume response fields emitted by a manual server handler
+before the generated wrapper reads the CUDA result.
 
 Keep function-specific code in manual files when the behavior cannot be
 described by annotations without embedding C++ for that exact API. Typical

@@ -1,10 +1,9 @@
 import gc
+import io
 import importlib
 import json
 import subprocess
 import sys
-import textwrap
-import types
 import weakref
 
 import pytest
@@ -40,7 +39,8 @@ def make_tensor(session, handle):
             "handle": handle,
             "shape": [2],
             "dtype": "float32",
-        }
+        },
+        [],
     )
 
 
@@ -48,7 +48,9 @@ def test_tensor_close_is_idempotent_and_prevents_use_after_release(monkeypatch):
     sidecar._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
     requests = []
-    monkeypatch.setattr(session, "_request", lambda payload: requests.append(payload) or {})
+    monkeypatch.setattr(
+        session, "_request", lambda payload: requests.append(payload) or {}
+    )
 
     tensor = make_tensor(session, 1)
     assert session.live_handle_count == 1
@@ -60,14 +62,16 @@ def test_tensor_close_is_idempotent_and_prevents_use_after_release(monkeypatch):
     assert tensor.closed
     assert session.live_handle_count == 0
     with pytest.raises(sidecar.SidecarError, match="handle 1 is closed"):
-        session._encode(tensor)
+        session._encode(tensor, [])
 
 
 def test_tensor_finalizer_releases_owned_handle(monkeypatch):
     sidecar._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
     requests = []
-    monkeypatch.setattr(session, "_request", lambda payload: requests.append(payload) or {})
+    monkeypatch.setattr(
+        session, "_request", lambda payload: requests.append(payload) or {}
+    )
 
     tensor = make_tensor(session, 2)
     tensor_ref = weakref.ref(tensor)
@@ -84,7 +88,9 @@ def test_session_close_releases_all_handles_once(monkeypatch):
     session = sidecar.SidecarSession(server="host-a:14833")
     session._proc = FakeProcess()
     requests = []
-    monkeypatch.setattr(session, "_request", lambda payload: requests.append(payload) or {})
+    monkeypatch.setattr(
+        session, "_request", lambda payload: requests.append(payload) or {}
+    )
 
     first = make_tensor(session, 3)
     second = make_tensor(session, 4)
@@ -96,7 +102,7 @@ def test_session_close_releases_all_handles_once(monkeypatch):
     assert session.live_handle_count == 0
     assert first.closed and second.closed
     with pytest.raises(sidecar.SidecarError, match="closed"):
-        session._encode(first)
+        session._encode(first, [])
 
 
 def test_tensor_release_failure_closes_session(monkeypatch):
@@ -133,19 +139,26 @@ def test_partial_decode_releases_every_result_handle(monkeypatch):
             {"type": "unsupported"},
         ],
     }
-    requests = []
-
-    def request(payload):
-        requests.append(payload)
-        return result if payload["op"] == "call" else {}
-
-    monkeypatch.setattr(session, "_request", request)
-    func = types.SimpleNamespace(__name__="lifecycle.default")
+    responses = [
+        {"ok": True, "result": result, "tensor_streams": []},
+        {
+            "ok": True,
+            "result": {"released": 1, "live_handles": 0},
+            "tensor_streams": [],
+        },
+    ]
+    proc = FakeProcess()
+    proc.stdin = io.BytesIO()
+    proc.stdout = io.BytesIO(
+        b"".join(json.dumps(response).encode() + b"\n" for response in responses)
+    )
+    proc.stderr = io.BytesIO()
+    session._proc = proc
 
     with pytest.raises(sidecar.SidecarError, match="unsupported result"):
-        session.forward(func, (), {})
+        session._request({"op": "call"}, decode_result=True)
 
-    assert requests[-1] == {"op": "release", "handles": [5]}
+    assert b'"op": "release", "handles": [5]' in proc.stdin.getvalue()
     assert session.live_handle_count == 0
 
 
@@ -157,23 +170,31 @@ def test_cancellation_after_response_releases_every_result_handle(monkeypatch):
         "shape": [1],
         "dtype": "float32",
     }
-    requests = []
+    responses = [
+        {"ok": True, "result": result, "tensor_streams": []},
+        {
+            "ok": True,
+            "result": {"released": 1, "live_handles": 0},
+            "tensor_streams": [],
+        },
+    ]
+    proc = FakeProcess()
+    proc.stdin = io.BytesIO()
+    proc.stdout = io.BytesIO(
+        b"".join(json.dumps(response).encode() + b"\n" for response in responses)
+    )
+    proc.stderr = io.BytesIO()
+    session._proc = proc
 
-    def request(payload):
-        requests.append(payload)
-        return result if payload["op"] == "call" else {}
-
-    def cancel_decode(value):
+    def cancel_decode(value, tensors):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(session, "_request", request)
     monkeypatch.setattr(session, "_decode", cancel_decode)
-    func = types.SimpleNamespace(__name__="lifecycle.default")
 
     with pytest.raises(KeyboardInterrupt):
-        session.forward(func, (), {})
+        session._request({"op": "call"}, decode_result=True)
 
-    assert requests[-1] == {"op": "release", "handles": [8]}
+    assert b'"op": "release", "handles": [8]' in proc.stdin.getvalue()
     assert session.live_handle_count == 0
 
 
@@ -245,7 +266,7 @@ class Cuda:
         return "fake-gpu"
 
     def memory_allocated(self):
-        return len(getattr(sys.modules["__main__"], "objects", {})) * 1024
+        return len(getattr(sys.modules["lupine.worker"], "objects", {})) * 1024
 
     def memory_reserved(self):
         return self.memory_allocated()
@@ -277,12 +298,15 @@ torch.ops = types.SimpleNamespace(
         partial=types.SimpleNamespace(default=partial),
     )
 )
+torch.utils = types.SimpleNamespace(
+    _python_dispatch=types.SimpleNamespace(TorchDispatchMode=object),
+)
 sys.modules["torch"] = torch
 """
 
 
 def test_worker_handle_count_stays_stable_and_failure_rolls_back():
-    script = _FAKE_TORCH + "\n" + textwrap.dedent(sidecar._WORKER)
+    script = _FAKE_TORCH + "\n" + sidecar._worker_source()
     proc = subprocess.Popen(
         [sys.executable, "-u", "-c", script],
         stdin=subprocess.PIPE,
@@ -293,6 +317,7 @@ def test_worker_handle_count_stays_stable_and_failure_rolls_back():
     )
 
     def request(payload):
+        payload["tensor_streams"] = []
         proc.stdin.write(json.dumps(payload) + "\n")
         proc.stdin.flush()
         return json.loads(proc.stdout.readline())
@@ -319,9 +344,7 @@ def test_worker_handle_count_stays_stable_and_failure_rolls_back():
         duplicate = request({"op": "release", "handles": [handle]})
         assert duplicate["result"] == {"released": 0, "live_handles": 0}
 
-        partial = request(
-            {"op": "call", "packet": "partial", "overload": "default"}
-        )
+        partial = request({"op": "call", "packet": "partial", "overload": "default"})
         assert not partial["ok"]
         assert request({"op": "stats"})["result"] == {
             "live_handles": 0,

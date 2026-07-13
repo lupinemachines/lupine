@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <array>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -11,8 +13,10 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdio.h>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -39,6 +43,7 @@
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "manual_server.h"
+#include "copy_pipeline.h"
 #include "rpc.h"
 
 #if CUDA_VERSION < 12020
@@ -54,24 +59,10 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
 
-extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
-                                           CUdevice dev);
-
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
-static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
-
-// cuMemAllocHost / cuMemFreeHost page-lock and unlock host memory on every
-// call, which costs on the order of a millisecond even for a tiny transfer and
-// dominates the latency of small, frequent copies. The server forks one
-// process per connection and runs handlers serially on that connection, so a
-// single process-global staging buffer can be reused across memcpy calls.
-// Buffers up to LUPINE_STAGING_RETAIN_BYTES are kept page-locked and reused;
-// larger requests fall back to a per-call allocation (whose cost is amortized
-// over the large transfer) so a process never pins a huge buffer indefinitely.
-static constexpr size_t LUPINE_STAGING_RETAIN_BYTES = 8 * 1024 * 1024;
 
 static std::unordered_map<CUlibrary, std::vector<unsigned char>> &
 lupine_preserved_library_images() {
@@ -86,56 +77,93 @@ lupine_jit_server_states() {
   return states;
 }
 
-struct lupine_staging {
+#ifdef _WIN32
+static constexpr size_t LUPINE_HTOD_CHUNK_BYTES = 64 * 1024 * 1024;
+
+struct lupine_deferred_host_free {
   void *ptr = nullptr;
-  bool owned = false; // true => caller must release (a per-call allocation)
-  bool pinned = false;
+  lupine_deferred_host_free *next = nullptr;
 };
 
-// Returns a host buffer of at least `bytes`. On success ptr != nullptr; when
-// owned is true the caller must release it via lupine_release_staging, when
-// false it borrows the retained buffer and must not free it.
-static lupine_staging lupine_acquire_staging(size_t bytes) {
-  lupine_staging out;
-  if (bytes == 0) {
-    return out;
-  }
-  if (bytes > LUPINE_STAGING_RETAIN_BYTES) {
-    if (cuMemAllocHost(&out.ptr, bytes) == CUDA_SUCCESS) {
-      out.owned = true;
-      out.pinned = true;
-    } else if ((out.ptr = malloc(bytes)) != nullptr) {
-      out.owned = true;
-    }
-    return out;
-  }
-  static void *retained = nullptr;
-  static size_t retained_size = 0;
-  if (retained_size < bytes) {
-    void *grown = nullptr;
-    if (cuMemAllocHost(&grown, bytes) != CUDA_SUCCESS) {
-      return out;
-    }
-    if (retained != nullptr) {
-      cuMemFreeHost(retained);
-    }
-    retained = grown;
-    retained_size = bytes;
-  }
-  out.ptr = retained;
-  out.pinned = true;
-  return out;
+struct lupine_host_free_queue {
+  std::mutex mutex;
+  std::condition_variable condition;
+  lupine_deferred_host_free *head = nullptr;
+  lupine_deferred_host_free *tail = nullptr;
+};
+
+static lupine_host_free_queue &lupine_host_frees() {
+  // The server process owns this detached worker until exit. Keep its queue
+  // alive for the same lifetime so static destruction cannot race the worker.
+  static auto *queue = new lupine_host_free_queue();
+  return *queue;
 }
 
-static void lupine_release_staging(const lupine_staging &s) {
-  if (s.ptr != nullptr && s.owned) {
-    if (s.pinned) {
-      cuMemFreeHost(s.ptr);
-    } else {
-      free(s.ptr);
+static void lupine_reap_host_frees() {
+  auto &queue = lupine_host_frees();
+  for (;;) {
+    lupine_deferred_host_free *item = nullptr;
+    {
+      std::unique_lock<std::mutex> lock(queue.mutex);
+      queue.condition.wait(lock, [&queue] { return queue.head != nullptr; });
+      item = queue.head;
+      queue.head = item->next;
+      if (queue.head == nullptr) {
+        queue.tail = nullptr;
+      }
     }
+
+    CUresult result = cuMemFreeHost(item->ptr);
+    if (result != CUDA_SUCCESS) {
+      LUPINE_LOG_ERROR("Deferred cuMemFreeHost failed for " << item->ptr << ": "
+                                                            << result);
+    }
+    delete item;
   }
 }
+
+static bool lupine_start_host_free_reaper() {
+  static std::once_flag once;
+  try {
+    (void)lupine_host_frees();
+    std::call_once(once, [] { std::thread(lupine_reap_host_frees).detach(); });
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+static void CUDA_CB lupine_queue_host_free(void *userData) {
+  // CUDA host functions cannot call CUDA APIs. Hand the completed allocation
+  // to a normal host thread before calling cuMemFreeHost.
+  auto *item = static_cast<lupine_deferred_host_free *>(userData);
+  auto &queue = lupine_host_frees();
+  {
+    std::lock_guard<std::mutex> lock(queue.mutex);
+    if (queue.tail == nullptr) {
+      queue.head = item;
+    } else {
+      queue.tail->next = item;
+    }
+    queue.tail = item;
+  }
+  queue.condition.notify_one();
+}
+
+static CUresult lupine_defer_host_free(CUstream stream, void *ptr) {
+  auto *item = new (std::nothrow) lupine_deferred_host_free{ptr, nullptr};
+  if (item == nullptr || !lupine_start_host_free_reaper()) {
+    delete item;
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+
+  CUresult result = cuLaunchHostFunc(stream, lupine_queue_host_free, item);
+  if (result != CUDA_SUCCESS) {
+    delete item;
+  }
+  return result;
+}
+#endif
 
 struct lupine_captured_stdout {
   int saved_stdout = -1;
@@ -871,31 +899,6 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
       rpc_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_manual_cuCtxCreate_v2(conn_t *conn) {
-  unsigned int flags = 0;
-  CUdevice dev = 0;
-  int request_id;
-  CUcontext ctx = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_read(conn, &dev, sizeof(dev)) < 0) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuCtxCreate_v2(&ctx, flags, dev);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -3096,56 +3099,6 @@ int handle_manual_cuGraphDestroy(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
-  CUdeviceptr dstDevice = 0;
-  size_t byteCount = 0;
-  CUresult result = CUDA_SUCCESS;
-
-  if (rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
-    return -1;
-  }
-
-  int framed = lupine_payload_framed(conn, byteCount);
-  size_t chunk_bytes = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount);
-  lupine_staging staging = lupine_acquire_staging(chunk_bytes);
-  void *host = staging.ptr;
-  if (chunk_bytes != 0 && host == nullptr) {
-    result = CUDA_ERROR_OUT_OF_MEMORY;
-    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
-      return -1;
-    }
-  }
-
-  size_t offset = 0;
-  while (result == CUDA_SUCCESS && offset < byteCount) {
-    size_t chunk = std::min(chunk_bytes, byteCount - offset);
-    if (rpc_read_payload_part(conn, framed, host, chunk) < 0) {
-      lupine_release_staging(staging);
-      return -1;
-    }
-    result = cuMemcpyHtoD_v2(dstDevice + offset, host, chunk);
-    offset += chunk;
-    if (result != CUDA_SUCCESS &&
-        rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
-      lupine_release_staging(staging);
-      return -1;
-    }
-  }
-
-  lupine_release_staging(staging);
-
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   size_t byteCount = 0;
@@ -3162,10 +3115,16 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
 
   int framed = lupine_payload_framed(conn, byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+  CUresult capture_query_result = CUDA_SUCCESS;
   if (stream != nullptr) {
-    cuStreamIsCapturing(stream, &capture_status);
+    capture_query_result = cuStreamIsCapturing(stream, &capture_status);
   }
-  if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
+  if (capture_query_result != CUDA_SUCCESS) {
+    result = capture_query_result;
+    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
+      return -1;
+    }
+  } else if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
     auto &stream_resources = lupine_stream_capture_resource_map();
     auto &resources = stream_resources[stream];
     if (!resources) {
@@ -3184,6 +3143,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       }
     }
   } else {
+#ifdef _WIN32
     result = CUDA_SUCCESS;
     void *host = nullptr;
     if (byteCount != 0) {
@@ -3220,13 +3180,18 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       offset += chunk;
     }
     if (host != nullptr && result == CUDA_SUCCESS) {
-      result = cuLaunchHostFunc(
-          stream, [](void *userData) { cuMemFreeHost(userData); }, host);
+      result = lupine_defer_host_free(stream, host);
       if (result != CUDA_SUCCESS) {
         cuStreamSynchronize(stream);
         cuMemFreeHost(host);
       }
     }
+#else
+    if (lupine_server_copy_htod_async(conn, framed, dstDevice, byteCount,
+                                      stream, result) < 0) {
+      return -1;
+    }
+#endif
   }
 
   request_id = rpc_read_end(conn);
@@ -3234,7 +3199,8 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     return -1;
   }
 
-  if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE &&
+  if (capture_query_result == CUDA_SUCCESS &&
+      capture_status != CU_STREAM_CAPTURE_STATUS_NONE &&
       result != CUDA_ERROR_OUT_OF_MEMORY) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, capture_host, byteCount, stream);
   }
@@ -3246,60 +3212,34 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
-  CUdeviceptr srcDevice = 0;
-  size_t byteCount = 0;
-  int request_id = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  std::vector<unsigned char> dstHost;
+int handle_manual_lupineManagedHostFlush(conn_t *conn) {
+  uint32_t count = 0;
+  CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
+  if (rpc_read(conn, &count, sizeof(count)) < 0) {
     return -1;
   }
 
-  request_id = rpc_read_end(conn);
+  for (uint32_t i = 0; i < count; ++i) {
+    void *server_host_ptr = nullptr;
+    size_t bytes = 0;
+    if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
+        rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+        rpc_read(conn, server_host_ptr, bytes) < 0) {
+      return -1;
+    }
+  }
+
+  int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
-
-  size_t staging_size =
-      std::min(byteCount, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
-  if (staging_size != 0) {
-    try {
-      dstHost.resize(staging_size);
-    } catch (...) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &result, sizeof(result)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        return -1;
-      }
-      return 0;
-    }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
   }
-
-  size_t offset = 0;
-  do {
-    size_t chunk = std::min(byteCount - offset, staging_size);
-    void *chunk_dst = chunk == 0 ? nullptr : dstHost.data();
-    result = cuMemcpyDtoH_v2(chunk_dst, srcDevice + offset, chunk);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS && chunk != 0 &&
-         rpc_write_payload(conn, dstHost.data(), chunk) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    if (result != CUDA_SUCCESS) {
-      return 0;
-    }
-    offset += chunk;
-  } while (offset < byteCount);
-
   return 0;
 }
-
 int handle_manual_cuMemcpyAtoH_v2(conn_t *conn) {
   CUarray srcArray = nullptr;
   size_t srcOffset = 0;

@@ -49,14 +49,14 @@ CORE_SAMPLES=(
   simpleAssert simpleAssert_nvrtc
   simpleAttributes simpleCallback simpleDrvRuntime simplePrintf simpleTemplates
   simpleAtomicIntrinsics simpleAtomicIntrinsics_nvrtc simpleStreams simpleMultiCopy simpleMultiGPU
-  simpleOccupancy simpleCooperativeGroups simpleIPC
+  simpleOccupancy simpleCooperativeGroups simpleIPC systemWideAtomics UnifiedMemoryStreams
   FunctionPointers
   simpleCubemapTexture simpleLayeredTexture simpleSurfaceWrite
   simpleTexture simpleTextureDrv simplePitchLinearTexture
   mergeSort reduction reductionMultiBlockCG scan sortingNetworks histogram scalarProd transpose
   BlackScholes BlackScholes_nvrtc binomialOptions binomialOptions_nvrtc SobolQRNG quasirandomGenerator
   quasirandomGenerator_nvrtc
-  simpleCudaGraphs streamOrderedAllocation cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter
+  simpleCudaGraphs streamOrderedAllocation cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP
   simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
@@ -376,6 +376,9 @@ sample_args() {
     transpose)
       printf '%s\0' -dimX=512 -dimY=512
       ;;
+    UnifiedMemoryPerf)
+      printf '%s\0' -kernel-iterations=1
+      ;;
     volumeFiltering)
       printf '%s\0' -file=data/ref_volumefilter.ppm
       ;;
@@ -610,7 +613,7 @@ start_remote_server() {
 
 sample_timeout() {
   case "$1" in
-    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|scan|LargeKernelParameter|UnifiedMemoryStreams|UnifiedMemoryPerf|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)
