@@ -131,6 +131,10 @@ struct lupine_module_function_record {
   std::unordered_map<int, CUfunction> functions_by_route;
 };
 
+static CUresult
+lupine_fetch_kernel_param_layout(CUfunction function, lupine_route route,
+                                 lupine_kernel_param_layout *layout);
+
 struct lupine_graph_kernel_node_params_storage {
   CUDA_KERNEL_NODE_PARAMS params = {};
   lupine_kernel_param_layout layout = {};
@@ -317,6 +321,13 @@ lupine_module_functions() {
   static auto *functions =
       new std::unordered_map<CUfunction, lupine_module_function_record>();
   return *functions;
+}
+
+static std::unordered_map<CUfunction, lupine_kernel_param_layout> &
+lupine_kernel_param_layouts() {
+  static auto *layouts =
+      new std::unordered_map<CUfunction, lupine_kernel_param_layout>();
+  return *layouts;
 }
 
 static std::unordered_map<int, lupine_primary_context_state> &
@@ -818,13 +829,20 @@ extern "C" void lupine_record_module_image(CUmodule module, lupine_route route,
   record.modules_by_route[route_id] = module;
 }
 
-extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library,
-                                             const char *name,
-                                             lupine_route route) {
+extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
+                                                 CUlibrary library,
+                                                 const char *name,
+                                                 lupine_route route) {
   int route_id = lupine_route_identity(route);
   if (kernel == nullptr || library == nullptr || name == nullptr ||
       route_id == -2) {
-    return;
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_kernel_param_layout layout;
+  CUresult result = lupine_fetch_kernel_param_layout(
+      reinterpret_cast<CUfunction>(kernel), route, &layout);
+  if (result != CUDA_SUCCESS) {
+    return result;
   }
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
@@ -832,17 +850,26 @@ extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library,
     record.library = library;
     record.name = name;
     record.kernels_by_route[route_id] = kernel;
+    lupine_kernel_param_layouts()[reinterpret_cast<CUfunction>(kernel)] =
+        std::move(layout);
   }
   lupine_note_function_owner_route(reinterpret_cast<CUfunction>(kernel), route);
+  return CUDA_SUCCESS;
 }
 
-extern "C" void lupine_record_module_function(CUfunction function,
-                                              CUmodule module, const char *name,
-                                              lupine_route route) {
+extern "C" CUresult lupine_record_module_function(CUfunction function,
+                                                  CUmodule module,
+                                                  const char *name,
+                                                  lupine_route route) {
   int route_id = lupine_route_identity(route);
   if (function == nullptr || module == nullptr || name == nullptr ||
       route_id == -2) {
-    return;
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_kernel_param_layout layout;
+  CUresult result = lupine_fetch_kernel_param_layout(function, route, &layout);
+  if (result != CUDA_SUCCESS) {
+    return result;
   }
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
@@ -850,8 +877,22 @@ extern "C" void lupine_record_module_function(CUfunction function,
     record.module = module;
     record.name = name;
     record.functions_by_route[route_id] = function;
+    lupine_kernel_param_layouts()[function] = std::move(layout);
   }
   lupine_note_function_owner_route(function, route);
+  return CUDA_SUCCESS;
+}
+
+static CUresult lupine_record_kernel_function(CUfunction function,
+                                              CUkernel kernel) {
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto layout =
+      lupine_kernel_param_layouts().find(reinterpret_cast<CUfunction>(kernel));
+  if (layout == lupine_kernel_param_layouts().end()) {
+    return CUDA_ERROR_INVALID_HANDLE;
+  }
+  lupine_kernel_param_layouts()[function] = layout->second;
+  return CUDA_SUCCESS;
 }
 
 static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
@@ -1130,6 +1171,11 @@ static CUresult lupine_resolve_library_kernel_for_route(CUfunction function,
     new_record.library = library;
     new_record.name = record.name;
     new_record.kernels_by_route[route_id] = kernel;
+    auto layout = lupine_kernel_param_layouts().find(function);
+    if (layout != lupine_kernel_param_layouts().end()) {
+      lupine_kernel_param_layouts()[reinterpret_cast<CUfunction>(kernel)] =
+          layout->second;
+    }
   }
   lupine_note_function_owner_route(reinterpret_cast<CUfunction>(kernel), route);
   *resolved = reinterpret_cast<CUfunction>(kernel);
@@ -1204,6 +1250,10 @@ static CUresult lupine_resolve_module_function_for_route(CUfunction function,
     new_record.module = module;
     new_record.name = record.name;
     new_record.functions_by_route[route_id] = route_function;
+    auto layout = lupine_kernel_param_layouts().find(function);
+    if (layout != lupine_kernel_param_layouts().end()) {
+      lupine_kernel_param_layouts()[route_function] = layout->second;
+    }
   }
   lupine_note_function_owner_route(route_function, route);
   *resolved = route_function;
@@ -1582,6 +1632,9 @@ extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc,
     }
     CUresult result = real(pFunc, route_kernel);
     if (result == CUDA_SUCCESS) {
+      result = lupine_record_kernel_function(*pFunc, route_kernel);
+    }
+    if (result == CUDA_SUCCESS) {
       std::lock_guard<std::mutex> lock(lupine_kernel_function_cache_mutex());
       lupine_kernel_function_cache()[key] = *pFunc;
       lupine_note_function_owner_route(*pFunc, route);
@@ -1599,6 +1652,9 @@ extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc,
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    return_value = lupine_record_kernel_function(function, route_kernel);
   }
   if (return_value == CUDA_SUCCESS) {
     std::lock_guard<std::mutex> lock(lupine_kernel_function_cache_mutex());
@@ -1740,6 +1796,12 @@ static CUresult lupine_get_remote_private_module_node(CUcontext context,
   }
   if (result == CUDA_SUCCESS && *server_node != nullptr) {
     lupine_note_function_owner_route(*server_node, route);
+    lupine_kernel_param_layout layout;
+    result = lupine_fetch_kernel_param_layout(*server_node, route, &layout);
+    if (result == CUDA_SUCCESS) {
+      std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+      lupine_kernel_param_layouts()[*server_node] = std::move(layout);
+    }
   }
   return result;
 }
@@ -3420,12 +3482,50 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
 }
 
 static CUresult
-lupine_fetch_kernel_param_layout(CUfunction f,
+lupine_fetch_kernel_param_layout(CUfunction f, lupine_route route,
                                  lupine_kernel_param_layout *layout) {
   if (layout == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  conn_t *conn = lupine_rpc_conn_for_function(f);
+  *layout = {};
+  if (lupine_route_is_local(route)) {
+    using func_info_fn_t = CUresult (*)(CUfunction, size_t, size_t *, size_t *);
+    using kernel_info_fn_t = CUresult (*)(CUkernel, size_t, size_t *, size_t *);
+    auto func_info = lupine_real_cuda_fn<func_info_fn_t>("cuFuncGetParamInfo");
+    auto kernel_info =
+        lupine_real_cuda_fn<kernel_info_fn_t>("cuKernelGetParamInfo");
+    if (func_info == nullptr) {
+      return CUDA_ERROR_NOT_SUPPORTED;
+    }
+    bool use_kernel_info = false;
+    for (uint32_t i = 0;; ++i) {
+      size_t offset = 0;
+      size_t size = 0;
+      CUresult result =
+          use_kernel_info
+              ? kernel_info(reinterpret_cast<CUkernel>(f), i, &offset, &size)
+              : func_info(f, i, &offset, &size);
+      if (result == CUDA_ERROR_INVALID_VALUE) {
+        return CUDA_SUCCESS;
+      }
+      if (i == 0 && result == CUDA_ERROR_INVALID_HANDLE &&
+          kernel_info != nullptr) {
+        use_kernel_info = true;
+        result = kernel_info(reinterpret_cast<CUkernel>(f), i, &offset, &size);
+        if (result == CUDA_ERROR_INVALID_VALUE) {
+          return CUDA_SUCCESS;
+        }
+      }
+      if (result != CUDA_SUCCESS) {
+        return i == 0 ? result : CUDA_SUCCESS;
+      }
+      layout->offsets.push_back(offset);
+      layout->sizes.push_back(size);
+      layout->count = i + 1;
+    }
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, LUPINE_RPC_cuFuncGetParamLayout) < 0 ||
@@ -3438,8 +3538,7 @@ lupine_fetch_kernel_param_layout(CUfunction f,
   return return_value;
 }
 
-extern "C" void lupine_invalidate_kernel_param_layout_cache() {
-  lupine_kernel_param_layout_cache_invalidate();
+extern "C" void lupine_invalidate_function_caches() {
   {
     std::lock_guard<std::mutex> lock(lupine_kernel_function_cache_mutex());
     lupine_kernel_function_cache().clear();
@@ -3451,26 +3550,18 @@ extern "C" void lupine_invalidate_kernel_param_layout_cache() {
 }
 
 extern "C" CUresult
-lupine_get_kernel_param_layout_cached(CUfunction f,
-                                      lupine_kernel_param_layout *layout) {
+lupine_get_kernel_param_layout(CUfunction f,
+                               lupine_kernel_param_layout *layout) {
   if (layout == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  f = lupine_translate_private_function(f);
-  lupine_route route = lupine_route_for_function(f);
-  uint64_t epoch = 0;
-  int route_id = lupine_route_identity(route);
-  if (lupine_kernel_param_layout_cache_lookup(route_id, f, layout, &epoch)) {
-    return CUDA_SUCCESS;
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto stored = lupine_kernel_param_layouts().find(f);
+  if (stored == lupine_kernel_param_layouts().end()) {
+    return CUDA_ERROR_INVALID_HANDLE;
   }
-
-  lupine_kernel_param_layout fetched = {};
-  CUresult result = lupine_fetch_kernel_param_layout(f, &fetched);
-  if (result == CUDA_SUCCESS) {
-    lupine_kernel_param_layout_cache_insert(route_id, f, fetched, epoch);
-    *layout = fetched;
-  }
-  return result;
+  *layout = stored->second;
+  return CUDA_SUCCESS;
 }
 
 static CUresult lupine_resolve_launch_function_for_route(
@@ -3534,7 +3625,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   lupine_kernel_param_layout layout;
-  status = lupine_get_kernel_param_layout_cached(f, &layout);
+  status = lupine_get_kernel_param_layout(f, &layout);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -3561,7 +3652,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     }
     route = lupine_route_for_function(f);
 
-    status = lupine_get_kernel_param_layout_cached(f, &layout);
+    status = lupine_get_kernel_param_layout(f, &layout);
     if (status != CUDA_SUCCESS) {
       return status;
     }
@@ -3655,7 +3746,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   lupine_kernel_param_layout layout;
-  status = lupine_get_kernel_param_layout_cached(f, &layout);
+  status = lupine_get_kernel_param_layout(f, &layout);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -3682,7 +3773,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     }
     route = lupine_route_for_function(f);
 
-    status = lupine_get_kernel_param_layout_cached(f, &layout);
+    status = lupine_get_kernel_param_layout(f, &layout);
     if (status != CUDA_SUCCESS) {
       return status;
     }
@@ -3766,7 +3857,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   }
 
   lupine_kernel_param_layout layout;
-  CUresult status = lupine_get_kernel_param_layout_cached(f, &layout);
+  CUresult status = lupine_get_kernel_param_layout(f, &layout);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -4396,7 +4487,7 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUfunction func = lupine_kernel_node_function(nodeParams);
-  CUresult status = lupine_get_kernel_param_layout_cached(func, layout);
+  CUresult status = lupine_get_kernel_param_layout(func, layout);
   if (status != CUDA_SUCCESS) {
     return status;
   }

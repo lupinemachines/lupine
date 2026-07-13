@@ -1,4 +1,4 @@
-// Exercises kernel parameter layout cache identity and lifetime rules.
+// Exercises kernel parameter layout metadata identity and lifetime rules.
 // Auto-discovered by test/run_custom_tests.sh via the test_*.cu glob.
 #include <cuda.h>
 
@@ -126,7 +126,7 @@ int main() {
     return 1;
   }
 
-  // Same symbol name, different live modules and different layouts. Cache
+  // Same symbol name, different live modules and different layouts. Metadata
   // identity must be the function handle, not the symbol name.
   CUmodule one_module = nullptr;
   CUmodule two_module = nullptr;
@@ -144,8 +144,8 @@ int main() {
   // Alternate layouts across unload/reload cycles. CUDA commonly reuses the
   // opaque function value, so stale entries keyed only by that value are
   // exposed; correctness must not depend on whether reuse happens on a given
-  // driver version. Launch from a persistent worker so teardown on this thread
-  // must also invalidate another thread's cache.
+  // driver version. Launch from a persistent worker so replacing metadata on
+  // this thread must be visible to launches from another thread.
   std::mutex worker_mutex;
   std::condition_variable worker_condition;
   CUfunction worker_function = nullptr;
@@ -253,7 +253,7 @@ int main() {
       !check(cuDevicePrimaryCtxRelease(device), "cuDevicePrimaryCtxRelease")) {
     return 1;
   }
-  printf("PASS: layout cache module identity/lifetime "
+  printf("PASS: layout metadata module identity/lifetime "
          "(cross-layout handle reuses: %u)\n",
          cross_layout_reuses);
   return 0;
