@@ -29,8 +29,6 @@ struct rpc_http2_read_stats {
 
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
-static constexpr uint32_t LUPINE_MAX_LAUNCH_ATTRIBUTES = 64;
-
 typedef struct conn_t conn_t;
 
 struct conn_t {
@@ -88,11 +86,9 @@ extern int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
                                         const size_t *sizes,
                                         size_t payload_size, void *storage,
                                         size_t storage_size, void **values);
-extern int rpc_write_launch_attributes(conn_t *conn, const uint32_t *count,
-                                       const CUlaunchAttribute *attributes);
-extern int
-rpc_read_launch_attributes(conn_t *conn,
-                           std::vector<CUlaunchAttribute> *attributes);
+extern int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config);
+extern int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
+                                  std::vector<CUlaunchAttribute> *attributes);
 struct rpc_jit_output_binding {
   CUjit_option option;
   void *dst;

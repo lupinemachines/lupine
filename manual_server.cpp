@@ -1744,33 +1744,18 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
 }
 
 int handle_manual_cuLaunchKernelEx(conn_t *conn) {
+  CUlaunchConfig config = {};
   CUfunction f = nullptr;
   CUcontext ctx = nullptr;
-  unsigned int gridDimX = 0;
-  unsigned int gridDimY = 0;
-  unsigned int gridDimZ = 0;
-  unsigned int blockDimX = 0;
-  unsigned int blockDimY = 0;
-  unsigned int blockDimZ = 0;
-  unsigned int sharedMemBytes = 0;
-  CUstream hStream = nullptr;
   uint32_t param_count = 0;
   size_t packed_size = 0;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   std::vector<CUlaunchAttribute> attributes;
-  if (rpc_read_launch_attributes(conn, &attributes) < 0 ||
+  if (rpc_read_launch_config(conn, &config, &attributes) < 0 ||
       rpc_read(conn, &f, sizeof(f)) < 0 ||
       rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
-      rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
-      rpc_read(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
-      rpc_read(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
-      rpc_read(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
-      rpc_read(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
-      rpc_read(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
-      rpc_read(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_read(conn, &packed_size, sizeof(packed_size)) < 0) {
     return -1;
@@ -1809,27 +1794,14 @@ int handle_manual_cuLaunchKernelEx(conn_t *conn) {
       params[i] = packed.data() + layout.offsets[i];
     }
     if (result == CUDA_SUCCESS) {
-      CUlaunchConfig config = {};
-      config.gridDimX = gridDimX;
-      config.gridDimY = gridDimY;
-      config.gridDimZ = gridDimZ;
-      config.blockDimX = blockDimX;
-      config.blockDimY = blockDimY;
-      config.blockDimZ = blockDimZ;
-      config.sharedMemBytes = sharedMemBytes;
-      config.hStream = hStream;
-      config.attrs = attributes.empty() ? nullptr : attributes.data();
-      config.numAttrs = static_cast<unsigned int>(attributes.size());
       result = cuLaunchKernelEx(
           &config, f, param_count == 0 ? nullptr : params.data(), nullptr);
     }
   }
 #endif
 
-  uint32_t response_attribute_count = static_cast<uint32_t>(attributes.size());
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_launch_attributes(conn, &response_attribute_count,
-                                  attributes.data()) < 0 ||
+      rpc_write_launch_config(conn, &config) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }

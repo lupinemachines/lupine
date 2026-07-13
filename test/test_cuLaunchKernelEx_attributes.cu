@@ -165,14 +165,13 @@ int main() {
     return 1;
   }
 
-  // An attribute array too large for the bounded RPC representation is
-  // rejected before launch.
-  config.numAttrs = 1024;
+  // Preserve a null attribute pointer so the server-side CUDA driver owns
+  // validation of the complete launch config.
+  config = config_for(nullptr);
+  config.numAttrs = 1;
   result = cuLaunchKernelEx(&config, function, params, nullptr);
-  if (result != CUDA_ERROR_NOT_SUPPORTED || !output_is(output, 0)) {
-    fprintf(stderr, "oversized attribute array returned %s (%d), expected %d\n",
-            error_name(result), static_cast<int>(result),
-            static_cast<int>(CUDA_ERROR_NOT_SUPPORTED));
+  if (result == CUDA_SUCCESS || !output_is(output, 0)) {
+    fprintf(stderr, "CUDA accepted a null launch attribute array\n");
     return 1;
   }
 

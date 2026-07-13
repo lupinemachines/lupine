@@ -3646,18 +3646,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (config == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  if (config->numAttrs == 0) {
-    return cuLaunchKernel(
-        f, config->gridDimX, config->gridDimY, config->gridDimZ,
-        config->blockDimX, config->blockDimY, config->blockDimZ,
-        config->sharedMemBytes, config->hStream, kernelParams, extra);
-  }
-  if (config->attrs == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  if (config->numAttrs > LUPINE_MAX_LAUNCH_ATTRIBUTES) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
 #if CUDA_VERSION < 11080
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
@@ -3804,7 +3792,8 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
-  for (uint32_t i = 0; i < launch_attribute_count; ++i) {
+  for (uint32_t i = 0;
+       launch_attributes != nullptr && i < launch_attribute_count; ++i) {
     const CUlaunchAttribute &attribute = launch_attributes[i];
     if (attribute.id == CU_LAUNCH_ATTRIBUTE_ACCESS_POLICY_WINDOW) {
       CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(
@@ -3830,18 +3819,9 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
 
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
-      rpc_write_launch_attributes(conn, &launch_attribute_count,
-                                  launch_attributes) < 0 ||
+      rpc_write_launch_config(conn, config) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
-      rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
-      rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
-      rpc_write(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
-      rpc_write(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
-      rpc_write(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
-      rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
-      rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
       rpc_write(conn, packed.data(), packed.size()) < 0 ||
@@ -3849,8 +3829,10 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
+  CUlaunchConfig returned_config = {};
   std::vector<CUlaunchAttribute> returned_attributes;
-  if (rpc_read_launch_attributes(conn, &returned_attributes) < 0 ||
+  if (rpc_read_launch_config(conn, &returned_config, &returned_attributes) <
+          0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3858,11 +3840,15 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (return_value != CUDA_SUCCESS) {
     return return_value;
   }
-  if (returned_attributes.size() != launch_attribute_count) {
+  if (returned_config.numAttrs != launch_attribute_count ||
+      (launch_attribute_count != 0 &&
+       (launch_attributes == nullptr) != (returned_config.attrs == nullptr))) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  memcpy(launch_attributes, returned_attributes.data(),
-         returned_attributes.size() * sizeof(returned_attributes[0]));
+  if (launch_attribute_count != 0 && launch_attributes != nullptr) {
+    memcpy(launch_attributes, returned_config.attrs,
+           returned_config.numAttrs * sizeof(returned_config.attrs[0]));
+  }
 
   if (sync_after_launch) {
     return cuStreamSynchronize(hStream);

@@ -421,38 +421,38 @@ int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
   return 0;
 }
 
-int rpc_write_launch_attributes(conn_t *conn, const uint32_t *count,
-                                const CUlaunchAttribute *attributes) {
-  if (count == nullptr) {
+int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config) {
+  if (conn == nullptr || config == nullptr) {
     return -1;
   }
-  if (conn == nullptr || *count > LUPINE_MAX_LAUNCH_ATTRIBUTES ||
-      (*count != 0 && attributes == nullptr)) {
-    return -1;
-  }
-  if (rpc_write(conn, count, sizeof(*count)) < 0 ||
-      (*count != 0 &&
-       rpc_write(conn, attributes, *count * sizeof(attributes[0])) < 0)) {
+  if (rpc_write(conn, config, sizeof(*config)) < 0 ||
+      (config->numAttrs != 0 && config->attrs != nullptr &&
+       rpc_write(conn, config->attrs,
+                 config->numAttrs * sizeof(config->attrs[0])) < 0)) {
     return -1;
   }
   return 0;
 }
 
-int rpc_read_launch_attributes(conn_t *conn,
-                               std::vector<CUlaunchAttribute> *attributes) {
-  if (conn == nullptr || attributes == nullptr) {
+int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
+                           std::vector<CUlaunchAttribute> *attributes) {
+  if (conn == nullptr || config == nullptr || attributes == nullptr) {
     return -1;
   }
-  uint32_t count = 0;
-  if (rpc_read(conn, &count, sizeof(count)) < 0 ||
-      count > LUPINE_MAX_LAUNCH_ATTRIBUTES) {
+  if (rpc_read(conn, config, sizeof(*config)) < 0) {
     return -1;
   }
-  attributes->resize(count);
-  if (count != 0 && rpc_read(conn, attributes->data(),
-                             count * sizeof((*attributes)[0])) < 0) {
+  if (config->numAttrs == 0 || config->attrs == nullptr) {
+    attributes->clear();
+    config->attrs = nullptr;
+    return 0;
+  }
+  attributes->resize(config->numAttrs);
+  if (rpc_read(conn, attributes->data(),
+               config->numAttrs * sizeof((*attributes)[0])) < 0) {
     return -1;
   }
+  config->attrs = attributes->data();
   return 0;
 }
 
