@@ -18,9 +18,9 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "copy_pipeline.h"
 #include "lupine_log.h"
 #include "manual_server.h"
-#include "copy_pipeline.h"
 #include "rpc.h"
 
 #define DEFAULT_PORT 14833
@@ -109,6 +109,8 @@ lupine_manual_handlers() {
         },
         "cuOccupancyMaxPotentialBlockSizeWithFlags"}},
       {RPC_cuLaunchKernel, {handle_manual_cuLaunchKernel, "cuLaunchKernel"}},
+      {RPC_cuLaunchKernelEx,
+       {handle_manual_cuLaunchKernelEx, "cuLaunchKernelEx"}},
       {RPC_cuLaunchCooperativeKernel,
        {handle_manual_cuLaunchCooperativeKernel, "cuLaunchCooperativeKernel"}},
       {RPC_cuGraphAddKernelNode_v2,

@@ -39,11 +39,12 @@
 
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "copy_pipeline.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
+#include "lupine_launch_attributes.h"
 #include "lupine_log.h"
 #include "manual_server.h"
-#include "copy_pipeline.h"
 #include "rpc.h"
 
 #if CUDA_VERSION < 12020
@@ -1667,7 +1668,7 @@ int handle_manual_cuFuncGetParamLayout(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuLaunchKernel(conn_t *conn) {
+static int handle_manual_cuLaunchKernel_impl(conn_t *conn, bool extended) {
   CUfunction f = nullptr;
   CUcontext ctx = nullptr;
   unsigned int gridDimX = 0;
@@ -1680,8 +1681,10 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
   CUstream hStream = nullptr;
   uint32_t param_count = 0;
   size_t packed_size = 0;
+  uint32_t attribute_count = 0;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
+  CUresult attribute_status = CUDA_SUCCESS;
 
   if (rpc_read(conn, &f, sizeof(f)) < 0 ||
       rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
@@ -1702,12 +1705,52 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
   if (packed_size != 0 && rpc_read(conn, packed.data(), packed_size) < 0) {
     return -1;
   }
+#if CUDA_VERSION >= 11080
+  std::vector<lupine_launch_attribute_wire> wire_attributes;
+  std::vector<CUlaunchAttribute> attributes;
+  if (extended) {
+    if (rpc_read(conn, &attribute_count, sizeof(attribute_count)) < 0 ||
+        attribute_count > LUPINE_MAX_LAUNCH_ATTRIBUTES) {
+      return -1;
+    }
+    wire_attributes.resize(attribute_count);
+    attributes.resize(attribute_count);
+    if ((attribute_count != 0 &&
+         rpc_read(conn, wire_attributes.data(),
+                  wire_attributes.size() * sizeof(wire_attributes[0])) < 0)) {
+      return -1;
+    }
+    for (uint32_t i = 0; i < attribute_count; ++i) {
+      CUresult status =
+          lupine_decode_launch_attribute(wire_attributes[i], &attributes[i]);
+      if (status != CUDA_SUCCESS && attribute_status == CUDA_SUCCESS) {
+        attribute_status = status;
+      }
+    }
+  }
+#else
+  if (extended) {
+    if (rpc_read(conn, &attribute_count, sizeof(attribute_count)) < 0 ||
+        attribute_count > LUPINE_MAX_LAUNCH_ATTRIBUTES) {
+      return -1;
+    }
+    attribute_status = CUDA_ERROR_NOT_SUPPORTED;
+  }
+  std::vector<lupine_launch_attribute_wire> wire_attributes(attribute_count);
+  if (attribute_count != 0 &&
+      rpc_read(conn, wire_attributes.data(),
+               wire_attributes.size() * sizeof(wire_attributes[0])) < 0) {
+    return -1;
+  }
+#endif
   request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
 
-  if (ctx != nullptr) {
+  if (attribute_status != CUDA_SUCCESS) {
+    result = attribute_status;
+  } else if (ctx != nullptr) {
     CUcontext previous = nullptr;
     result = cuCtxGetCurrent(&previous);
     if (result == CUDA_SUCCESS && previous != ctx) {
@@ -1731,17 +1774,73 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
       params[i] = packed.data() + layout.offsets[i];
     }
     if (result == CUDA_SUCCESS) {
-      result =
-          cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
-                         blockDimZ, sharedMemBytes, hStream,
-                         param_count == 0 ? nullptr : params.data(), nullptr);
+#if CUDA_VERSION >= 11080
+      if (extended) {
+        CUlaunchConfig config = {};
+        config.gridDimX = gridDimX;
+        config.gridDimY = gridDimY;
+        config.gridDimZ = gridDimZ;
+        config.blockDimX = blockDimX;
+        config.blockDimY = blockDimY;
+        config.blockDimZ = blockDimZ;
+        config.sharedMemBytes = sharedMemBytes;
+        config.hStream = hStream;
+        config.attrs = attributes.empty() ? nullptr : attributes.data();
+        config.numAttrs = attribute_count;
+        result = cuLaunchKernelEx(
+            &config, f, param_count == 0 ? nullptr : params.data(), nullptr);
+        if (result == CUDA_SUCCESS) {
+          for (uint32_t i = 0; i < attribute_count; ++i) {
+            result = lupine_encode_launch_attribute(attributes[i],
+                                                    &wire_attributes[i]);
+            if (result != CUDA_SUCCESS) {
+              break;
+            }
+          }
+        }
+      } else {
+        result =
+            cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
+                           blockDimY, blockDimZ, sharedMemBytes, hStream,
+                           param_count == 0 ? nullptr : params.data(), nullptr);
+      }
+#else
+      if (extended) {
+        result = CUDA_ERROR_NOT_SUPPORTED;
+      } else {
+        result =
+            cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
+                           blockDimY, blockDimZ, sharedMemBytes, hStream,
+                           param_count == 0 ? nullptr : params.data(), nullptr);
+      }
+#endif
     }
   }
 
-  // Fire-and-forget: no response is sent.
+  if (extended) {
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        (attribute_count != 0 &&
+         rpc_write(conn, wire_attributes.data(),
+                   wire_attributes.size() * sizeof(wire_attributes[0])) < 0) ||
+        rpc_write(conn, &result, sizeof(result)) < 0 ||
+        rpc_write_end(conn) < 0) {
+      return -1;
+    }
+    return 0;
+  }
+
+  // Legacy launches remain fire-and-forget; launch errors are sticky.
   (void)request_id;
   (void)result;
   return 0;
+}
+
+int handle_manual_cuLaunchKernel(conn_t *conn) {
+  return handle_manual_cuLaunchKernel_impl(conn, false);
+}
+
+int handle_manual_cuLaunchKernelEx(conn_t *conn) {
+  return handle_manual_cuLaunchKernel_impl(conn, true);
 }
 
 int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {

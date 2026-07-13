@@ -52,6 +52,7 @@
 #include "codegen/gen_client.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
+#include "lupine_launch_attributes.h"
 #include "lupine_log.h"
 #include "memcpy.h"
 #include "rpc.h"
@@ -3475,12 +3476,13 @@ lupine_get_kernel_param_layout_cached(CUfunction f,
   return result;
 }
 
-extern "C" CUresult
-cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
-               unsigned int gridDimZ, unsigned int blockDimX,
-               unsigned int blockDimY, unsigned int blockDimZ,
-               unsigned int sharedMemBytes, CUstream hStream,
-               void **kernelParams, void **extra) {
+static CUresult lupine_launch_kernel(
+    CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
+    unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,
+    unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream,
+    void **kernelParams, void **extra, CUlaunchAttribute *launch_attributes,
+    uint32_t launch_attribute_count) {
+  const bool extended = launch_attribute_count != 0;
   if (extra != nullptr) {
     return CUDA_ERROR_NOT_SUPPORTED;
   }
@@ -3516,6 +3518,28 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                    << gridDimZ << ") block=(" << blockDimX << "," << blockDimY
                    << "," << blockDimZ << ")");
   if (lupine_route_is_local(route)) {
+#if CUDA_VERSION >= 11080
+    if (extended) {
+      using real_ex_fn_t =
+          CUresult (*)(const CUlaunchConfig *, CUfunction, void **, void **);
+      auto real_ex = lupine_real_cuda_fn<real_ex_fn_t>("cuLaunchKernelEx");
+      if (real_ex == nullptr) {
+        return CUDA_ERROR_NOT_SUPPORTED;
+      }
+      CUlaunchConfig config = {};
+      config.gridDimX = gridDimX;
+      config.gridDimY = gridDimY;
+      config.gridDimZ = gridDimZ;
+      config.blockDimX = blockDimX;
+      config.blockDimY = blockDimY;
+      config.blockDimZ = blockDimZ;
+      config.sharedMemBytes = sharedMemBytes;
+      config.hStream = hStream;
+      config.attrs = launch_attributes;
+      config.numAttrs = launch_attribute_count;
+      return real_ex(&config, f, kernelParams, extra);
+    }
+#endif
     using real_fn_t = CUresult (*)(
         CUfunction, unsigned int, unsigned int, unsigned int, unsigned int,
         unsigned int, unsigned int, unsigned int, CUstream, void **, void **);
@@ -3617,9 +3641,44 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
-  // Fire-and-forget; launch errors are sticky and surface at the next sync.
+  std::vector<lupine_launch_attribute_wire> wire_attributes;
+#if CUDA_VERSION >= 11080
+  if (extended) {
+    wire_attributes.resize(launch_attribute_count);
+    for (uint32_t i = 0; i < launch_attribute_count; ++i) {
+      status = lupine_encode_launch_attribute(launch_attributes[i],
+                                              &wire_attributes[i]);
+      if (status != CUDA_SUCCESS) {
+        return status;
+      }
+
+      if (wire_attributes[i].id == 1) {
+        CUdeviceptr base_ptr = 0;
+        memcpy(&base_ptr, wire_attributes[i].value, sizeof(base_ptr));
+        if (base_ptr != 0 && !lupine_routes_share_server(
+                                 route, lupine_route_for_deviceptr(base_ptr))) {
+          return CUDA_ERROR_INVALID_VALUE;
+        }
+      } else if (wire_attributes[i].id == 7 || wire_attributes[i].id == 12) {
+        CUevent event = nullptr;
+        memcpy(&event, wire_attributes[i].value, sizeof(event));
+        if (event != nullptr &&
+            !lupine_routes_share_server(route, lupine_route_for_event(event))) {
+          return CUDA_ERROR_INVALID_VALUE;
+        }
+      }
+    }
+  }
+#else
+  if (extended) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+#endif
+
+  // Attribute-free launches retain the legacy fire-and-forget protocol.
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
+      rpc_write_start_request(conn, extended ? RPC_cuLaunchKernelEx
+                                             : RPC_cuLaunchKernel) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
@@ -3633,8 +3692,33 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &total_size, sizeof(total_size)) < 0 ||
       rpc_write(conn, packed.data(), packed.size()) < 0 ||
-      rpc_write_end(conn) < 0) {
+      (extended &&
+       (rpc_write(conn, &launch_attribute_count,
+                  sizeof(launch_attribute_count)) < 0 ||
+        rpc_write(conn, wire_attributes.data(),
+                  wire_attributes.size() * sizeof(wire_attributes[0])) < 0)) ||
+      (extended ? rpc_wait_for_response(conn) : rpc_write_end(conn)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (extended) {
+    if (rpc_read(conn, wire_attributes.data(),
+                 wire_attributes.size() * sizeof(wire_attributes[0])) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (return_value != CUDA_SUCCESS) {
+      return return_value;
+    }
+#if CUDA_VERSION >= 11080
+    for (uint32_t i = 0; i < launch_attribute_count; ++i) {
+      status = lupine_decode_launch_attribute(wire_attributes[i],
+                                              &launch_attributes[i]);
+      if (status != CUDA_SUCCESS) {
+        return status;
+      }
+    }
+#endif
   }
   if (sync_after_launch) {
     return cuStreamSynchronize(hStream);
@@ -3643,19 +3727,50 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   return CUDA_SUCCESS;
 }
 
+extern "C" CUresult
+cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
+               unsigned int gridDimZ, unsigned int blockDimX,
+               unsigned int blockDimY, unsigned int blockDimZ,
+               unsigned int sharedMemBytes, CUstream hStream,
+               void **kernelParams, void **extra) {
+  return lupine_launch_kernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
+                              blockDimY, blockDimZ, sharedMemBytes, hStream,
+                              kernelParams, extra, nullptr, 0);
+}
+
 extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
                                      void **kernelParams, void **extra) {
   if (config == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  if (config->numAttrs != 0) {
-    LUPINE_TRACE_LOG("LUPINE cuLaunchKernelEx ignoring "
-                     << config->numAttrs << " launch attributes");
+  if (config->numAttrs == 0) {
+    return cuLaunchKernel(
+        f, config->gridDimX, config->gridDimY, config->gridDimZ,
+        config->blockDimX, config->blockDimY, config->blockDimZ,
+        config->sharedMemBytes, config->hStream, kernelParams, extra);
   }
-  return cuLaunchKernel(f, config->gridDimX, config->gridDimY, config->gridDimZ,
-                        config->blockDimX, config->blockDimY, config->blockDimZ,
-                        config->sharedMemBytes, config->hStream, kernelParams,
-                        extra);
+  if (config->attrs == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (config->numAttrs > LUPINE_MAX_LAUNCH_ATTRIBUTES) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+#if CUDA_VERSION >= 11080
+  for (uint32_t i = 0; i < config->numAttrs; ++i) {
+    lupine_launch_attribute_wire wire;
+    CUresult status = lupine_encode_launch_attribute(config->attrs[i], &wire);
+    if (status != CUDA_SUCCESS) {
+      return status;
+    }
+  }
+#else
+  return CUDA_ERROR_NOT_SUPPORTED;
+#endif
+  return lupine_launch_kernel(
+      f, config->gridDimX, config->gridDimY, config->gridDimZ,
+      config->blockDimX, config->blockDimY, config->blockDimZ,
+      config->sharedMemBytes, config->hStream, kernelParams, extra,
+      config->attrs, config->numAttrs);
 }
 
 extern "C" CUresult

@@ -88,6 +88,7 @@ set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/lupine_launch_attributes.h
 )
 
 set(SERVER_HEADERS
@@ -97,6 +98,7 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/lupine_launch_attributes.h
 )
 
 set(CLIENT_OUTPUT lupine_driver)
