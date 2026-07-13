@@ -41,6 +41,7 @@
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "copy_pipeline.h"
+#include "dirty_ranges.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
@@ -3266,7 +3267,16 @@ struct lupine_mapped_device_shadow {
   unsigned char *host = nullptr;
   size_t size = 0;
   size_t page_size = 0;
-  std::vector<std::vector<unsigned char>> pages;
+  std::vector<unsigned char> baseline;
+  bool force_full_sync = false;
+};
+
+using lupine_dirty_device_range =
+    lupine_dirty_range<lupine_mapped_device_shadow>;
+
+struct lupine_mapped_device_wire_range {
+  size_t offset = 0;
+  size_t bytes = 0;
 };
 
 static std::mutex &lupine_mapped_device_shadow_mutex() {
@@ -3299,24 +3309,8 @@ static CUresult lupine_update_mapped_device_shadow(void *host, size_t bytes) {
       continue;
     }
 
-    size_t first_page = (start - base) / shadow.page_size;
-    size_t last_page = (end - 1 - base) / shadow.page_size;
-    try {
-      for (size_t page_index = first_page; page_index <= last_page;
-           ++page_index) {
-        auto &page = shadow.pages[page_index];
-        if (page.empty()) {
-          page.assign(shadow.page_size, 0);
-        }
-        size_t page_offset = page_index * shadow.page_size;
-        size_t copy_start = std::max(start - base, page_offset);
-        size_t copy_end = std::min(end - base, page_offset + shadow.page_size);
-        memcpy(page.data() + copy_start - page_offset, shadow.host + copy_start,
-               copy_end - copy_start);
-      }
-    } catch (...) {
-      return CUDA_ERROR_OUT_OF_MEMORY;
-    }
+    size_t offset = start - base;
+    memcpy(shadow.baseline.data() + offset, shadow.host + offset, bytes);
     return CUDA_SUCCESS;
   }
   return CUDA_ERROR_INVALID_VALUE;
@@ -3347,7 +3341,7 @@ int handle_manual_lupineMappedDeviceRegister(conn_t *conn) {
       shadow.host = reinterpret_cast<unsigned char *>(server_host_ptr);
       shadow.size = size;
       shadow.page_size = page_size;
-      shadow.pages.resize((size + page_size - 1) / page_size);
+      shadow.baseline.assign(size, 0);
       memset(shadow.host, 0, size);
       std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
       lupine_mapped_device_shadows()[device_ptr] = std::move(shadow);
@@ -3404,61 +3398,58 @@ int handle_manual_lupineMappedDeviceSync(conn_t *conn) {
     result = CUDA_ERROR_INVALID_VALUE;
   }
 
-  std::vector<size_t> dirty_pages;
-  std::vector<std::pair<size_t, size_t>> ranges;
+  std::vector<lupine_dirty_device_range> dirty_ranges;
+  std::vector<lupine_mapped_device_wire_range> wire_ranges;
   if (result == CUDA_SUCCESS) {
     auto &shadow = shadow_it->second;
-    std::vector<unsigned char> zero_page;
     try {
-      zero_page.assign(shadow.page_size, 0);
-      dirty_pages.reserve(shadow.pages.size());
-      for (size_t page_index = 0; page_index < shadow.pages.size();
-           ++page_index) {
-        size_t offset = page_index * shadow.page_size;
+      for (size_t offset = 0; offset < shadow.size;
+           offset += shadow.page_size) {
         size_t bytes = std::min(shadow.page_size, shadow.size - offset);
-        const auto &page = shadow.pages[page_index];
-        const unsigned char *baseline =
-            page.empty() ? zero_page.data() : page.data();
-        if (memcmp(shadow.host + offset, baseline, bytes) != 0) {
-          dirty_pages.push_back(page_index);
+        if (shadow.force_full_sync ||
+            memcmp(shadow.host + offset, shadow.baseline.data() + offset,
+                   bytes) != 0) {
+          uintptr_t start = reinterpret_cast<uintptr_t>(shadow.host) + offset;
+          dirty_ranges.push_back({&shadow, start, start + bytes});
         }
       }
 
-      for (size_t page_index : dirty_pages) {
-        auto &page = shadow.pages[page_index];
-        if (page.empty()) {
-          page.assign(shadow.page_size, 0);
-        }
-        size_t offset = page_index * shadow.page_size;
-        size_t bytes = std::min(shadow.page_size, shadow.size - offset);
-        if (ranges.empty() ||
-            ranges.back().first + ranges.back().second != offset) {
-          ranges.push_back({offset, bytes});
-        } else {
-          ranges.back().second += bytes;
-        }
-      }
+      auto ranges = lupine_sort_and_coalesce_dirty_ranges(
+          std::move(dirty_ranges),
+          [](const lupine_mapped_device_shadow *allocation) {
+            return reinterpret_cast<uintptr_t>(allocation->host);
+          });
       if (ranges.size() > UINT32_MAX) {
-        result = CUDA_ERROR_OUT_OF_MEMORY;
-      } else {
-        range_count = static_cast<uint32_t>(ranges.size());
+        throw std::bad_alloc();
       }
+      wire_ranges.reserve(ranges.size());
+      for (const auto &range : ranges) {
+        size_t offset = range.start - reinterpret_cast<uintptr_t>(shadow.host);
+        size_t bytes = range.end - range.start;
+        memcpy(shadow.baseline.data() + offset, shadow.host + offset, bytes);
+        wire_ranges.push_back({offset, bytes});
+      }
+      range_count = static_cast<uint32_t>(wire_ranges.size());
     } catch (...) {
       result = CUDA_ERROR_OUT_OF_MEMORY;
       range_count = 0;
+      wire_ranges.clear();
     }
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
       rpc_write(conn, &range_count, sizeof(range_count)) < 0) {
+    if (result == CUDA_SUCCESS) {
+      shadow_it->second.force_full_sync = true;
+    }
     return -1;
   }
   if (result == CUDA_SUCCESS) {
     auto &shadow = shadow_it->second;
     size_t dirty_bytes = 0;
-    for (const auto &range : ranges) {
-      dirty_bytes += range.second;
+    for (const auto &range : wire_ranges) {
+      dirty_bytes += range.bytes;
     }
     auto scan_micros = std::chrono::duration_cast<std::chrono::microseconds>(
                            std::chrono::steady_clock::now() - scan_started)
@@ -3468,22 +3459,20 @@ int handle_manual_lupineMappedDeviceSync(conn_t *conn) {
                      << shadow.size << " dirty_bytes=" << dirty_bytes
                      << " ranges=" << range_count
                      << " scan_us=" << scan_micros);
-    for (const auto &range : ranges) {
-      if (rpc_write(conn, &range.first, sizeof(range.first)) < 0 ||
-          rpc_write(conn, &range.second, sizeof(range.second)) < 0 ||
-          rpc_write_payload(conn, shadow.host + range.first, range.second) <
-              0) {
+    for (const auto &range : wire_ranges) {
+      if (rpc_write(conn, &range.offset, sizeof(range.offset)) < 0 ||
+          rpc_write(conn, &range.bytes, sizeof(range.bytes)) < 0 ||
+          rpc_write_payload(conn, shadow.baseline.data() + range.offset,
+                            range.bytes) < 0) {
+        shadow.force_full_sync = true;
         return -1;
       }
     }
     if (rpc_write_end(conn) < 0) {
+      shadow.force_full_sync = true;
       return -1;
     }
-    for (size_t page_index : dirty_pages) {
-      size_t offset = page_index * shadow.page_size;
-      size_t bytes = std::min(shadow.page_size, shadow.size - offset);
-      memcpy(shadow.pages[page_index].data(), shadow.host + offset, bytes);
-    }
+    shadow.force_full_sync = false;
     return 0;
   }
   return rpc_write_end(conn) < 0 ? -1 : 0;

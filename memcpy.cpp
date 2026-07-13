@@ -15,6 +15,7 @@
 
 #include "client_routing.h"
 #include "codegen/gen_api.h"
+#include "dirty_ranges.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_log.h"
 #include "memcpy.h"
@@ -87,11 +88,7 @@ static constexpr size_t LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES = 16;
 static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES = 1024;
 static constexpr uint32_t LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES = 64 * 1024;
 
-struct lupine_dirty_host_range {
-  lupine_host_allocation *allocation = nullptr;
-  uintptr_t start = 0;
-  uintptr_t end = 0;
-};
+using lupine_dirty_host_range = lupine_dirty_range<lupine_host_allocation>;
 
 struct lupine_dirty_host_range_queue {
   std::mutex mutex;
@@ -467,27 +464,10 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     }
   };
 
-  std::sort(
-      ranges.begin(), ranges.end(),
-      [](const lupine_dirty_host_range &a, const lupine_dirty_host_range &b) {
-        if (a.allocation != b.allocation) {
-          return a.allocation->host_base < b.allocation->host_base;
-        }
-        if (a.start != b.start) {
-          return a.start < b.start;
-        }
-        return a.end < b.end;
+  auto merged = lupine_sort_and_coalesce_dirty_ranges(
+      ranges, [](const lupine_host_allocation *allocation) {
+        return allocation->host_base;
       });
-  std::vector<lupine_dirty_host_range> merged;
-  merged.reserve(ranges.size());
-  for (const auto &range : ranges) {
-    if (merged.empty() || merged.back().allocation != range.allocation ||
-        merged.back().end < range.start) {
-      merged.push_back(range);
-    } else {
-      merged.back().end = std::max(merged.back().end, range.end);
-    }
-  }
 
   for (const auto &range : merged) {
     if (!lupine_protect_host_range(reinterpret_cast<void *>(range.start),

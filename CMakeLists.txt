@@ -86,12 +86,14 @@ set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/dirty_ranges.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
 )
 
 set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/dirty_ranges.h
     ${CMAKE_CURRENT_SOURCE_DIR}/lupine_platform.h
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
