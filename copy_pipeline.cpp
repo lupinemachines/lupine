@@ -1597,10 +1597,12 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
 
   while (sent_offset < bytes) {
     if (terminal_error_pending && terminal_error_offset == sent_offset) {
-      int write_result = lupine_write_dtoh_chunk_response(
-          conn, request_id, terminal_error, nullptr, 0);
+      // Synchronize/quarantine ambiguous pinned storage before reporting the
+      // terminal error so a concurrent context teardown cannot free it while
+      // DMA may still be referencing it.
       (void)lupine_cleanup_dtoh_pipeline(pipeline, false);
-      return write_result;
+      return lupine_write_dtoh_chunk_response(conn, request_id, terminal_error,
+                                              nullptr, 0);
     }
 
     size_t index = (sent_offset / LUPINE_DTOH_PIPELINE_SLOT_BYTES) %
@@ -1618,10 +1620,9 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
 
     CUresult result = cuEventSynchronize(slot.completion);
     if (result != CUDA_SUCCESS) {
-      int write_result = lupine_write_dtoh_chunk_response(conn, request_id,
-                                                          result, nullptr, 0);
       (void)lupine_cleanup_dtoh_pipeline(pipeline, true);
-      return write_result;
+      return lupine_write_dtoh_chunk_response(conn, request_id, result, nullptr,
+                                              0);
     }
     if (lupine_write_dtoh_chunk_response(conn, request_id, CUDA_SUCCESS,
                                          slot.data, slot.bytes) < 0) {
@@ -1667,6 +1668,30 @@ int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
+  }
+
+  // Hold the per-connection staging lifecycle reservation for the complete
+  // DtoH response so a context destroy/reset on another RPC lane cannot race
+  // this copy's pinned buffers and completion events.
+  auto *state = lupine_staging_state_for(conn);
+  CUcontext context = nullptr;
+  CUdevice device = 0;
+  CUresult context_result =
+      state == nullptr ? CUDA_ERROR_OUT_OF_MEMORY : cuCtxGetCurrent(&context);
+  if (context_result == CUDA_SUCCESS && context == nullptr) {
+    context_result = CUDA_ERROR_INVALID_CONTEXT;
+  }
+  if (context_result == CUDA_SUCCESS) {
+    context_result = cuCtxGetDevice(&device);
+  }
+  lupine_staging_operation operation(
+      context_result == CUDA_SUCCESS ? state : nullptr, context, device);
+  if (context_result == CUDA_SUCCESS && !operation.acquired()) {
+    context_result = CUDA_ERROR_INVALID_CONTEXT;
+  }
+  if (context_result != CUDA_SUCCESS) {
+    return lupine_write_dtoh_chunk_response(conn, request_id, context_result,
+                                            nullptr, 0);
   }
 
   size_t fallback_offset = 0;
