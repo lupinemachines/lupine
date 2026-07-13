@@ -417,27 +417,13 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
         allocation.dirty_snapshot[word] = 0;
       }
     };
-    auto page_is_dirty = [&](size_t page) {
-      return (allocation.dirty_snapshot[page / LUPINE_DIRTY_WORD_BITS] &
-              (1UL << (page % LUPINE_DIRTY_WORD_BITS))) != 0;
-    };
-
     uint32_t count = 0;
-    size_t page = 0;
-    while (page < allocation.page_count) {
-      if (!page_is_dirty(page)) {
-        ++page;
-        continue;
-      }
-      size_t first_page = page++;
-      while (page < allocation.page_count && page_is_dirty(page)) {
-        ++page;
-      }
+    auto append_range = [&](size_t first_page, size_t end_page) -> CUresult {
       size_t offset = first_page * allocation.page_size;
       if (offset >= allocation.size) {
-        continue;
+        return CUDA_SUCCESS;
       }
-      size_t bytes = std::min((page - first_page) * allocation.page_size,
+      size_t bytes = std::min((end_page - first_page) * allocation.page_size,
                               allocation.size - offset);
       CUdeviceptr dst = allocation.server_host_ptr + offset;
       memcpy(headers[count].data(), &dst, sizeof(dst));
@@ -450,10 +436,45 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
       if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
         CUresult result = send_batch(count);
         if (result != CUDA_SUCCESS) {
-          restore_snapshot();
           return result;
         }
         count = 0;
+      }
+      return CUDA_SUCCESS;
+    };
+
+    size_t first_page = allocation.page_count;
+    size_t end_page = 0;
+    for (size_t word = 0; word < allocation.dirty_snapshot.size(); ++word) {
+      unsigned long dirty = allocation.dirty_snapshot[word];
+      while (dirty != 0) {
+        size_t page = word * LUPINE_DIRTY_WORD_BITS +
+                      static_cast<size_t>(__builtin_ctzl(dirty));
+        dirty &= dirty - 1;
+        if (page >= allocation.page_count) {
+          continue;
+        }
+        if (first_page == allocation.page_count) {
+          first_page = page;
+          end_page = page + 1;
+        } else if (page == end_page) {
+          ++end_page;
+        } else {
+          CUresult result = append_range(first_page, end_page);
+          if (result != CUDA_SUCCESS) {
+            restore_snapshot();
+            return result;
+          }
+          first_page = page;
+          end_page = page + 1;
+        }
+      }
+    }
+    if (first_page != allocation.page_count) {
+      CUresult result = append_range(first_page, end_page);
+      if (result != CUDA_SUCCESS) {
+        restore_snapshot();
+        return result;
       }
     }
     CUresult result = send_batch(count);
