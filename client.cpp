@@ -3475,6 +3475,27 @@ lupine_get_kernel_param_layout_cached(CUfunction f,
   return result;
 }
 
+static CUresult lupine_resolve_launch_function_for_route(
+    CUfunction requested_function, lupine_route route,
+    CUfunction *route_function, CUfunction *launch_function) {
+  CUresult result = lupine_resolve_library_kernel_for_route(
+      requested_function, route, route_function);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = lupine_resolve_module_function_for_route(*route_function, route,
+                                                    route_function);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = lupine_resolve_private_function_for_route(*route_function, route,
+                                                     route_function);
+  if (result == CUDA_SUCCESS) {
+    *launch_function = lupine_translate_private_function(*route_function);
+  }
+  return result;
+}
+
 extern "C" CUresult
 cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                unsigned int gridDimZ, unsigned int blockDimX,
@@ -3488,24 +3509,12 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   lupine_route launch_route = hStream != nullptr
                                   ? lupine_route_for_stream(hStream)
                                   : lupine_route_for_default();
-  CUfunction route_function = f;
-  CUresult resolve_status =
-      lupine_resolve_library_kernel_for_route(f, launch_route, &route_function);
-  if (resolve_status != CUDA_SUCCESS) {
-    return resolve_status;
+  CUfunction route_function;
+  CUresult status = lupine_resolve_launch_function_for_route(
+      requested_function, launch_route, &route_function, &f);
+  if (status != CUDA_SUCCESS) {
+    return status;
   }
-  resolve_status = lupine_resolve_module_function_for_route(
-      route_function, launch_route, &route_function);
-  if (resolve_status != CUDA_SUCCESS) {
-    return resolve_status;
-  }
-  f = route_function;
-  resolve_status = lupine_resolve_private_function_for_route(f, launch_route,
-                                                             &route_function);
-  if (resolve_status != CUDA_SUCCESS) {
-    return resolve_status;
-  }
-  f = lupine_translate_private_function(route_function);
 
   lupine_route route = lupine_route_for_function(f);
   LUPINE_TRACE_LOG("LUPINE cuLaunchKernel f="
@@ -3527,7 +3536,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   lupine_kernel_param_layout layout;
-  CUresult status = lupine_get_kernel_param_layout_cached(f, &layout);
+  status = lupine_get_kernel_param_layout_cached(f, &layout);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -3555,23 +3564,11 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       packed.data(), packed.size(), layout, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
-    route_function = requested_function;
-    resolve_status = lupine_resolve_library_kernel_for_route(
-        requested_function, launch_route, &route_function);
-    if (resolve_status != CUDA_SUCCESS) {
-      return resolve_status;
+    status = lupine_resolve_launch_function_for_route(
+        requested_function, launch_route, &route_function, &f);
+    if (status != CUDA_SUCCESS) {
+      return status;
     }
-    resolve_status = lupine_resolve_module_function_for_route(
-        route_function, launch_route, &route_function);
-    if (resolve_status != CUDA_SUCCESS) {
-      return resolve_status;
-    }
-    resolve_status = lupine_resolve_private_function_for_route(
-        route_function, launch_route, &route_function);
-    if (resolve_status != CUDA_SUCCESS) {
-      return resolve_status;
-    }
-    f = lupine_translate_private_function(route_function);
     route = lupine_route_for_function(f);
 
     status = lupine_get_kernel_param_layout_cached(f, &layout);
@@ -3649,50 +3646,21 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
 #if CUDA_VERSION < 11080
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
-  unsigned int gridDimX = config->gridDimX;
-  unsigned int gridDimY = config->gridDimY;
-  unsigned int gridDimZ = config->gridDimZ;
-  unsigned int blockDimX = config->blockDimX;
-  unsigned int blockDimY = config->blockDimY;
-  unsigned int blockDimZ = config->blockDimZ;
-  unsigned int sharedMemBytes = config->sharedMemBytes;
-  CUstream hStream = config->hStream;
-  CUlaunchAttribute *launch_attributes = config->attrs;
-  uint32_t launch_attribute_count = config->numAttrs;
   if (extra != nullptr) {
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUfunction requested_function = f;
-  lupine_route launch_route = hStream != nullptr
-                                  ? lupine_route_for_stream(hStream)
+  lupine_route launch_route = config->hStream != nullptr
+                                  ? lupine_route_for_stream(config->hStream)
                                   : lupine_route_for_default();
-  CUfunction route_function = f;
-  CUresult resolve_status =
-      lupine_resolve_library_kernel_for_route(f, launch_route, &route_function);
-  if (resolve_status != CUDA_SUCCESS) {
-    return resolve_status;
+  CUfunction route_function;
+  CUresult status = lupine_resolve_launch_function_for_route(
+      requested_function, launch_route, &route_function, &f);
+  if (status != CUDA_SUCCESS) {
+    return status;
   }
-  resolve_status = lupine_resolve_module_function_for_route(
-      route_function, launch_route, &route_function);
-  if (resolve_status != CUDA_SUCCESS) {
-    return resolve_status;
-  }
-  f = route_function;
-  resolve_status = lupine_resolve_private_function_for_route(f, launch_route,
-                                                             &route_function);
-  if (resolve_status != CUDA_SUCCESS) {
-    return resolve_status;
-  }
-  f = lupine_translate_private_function(route_function);
 
   lupine_route route = lupine_route_for_function(f);
-  LUPINE_TRACE_LOG("LUPINE cuLaunchKernelEx f="
-                   << f << " stream=" << hStream
-                   << " launch_route=" << lupine_route_identity(launch_route)
-                   << " function_route=" << lupine_route_identity(route)
-                   << " grid=(" << gridDimX << "," << gridDimY << ","
-                   << gridDimZ << ") block=(" << blockDimX << "," << blockDimY
-                   << "," << blockDimZ << ")");
   if (lupine_route_is_local(route)) {
     using real_fn_t =
         CUresult (*)(const CUlaunchConfig *, CUfunction, void **, void **);
@@ -3702,7 +3670,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   lupine_kernel_param_layout layout;
-  CUresult status = lupine_get_kernel_param_layout_cached(f, &layout);
+  status = lupine_get_kernel_param_layout_cached(f, &layout);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -3730,23 +3698,11 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       packed.data(), packed.size(), layout, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
-    route_function = requested_function;
-    resolve_status = lupine_resolve_library_kernel_for_route(
-        requested_function, launch_route, &route_function);
-    if (resolve_status != CUDA_SUCCESS) {
-      return resolve_status;
+    status = lupine_resolve_launch_function_for_route(
+        requested_function, launch_route, &route_function, &f);
+    if (status != CUDA_SUCCESS) {
+      return status;
     }
-    resolve_status = lupine_resolve_module_function_for_route(
-        route_function, launch_route, &route_function);
-    if (resolve_status != CUDA_SUCCESS) {
-      return resolve_status;
-    }
-    resolve_status = lupine_resolve_private_function_for_route(
-        route_function, launch_route, &route_function);
-    if (resolve_status != CUDA_SUCCESS) {
-      return resolve_status;
-    }
-    f = lupine_translate_private_function(route_function);
     route = lupine_route_for_function(f);
 
     status = lupine_get_kernel_param_layout_cached(f, &layout);
@@ -3768,8 +3724,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       memcpy(packed.data() + layout.offsets[i], kernelParams[i],
              layout.sizes[i]);
     }
-    LUPINE_TRACE_LOG("LUPINE cuLaunchKernelEx rerouted by args f="
-                     << f << " route=" << lupine_route_identity(route));
   }
 
   bool used_managed_mapping = false;
@@ -3792,9 +3746,8 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
-  for (uint32_t i = 0;
-       launch_attributes != nullptr && i < launch_attribute_count; ++i) {
-    const CUlaunchAttribute &attribute = launch_attributes[i];
+  for (uint32_t i = 0; config->attrs != nullptr && i < config->numAttrs; ++i) {
+    const CUlaunchAttribute &attribute = config->attrs[i];
     if (attribute.id == CU_LAUNCH_ATTRIBUTE_ACCESS_POLICY_WINDOW) {
       CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(
           attribute.value.accessPolicyWindow.base_ptr);
@@ -3829,29 +3782,16 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
-  CUlaunchConfig returned_config = {};
-  std::vector<CUlaunchAttribute> returned_attributes;
-  if (rpc_read_launch_config(conn, &returned_config, &returned_attributes) <
-          0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value != CUDA_SUCCESS) {
     return return_value;
   }
-  if (returned_config.numAttrs != launch_attribute_count ||
-      (launch_attribute_count != 0 &&
-       (launch_attributes == nullptr) != (returned_config.attrs == nullptr))) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (launch_attribute_count != 0 && launch_attributes != nullptr) {
-    memcpy(launch_attributes, returned_config.attrs,
-           returned_config.numAttrs * sizeof(returned_config.attrs[0]));
-  }
 
   if (sync_after_launch) {
-    return cuStreamSynchronize(hStream);
+    return cuStreamSynchronize(config->hStream);
   }
   return CUDA_SUCCESS;
 #endif
