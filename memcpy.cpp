@@ -15,7 +15,7 @@
 
 #include "client_routing.h"
 #include "codegen/gen_api.h"
-#include "dirty_ranges.h"
+#include "copy_pipeline.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_log.h"
 #include "memcpy.h"
