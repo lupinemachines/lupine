@@ -47,6 +47,7 @@
 #include <cstring>
 
 #include "cache.h"
+#include "checkpoint.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
@@ -5894,6 +5895,112 @@ static CUresult lupine_cuStreamGetCaptureInfo(
   return return_value;
 }
 
+class lupine_capture_begin_guard {
+public:
+  lupine_capture_begin_guard() { lupine_checkpoint::capture_begin(); }
+
+  ~lupine_capture_begin_guard() {
+    if (!completed_) {
+      lupine_checkpoint::capture_begin_complete(false);
+    }
+  }
+
+  CUresult complete(CUresult result) {
+    if (!completed_) {
+      completed_ = true;
+      lupine_checkpoint::capture_begin_complete(result == CUDA_SUCCESS);
+    }
+    return result;
+  }
+
+private:
+  bool completed_ = false;
+};
+
+static CUresult lupine_complete_stream_end_capture(CUresult result) {
+  // CUDA_SUCCESS ends a valid capture. An invalidated or unjoined capture also
+  // leaves capture mode when EndCapture reports the terminal error. Errors
+  // such as WRONG_THREAD and UNMATCHED leave the tracked capture untouched.
+  if (result == CUDA_SUCCESS ||
+      result == CUDA_ERROR_STREAM_CAPTURE_INVALIDATED ||
+      result == CUDA_ERROR_STREAM_CAPTURE_UNJOINED) {
+    lupine_checkpoint::capture_end();
+  }
+  return result;
+}
+
+extern "C" CUresult cuStreamBeginCapture_v2(CUstream hStream,
+                                            CUstreamCaptureMode mode) {
+  lupine_capture_begin_guard capture_guard;
+  lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
+                                          : lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUstream, CUstreamCaptureMode);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuStreamBeginCapture_v2", &return_value, hStream, mode)) {
+    return capture_guard.complete(return_value);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuStreamBeginCapture_v2) < 0 ||
+      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_write(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return capture_guard.complete(CUDA_ERROR_DEVICE_UNAVAILABLE);
+  }
+  return capture_guard.complete(return_value);
+}
+
+extern "C" CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph) {
+  lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
+                                          : lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUstream, CUgraph *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuStreamEndCapture", &return_value, hStream, phGraph)) {
+    if (return_value == CUDA_SUCCESS && phGraph != nullptr) {
+      lupine_note_graph_owner_route(*phGraph, route);
+    }
+    return lupine_complete_stream_end_capture(return_value);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUgraph *phGraph_null_check;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuStreamEndCapture) < 0 ||
+      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_write(conn, &phGraph, sizeof(CUgraph *)) < 0 ||
+      (phGraph != nullptr && rpc_write(conn, phGraph, sizeof(CUgraph)) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &phGraph_null_check, sizeof(CUgraph *)) < 0 ||
+      (phGraph_null_check && rpc_read(conn, phGraph, sizeof(CUgraph)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && phGraph != nullptr) {
+    lupine_note_graph_owner_route(*phGraph, route);
+  }
+  return lupine_complete_stream_end_capture(return_value);
+}
+
+#ifdef cuStreamBeginCapture
+#undef cuStreamBeginCapture
+#endif
+extern "C" CUresult cuStreamBeginCapture(CUstream hStream,
+                                         CUstreamCaptureMode mode) {
+  return cuStreamBeginCapture_v2(hStream, mode);
+}
+
+#ifdef cuStreamEndCapture_ptsz
+#undef cuStreamEndCapture_ptsz
+#endif
+extern "C" CUresult cuStreamEndCapture_ptsz(CUstream hStream,
+                                            CUgraph *phGraph) {
+  return cuStreamEndCapture(hStream, phGraph);
+}
+
 extern "C" CUresult cuStreamGetCaptureInfo_v3(
     CUstream stream, CUstreamCaptureStatus *captureStatus_out,
     cuuint64_t *id_out, CUgraph *graph_out,
@@ -5949,6 +6056,7 @@ cuStreamBeginCaptureToGraph(CUstream hStream, CUgraph hGraph,
   if (status != CUDA_SUCCESS) {
     return status;
   }
+  lupine_capture_begin_guard capture_guard;
   lupine_route route =
       hGraph != nullptr ? lupine_route_for_graph(hGraph)
                         : (hStream != nullptr ? lupine_route_for_stream(hStream)
@@ -5960,7 +6068,7 @@ cuStreamBeginCaptureToGraph(CUstream hStream, CUgraph hGraph,
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuStreamBeginCaptureToGraph", &return_value, hStream, hGraph,
           dependencies, dependencyData, numDependencies, mode)) {
-    return return_value;
+    return capture_guard.complete(return_value);
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -5974,9 +6082,9 @@ cuStreamBeginCaptureToGraph(CUstream hStream, CUgraph hGraph,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    return capture_guard.complete(CUDA_ERROR_DEVICE_UNAVAILABLE);
   }
-  return return_value;
+  return capture_guard.complete(return_value);
 }
 
 extern "C" CUresult cuStreamUpdateCaptureDependencies_v2(
@@ -7572,6 +7680,8 @@ lupine_manual_function_map() {
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
       {"cuStreamAddCallback", (void *)cuStreamAddCallback},
       {"cuStreamAddCallback_ptsz", (void *)cuStreamAddCallback},
+      {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
+      {"cuStreamEndCapture_ptsz", (void *)cuStreamEndCapture},
       {"cuStreamBeginCaptureToGraph", (void *)cuStreamBeginCaptureToGraph},
       {"cuStreamBeginCaptureToGraph_ptsz", (void *)cuStreamBeginCaptureToGraph},
       {"cuStreamUpdateCaptureDependencies",

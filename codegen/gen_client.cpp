@@ -3148,27 +3148,6 @@ CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx) {
   return return_value;
 }
 
-CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode) {
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUstream, CUstreamCaptureMode);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuStreamBeginCapture_v2", &return_value, hStream, mode)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuStreamBeginCapture_v2) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_write(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
@@ -3187,37 +3166,6 @@ CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph) {
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUstream, CUgraph *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuStreamEndCapture", &return_value, hStream, phGraph)) {
-    if (return_value == CUDA_SUCCESS && phGraph != nullptr) {
-      lupine_note_graph_owner_route(*phGraph, route);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUgraph *phGraph_null_check;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuStreamEndCapture) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_write(conn, &phGraph, sizeof(CUgraph *)) < 0 ||
-      (phGraph != nullptr && rpc_write(conn, phGraph, sizeof(CUgraph)) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &phGraph_null_check, sizeof(CUgraph *)) < 0 ||
-      (phGraph_null_check && rpc_read(conn, phGraph, sizeof(CUgraph)) < 0) ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && phGraph != nullptr) {
-    lupine_note_graph_owner_route(*phGraph, route);
-  }
   return return_value;
 }
 
@@ -7233,14 +7181,6 @@ extern "C" CUresult cuIpcOpenMemHandle(CUdeviceptr *pdptr,
   return cuIpcOpenMemHandle_v2(pdptr, handle, Flags);
 }
 
-#ifdef cuStreamBeginCapture
-#undef cuStreamBeginCapture
-#endif
-extern "C" CUresult cuStreamBeginCapture(CUstream hStream,
-                                         CUstreamCaptureMode mode) {
-  return cuStreamBeginCapture_v2(hStream, mode);
-}
-
 #if CUDA_VERSION >= 12000
 #ifdef cuGraphExecUpdate
 #undef cuGraphExecUpdate
@@ -7367,14 +7307,6 @@ extern "C" CUresult cuStreamGetFlags_ptsz(CUstream hStream,
 #endif
 extern "C" CUresult cuStreamGetCtx_ptsz(CUstream hStream, CUcontext *pctx) {
   return cuStreamGetCtx(hStream, pctx);
-}
-
-#ifdef cuStreamEndCapture_ptsz
-#undef cuStreamEndCapture_ptsz
-#endif
-extern "C" CUresult cuStreamEndCapture_ptsz(CUstream hStream,
-                                            CUgraph *phGraph) {
-  return cuStreamEndCapture(hStream, phGraph);
 }
 
 #ifdef cuStreamIsCapturing_ptsz
@@ -7907,7 +7839,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemsetD2D16", (void *)cuMemsetD2D16_v2},
     {"cuMemsetD2D32", (void *)cuMemsetD2D32_v2},
     {"cuIpcOpenMemHandle", (void *)cuIpcOpenMemHandle_v2},
-    {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
     {"cuMemcpy_ptds", (void *)cuMemcpy},
     {"cuMemcpyPeer_ptds", (void *)cuMemcpyPeer},
@@ -7922,7 +7853,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetId_ptsz", (void *)cuStreamGetId},
     {"cuStreamGetFlags_ptsz", (void *)cuStreamGetFlags},
     {"cuStreamGetCtx_ptsz", (void *)cuStreamGetCtx},
-    {"cuStreamEndCapture_ptsz", (void *)cuStreamEndCapture},
     {"cuStreamIsCapturing_ptsz", (void *)cuStreamIsCapturing},
     {"cuStreamAttachMemAsync_ptsz", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery_ptsz", (void *)cuStreamQuery},

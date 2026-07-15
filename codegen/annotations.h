@@ -3392,6 +3392,7 @@ CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
 CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
                              void *userData, unsigned int flags);
 /**
+ * @disabled client - manual client coordinates checkpoint capture admission
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param mode SEND_ONLY
@@ -3402,6 +3403,7 @@ CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**
+ * @disabled client - manual client coordinates checkpoint capture completion
  * @recordowner GRAPH phGraph
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY

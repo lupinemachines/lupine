@@ -57,6 +57,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
@@ -84,6 +85,7 @@ set(NVML_CLIENT_SOURCES
 
 set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
@@ -161,6 +163,14 @@ else()
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
     set_tests_properties(h2_test PROPERTIES TIMEOUT 30)
+
+    add_executable(checkpoint_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp
+    )
+    target_link_libraries(checkpoint_test PRIVATE pthread)
+    add_test(NAME checkpoint_test COMMAND checkpoint_test)
+    set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
     add_test(
         NAME nvml_ecc_exports
         COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"
