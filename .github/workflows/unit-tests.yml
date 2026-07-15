@@ -1,0 +1,40 @@
+name: C++ Unit Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: CMake _test targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build test environment
+        run: |
+          docker build \
+            -f Dockerfile \
+            --target builder \
+            --build-arg CUDA_VERSION="13.1.0" \
+            --build-arg UBUNTU_VERSION="24.04" \
+            -t lupine-unit-tests \
+            .
+
+      - name: Build and run CMake _test targets
+        run: |
+          docker run --rm --entrypoint bash lupine-unit-tests -lc '
+            set -euo pipefail
+            cmake --build /opt/lupine/build --parallel
+            ctest --test-dir /opt/lupine/build \
+              --output-on-failure -R "_test$"
+          '
