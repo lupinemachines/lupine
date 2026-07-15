@@ -16,6 +16,7 @@
 #include <unistd.h>
 #endif
 
+#include "checkpoint.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "copy_pipeline.h"
@@ -323,11 +324,18 @@ void client_handler(lupine_socket_t connfd) {
 
           conn.read_lane_id = lane->id;
           conn.read_op = op;
-          if (conn.read_id == -1 || op == LUPINE_RPC_TERMINATE_LANE ||
-              lupine_handle_rpc_request(&conn, op) < 0) {
+          if (conn.read_id == -1 || op == LUPINE_RPC_TERMINATE_LANE) {
             rpc_read_end(&conn);
             return;
           }
+          {
+            lupine_checkpoint::cuda_call_guard dispatch_guard;
+            if (lupine_handle_rpc_request(&conn, op) >= 0) {
+              continue;
+            }
+          }
+          rpc_read_end(&conn);
+          return;
         }
       });
       lanes.emplace(lane_id, lane);
