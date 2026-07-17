@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -176,6 +177,46 @@ struct lupine_captured_stdout {
 };
 
 static pthread_mutex_t lupine_stdout_capture_mutex = PTHREAD_MUTEX_INITIALIZER;
+static std::atomic<bool> lupine_stdout_capture_required{false};
+
+static bool lupine_image_contains(const unsigned char *image, size_t image_size,
+                                  const char *needle, size_t needle_size) {
+  return image != nullptr && needle != nullptr && needle_size != 0 &&
+         image_size >= needle_size &&
+         std::search(image, image + image_size, needle, needle + needle_size) !=
+             image + image_size;
+}
+
+static bool lupine_image_may_use_device_stdout(const unsigned char *image,
+                                               size_t image_size) {
+  static constexpr char vprintf_symbol[] = "vprintf";
+  if (lupine_image_contains(image, image_size, vprintf_symbol,
+                            sizeof(vprintf_symbol) - 1)) {
+    return true;
+  }
+
+  // PTX names vprintf directly and cubins retain it in their symbol data. A
+  // fatbin whose members are all compressed exposes neither representation,
+  // so keep capture enabled for that unknown case rather than dropping output.
+  uint32_t magic = 0;
+  if (image_size >= sizeof(magic)) {
+    memcpy(&magic, image, sizeof(magic));
+  }
+  static constexpr char elf_magic[] = "\177ELF";
+  static constexpr char ptx_version[] = ".version";
+  return magic == LUPINE_FATBIN_MAGIC &&
+         !lupine_image_contains(image, image_size, elf_magic,
+                                sizeof(elf_magic) - 1) &&
+         !lupine_image_contains(image, image_size, ptx_version,
+                                sizeof(ptx_version) - 1);
+}
+
+static void lupine_note_device_stdout_image(const unsigned char *image,
+                                            size_t image_size) {
+  if (lupine_image_may_use_device_stdout(image, image_size)) {
+    lupine_stdout_capture_required.store(true, std::memory_order_release);
+  }
+}
 
 // Device printf output is drained by the CUDA driver as a write to fd 1
 // (process stdout) during synchronization (see issue #294). We capture it by
@@ -215,6 +256,12 @@ static bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
   capture->saved_stdout = -1;
   capture->active = false;
   capture->output.clear();
+
+  // Redirecting fd 1 is process-global, so only pay the serialization and
+  // syscall cost after a loaded image has shown that device stdout may be used.
+  if (!lupine_stdout_capture_required.load(std::memory_order_acquire)) {
+    return false;
+  }
 
   FILE *capture_file = lupine_stdout_capture_file();
   if (capture_file == nullptr) {
@@ -834,6 +881,9 @@ int handle_manual_cuModuleLoad(conn_t *conn) {
   }
 
   result = cuModuleLoadData(&module, image.data());
+  if (result == CUDA_SUCCESS) {
+    lupine_note_device_stdout_image(image.data(), image_size);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
@@ -872,6 +922,9 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
     result = cuModuleLoadData(&module, image.data());
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_note_device_stdout_image(image.data(), image.size());
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -953,6 +1006,7 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }
   if (result == CUDA_SUCCESS) {
+    lupine_note_device_stdout_image(image.data(), image.size());
     lupine_preserved_library_images().store(library, std::move(image));
   }
 

@@ -105,6 +105,19 @@ LUPINE_TRACE=/tmp/lupine.trace ./your_cuda_program
 The same `LUPINE_TRACE` variable controls both client and server tracing;
 `LUPINE_SERVER_TRACE` is no longer used.
 
+## Device `printf` Forwarding
+
+LUPINE inspects uploaded PTX and cubin symbol data for `vprintf`, the CUDA device
+`printf` implementation. Until an image that may use device stdout is loaded,
+synchronization avoids stdout redirection and its process-global lock, allowing
+independent RPC lanes to synchronize concurrently. Fully opaque compressed
+fatbins are treated conservatively as potentially using device stdout.
+
+After a device-output-capable image is loaded, context, stream, and event
+synchronization captures server fd 1 and forwards the bounded CUDA `printf`
+buffer to the client's stdout. Capture remains process-global so output from
+concurrent synchronization lanes is not misattributed.
+
 ## Multi-GPU Across Multiple Servers
 
 The client accepts a comma-separated `LUPINE_SERVER` list. Devices are exposed as
