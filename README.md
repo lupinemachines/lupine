@@ -84,6 +84,26 @@ Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
 so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
 as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
 
+## Optional Pointer Translation Provider
+
+The client can translate device-pointer arguments without linking to a
+checkpoint or migration library. Set `LUPINE_POINTER_TRANSLATOR` to a shared
+object that exports `lupine_pointer_translation_provider_v1`. The provider
+returns a callback with this ABI:
+
+```c
+int translate(void *context, CUdeviceptr old_pointer,
+              CUdeviceptr *new_pointer);
+```
+
+Return a positive value when the pointer was translated, zero when it is not a
+pointer owned by the provider, and a negative value on error. Lupine loads the
+provider lazily on the client only; when the variable, library, or symbol is
+absent, serialization is unchanged. Typed by-value device-pointer arguments
+are translated immediately before a local CUDA call. Remote values are
+translated immediately before RPC serialization. Translated RPC values are
+copied into temporary storage so caller-owned memory is never modified.
+
 ## Trace Logging
 
 Set `LUPINE_TRACE` on the client, server, or both to enable trace logging.

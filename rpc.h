@@ -18,6 +18,7 @@ struct rpc_write_entry {
   // every block is stored raw (the source is already compressed, so the LZ4
   // attempt would only waste CPU; the wire format is unchanged).
   unsigned char framed;
+  void *owned_data;
 };
 
 struct rpc_http2_read_stats {

@@ -55,6 +55,7 @@ endif()
 set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pointer_translation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
@@ -115,6 +116,7 @@ if (NOT WIN32)
       target_link_libraries(${CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     endif()
     target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
+    target_link_libraries(${CLIENT_OUTPUT} PRIVATE ${CMAKE_DL_LIBS})
     target_link_options(${CLIENT_OUTPUT} PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/client.exports"
     )

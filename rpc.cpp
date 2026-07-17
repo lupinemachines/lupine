@@ -1,4 +1,5 @@
 #include "rpc.h"
+#include "pointer_translation.h"
 #include <algorithm>
 #include <climits>
 #include <cstdlib>
@@ -39,6 +40,10 @@ static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
 }
 
 static int rpc_write_queue_reset(conn_t *conn, int count) {
+  for (int i = 0; i < conn->write_queue_count; ++i) {
+    free(conn->write_queue[i].owned_data);
+    conn->write_queue[i].owned_data = nullptr;
+  }
   if (rpc_write_queue_reserve(conn, count) < 0) {
     return -1;
   }
@@ -62,6 +67,9 @@ static int rpc_write_queue_push(conn_t *conn, const void *data, size_t size,
 void rpc_write_queue_free(conn_t *conn) {
   if (conn == nullptr) {
     return;
+  }
+  for (int i = 0; i < conn->write_queue_count; ++i) {
+    free(conn->write_queue[i].owned_data);
   }
   free(conn->write_queue);
   conn->write_queue = nullptr;
@@ -352,6 +360,17 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
+#ifdef LUPINE_RPC_CLIENT
+  void *owned_copy = nullptr;
+  if (lupine_translate_rpc_pointer(data, size, &owned_copy)) {
+    if (rpc_write_queue_push(conn, owned_copy, size, 0) < 0) {
+      free(owned_copy);
+      return -1;
+    }
+    conn->write_queue[conn->write_queue_count - 1].owned_data = owned_copy;
+    return 0;
+  }
+#endif
   return rpc_write_queue_push(conn, data, size, 0);
 }
 

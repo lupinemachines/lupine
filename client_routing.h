@@ -7,6 +7,7 @@
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
 #include "rpc.h"
+#include "pointer_translation.h"
 
 struct lupine_kernel_param_layout;
 
@@ -138,6 +139,16 @@ template <typename Fn> static Fn lupine_real_cuda_fn(const char *name) {
   return reinterpret_cast<Fn>(lupine_real_cuda_symbol(name));
 }
 
+template <typename T> static T lupine_translate_local_call_arg(T value) {
+  return value;
+}
+
+static CUdeviceptr lupine_translate_local_call_arg(CUdeviceptr value) {
+  CUdeviceptr translated = value;
+  (void)lupine_translate_device_pointer(value, &translated);
+  return translated;
+}
+
 template <typename Fn, typename... Args>
 static bool lupine_call_local_cuda_if_routed(lupine_route route,
                                              const char *symbol,
@@ -147,6 +158,8 @@ static bool lupine_call_local_cuda_if_routed(lupine_route route,
     return false;
   }
   auto real = reinterpret_cast<Fn>(local_symbol);
-  *result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(args...);
+  *result = real == nullptr
+                ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                : real(lupine_translate_local_call_arg(args)...);
   return true;
 }
