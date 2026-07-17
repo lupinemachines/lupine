@@ -176,12 +176,12 @@ else()
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
 
-    add_library(fake_lupinecr_provider SHARED
-        ${CMAKE_CURRENT_SOURCE_DIR}/fake_checkpoint_provider.c
+    add_library(test_lupinecr_provider SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_checkpoint_provider.c
     )
-    set_target_properties(fake_lupinecr_provider PROPERTIES
+    set_target_properties(test_lupinecr_provider PROPERTIES
         PREFIX ""
-        OUTPUT_NAME "fake-lupinecr-provider"
+        OUTPUT_NAME "test-lupinecr-provider"
     )
 
     add_executable(server_checkpoint_test
@@ -192,7 +192,7 @@ else()
     target_link_libraries(server_checkpoint_test PRIVATE dl pthread)
     add_test(
         NAME server_checkpoint_test
-        COMMAND server_checkpoint_test $<TARGET_FILE:fake_lupinecr_provider> present
+        COMMAND server_checkpoint_test $<TARGET_FILE:test_lupinecr_provider> present
     )
     set_tests_properties(server_checkpoint_test PROPERTIES TIMEOUT 10)
     add_test(
@@ -219,7 +219,7 @@ else()
         NAME server_sigterm_provider_test
         COMMAND server_sigterm_test
                 $<TARGET_FILE:${SERVER_OUTPUT}>
-                $<TARGET_FILE:fake_lupinecr_provider>
+                $<TARGET_FILE:test_lupinecr_provider>
     )
     set_tests_properties(server_sigterm_provider_test PROPERTIES
         TIMEOUT 10

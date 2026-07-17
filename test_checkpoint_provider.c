@@ -21,21 +21,21 @@ static void append_event(const char *event, const char *directory,
   fclose(file);
 }
 
-static int fake_start(void) {
+static int test_start(void) {
   append_event("start", NULL, 0);
   return 0;
 }
 
-static int fake_checkpoint(const char *directory, uint64_t connection_id) {
+static int test_checkpoint(const char *directory, uint64_t connection_id) {
   append_event("checkpoint", directory, connection_id);
   return 0;
 }
 
-static void fake_stop(void) { append_event("stop", NULL, 0); }
+static void test_stop(void) { append_event("stop", NULL, 0); }
 
 static const lupine_checkpoint_provider_v1 provider = {
-    sizeof(provider), LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION, fake_start,
-    fake_checkpoint, fake_stop};
+    sizeof(provider), LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION, test_start,
+    test_checkpoint, test_stop};
 
 const lupine_checkpoint_provider_v1 *lupinecr_get_lupine_provider_v1(void) {
   return &provider;
