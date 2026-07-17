@@ -7119,7 +7119,11 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       int found = 0;
 
-      rpc_read(conn, &found, sizeof(int));
+      if (rpc_read(conn, &found, sizeof(int)) < 0) {
+        LUPINE_LOG_ERROR("Failed to read transfer count.");
+        rpc_close(conn);
+        return nullptr;
+      }
 
       for (int i = 0; i < found; ++i) {
         void *host_data = nullptr;
@@ -7129,13 +7133,15 @@ void *rpc_client_dispatch_thread(void *arg) {
         if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
             rpc_read(conn, &count, sizeof(size_t)) < 0) {
           LUPINE_LOG_ERROR("Failed to read transfer parameters.");
-          break;
+          rpc_close(conn);
+          return nullptr;
         }
 
         host_data = malloc(count);
         if (!host_data) {
           LUPINE_LOG_ERROR("Memory allocation failed.");
-          break;
+          rpc_close(conn);
+          return nullptr;
         }
 
         // Read the actual data from the server (sent from `src` in device
@@ -7143,7 +7149,8 @@ void *rpc_client_dispatch_thread(void *arg) {
         if (rpc_read_payload(conn, host_data, count) < 0) {
           LUPINE_LOG_ERROR("Failed to read device data from server.");
           free(host_data);
-          break;
+          rpc_close(conn);
+          return nullptr;
         }
 
         // Copy received data to the destination (dst) on the host
