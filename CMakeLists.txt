@@ -177,7 +177,7 @@ else()
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
 
     add_library(test_lupinecr_provider SHARED
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_checkpoint_provider.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_checkpoint_provider.c
     )
     set_target_properties(test_lupinecr_provider PROPERTIES
         PREFIX ""
@@ -187,7 +187,7 @@ else()
     add_executable(server_checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_checkpoint.cpp
     )
     target_link_libraries(server_checkpoint_test PRIVATE dl pthread)
     add_test(
@@ -204,7 +204,7 @@ else()
                          PROPERTIES TIMEOUT 10)
 
     add_executable(server_sigterm_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/server_sigterm_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_sigterm.cpp
     )
     target_link_libraries(server_sigterm_test PRIVATE pthread)
     add_test(
