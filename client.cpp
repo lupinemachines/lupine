@@ -7309,7 +7309,10 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       int found = 0;
 
-      rpc_read(conn, &found, sizeof(int));
+      if (rpc_read(conn, &found, sizeof(found)) < 0) {
+        LUPINE_LOG_ERROR("Failed to read transfer count.");
+        goto close_connection;
+      }
 
       for (int i = 0; i < found; ++i) {
         void *host_data = nullptr;
@@ -7319,13 +7322,13 @@ void *rpc_client_dispatch_thread(void *arg) {
         if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
             rpc_read(conn, &count, sizeof(size_t)) < 0) {
           LUPINE_LOG_ERROR("Failed to read transfer parameters.");
-          break;
+          goto close_connection;
         }
 
         host_data = malloc(count);
         if (!host_data) {
           LUPINE_LOG_ERROR("Memory allocation failed.");
-          break;
+          goto close_connection;
         }
 
         // Read the actual data from the server (sent from `src` in device
@@ -7333,7 +7336,7 @@ void *rpc_client_dispatch_thread(void *arg) {
         if (rpc_read_payload(conn, host_data, count) < 0) {
           LUPINE_LOG_ERROR("Failed to read device data from server.");
           free(host_data);
-          break;
+          goto close_connection;
         }
 
         // Copy received data to the destination (dst) on the host
@@ -7348,16 +7351,17 @@ void *rpc_client_dispatch_thread(void *arg) {
       if (rpc_read(conn, &callback, sizeof(callback)) < 0 ||
           rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
         LUPINE_LOG_ERROR("Failed to read host callback request.");
-        break;
+        goto close_connection;
       }
 
       int request_id = rpc_read_end(conn);
       if (request_id < 0) {
-        break;
+        LUPINE_LOG_ERROR("Failed to finish host callback request.");
+        goto close_connection;
       }
       if (callback == nullptr) {
         LUPINE_LOG_ERROR("Invalid function pointer!");
-        continue;
+        goto close_connection;
       }
 
       callback(user_data);
@@ -7367,7 +7371,7 @@ void *rpc_client_dispatch_thread(void *arg) {
           rpc_write(conn, &res, sizeof(void *)) < 0 ||
           rpc_write_end(conn) < 0) {
         LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
-        break;
+        goto close_connection;
       }
     } else if (op == 2) {
       CUstream stream = nullptr;
@@ -7407,6 +7411,8 @@ void *rpc_client_dispatch_thread(void *arg) {
   if (!conn->closed) {
     LUPINE_LOG_ERROR("Exiting dispatch thread due to an error.");
   }
+close_connection:
+  rpc_close(conn);
   return nullptr;
 }
 
