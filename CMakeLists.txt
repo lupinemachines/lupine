@@ -68,6 +68,7 @@ set(CLIENT_SOURCES
 set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
@@ -94,12 +95,14 @@ set(CLIENT_HEADERS
 )
 
 set(SERVER_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_provider.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/lupine_platform.h
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.h
 )
 
 set(CLIENT_OUTPUT lupine_driver)
@@ -172,6 +175,56 @@ else()
     target_link_libraries(checkpoint_test PRIVATE pthread)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
+
+    add_library(fake_lupinecr_provider SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/fake_checkpoint_provider.c
+    )
+    set_target_properties(fake_lupinecr_provider PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "fake-lupinecr-provider"
+    )
+
+    add_executable(server_checkpoint_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint_test.cpp
+    )
+    target_link_libraries(server_checkpoint_test PRIVATE dl pthread)
+    add_test(
+        NAME server_checkpoint_test
+        COMMAND server_checkpoint_test $<TARGET_FILE:fake_lupinecr_provider> present
+    )
+    set_tests_properties(server_checkpoint_test PROPERTIES TIMEOUT 10)
+    add_test(
+        NAME server_checkpoint_missing_provider_test
+        COMMAND server_checkpoint_test
+                ${CMAKE_CURRENT_BINARY_DIR}/missing-liblupinecr.so missing
+    )
+    set_tests_properties(server_checkpoint_missing_provider_test
+                         PROPERTIES TIMEOUT 10)
+
+    add_executable(server_sigterm_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/server_sigterm_test.cpp
+    )
+    target_link_libraries(server_sigterm_test PRIVATE pthread)
+    add_test(
+        NAME server_sigterm_test
+        COMMAND server_sigterm_test $<TARGET_FILE:${SERVER_OUTPUT}>
+    )
+    set_tests_properties(server_sigterm_test PROPERTIES
+        TIMEOUT 10
+        SKIP_RETURN_CODE 77
+    )
+    add_test(
+        NAME server_sigterm_provider_test
+        COMMAND server_sigterm_test
+                $<TARGET_FILE:${SERVER_OUTPUT}>
+                $<TARGET_FILE:fake_lupinecr_provider>
+    )
+    set_tests_properties(server_sigterm_provider_test PROPERTIES
+        TIMEOUT 10
+        SKIP_RETURN_CODE 77
+    )
     add_test(
         NAME nvml_ecc_exports
         COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter"

@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -7,12 +8,14 @@
 #include <stdio.h>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -23,10 +26,60 @@
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
+#include "server_checkpoint.h"
 
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
 #define MAX_LANES 256
+
+#ifndef _WIN32
+static volatile sig_atomic_t lupine_parent_termination_requested = 0;
+static volatile sig_atomic_t lupine_parent_child_exited = 0;
+
+static void lupine_parent_sigterm_handler(int) {
+  lupine_parent_termination_requested = 1;
+}
+
+static void lupine_parent_sigchld_handler(int) {
+  lupine_parent_child_exited = 1;
+}
+
+static bool lupine_install_parent_signal_handlers() {
+  struct sigaction term_action = {};
+  term_action.sa_handler = lupine_parent_sigterm_handler;
+  sigemptyset(&term_action.sa_mask);
+
+  struct sigaction child_action = {};
+  child_action.sa_handler = lupine_parent_sigchld_handler;
+  sigemptyset(&child_action.sa_mask);
+
+  return sigaction(SIGTERM, &term_action, nullptr) == 0 &&
+         sigaction(SIGCHLD, &child_action, nullptr) == 0;
+}
+
+static void
+lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
+  sigset_t child_mask;
+  sigset_t previous_mask;
+  sigemptyset(&child_mask);
+  sigaddset(&child_mask, SIGCHLD);
+  bool signal_blocked =
+      sigprocmask(SIG_BLOCK, &child_mask, &previous_mask) == 0;
+
+  for (;;) {
+    int status = 0;
+    pid_t child = waitpid(-1, &status, WNOHANG);
+    if (child <= 0) {
+      break;
+    }
+    children.erase(child);
+  }
+  lupine_parent_child_exited = 0;
+  if (signal_blocked) {
+    (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
+  }
+}
+#endif
 
 static void lupine_log_manual_handler_error(const char *name) {
   LUPINE_LOG_ERROR("Error handling manual " << name << " request.");
@@ -238,7 +291,7 @@ struct lupine_lane {
   std::thread worker;
 };
 
-void client_handler(lupine_socket_t connfd) {
+int client_handler(lupine_socket_t connfd) {
   conn_t conn = {};
   conn.connfd = connfd;
   conn.request_id = 1;
@@ -249,13 +302,13 @@ void client_handler(lupine_socket_t connfd) {
       pthread_cond_init(&conn.read_cond, NULL) < 0 ||
       rpc_http2_server_init(&conn) < 0) {
     LUPINE_LOG_ERROR("Error initializing mutex.");
-    return;
+    return lupine_server_checkpoint_child_finish();
   }
   if (!lupine_server_initialize_connection(&conn)) {
     LUPINE_LOG_ERROR("Error initializing per-connection staging state.");
     lupine_socket_close(connfd);
     rpc_conn_destroy(&conn);
-    return;
+    return lupine_server_checkpoint_child_finish();
   }
 
   LUPINE_LOG_DEBUG("Client connected.");
@@ -393,8 +446,13 @@ void client_handler(lupine_socket_t connfd) {
     pthread_join(conn.rpc_thread, nullptr);
     conn.rpc_thread = 0;
   }
+
+  // Preserve the connection's CUDA state through checkpointing. Cleanup can
+  // release CUDA-owned staging resources and must happen afterward.
+  int checkpoint_result = lupine_server_checkpoint_child_finish();
   lupine_server_cleanup_connection(&conn);
   rpc_conn_destroy(&conn);
+  return checkpoint_result;
 }
 
 int main() {
@@ -452,19 +510,49 @@ int main() {
   LUPINE_LOG_DEBUG("Server listening on port " << port << "...");
 
 #ifndef _WIN32
-  // reap exited connection processes automatically
-  signal(SIGCHLD, SIG_IGN);
+  if (!lupine_install_parent_signal_handlers()) {
+    LUPINE_LOG_ERROR("Failed to install server signal handlers.");
+    lupine_socket_close(sockfd);
+    exit(EXIT_FAILURE);
+  }
+  std::unordered_set<pid_t> connection_children;
 #endif
 
   // Server loop
   while (1) {
+#ifndef _WIN32
+    if (lupine_parent_child_exited != 0) {
+      lupine_reap_connection_children(connection_children);
+    }
+    if (lupine_parent_termination_requested != 0) {
+      break;
+    }
+#endif
     socklen_t len = sizeof(cli);
     lupine_socket_t connfd = accept(sockfd, (struct sockaddr *)&cli, &len);
 
     if (connfd == LUPINE_INVALID_SOCKET) {
+#ifndef _WIN32
+      if (lupine_parent_child_exited != 0) {
+        lupine_reap_connection_children(connection_children);
+      }
+      if (lupine_parent_termination_requested != 0) {
+        break;
+      }
+      if (errno == EINTR) {
+        continue;
+      }
+#endif
       LUPINE_LOG_ERROR("Server accept failed.");
       continue;
     }
+
+#ifndef _WIN32
+    if (lupine_parent_termination_requested != 0) {
+      lupine_socket_close(connfd);
+      break;
+    }
+#endif
 
 #ifndef _WIN32
     int flag = 1;
@@ -480,17 +568,42 @@ int main() {
     // parent's initialized driver.
     fflush(stdout);
     fflush(stderr);
+
+    sigset_t term_mask;
+    sigset_t previous_mask;
+    sigemptyset(&term_mask);
+    sigaddset(&term_mask, SIGTERM);
+    if (sigprocmask(SIG_BLOCK, &term_mask, &previous_mask) != 0) {
+      LUPINE_LOG_ERROR("Failed to block SIGTERM around server fork.");
+      lupine_socket_close(connfd);
+      continue;
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
+      (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
       LUPINE_LOG_ERROR("Server fork failed.");
       lupine_socket_close(connfd);
       continue;
     }
     if (pid == 0) {
+      struct sigaction child_action = {};
+      child_action.sa_handler = SIG_DFL;
+      sigemptyset(&child_action.sa_mask);
+      (void)sigaction(SIGCHLD, &child_action, nullptr);
+
       lupine_socket_close(sockfd);
-      client_handler(connfd);
-      exit(0);
+      if (!lupine_server_checkpoint_child_start(connfd)) {
+        LUPINE_LOG_ERROR("Failed to initialize graceful child shutdown.");
+        lupine_socket_close(connfd);
+        exit(EXIT_FAILURE);
+      }
+      (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
+      int checkpoint_result = client_handler(connfd);
+      exit(checkpoint_result == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
     }
+    connection_children.insert(pid);
+    (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
     lupine_socket_close(connfd);
 #else
     // Windows has no fork; connections share the server process.
@@ -502,5 +615,38 @@ int main() {
   }
 
   lupine_socket_close(sockfd);
+
+#ifndef _WIN32
+  // Every connection owns its CUDA state in a dedicated child, so each child
+  // must quiesce and optionally checkpoint itself.
+  lupine_reap_connection_children(connection_children);
+  for (pid_t child : connection_children) {
+    (void)kill(child, SIGTERM);
+  }
+
+  int shutdown_result = EXIT_SUCCESS;
+  while (!connection_children.empty()) {
+    int status = 0;
+    pid_t child = waitpid(-1, &status, 0);
+    if (child > 0) {
+      connection_children.erase(child);
+      if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
+        shutdown_result = EXIT_FAILURE;
+      }
+      continue;
+    }
+    if (child < 0 && errno == EINTR) {
+      continue;
+    }
+    if (child < 0 && errno == ECHILD) {
+      connection_children.clear();
+      break;
+    }
+    shutdown_result = EXIT_FAILURE;
+    break;
+  }
+  return shutdown_result;
+#else
   return 0;
+#endif
 }
