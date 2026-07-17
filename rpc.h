@@ -65,6 +65,7 @@ extern int rpc_read_start(conn_t *conn, int write_id);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
+extern void rpc_poison_connection(conn_t *conn);
 
 extern int rpc_wait_for_response(conn_t *conn);
 

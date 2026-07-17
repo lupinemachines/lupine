@@ -115,10 +115,21 @@ static void rpc_destroy_thread_lane(uint64_t lane_id) { (void)lane_id; }
 #endif
 
 static void rpc_mark_connection_closed(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
   conn->closed = 1;
 #ifdef LUPINE_RPC_CLIENT
   lupine_invalidate_current_context_cache();
 #endif
+}
+
+void rpc_poison_connection(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+  rpc_mark_connection_closed(conn);
+  pthread_cond_broadcast(&conn->read_cond);
 }
 
 namespace {

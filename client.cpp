@@ -48,6 +48,7 @@
 
 #include "cache.h"
 #include "checkpoint.h"
+#include "client_callback.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
@@ -5142,20 +5143,33 @@ cuGraphAddHostNode(CUgraphNode *phGraphNode, CUgraph hGraph,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  lupine_wire_callback wire;
+  if (conn == nullptr ||
+      !lupine_register_host_callback(conn, nodeParams->fn,
+                                     nodeParams->userData, true, &wire)) {
+    return conn == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  CUDA_HOST_NODE_PARAMS wire_params = *nodeParams;
+  wire_params.fn = reinterpret_cast<CUhostFn>(wire.function_token);
+  wire_params.userData = wire.user_data_token;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphAddHostNode) < 0 ||
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
-      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
+      rpc_write(conn, &wire_params, sizeof(wire_params)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
+    lupine_revoke_callback(conn, wire.function_token);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
     lupine_note_graph_node_owner_route(*phGraphNode, route);
+  } else {
+    lupine_revoke_callback(conn, wire.function_token);
   }
   return return_value;
 }
@@ -5606,6 +5620,14 @@ cuGraphHostNodeGetParams(CUgraphNode hNode, CUDA_HOST_NODE_PARAMS *nodeParams) {
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_wire_callback wire{reinterpret_cast<void *>(params.fn),
+                              params.userData};
+    if (!lupine_resolve_host_callback(conn, wire, false, &params.fn,
+                                      &params.userData)) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+  }
   *nodeParams = params;
   return return_value;
 }
@@ -5626,14 +5648,28 @@ cuGraphHostNodeSetParams(CUgraphNode hNode,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  lupine_wire_callback wire;
+  if (conn == nullptr ||
+      !lupine_register_host_callback(conn, nodeParams->fn,
+                                     nodeParams->userData, true, &wire)) {
+    return conn == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  CUDA_HOST_NODE_PARAMS wire_params = *nodeParams;
+  wire_params.fn = reinterpret_cast<CUhostFn>(wire.function_token);
+  wire_params.userData = wire.user_data_token;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphHostNodeSetParams) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
+      rpc_write(conn, &wire_params, sizeof(wire_params)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
+    lupine_revoke_callback(conn, wire.function_token);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value != CUDA_SUCCESS) {
+    lupine_revoke_callback(conn, wire.function_token);
   }
   return return_value;
 }
@@ -5655,15 +5691,29 @@ cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  lupine_wire_callback wire;
+  if (conn == nullptr ||
+      !lupine_register_host_callback(conn, nodeParams->fn,
+                                     nodeParams->userData, true, &wire)) {
+    return conn == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  CUDA_HOST_NODE_PARAMS wire_params = *nodeParams;
+  wire_params.fn = reinterpret_cast<CUhostFn>(wire.function_token);
+  wire_params.userData = wire.user_data_token;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphExecHostNodeSetParams) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
+      rpc_write(conn, &wire_params, sizeof(wire_params)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
+    lupine_revoke_callback(conn, wire.function_token);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value != CUDA_SUCCESS) {
+    lupine_revoke_callback(conn, wire.function_token);
   }
   return return_value;
 }
@@ -5691,15 +5741,26 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  lupine_wire_callback wire;
+  if (conn == nullptr ||
+      !lupine_register_host_callback(conn, fn, userData, false, &wire)) {
+    return conn == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  CUhostFn wire_fn = reinterpret_cast<CUhostFn>(wire.function_token);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchHostFunc) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &fn, sizeof(fn)) < 0 ||
-      rpc_write(conn, &userData, sizeof(userData)) < 0 ||
+      rpc_write(conn, &wire_fn, sizeof(wire_fn)) < 0 ||
+      rpc_write(conn, &wire.user_data_token, sizeof(wire.user_data_token)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
+    lupine_revoke_callback(conn, wire.function_token);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value != CUDA_SUCCESS) {
+    lupine_revoke_callback(conn, wire.function_token);
   }
   return return_value;
 }
@@ -5722,16 +5783,28 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  lupine_wire_callback wire;
+  if (conn == nullptr ||
+      !lupine_register_stream_callback(conn, callback, userData, &wire)) {
+    return conn == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  CUstreamCallback wire_callback =
+      reinterpret_cast<CUstreamCallback>(wire.function_token);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuStreamAddCallback) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &callback, sizeof(callback)) < 0 ||
-      rpc_write(conn, &userData, sizeof(userData)) < 0 ||
+      rpc_write(conn, &wire_callback, sizeof(wire_callback)) < 0 ||
+      rpc_write(conn, &wire.user_data_token, sizeof(wire.user_data_token)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
+    lupine_revoke_callback(conn, wire.function_token);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value != CUDA_SUCCESS) {
+    lupine_revoke_callback(conn, wire.function_token);
   }
   return return_value;
 }
@@ -7056,6 +7129,7 @@ void rpc_close(conn_t *conn) {
   // A reopened connection reuses the static conn_t slot but gets fresh server
   // lane threads with no CUDA context. Invalidate all per-lane context hints.
   lupine_invalidate_current_context_cache();
+  lupine_clear_callbacks(conn);
 
   if (!conn->closed) {
     conn->closed = 1;
@@ -7116,61 +7190,23 @@ void *rpc_client_dispatch_thread(void *arg) {
 
     if (op == 1) {
       std::cout << "Transferring memory..." << std::endl;
-
-      int found = 0;
-
-      rpc_read(conn, &found, sizeof(int));
-
-      for (int i = 0; i < found; ++i) {
-        void *host_data = nullptr;
-        void *dst = nullptr;
-        size_t count = 0;
-
-        if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
-            rpc_read(conn, &count, sizeof(size_t)) < 0) {
-          LUPINE_LOG_ERROR("Failed to read transfer parameters.");
-          break;
-        }
-
-        host_data = malloc(count);
-        if (!host_data) {
-          LUPINE_LOG_ERROR("Memory allocation failed.");
-          break;
-        }
-
-        // Read the actual data from the server (sent from `src` in device
-        // memory)
-        if (rpc_read_payload(conn, host_data, count) < 0) {
-          LUPINE_LOG_ERROR("Failed to read device data from server.");
-          free(host_data);
-          break;
-        }
-
-        // Copy received data to the destination (dst) on the host
+      lupine_host_callback_dispatch_options options;
+      options.commit_copy = [](void *dst, const void *src, size_t count) {
         lupine_prepare_host_range_write(dst, count);
-        memcpy(dst, host_data, count);
+        memcpy(dst, src, count);
         lupine_mark_host_range_clean(dst, count);
-        free(host_data);
-      }
-
-      CUhostFn callback = nullptr;
-      void *user_data = nullptr;
-      if (rpc_read(conn, &callback, sizeof(callback)) < 0 ||
-          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
-        LUPINE_LOG_ERROR("Failed to read host callback request.");
+      };
+      int request_id = -1;
+      int dispatch_result =
+          lupine_dispatch_host_callback(conn, &options, &request_id);
+      if (dispatch_result == LUPINE_CALLBACK_DISPATCH_FATAL) {
+        LUPINE_LOG_ERROR("Failed to decode host callback request; connection "
+                         "poisoned.");
         break;
       }
-
-      int request_id = rpc_read_end(conn);
-      if (request_id < 0) {
-        break;
+      if (dispatch_result == LUPINE_CALLBACK_DISPATCH_ABORTED) {
+        LUPINE_LOG_ERROR("Host callback request aborted without execution.");
       }
-      if (callback == nullptr) {
-        LUPINE_LOG_ERROR("Invalid function pointer!");
-        continue;
-      }
-
-      callback(user_data);
 
       void *res = nullptr;
       if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -7182,13 +7218,12 @@ void *rpc_client_dispatch_thread(void *arg) {
     } else if (op == 2) {
       CUstream stream = nullptr;
       CUresult status = CUDA_ERROR_UNKNOWN;
-      CUstreamCallback callback = nullptr;
-      void *user_data = nullptr;
+      lupine_wire_callback wire;
       if (lupine_read_deferred_dtoh_copies(conn) < 0 ||
           rpc_read(conn, &stream, sizeof(stream)) < 0 ||
           rpc_read(conn, &status, sizeof(status)) < 0 ||
-          rpc_read(conn, &callback, sizeof(callback)) < 0 ||
-          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
+          rpc_read(conn, &wire.function_token, sizeof(wire.function_token)) < 0 ||
+          rpc_read(conn, &wire.user_data_token, sizeof(wire.user_data_token)) < 0) {
         LUPINE_LOG_ERROR("Failed to read stream callback request.");
         break;
       }
@@ -7198,8 +7233,13 @@ void *rpc_client_dispatch_thread(void *arg) {
         break;
       }
 
-      if (callback != nullptr) {
+      CUstreamCallback callback = nullptr;
+      void *user_data = nullptr;
+      if (lupine_resolve_stream_callback(conn, wire, &callback, &user_data) &&
+          callback != nullptr) {
         callback(stream, status, user_data);
+      } else {
+        LUPINE_LOG_ERROR("Rejected unregistered stream callback token.");
       }
 
       void *res = nullptr;

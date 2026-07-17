@@ -1,4 +1,5 @@
 #include "lupine_log.h"
+#include "client_callback.h"
 #include "rpc.h"
 
 #include <algorithm>
@@ -119,6 +120,19 @@ rpc_http2_read_stats read_stats(conn_t *conn) {
   rpc_http2_read_stats stats = {};
   require(rpc_http2_get_read_stats(conn, &stats) == 0, "read stats failed");
   return stats;
+}
+
+void stop_rpc_threads(h2_pair *pair) {
+  shutdown(pair->client.connfd, SHUT_RDWR);
+  shutdown(pair->server.connfd, SHUT_RDWR);
+  if (pair->client.rpc_thread != 0) {
+    pthread_join(pair->client.rpc_thread, nullptr);
+    pair->client.rpc_thread = 0;
+  }
+  if (pair->server.rpc_thread != 0) {
+    pthread_join(pair->server.rpc_thread, nullptr);
+    pair->server.rpc_thread = 0;
+  }
 }
 
 bool raw_write_all(lupine_socket_t socket, const unsigned char *data,
@@ -661,11 +675,168 @@ void test_rpc_lz4_payload_round_trip() {
           "lz4 payload did not use direct receive");
 }
 
+std::atomic<int> host_callback_count{0};
+
+void CUDA_CB test_registered_host_callback(void *user_data) {
+  auto *count = static_cast<std::atomic<int> *>(user_data);
+  count->fetch_add(1, std::memory_order_relaxed);
+}
+
+void *fail_allocation(size_t) { return nullptr; }
+
+void send_host_callback_request(conn_t *server, const void *dst,
+                                const std::vector<char> *payload,
+                                const lupine_wire_callback &wire) {
+  int transfer_count = payload == nullptr ? 0 : 1;
+  require(rpc_write_start_request(server, 1) == 0,
+          "callback request start failed");
+  require(rpc_write(server, &transfer_count, sizeof(transfer_count)) == 0,
+          "callback transfer count write failed");
+  if (payload != nullptr) {
+    size_t count = payload->size();
+    require(rpc_write(server, &dst, sizeof(dst)) == 0,
+            "callback destination write failed");
+    require(rpc_write(server, &count, sizeof(count)) == 0,
+            "callback transfer size write failed");
+    require(rpc_write_payload(server, payload->data(), payload->size()) == 0,
+            "callback payload write failed");
+  }
+  require(rpc_write(server, &wire.function_token,
+                    sizeof(wire.function_token)) == 0,
+          "callback token write failed");
+  require(rpc_write(server, &wire.user_data_token,
+                    sizeof(wire.user_data_token)) == 0,
+          "callback user token write failed");
+  require(rpc_write_end(server) > 0, "callback request end failed");
+}
+
+void test_host_callback_allocation_failure_drains_message() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+  pair.server.request_id = 1; // Server-initiated requests use odd IDs >= 3.
+
+  host_callback_count = 0;
+  lupine_wire_callback failed_wire;
+  lupine_wire_callback valid_wire;
+  require(lupine_register_host_callback(
+              &pair.client, test_registered_host_callback,
+              &host_callback_count, false, &failed_wire),
+          "failed callback registration failed");
+  require(lupine_register_host_callback(
+              &pair.client, test_registered_host_callback,
+              &host_callback_count, false, &valid_wire),
+          "valid callback registration failed");
+
+  std::array<int, 3> results = {-2, -2, -2};
+  std::thread dispatcher([&] {
+    lupine_host_callback_dispatch_options options;
+    options.allocate = fail_allocation;
+    for (size_t i = 0; i < results.size(); ++i) {
+      require(rpc_dispatch(&pair.client, 1) == 1,
+              "callback dispatch prefix failed");
+      int request_id = -1;
+      results[i] =
+          lupine_dispatch_host_callback(&pair.client, &options, &request_id);
+      require(results[i] != LUPINE_CALLBACK_DISPATCH_FATAL,
+              "recoverable callback request poisoned connection");
+      void *response = nullptr;
+      require(rpc_write_start_response(&pair.client, request_id) == 0,
+              "callback response start failed");
+      require(rpc_write(&pair.client, &response, sizeof(response)) == 0,
+              "callback response write failed");
+      require(rpc_write_end(&pair.client) == request_id,
+              "callback response end failed");
+    }
+  });
+
+  std::vector<char> payload(128 * 1024, 'x');
+  std::vector<char> dst(payload.size());
+  send_host_callback_request(&pair.server, dst.data(), &payload, failed_wire);
+
+  lupine_wire_callback forged_wire{
+      reinterpret_cast<void *>(static_cast<uintptr_t>(0x12345678)),
+      reinterpret_cast<void *>(static_cast<uintptr_t>(0x12345678))};
+  send_host_callback_request(&pair.server, nullptr, nullptr, forged_wire);
+
+  send_host_callback_request(&pair.server, nullptr, nullptr, valid_wire);
+  dispatcher.join();
+
+  require(results[0] == LUPINE_CALLBACK_DISPATCH_ABORTED,
+          "allocation failure did not abort callback");
+  require(results[1] == LUPINE_CALLBACK_DISPATCH_ABORTED,
+          "forged callback token was accepted");
+  require(results[2] == LUPINE_CALLBACK_DISPATCH_COMPLETE,
+          "next valid callback did not execute");
+  require(host_callback_count.load(std::memory_order_relaxed) == 1,
+          "next-message callback behavior was not preserved");
+  require(!pair.client.closed,
+          "bounded allocation failure unexpectedly closed connection");
+  stop_rpc_threads(&pair);
+  lupine_clear_callbacks(&pair.client);
+}
+
+void test_host_callback_malformed_frame_poisons_connection() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+  pair.server.request_id = 1;
+
+  host_callback_count = 0;
+  lupine_wire_callback wire;
+  require(lupine_register_host_callback(
+              &pair.client, test_registered_host_callback,
+              &host_callback_count, false, &wire),
+          "malformed-frame callback registration failed");
+
+  int dispatch_result = LUPINE_CALLBACK_DISPATCH_COMPLETE;
+  std::thread dispatcher([&] {
+    require(rpc_dispatch(&pair.client, 1) == 1,
+            "malformed callback dispatch prefix failed");
+    int request_id = -1;
+    dispatch_result =
+        lupine_dispatch_host_callback(&pair.client, nullptr, &request_id);
+  });
+
+  int transfer_count = 1;
+  void *dst = nullptr;
+  size_t count = 128 * 1024;
+  uint32_t invalid_token = UINT32_MAX;
+  require(rpc_write_start_request(&pair.server, 1) == 0,
+          "malformed callback request start failed");
+  require(rpc_write(&pair.server, &transfer_count, sizeof(transfer_count)) == 0,
+          "malformed callback transfer count failed");
+  require(rpc_write(&pair.server, &dst, sizeof(dst)) == 0,
+          "malformed callback destination failed");
+  require(rpc_write(&pair.server, &count, sizeof(count)) == 0,
+          "malformed callback size failed");
+  require(rpc_write(&pair.server, &invalid_token, sizeof(invalid_token)) == 0,
+          "malformed compression token failed");
+  require(rpc_write(&pair.server, &wire.function_token,
+                    sizeof(wire.function_token)) == 0,
+          "malformed callback token failed");
+  require(rpc_write(&pair.server, &wire.user_data_token,
+                    sizeof(wire.user_data_token)) == 0,
+          "malformed callback user token failed");
+  require(rpc_write_end(&pair.server) > 0,
+          "malformed callback request end failed");
+  dispatcher.join();
+
+  require(dispatch_result == LUPINE_CALLBACK_DISPATCH_FATAL,
+          "malformed frame did not fail dispatch");
+  require(pair.client.closed,
+          "malformed frame did not poison the connection");
+  require(host_callback_count.load(std::memory_order_relaxed) == 0,
+          "callback executed after malformed frame");
+  stop_rpc_threads(&pair);
+  lupine_clear_callbacks(&pair.client);
+}
+
 } // namespace
 
 int main() {
   test_rpc_write_queue_grows();
   test_rpc_lz4_payload_round_trip();
+  test_host_callback_allocation_failure_drains_message();
+  test_host_callback_malformed_frame_poisons_connection();
   test_client_to_server();
   test_server_to_client_after_request_headers();
   test_fragmented_iovec();
