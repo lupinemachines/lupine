@@ -31,5 +31,6 @@ extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 
 CUresult lupine_sync_mapped_host_to_device_for_launch(
-    unsigned char *packed, const size_t *offsets, const size_t *sizes,
-    uint32_t count, bool *used_managed_mapping = nullptr);
+    void *const *kernel_params, const size_t *sizes, uint32_t count,
+    CUdeviceptr *translated_params, void **rpc_params,
+    bool *used_managed_mapping = nullptr);

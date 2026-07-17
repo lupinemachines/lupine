@@ -97,10 +97,6 @@ MANUAL_REMAPPINGS = [
 ]
 
 KERNEL_PARAM_LAYOUT_INVALIDATORS = {
-    "cuCtxDestroy_v2",
-    "cuCtxDetach",
-    "cuDevicePrimaryCtxRelease_v2",
-    "cuDevicePrimaryCtxReset_v2",
     "cuLibraryUnload",
     "cuModuleUnload",
 }
@@ -184,7 +180,6 @@ NVML_MANUAL_SERVER_FUNCTIONS = {
 }
 
 PRIVATE_RPC_FUNCTIONS = [
-    "cuFuncGetParamLayout",
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
     "cuGraphConditionalHandleCreate",
@@ -825,11 +820,11 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
     }:
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
     if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_kernel_param_layout_cache();\n")
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_function_caches();\n")
     if function.name.format() == "cuModuleGetFunction":
-        f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) lupine_record_module_function(*hfunc, hmod, name, route);\n")
+        f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) return_value = lupine_record_module_function(*hfunc, hmod, name, route);\n")
     if function.name.format() == "cuLibraryGetKernel":
-        f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) lupine_record_library_kernel(*pKernel, library, name, route);\n")
+        f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) return_value = lupine_record_library_kernel(*pKernel, library, name, route);\n")
 
 
 def error_const(return_type: str) -> str:
@@ -1256,8 +1251,8 @@ def main():
             'extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);\n\n'
             'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
-            'extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
-            'extern "C" void lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
+            'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
+            'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
             'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
@@ -1273,13 +1268,15 @@ def main():
             'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
-            'extern "C" void lupine_invalidate_kernel_param_layout_cache();\n'
+            'extern "C" void lupine_invalidate_function_caches();\n'
             'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
             'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
             'extern "C" void lupine_note_primary_context_flags(CUdevice dev, unsigned int flags);\n'
             'extern "C" void lupine_invalidate_primary_context_state(CUdevice dev);\n'
             'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
+            'extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
+            'extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
             'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
@@ -1321,6 +1318,8 @@ def main():
                 "cuCtxGetCurrent": "lupine_cuCtxGetCurrent_virtual(pctx)",
                 "cuCtxGetDevice": "lupine_cuCtxGetDevice_cached(device)",
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
+                "cuKernelGetParamInfo": "lupine_cuKernelGetParamInfo_cached(kernel, paramIndex, paramOffset, paramSize)",
+                "cuFuncGetParamInfo": "lupine_cuFuncGetParamInfo_cached(func, paramIndex, paramOffset, paramSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
             }

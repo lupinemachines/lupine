@@ -16,11 +16,12 @@
 #include <unistd.h>
 #endif
 
+#include "checkpoint.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
+#include "copy_pipeline.h"
 #include "lupine_log.h"
 #include "manual_server.h"
-#include "copy_pipeline.h"
 #include "rpc.h"
 
 #define DEFAULT_PORT 14833
@@ -96,8 +97,6 @@ lupine_manual_handlers() {
       {RPC_cuLibraryUnload, {handle_manual_cuLibraryUnload, "cuLibraryUnload"}},
       {RPC_cuModuleGetGlobal_v2,
        {handle_manual_cuModuleGetGlobal_v2, "cuModuleGetGlobal_v2"}},
-      {LUPINE_RPC_cuFuncGetParamLayout,
-       {handle_manual_cuFuncGetParamLayout, "cuFuncGetParamLayout"}},
       {RPC_cuOccupancyMaxPotentialBlockSize,
        {[](conn_t *conn) {
           return handle_manual_cuOccupancyMaxPotentialBlockSize(conn, false);
@@ -109,6 +108,8 @@ lupine_manual_handlers() {
         },
         "cuOccupancyMaxPotentialBlockSizeWithFlags"}},
       {RPC_cuLaunchKernel, {handle_manual_cuLaunchKernel, "cuLaunchKernel"}},
+      {RPC_cuLaunchKernelEx,
+       {handle_manual_cuLaunchKernelEx, "cuLaunchKernelEx"}},
       {RPC_cuLaunchCooperativeKernel,
        {handle_manual_cuLaunchCooperativeKernel, "cuLaunchCooperativeKernel"}},
       {RPC_cuGraphAddKernelNode_v2,
@@ -323,11 +324,18 @@ void client_handler(lupine_socket_t connfd) {
 
           conn.read_lane_id = lane->id;
           conn.read_op = op;
-          if (conn.read_id == -1 || op == LUPINE_RPC_TERMINATE_LANE ||
-              lupine_handle_rpc_request(&conn, op) < 0) {
+          if (conn.read_id == -1 || op == LUPINE_RPC_TERMINATE_LANE) {
             rpc_read_end(&conn);
             return;
           }
+          {
+            lupine_checkpoint::cuda_call_guard dispatch_guard;
+            if (lupine_handle_rpc_request(&conn, op) >= 0) {
+              continue;
+            }
+          }
+          rpc_read_end(&conn);
+          return;
         }
       });
       lanes.emplace(lane_id, lane);

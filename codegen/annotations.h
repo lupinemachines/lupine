@@ -2466,6 +2466,24 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
  */
 CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
 /**
+ * @routingkey FUNCTION kernel
+ * @param kernel SEND_ONLY
+ * @param paramIndex SEND_ONLY
+ * @param paramOffset RECV_ONLY
+ * @param paramSize RECV_ONLY
+ */
+CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
+                              size_t *paramOffset, size_t *paramSize);
+/**
+ * @routingkey FUNCTION func
+ * @param func SEND_ONLY
+ * @param paramIndex SEND_ONLY
+ * @param paramOffset RECV_ONLY
+ * @param paramSize RECV_ONLY
+ */
+CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
+                            size_t *paramOffset, size_t *paramSize);
+/**
  * @routingkey LIBRARY library
  * @param dptr RECV_ONLY
  * @param bytes RECV_ONLY
@@ -3374,6 +3392,7 @@ CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
 CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
                              void *userData, unsigned int flags);
 /**
+ * @disabled client - manual client coordinates checkpoint capture admission
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param mode SEND_ONLY
@@ -3384,6 +3403,7 @@ CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**
+ * @disabled client - manual client coordinates checkpoint capture completion
  * @recordowner GRAPH phGraph
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY

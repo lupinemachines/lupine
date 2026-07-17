@@ -1,6 +1,7 @@
 #ifndef RPC_H
 #define RPC_H
 
+#include "cache.h"
 #include "cuda_compat.h"
 #include "lupine_platform.h"
 #include <stdint.h>
@@ -86,6 +87,14 @@ extern int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
                                         const size_t *sizes,
                                         size_t payload_size, void *storage,
                                         size_t storage_size, void **values);
+extern int
+rpc_write_kernel_param_layout(conn_t *conn,
+                              const lupine_kernel_param_layout *layout);
+extern int rpc_read_kernel_param_layout(conn_t *conn,
+                                        lupine_kernel_param_layout *layout);
+extern int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config);
+extern int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
+                                  std::vector<CUlaunchAttribute> *attributes);
 struct rpc_jit_output_binding {
   CUjit_option option;
   void *dst;

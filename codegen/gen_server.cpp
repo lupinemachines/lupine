@@ -1664,6 +1664,35 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuKernelGetParamInfo(conn_t *conn) {
+  CUkernel kernel;
+  size_t paramIndex;
+  size_t paramOffset;
+  size_t paramSize;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 ||
+      rpc_read(conn, &paramIndex, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuKernelGetParamInfo(kernel, paramIndex, &paramOffset, &paramSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &paramOffset, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &paramSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_cuMemGetInfo_v2(conn_t *conn) {
   size_t free;
   size_t total;
@@ -4695,6 +4724,35 @@ int handle_cuFuncGetModule(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuFuncGetParamInfo(conn_t *conn) {
+  CUfunction func;
+  size_t paramIndex;
+  size_t paramOffset;
+  size_t paramSize;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &func, sizeof(CUfunction)) < 0 ||
+      rpc_read(conn, &paramIndex, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuFuncGetParamInfo(func, paramIndex, &paramOffset, &paramSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &paramOffset, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &paramSize, sizeof(size_t)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -8424,6 +8482,7 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuKernelGetAttribute, handle_cuKernelGetAttribute},
     {RPC_cuKernelSetAttribute, handle_cuKernelSetAttribute},
     {RPC_cuKernelSetCacheConfig, handle_cuKernelSetCacheConfig},
+    {RPC_cuKernelGetParamInfo, handle_cuKernelGetParamInfo},
     {RPC_cuMemGetInfo_v2, handle_cuMemGetInfo_v2},
     {RPC_cuMemAlloc_v2, handle_cuMemAlloc_v2},
     {RPC_cuMemAllocPitch_v2, handle_cuMemAllocPitch_v2},
@@ -8543,6 +8602,7 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuFuncSetAttribute, handle_cuFuncSetAttribute},
     {RPC_cuFuncSetCacheConfig, handle_cuFuncSetCacheConfig},
     {RPC_cuFuncGetModule, handle_cuFuncGetModule},
+    {RPC_cuFuncGetParamInfo, handle_cuFuncGetParamInfo},
     {RPC_cuLaunchCooperativeKernel, handle_cuLaunchCooperativeKernel},
     {RPC_cuLaunchCooperativeKernelMultiDevice,
      handle_cuLaunchCooperativeKernelMultiDevice},

@@ -24,8 +24,8 @@ int lupine_route_identity(lupine_route route);
 lupine_route lupine_route_from_identity(int route_id);
 int lupine_known_deviceptr_route_id(CUdeviceptr ptr);
 lupine_route lupine_route_from_known_kernel_deviceptr_args(
-    const unsigned char *packed, size_t packed_size,
-    const lupine_kernel_param_layout &layout, lupine_route fallback);
+    void *const *kernel_params, const lupine_kernel_param_layout &layout,
+    lupine_route fallback);
 conn_t *lupine_thread_conn_by_index(unsigned int index);
 CUresult lupine_virtual_device_count(int *count);
 CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);

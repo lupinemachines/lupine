@@ -74,6 +74,7 @@
 #define RPC_cuKernelGetAttribute 1724498758
 #define RPC_cuKernelSetAttribute 1775703493
 #define RPC_cuKernelSetCacheConfig 1572033421
+#define RPC_cuKernelGetParamInfo 89830551
 #define RPC_cuMemGetInfo_v2 969693882
 #define RPC_cuMemAlloc_v2 892243478
 #define RPC_cuMemAllocPitch_v2 1753237206
@@ -206,6 +207,7 @@
 #define RPC_cuFuncSetAttribute 1296138514
 #define RPC_cuFuncSetCacheConfig 1688761246
 #define RPC_cuFuncGetModule 1933245726
+#define RPC_cuFuncGetParamInfo 567025728
 #define RPC_cuLaunchKernel 732897317
 #define RPC_cuLaunchKernelEx 1100221233
 #define RPC_cuLaunchCooperativeKernel 1003615807
@@ -443,7 +445,6 @@
 #define RPC_nvmlDeviceGetNvLinkRemoteDeviceType 65527014
 #define RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2 1998574024
 
-#define LUPINE_RPC_cuFuncGetParamLayout 1426662851
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphAddNode_v2 1958016248
 #define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620
