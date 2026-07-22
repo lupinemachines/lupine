@@ -38,11 +38,11 @@ static int test_checkpoint(const char *connection_id) {
 
 static void test_stop(void) { append_event("stop", NULL); }
 
-static const lupine_checkpoint_provider_v2 provider = {
+static const lupine_checkpoint_provider_v1 provider = {
     sizeof(provider), LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION,
     test_start,       test_restore,
     test_checkpoint,  test_stop};
 
-const lupine_checkpoint_provider_v2 *lupinecr_get_lupine_provider_v2(void) {
+const lupine_checkpoint_provider_v1 *lupinecr_get_lupine_provider_v1(void) {
   return &provider;
 }

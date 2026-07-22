@@ -24,7 +24,7 @@ namespace {
 
 struct optional_checkpoint_provider {
   void *library = nullptr;
-  const lupine_checkpoint_provider_v2 *api = nullptr;
+  const lupine_checkpoint_provider_v1 *api = nullptr;
   bool started = false;
 };
 
@@ -96,14 +96,14 @@ optional_checkpoint_provider load_provider() {
     return provider;
   }
 
-  auto get_provider = reinterpret_cast<lupine_checkpoint_provider_get_v2_fn>(
+  auto get_provider = reinterpret_cast<lupine_checkpoint_provider_get_v1_fn>(
       dlsym(provider.library, LUPINE_CHECKPOINT_PROVIDER_SYMBOL));
   if (get_provider != nullptr) {
     provider.api = get_provider();
   }
   constexpr size_t required_size =
-      offsetof(lupine_checkpoint_provider_v2, stop) +
-      sizeof(lupine_checkpoint_provider_v2::stop);
+      offsetof(lupine_checkpoint_provider_v1, stop) +
+      sizeof(lupine_checkpoint_provider_v1::stop);
   if (provider.api == nullptr || provider.api->struct_size < required_size ||
       provider.api->abi_version != LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION ||
       provider.api->start == nullptr || provider.api->restore == nullptr ||

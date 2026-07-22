@@ -7,10 +7,10 @@
 extern "C" {
 #endif
 
-#define LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION 2u
-#define LUPINE_CHECKPOINT_PROVIDER_SYMBOL "lupinecr_get_lupine_provider_v2"
+#define LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION 1u
+#define LUPINE_CHECKPOINT_PROVIDER_SYMBOL "lupinecr_get_lupine_provider_v1"
 
-typedef struct lupine_checkpoint_provider_v2 {
+typedef struct lupine_checkpoint_provider_v1 {
   size_t struct_size;
   uint32_t abi_version;
 
@@ -30,10 +30,10 @@ typedef struct lupine_checkpoint_provider_v2 {
 
   // Stops observation and releases provider-owned process state.
   void (*stop)(void);
-} lupine_checkpoint_provider_v2;
+} lupine_checkpoint_provider_v1;
 
-typedef const lupine_checkpoint_provider_v2 *(
-    *lupine_checkpoint_provider_get_v2_fn)(void);
+typedef const lupine_checkpoint_provider_v1 *(
+    *lupine_checkpoint_provider_get_v1_fn)(void);
 
 #ifdef __cplusplus
 }
