@@ -164,6 +164,29 @@ void test_client_to_server() {
   require(received == message, "client-to-server payload mismatch");
 }
 
+void test_server_receives_session_id() {
+  const char *original = getenv("LUPINE_SESSION");
+  bool had_original = original != nullptr;
+  std::string saved = original == nullptr ? "" : original;
+  setenv("LUPINE_SESSION", "lease-123", 1);
+
+  {
+    h2_pair pair = make_pair();
+    write_all(&pair.client, {"x"});
+    require(read_string(&pair.server, 1) == "x",
+            "server did not receive session test payload");
+    const char *session_id = rpc_http2_session_id(&pair.server);
+    require(session_id != nullptr && std::string(session_id) == "lease-123",
+            "server did not retain x-lupine-session");
+  }
+
+  if (had_original) {
+    setenv("LUPINE_SESSION", saved.c_str(), 1);
+  } else {
+    unsetenv("LUPINE_SESSION");
+  }
+}
+
 void test_server_to_client_after_request_headers() {
   h2_pair pair = make_pair();
   std::string request = "request";
@@ -667,6 +690,7 @@ int main() {
   test_rpc_write_queue_grows();
   test_rpc_lz4_payload_round_trip();
   test_client_to_server();
+  test_server_receives_session_id();
   test_server_to_client_after_request_headers();
   test_fragmented_iovec();
   test_fragmented_frames_direct();

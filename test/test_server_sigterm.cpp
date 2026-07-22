@@ -60,15 +60,15 @@ int main(int argc, char **argv) {
   }
 
   char directory_template[] = "/tmp/lupine-server-sigterm-test.XXXXXX";
-  char *checkpoint_directory = nullptr;
-  std::string checkpoint_log;
+  char *provider_log_directory = nullptr;
+  std::string provider_log;
   if (argc == 3) {
-    checkpoint_directory = mkdtemp(directory_template);
-    if (checkpoint_directory == nullptr) {
+    provider_log_directory = mkdtemp(directory_template);
+    if (provider_log_directory == nullptr) {
       std::cerr << "FAIL: could not create checkpoint test directory\n";
       return 1;
     }
-    checkpoint_log = std::string(checkpoint_directory) + "/provider.log";
+    provider_log = std::string(provider_log_directory) + "/provider.log";
   }
 
   int port = reserve_port();
@@ -85,12 +85,12 @@ int main(int argc, char **argv) {
     (void)setpgid(0, 0);
     std::string port_text = std::to_string(port);
     setenv("LUPINE_PORT", port_text.c_str(), 1);
-    if (checkpoint_directory != nullptr) {
-      setenv("LUPINE_CHECKPOINT_DIR", checkpoint_directory, 1);
+    if (provider_log_directory != nullptr) {
       setenv("LUPINE_CHECKPOINT_LIBRARY", argv[2], 1);
-      setenv("LUPINE_CHECKPOINT_TEST_LOG", checkpoint_log.c_str(), 1);
+      setenv("LUPINE_CHECKPOINT_TEST_LOG", provider_log.c_str(), 1);
     } else {
-      unsetenv("LUPINE_CHECKPOINT_DIR");
+      unsetenv("LUPINE_CHECKPOINT_LIBRARY");
+      unsetenv("LUPINE_CHECKPOINT_TEST_LOG");
     }
     execl(argv[1], argv[1], static_cast<char *>(nullptr));
     _exit(127);
@@ -145,16 +145,11 @@ int main(int argc, char **argv) {
     if (result == server) {
       close(connection);
       if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-        if (checkpoint_directory != nullptr) {
-          std::ifstream log(checkpoint_log);
+        if (provider_log_directory != nullptr) {
+          std::ifstream log(provider_log);
           std::stringstream contents;
           contents << log.rdbuf();
-          std::string lifecycle = contents.str();
-          std::string checkpoint_prefix =
-              "start\ncheckpoint " + std::string(checkpoint_directory) + " ";
-          if (lifecycle.rfind(checkpoint_prefix, 0) != 0 ||
-              lifecycle.size() < checkpoint_prefix.size() + 7 ||
-              lifecycle.substr(lifecycle.size() - 6) != "\nstop\n") {
+          if (contents.str() != "start\ncheckpoint <unnamed>\nstop\n") {
             std::cerr << "FAIL: provider lifecycle was not completed\n";
             return 1;
           }
