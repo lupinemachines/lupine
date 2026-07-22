@@ -84,6 +84,25 @@ Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
 so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
 as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
 
+## Graceful Server Checkpoints
+
+On Linux, `SIGTERM` stops the server from accepting connections, asks every
+connection child to finish its in-flight CUDA calls, and waits for those
+children to exit. This graceful drain happens in the open-source server with
+no extra runtime dependency.
+
+Set `LUPINE_CHECKPOINT_DIR` to additionally checkpoint each active connection
+before its CUDA state is released. The connection child looks for
+`liblupinecr.so.0`, then `liblupinecr.so`, and uses the versioned provider ABI
+in [`checkpoint_provider.h`](checkpoint_provider.h). A missing or incompatible
+provider is a no-op; the server still drains and exits normally. The provider
+is loaded before the child's first CUDA call so it can observe RM/UVM activity
+needed to discover allocations.
+
+`LUPINE_CHECKPOINT_LIBRARY` can override the library path for a private
+deployment. The provider owns the checkpoint file layout beneath
+`LUPINE_CHECKPOINT_DIR`.
+
 ## Trace Logging
 
 Set `LUPINE_TRACE` on the client, server, or both to enable trace logging.
