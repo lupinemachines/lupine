@@ -1523,12 +1523,12 @@ ERROR_0:
 int handle_nvmlDeviceGetMemoryInfo_v2(conn_t *conn) {
   nvmlDevice_t device;
   nvmlMemory_v2_t memory;
-  memory = {};
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_v2_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 || false)
+  if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_read(conn, &memory, sizeof(nvmlMemory_v2_t)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);

@@ -1046,6 +1046,7 @@ lupine_rpc_nvmlDeviceGetMemoryInfo_v2(conn_t *conn, nvmlDevice_t device,
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_nvmlDeviceGetMemoryInfo_v2) < 0 ||
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, memory, sizeof(nvmlMemory_v2_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, memory, sizeof(nvmlMemory_v2_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
