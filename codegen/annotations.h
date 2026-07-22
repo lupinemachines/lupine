@@ -635,7 +635,7 @@ nvmlReturn_t nvmlDeviceGetGpuOperationMode(nvmlDevice_t device,
 nvmlReturn_t nvmlDeviceGetMemoryInfo(nvmlDevice_t device, nvmlMemory_t *memory);
 /**
  * @param device SEND_ONLY
- * @param memory RECV_ONLY
+ * @param memory SEND_RECV
  */
 nvmlReturn_t nvmlDeviceGetMemoryInfo_v2(nvmlDevice_t device,
                                         nvmlMemory_v2_t *memory);
