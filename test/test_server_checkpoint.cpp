@@ -34,7 +34,6 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::string log_path = std::string(directory) + "/provider.log";
-  setenv("LUPINE_CHECKPOINT_DIR", directory, 1);
   setenv("LUPINE_CHECKPOINT_LIBRARY", argv[1], 1);
   setenv("LUPINE_CHECKPOINT_TEST_LOG", log_path.c_str(), 1);
 
@@ -43,6 +42,10 @@ int main(int argc, char **argv) {
               "failed to create socket pair") ||
       !expect(lupine_server_checkpoint_child_start(sockets[0]),
               "failed to start checkpoint shutdown shell")) {
+    return 1;
+  }
+  if (!expect(lupine_server_checkpoint_connection_ready("lease-123"),
+              "failed to restore connection checkpoint")) {
     return 1;
   }
 
@@ -65,9 +68,7 @@ int main(int argc, char **argv) {
   contents << log.rdbuf();
   std::string expected;
   if (expect_provider) {
-    expected = "start\ncheckpoint " + std::string(directory) + " " +
-               std::to_string(static_cast<unsigned long long>(getpid())) +
-               "\nstop\n";
+    expected = "start\nrestore lease-123\ncheckpoint lease-123\nstop\n";
   }
   bool passed = expect(contents.str() == expected,
                        "provider did not receive the expected lifecycle");

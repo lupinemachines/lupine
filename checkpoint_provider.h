@@ -18,9 +18,15 @@ typedef struct lupine_checkpoint_provider_v1 {
   // Providers can begin observing RM/UVM activity here.
   int (*start)(void);
 
-  // Writes a complete checkpoint for the current connection. The provider
-  // owns the file layout beneath directory.
-  int (*checkpoint)(const char *directory, uint64_t connection_id);
+  // Restores the named connection before its first CUDA RPC is dispatched.
+  // A missing checkpoint is success; malformed or unrestorable state fails the
+  // connection rather than allowing it to continue with empty GPU memory.
+  int (*restore)(const char *connection_id);
+
+  // Writes a complete checkpoint for the current connection. The identifier
+  // is null when the client did not supply one. The provider owns storage,
+  // file layout, and any fallback policy for unnamed connections.
+  int (*checkpoint)(const char *connection_id);
 
   // Stops observation and releases provider-owned process state.
   void (*stop)(void);

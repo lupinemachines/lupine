@@ -91,17 +91,22 @@ connection child to finish its in-flight CUDA calls, and waits for those
 children to exit. This graceful drain happens in the open-source server with
 no extra runtime dependency.
 
-Set `LUPINE_CHECKPOINT_DIR` to additionally checkpoint each active connection
-before its CUDA state is released. The connection child looks for
-`liblupinecr.so.0`, then `liblupinecr.so`, and uses the versioned provider ABI
-in [`checkpoint_provider.h`](checkpoint_provider.h). A missing or incompatible
+Each connection child looks for `liblupinecr.so.0`, then `liblupinecr.so`, and
+uses the versioned provider ABI in
+[`checkpoint_provider.h`](checkpoint_provider.h). A missing or incompatible
 provider is a no-op; the server still drains and exits normally. The provider
 is loaded before the child's first CUDA call so it can observe RM/UVM activity
 needed to discover allocations.
 
-`LUPINE_CHECKPOINT_LIBRARY` can override the library path for a private
-deployment. The provider owns the checkpoint file layout beneath
-`LUPINE_CHECKPOINT_DIR`.
+Set `LUPINE_SESSION` in the client to attach a stable connection identifier.
+The optional provider receives that identifier to restore the connection
+before its first CUDA RPC and checkpoint it after shutdown has drained. For an
+unkeyed connection, restore is skipped and checkpoint receives a null
+identifier. Providers own storage configuration, file layout, and any fallback
+policy for unkeyed connections; Lupine does not select a checkpoint directory.
+
+`LUPINE_CHECKPOINT_LIBRARY` can override the provider library path for a
+private deployment.
 
 ## Trace Logging
 

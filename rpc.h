@@ -145,6 +145,9 @@ extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
 extern int rpc_http2_client_init(conn_t *conn);
 extern int rpc_http2_server_init(conn_t *conn);
 extern int rpc_http2_compress_lz4(conn_t *conn);
+// Returns the x-lupine-session request header after the server has consumed
+// the HTTP/2 request headers, or nullptr when no session was supplied.
+extern const char *rpc_http2_session_id(conn_t *conn);
 extern int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats);
 
 // Optional LZ4 framing for large memory transfer payloads (see compress.cpp).

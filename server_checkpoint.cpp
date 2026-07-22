@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <string>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -33,7 +34,7 @@ struct child_checkpoint_state {
   std::thread signal_thread;
   struct sigaction previous_sigterm = {};
   optional_checkpoint_provider provider;
-  const char *directory = nullptr;
+  std::string connection_id;
   std::atomic<bool> checkpoint_requested{false};
   bool handler_installed = false;
   bool started = false;
@@ -105,8 +106,8 @@ optional_checkpoint_provider load_provider() {
       sizeof(lupine_checkpoint_provider_v1::stop);
   if (provider.api == nullptr || provider.api->struct_size < required_size ||
       provider.api->abi_version != LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION ||
-      provider.api->start == nullptr || provider.api->checkpoint == nullptr ||
-      provider.api->stop == nullptr) {
+      provider.api->start == nullptr || provider.api->restore == nullptr ||
+      provider.api->checkpoint == nullptr || provider.api->stop == nullptr) {
     LUPINE_LOG_ERROR("Ignoring incompatible LupineCR checkpoint provider.");
     provider.api = nullptr;
     unload_provider(provider);
@@ -157,12 +158,10 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection) {
   }
 
   state.connection = connection;
+  state.connection_id.clear();
   state.checkpoint_requested.store(false, std::memory_order_relaxed);
   sigterm_received = 0;
-  state.directory = getenv("LUPINE_CHECKPOINT_DIR");
-  if (state.directory != nullptr && state.directory[0] != '\0') {
-    state.provider = load_provider();
-  }
+  state.provider = load_provider();
 
   if (pipe(state.signal_pipe) != 0) {
     unload_provider(state.provider);
@@ -209,6 +208,33 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection) {
 #endif
 }
 
+bool lupine_server_checkpoint_connection_ready(const char *connection_id) {
+#ifdef _WIN32
+  (void)connection_id;
+  return true;
+#else
+  child_checkpoint_state &state = checkpoint_state();
+  if (!state.started) {
+    return false;
+  }
+  if (connection_id == nullptr || connection_id[0] == '\0') {
+    return true;
+  }
+  if (!state.connection_id.empty()) {
+    return state.connection_id == connection_id;
+  }
+  state.connection_id = connection_id;
+
+  if (state.provider.api != nullptr &&
+      state.provider.api->restore(state.connection_id.c_str()) != 0) {
+    LUPINE_LOG_ERROR("LupineCR failed to restore connection "
+                     << state.connection_id << ".");
+    return false;
+  }
+  return true;
+#endif
+}
+
 int lupine_server_checkpoint_child_finish() {
 #ifdef _WIN32
   return 0;
@@ -242,18 +268,20 @@ int lupine_server_checkpoint_child_finish() {
     // This remains unconditional even when no provider is installed.
     lupine_checkpoint_drain_cuda_calls();
     if (state.provider.api != nullptr) {
-      result = state.provider.api->checkpoint(state.directory,
-                                              static_cast<uint64_t>(getpid()));
+      const char *connection_id =
+          state.connection_id.empty() ? nullptr : state.connection_id.c_str();
+      result = state.provider.api->checkpoint(connection_id);
       if (result != 0) {
-        LUPINE_LOG_ERROR("LupineCR failed to checkpoint connection process "
-                         << getpid() << ".");
+        LUPINE_LOG_ERROR(
+            "LupineCR failed to checkpoint connection "
+            << (connection_id == nullptr ? "<unnamed>" : connection_id) << ".");
       }
     }
   }
 
   unload_provider(state.provider);
   state.connection = LUPINE_INVALID_SOCKET;
-  state.directory = nullptr;
+  state.connection_id.clear();
   state.started = false;
   return result;
 #endif

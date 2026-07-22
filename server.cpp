@@ -314,6 +314,7 @@ int client_handler(lupine_socket_t connfd) {
   LUPINE_LOG_DEBUG("Client connected.");
 
   std::unordered_map<uint64_t, std::shared_ptr<lupine_lane>> lanes;
+  bool connection_ready = false;
   while (!conn.closed) {
     if (pthread_mutex_lock(&conn.read_mutex) != 0) {
       break;
@@ -354,6 +355,16 @@ int client_handler(lupine_socket_t connfd) {
     }
     uint64_t lane_id = conn.read_lane_id;
     int op = conn.read_op;
+
+    if (!connection_ready) {
+      if (!lupine_server_checkpoint_connection_ready(
+              rpc_http2_session_id(&conn))) {
+        pthread_mutex_unlock(&conn.read_mutex);
+        LUPINE_LOG_ERROR("Failed to restore connection checkpoint.");
+        break;
+      }
+      connection_ready = true;
+    }
 
     std::shared_ptr<lupine_lane> lane;
     auto it = lanes.find(lane_id);
