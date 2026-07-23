@@ -375,6 +375,102 @@ int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
   return 0;
 }
 
+// CUDA_KERNEL_NODE_PARAMS gained kern and ctx in CUDA 12. Keep the RPC payload
+// fixed at the CUDA 12 layout so older and newer endpoints stay aligned.
+static const uint32_t rpc_kernel_node_reserved = 0;
+#if CUDA_VERSION < 12000
+static const uint64_t rpc_kernel_node_null_handle = 0;
+#endif
+
+static_assert(sizeof(CUfunction) == sizeof(uint64_t),
+              "CUDA function handles must fit the kernel node wire ABI");
+static_assert(sizeof(unsigned int) == sizeof(uint32_t),
+              "CUDA dimension fields must fit the kernel node wire ABI");
+#if CUDA_VERSION >= 12000
+static_assert(sizeof(CUkernel) == sizeof(uint64_t),
+              "CUDA kernel handles must fit the kernel node wire ABI");
+static_assert(sizeof(CUcontext) == sizeof(uint64_t),
+              "CUDA context handles must fit the kernel node wire ABI");
+#endif
+
+int rpc_write_kernel_node_params(conn_t *conn,
+                                 const CUDA_KERNEL_NODE_PARAMS *node_params) {
+  if (conn == nullptr || node_params == nullptr) {
+    return -1;
+  }
+  if (rpc_write(conn, &node_params->func, sizeof(node_params->func)) < 0 ||
+      rpc_write(conn, &node_params->gridDimX, sizeof(node_params->gridDimX)) <
+          0 ||
+      rpc_write(conn, &node_params->gridDimY, sizeof(node_params->gridDimY)) <
+          0 ||
+      rpc_write(conn, &node_params->gridDimZ, sizeof(node_params->gridDimZ)) <
+          0 ||
+      rpc_write(conn, &node_params->blockDimX, sizeof(node_params->blockDimX)) <
+          0 ||
+      rpc_write(conn, &node_params->blockDimY, sizeof(node_params->blockDimY)) <
+          0 ||
+      rpc_write(conn, &node_params->blockDimZ, sizeof(node_params->blockDimZ)) <
+          0 ||
+      rpc_write(conn, &node_params->sharedMemBytes,
+                sizeof(node_params->sharedMemBytes)) < 0 ||
+      rpc_write(conn, &rpc_kernel_node_reserved,
+                sizeof(rpc_kernel_node_reserved)) < 0) {
+    return -1;
+  }
+#if CUDA_VERSION >= 12000
+  if (rpc_write(conn, &node_params->kern, sizeof(node_params->kern)) < 0 ||
+      rpc_write(conn, &node_params->ctx, sizeof(node_params->ctx)) < 0) {
+    return -1;
+  }
+#else
+  if (rpc_write(conn, &rpc_kernel_node_null_handle,
+                sizeof(rpc_kernel_node_null_handle)) < 0 ||
+      rpc_write(conn, &rpc_kernel_node_null_handle,
+                sizeof(rpc_kernel_node_null_handle)) < 0) {
+    return -1;
+  }
+#endif
+  return 0;
+}
+
+int rpc_read_kernel_node_params(conn_t *conn,
+                                CUDA_KERNEL_NODE_PARAMS *node_params) {
+  if (conn == nullptr || node_params == nullptr) {
+    return -1;
+  }
+
+  *node_params = {};
+  if (rpc_read(conn, &node_params->func, sizeof(node_params->func)) < 0 ||
+      rpc_read(conn, &node_params->gridDimX, sizeof(node_params->gridDimX)) <
+          0 ||
+      rpc_read(conn, &node_params->gridDimY, sizeof(node_params->gridDimY)) <
+          0 ||
+      rpc_read(conn, &node_params->gridDimZ, sizeof(node_params->gridDimZ)) <
+          0 ||
+      rpc_read(conn, &node_params->blockDimX, sizeof(node_params->blockDimX)) <
+          0 ||
+      rpc_read(conn, &node_params->blockDimY, sizeof(node_params->blockDimY)) <
+          0 ||
+      rpc_read(conn, &node_params->blockDimZ, sizeof(node_params->blockDimZ)) <
+          0 ||
+      rpc_read(conn, &node_params->sharedMemBytes,
+               sizeof(node_params->sharedMemBytes)) < 0 ||
+      rpc_drain(conn, sizeof(uint32_t)) < 0) {
+    return -1;
+  }
+#if CUDA_VERSION >= 12000
+  if (rpc_read(conn, &node_params->kern, sizeof(node_params->kern)) < 0 ||
+      rpc_read(conn, &node_params->ctx, sizeof(node_params->ctx)) < 0) {
+    return -1;
+  }
+#else
+  if (rpc_drain(conn, 2 * sizeof(uint64_t)) < 0) {
+    return -1;
+  }
+#endif
+  return 0;
+}
+
 int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
                                   const size_t *sizes, void *const *values) {
   if (conn == nullptr ||

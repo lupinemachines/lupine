@@ -88,6 +88,11 @@ extern int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
                                         size_t payload_size, void *storage,
                                         size_t storage_size, void **values);
 extern int
+rpc_write_kernel_node_params(conn_t *conn,
+                             const CUDA_KERNEL_NODE_PARAMS *node_params);
+extern int rpc_read_kernel_node_params(conn_t *conn,
+                                       CUDA_KERNEL_NODE_PARAMS *node_params);
+extern int
 rpc_write_kernel_param_layout(conn_t *conn,
                               const lupine_kernel_param_layout *layout);
 extern int rpc_read_kernel_param_layout(conn_t *conn,

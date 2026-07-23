@@ -2003,7 +2003,7 @@ int handle_manual_cuGraphAddKernelNode(conn_t *conn) {
 
   if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_read_graph_dependencies(conn, &deps) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
       rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
     return -1;
@@ -2157,7 +2157,7 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &serialParams, sizeof(serialParams)) < 0 ||
+      rpc_write_kernel_node_params(conn, &serialParams) < 0 ||
       rpc_write_kernel_param_layout(conn, &layout) < 0 ||
       rpc_write(conn, &payloadSize, sizeof(payloadSize)) < 0 ||
       (result == CUDA_SUCCESS &&
@@ -2177,7 +2177,7 @@ int handle_manual_cuGraphKernelNodeSetParams(conn_t *conn) {
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
       rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
     return -1;
@@ -2214,7 +2214,7 @@ int handle_manual_cuGraphExecKernelNodeSetParams(conn_t *conn) {
 
   if (rpc_read(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
       rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
     return -1;
