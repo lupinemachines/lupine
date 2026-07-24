@@ -1,0 +1,32 @@
+name: ThreadSanitizer
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server-registry:
+    name: Server registry stress
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Build ThreadSanitizer test
+        run: >-
+          clang++ -std=c++14 -O1 -g
+          -fsanitize=thread -fno-omit-frame-pointer -pthread
+          -I. test/test_server_registry.cpp
+          -o server_registry_tsan
+
+      - name: Run ThreadSanitizer test
+        run: TSAN_OPTIONS=halt_on_error=1 ./server_registry_tsan
