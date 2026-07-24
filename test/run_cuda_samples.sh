@@ -58,7 +58,7 @@ CORE_SAMPLES=(
   quasirandomGenerator_nvrtc
   simpleCudaGraphs streamOrderedAllocation cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP
-  simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
+  simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation
   newdelete
@@ -75,7 +75,7 @@ CORE_SAMPLES=(
   imageDenoising marchingCubes particles simpleGL smokeParticles
   simpleTexture3D volumeFiltering volumeRender
   radixSortThrust segmentationTreeThrust template interval
-  ptxgen ptxjit matrixMulDynlinkJIT threadMigration
+  ptxjit matrixMulDynlinkJIT threadMigration
 )
 
 LIBRARY_SAMPLES=(
