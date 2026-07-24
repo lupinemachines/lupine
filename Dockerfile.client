@@ -1,0 +1,20 @@
+ARG CUDA_VERSION=12.6.2
+ARG UBUNTU_VERSION=24.04
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
+WORKDIR /build
+COPY client.cpp .
+COPY codegen codegen
+RUN g++ -fPIC -c client.cpp -o client.o -I/usr/local/cuda/include
+RUN g++ -fPIC -c codegen/gen_client.cpp -o gen_client.o -I/usr/local/cuda/include
+RUN g++ -fPIC -c codegen/manual_client.cpp -o manual_client.o -I/usr/local/cuda/include
+RUN g++ -shared -o libscuda.so client.o gen_client.o manual_client.o -L/usr/local/cuda/lib64 -lcudart -lstdc++
+
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+ENV SCUDA_SERVER=host.docker.internal
+WORKDIR /cuda
+COPY --from=builder /build/libscuda.so .
+ENV LD_PRELOAD=/cuda/libscuda.so
+WORKDIR /
+CMD [ "nvidia-smi" ]
