@@ -138,6 +138,11 @@ class Session:
         count = int(torch.cuda.device_count())
         return [torch.device("cuda", index) for index in range(count)]
 
+    def device(self, index: int = 0) -> Any:
+        """Return one GPU from LUPINE's native virtual device topology."""
+
+        return self.devices()[index]
+
 
 def connect(
     *,

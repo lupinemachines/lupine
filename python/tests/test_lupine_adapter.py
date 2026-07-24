@@ -96,6 +96,15 @@ def test_session_devices_use_native_topology_for_multi_gpu_server(lupine_module)
         ]
 
 
+def test_session_device_returns_one_native_device(lupine_module):
+    lupine, fake_torch = lupine_module
+    fake_torch.cuda.count = 2
+
+    with lupine.connect(host="host-a") as session:
+        assert session.device() == FakeDevice("cuda", 0)
+        assert session.device(1) == FakeDevice("cuda", 1)
+
+
 def test_connect_uses_sidecar_when_torch_has_no_cuda_backend(lupine_module, monkeypatch):
     lupine, fake_torch = lupine_module
     fake_torch.version.cuda = None
