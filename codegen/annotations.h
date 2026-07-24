@@ -1343,7 +1343,7 @@ nvmlReturn_t nvmlDeviceGetCreatableVgpus(nvmlDevice_t device,
                                          nvmlVgpuTypeId_t *vgpuTypeIds);
 /**
  * @param vgpuTypeId SEND_ONLY
- * @param size RECV_ONLY
+ * @param size SEND_RECV
  * @param vgpuTypeClass RECV_ONLY LENGTH:size
  */
 nvmlReturn_t nvmlVgpuTypeGetClass(nvmlVgpuTypeId_t vgpuTypeId,
