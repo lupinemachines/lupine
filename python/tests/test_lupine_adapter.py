@@ -228,3 +228,13 @@ def test_duplicate_hosts_are_preserved(lupine_module):
 
     with lupine.connect(host=["host-a:14833", "host-a"]) as session:
         assert session.servers == ("host-a:14833", "host-a:14833")
+
+
+def test_bare_ipv6_host_gets_bracketed(lupine_module):
+    lupine, _ = lupine_module
+
+    assert lupine._normalize_server("::1") == "[::1]:14833"
+    assert lupine._normalize_server("::1", 14833) == "[::1]:14833"
+    assert lupine._normalize_server("2001:db8::1") == "[2001:db8::1]:14833"
+    assert lupine._normalize_server("[::1]") == "[::1]:14833"
+    assert lupine._normalize_server("[::1]:14833") == "[::1]:14833"
