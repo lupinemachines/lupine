@@ -24,7 +24,7 @@ objects = {}
 next_handle = 1
 
 
-def store(tensor, tensors):
+def store(tensor, tensors, created_handles):
     global next_handle
     if tensor.device.type == "cpu":
         _validate_cpu_result_tensor(tensor)
@@ -40,6 +40,7 @@ def store(tensor, tensors):
     handle = next_handle
     next_handle += 1
     objects[handle] = tensor
+    created_handles.append(handle)
     return {
         "type": "tensor",
         "handle": handle,
@@ -68,7 +69,10 @@ def decode(value, tensors):
     if isinstance(value, dict) and "__tuple__" in value:
         return tuple(decode(item, tensors) for item in value["__tuple__"])
     if isinstance(value, dict) and "__sidecar_tensor__" in value:
-        return objects[int(value["__sidecar_tensor__"])]
+        handle = int(value["__sidecar_tensor__"])
+        if handle not in objects:
+            raise RuntimeError(f"sidecar tensor handle {handle} is released or unknown")
+        return objects[handle]
     if isinstance(value, dict) and "__cpu_tensor__" in value:
         stream_index = int(value["__cpu_tensor__"])
         if stream_index < 0 or stream_index >= len(tensors):
@@ -87,19 +91,28 @@ def decode(value, tensors):
     return value
 
 
-def encode(value, tensors):
+def encode(value, tensors, created_handles):
     if isinstance(value, torch.Tensor):
-        return store(value, tensors)
+        return store(value, tensors, created_handles)
     if isinstance(value, torch.Size):
         return {"type": "tuple", "items": list(value)}
     if isinstance(value, tuple):
-        return {"type": "tuple", "items": [encode(item, tensors) for item in value]}
+        return {
+            "type": "tuple",
+            "items": [encode(item, tensors, created_handles) for item in value],
+        }
     if isinstance(value, list):
-        return {"type": "list", "items": [encode(item, tensors) for item in value]}
+        return {
+            "type": "list",
+            "items": [encode(item, tensors, created_handles) for item in value],
+        }
     if isinstance(value, dict):
         return {
             "type": "dict",
-            "items": {key: encode(item, tensors) for key, item in value.items()},
+            "items": {
+                key: encode(item, tensors, created_handles)
+                for key, item in value.items()
+            },
         }
     return {"type": "value", "value": value}
 
@@ -124,7 +137,24 @@ def release(value):
             release(item)
 
 
-def handle(request, input_stream, descriptions, output_tensors):
+def release_handles(handles):
+    released = 0
+    for handle in {int(handle) for handle in handles}:
+        if objects.pop(handle, None) is not None:
+            released += 1
+    return released
+
+
+def stats():
+    cuda_available = torch.cuda.is_available()
+    return {
+        "live_handles": len(objects),
+        "cuda_memory_allocated": torch.cuda.memory_allocated() if cuda_available else 0,
+        "cuda_memory_reserved": torch.cuda.memory_reserved() if cuda_available else 0,
+    }
+
+
+def handle(request, input_stream, descriptions, output_tensors, created_handles):
     op = request["op"]
     if op == "upload":
         try:
@@ -139,7 +169,7 @@ def handle(request, input_stream, descriptions, output_tensors):
             dtype=dtype,
             device=device,
         )
-        return store(tensor, output_tensors)
+        return store(tensor, output_tensors, created_handles)
     if op == "copy_from_cpu":
         try:
             destination = objects[int(request["handle"])]
@@ -168,7 +198,7 @@ def handle(request, input_stream, descriptions, output_tensors):
             args = decode(request.get("args", []), input_tensors)
             kwargs = decode(request.get("kwargs", {}), input_tensors)
             func = resolve(request["packet"], request["overload"])
-            return encode(func(*args, **kwargs), output_tensors)
+            return encode(func(*args, **kwargs), output_tensors, created_handles)
         if op == "download":
             tensor = objects[int(request["handle"])]
             if tensor.device.type != "cuda":
@@ -180,8 +210,16 @@ def handle(request, input_stream, descriptions, output_tensors):
             output_tensors.append((tensor, dtype))
             return {"type": "tensor_data", "stream": stream_index}
         if op == "release":
-            release(request["value"])
-            return True
+            handles = request.get("handles")
+            if handles is None:
+                before = len(objects)
+                release(request.get("value"))
+                released = before - len(objects)
+            else:
+                released = release_handles(handles)
+            return {"released": released, "live_handles": len(objects)}
+        if op == "stats":
+            return stats()
         raise RuntimeError(f"unknown op: {op}")
     finally:
         input_tensors.clear()
@@ -195,6 +233,7 @@ def main():
         if not line:
             break
         output_tensors = []
+        created_handles = []
         try:
             request = json.loads(line)
             descriptions = request.pop("tensor_streams", [])
@@ -218,12 +257,14 @@ def main():
                     input_stream,
                     descriptions,
                     output_tensors,
+                    created_handles,
                 ),
             }
         except TensorStreamError:
             traceback.print_exc(file=sys.stderr)
             break
         except Exception as exc:
+            release_handles(created_handles)
             output_tensors = []
             response = {
                 "ok": False,
@@ -233,7 +274,19 @@ def main():
         response["tensor_streams"] = [
             _tensor_stream_metadata(tensor, dtype) for tensor, dtype in output_tensors
         ]
-        _write_all(output_stream, json.dumps(response).encode("utf-8") + b"\n")
+        try:
+            serialized = json.dumps(response).encode("utf-8") + b"\n"
+        except Exception as exc:
+            release_handles(created_handles)
+            output_tensors = []
+            response = {
+                "ok": False,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+                "tensor_streams": [],
+            }
+            serialized = json.dumps(response).encode("utf-8") + b"\n"
+        _write_all(output_stream, serialized)
         for tensor, dtype in output_tensors:
             if tensor.device.type == "cpu":
                 _write_tensor(output_stream, tensor)

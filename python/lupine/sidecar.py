@@ -34,6 +34,22 @@ from .tensor import (
 DEFAULT_IMAGE = "lupine-pytorch-worker:cuda-13.1.0"
 
 
+def _result_handles(value: Any) -> set[int]:
+    if isinstance(value, dict):
+        if value.get("type") == "tensor":
+            return {int(value["handle"])}
+        handles: set[int] = set()
+        for item in value.values():
+            handles.update(_result_handles(item))
+        return handles
+    if isinstance(value, list):
+        handles = set()
+        for item in value:
+            handles.update(_result_handles(item))
+        return handles
+    return set()
+
+
 def _op_name(func: Any) -> dict[str, str]:
     overload = func.__name__
     if "." in overload:
@@ -167,7 +183,11 @@ class ContainerRuntime:
 
 @dataclass
 class SidecarSession:
-    """Session-scoped macOS frontend for a local Linux CUDA PyTorch sidecar."""
+    """Session-scoped macOS frontend for a local Linux CUDA PyTorch sidecar.
+
+    Returned ``SidecarTensor`` objects own their worker handles. Closing the
+    session releases all outstanding handles before stopping the worker.
+    """
 
     server: str
     image: str = DEFAULT_IMAGE
@@ -175,8 +195,17 @@ class SidecarSession:
     platform: str = "linux/arm64"
     rosetta: bool = False
     env: dict[str, str] = field(default_factory=dict)
+    _proc: Any = field(init=False, default=None, repr=False)
+    _lock: Any = field(init=False, default_factory=threading.RLock, repr=False)
+    _mode: Any = field(init=False, default=None, repr=False)
+    _closed: bool = field(init=False, default=False, repr=False)
+    _live_handles: set[int] = field(init=False, default_factory=set, repr=False)
+    _atexit_registered: bool = field(init=False, default=False, repr=False)
+    info: dict[str, Any] = field(init=False, default_factory=dict)
 
     def __enter__(self) -> "SidecarSession":
+        if self._closed:
+            raise SidecarError("a closed LUPINE sidecar session cannot be reopened")
         if _get_active_session() is not None:
             raise SidecarError("a LUPINE sidecar session is already active")
         _ensure_registered()
@@ -201,35 +230,104 @@ class SidecarSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        self._lock = threading.Lock()
-        self.info = self._request({"op": "ping"})
-        if not self.info.get("cuda_available"):
-            raise SidecarError(f"sidecar worker has no CUDA device: {self.info}")
-        _set_active_session(self)
-        self._mode = SidecarDispatchMode(self)
-        self._mode.__enter__()
-        atexit.register(self.close)
-        return self
+        try:
+            self.info = self._request({"op": "ping"})
+            if not self.info.get("cuda_available"):
+                raise SidecarError(f"sidecar worker has no CUDA device: {self.info}")
+            _set_active_session(self)
+            self._mode = SidecarDispatchMode(self)
+            self._mode.__enter__()
+            atexit.register(self.close)
+            self._atexit_registered = True
+            return self
+        except BaseException:
+            self.close()
+            raise
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         self.close()
         return False
 
     def close(self) -> None:
-        if _get_active_session() is self:
-            _set_active_session(None)
-        mode = getattr(self, "_mode", None)
-        if mode is not None:
-            mode.__exit__(None, None, None)
+        with self._lock:
+            if self._closed and self._proc is None:
+                return
+            if _get_active_session() is self:
+                _set_active_session(None)
+            mode = self._mode
             self._mode = None
-        proc = getattr(self, "_proc", None)
+            try:
+                if mode is not None:
+                    mode.__exit__(None, None, None)
+            finally:
+                proc = self._proc
+                if self._live_handles and proc is not None and proc.poll() is None:
+                    try:
+                        self._request(
+                            {"op": "release", "handles": sorted(self._live_handles)}
+                        )
+                    except BaseException:
+                        pass
+                self._terminate_worker_locked()
+                if self._atexit_registered:
+                    atexit.unregister(self.close)
+                    self._atexit_registered = False
+
+    def _terminate_worker_locked(self) -> None:
+        proc = self._proc
         if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()
         self._proc = None
+        self._live_handles.clear()
+        self._closed = True
+
+    @property
+    def closed(self) -> bool:
+        """Whether the worker session has been closed."""
+
+        return self._closed
+
+    @property
+    def live_handle_count(self) -> int:
+        """Number of worker tensor handles owned by this session."""
+
+        with self._lock:
+            return len(self._live_handles)
+
+    def stats(self) -> dict[str, int]:
+        """Return worker handle and CUDA allocator counts for diagnostics."""
+
+        result = self._request({"op": "stats"})
+        if not isinstance(result, dict):
+            raise SidecarError(f"sidecar returned invalid stats: {result!r}")
+        return {key: int(value) for key, value in result.items()}
+
+    def _adopt_handle(self, handle: int) -> None:
+        with self._lock:
+            if self._closed:
+                raise SidecarError("sidecar session is closed")
+            if handle in self._live_handles:
+                raise SidecarError(f"sidecar tensor handle {handle} was returned twice")
+            self._live_handles.add(handle)
+
+    def _release_handle(self, handle: int, *, suppress_errors: bool = False) -> None:
+        with self._lock:
+            if handle not in self._live_handles:
+                return
+            self._live_handles.remove(handle)
+            if self._closed:
+                return
+            try:
+                self._request({"op": "release", "handles": [handle]})
+            except BaseException:
+                self._terminate_worker_locked()
+                if not suppress_errors:
+                    raise
 
     def device(self, index: int = 0) -> Any:
         if index != 0:
@@ -244,7 +342,9 @@ class SidecarSession:
         decode_result: bool = False,
     ) -> Any:
         with self._lock:
-            proc = getattr(self, "_proc", None)
+            if self._closed:
+                raise SidecarError("sidecar session is closed")
+            proc = self._proc
             if proc is None:
                 raise SidecarError("sidecar worker pipes are closed")
             if proc.stdin is None or proc.stdout is None:
@@ -265,25 +365,31 @@ class SidecarSession:
                     _decode_cpu_tensor(metadata, proc.stdout)
                     for metadata in response.pop("tensor_streams", [])
                 ]
-            except Exception as exc:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait()
-                self._proc = None
+            except BaseException as exc:
+                self._terminate_worker_locked()
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
                 stderr = b""
                 if proc.stderr is not None:
                     stderr = proc.stderr.read()
                 detail = stderr.decode("utf-8", errors="replace").strip()
                 suffix = f": {detail}" if detail else ""
                 raise SidecarError(f"sidecar tensor transport failed{suffix}") from exc
+            if not isinstance(response, dict) or "ok" not in response:
+                self._terminate_worker_locked()
+                raise SidecarError(f"sidecar returned invalid response: {response!r}")
             if not response.get("ok"):
                 raise SidecarError(response.get("traceback") or response.get("error"))
+            if "result" not in response:
+                self._terminate_worker_locked()
+                raise SidecarError(f"sidecar returned invalid response: {response!r}")
             if decode_result:
-                return self._decode(response["result"], output_tensors)
+                result = response["result"]
+                try:
+                    return self._decode(result, output_tensors)
+                except BaseException:
+                    self._discard_result_handles(result)
+                    raise
             return response["result"]
 
     def _wrap(self, result: dict[str, Any]) -> SidecarTensor:
@@ -329,6 +435,12 @@ class SidecarSession:
 
     def _encode(self, value: Any, tensors: list[tuple[Any, Mapping[str, Any]]]) -> Any:
         if isinstance(value, SidecarTensor):
+            if value._lupine_session is not self:
+                raise SidecarError("cannot mix tensors from different sidecar sessions")
+            if value.closed or value._lupine_handle not in self._live_handles:
+                raise SidecarError(
+                    f"sidecar tensor handle {value._lupine_handle} is closed"
+                )
             return {"__sidecar_tensor__": value._lupine_handle}
         if isinstance(value, torch.Tensor):
             stream_index = len(tensors)
@@ -375,6 +487,16 @@ class SidecarSession:
         if kind == "value":
             return value["value"]
         raise SidecarError(f"sidecar returned unsupported result: {value!r}")
+
+    def _discard_result_handles(self, result: Any) -> None:
+        handles = _result_handles(result)
+        if not handles:
+            return
+        try:
+            self._request({"op": "release", "handles": sorted(handles)})
+            self._live_handles.difference_update(handles)
+        except BaseException:
+            self._terminate_worker_locked()
 
     def forward(self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         op = _op_name(func)

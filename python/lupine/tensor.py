@@ -6,6 +6,7 @@ import ctypes
 import math
 import sys
 import types
+import weakref
 from collections.abc import Mapping, Sequence
 from functools import cache
 from typing import Any
@@ -33,6 +34,16 @@ def _get_active_session() -> Any:
 def _set_active_session(session: Any) -> None:
     global _ACTIVE_SESSION
     _ACTIVE_SESSION = session
+
+
+def _finalize_sidecar_handle(session_ref: Any, handle: int) -> None:
+    session = session_ref()
+    if session is None:
+        return
+    try:
+        session._release_handle(handle, suppress_errors=True)
+    except BaseException:
+        pass
 
 
 def _dtype_name(dtype: Any) -> str:
@@ -337,6 +348,8 @@ def _ensure_registered() -> None:
 
 
 class SidecarTensor(torch.Tensor):
+    """Tensor wrapper that owns one GPU object handle in the sidecar worker."""
+
     @staticmethod
     def __new__(
         cls,
@@ -368,11 +381,42 @@ class SidecarTensor(torch.Tensor):
     ) -> None:
         self._lupine_session = session
         self._lupine_handle = int(handle)
+        self._lupine_closed = False
+        session._adopt_handle(self._lupine_handle)
+        self._lupine_finalizer = weakref.finalize(
+            self,
+            _finalize_sidecar_handle,
+            weakref.ref(session),
+            self._lupine_handle,
+        )
+
+    @property
+    def closed(self) -> bool:
+        return self._lupine_closed or self._lupine_session.closed
+
+    def close(self) -> None:
+        """Release this tensor's worker handle. Safe to call more than once."""
+
+        if self._lupine_closed:
+            return
+        self._lupine_closed = True
+        self._lupine_finalizer.detach()
+        self._lupine_session._release_handle(self._lupine_handle)
+
+    def __enter__(self) -> "SidecarTensor":
+        if self.closed:
+            raise SidecarError(f"sidecar tensor handle {self._lupine_handle} is closed")
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        self.close()
+        return False
 
     def __repr__(self) -> str:
+        state = ", closed=True" if self.closed else ""
         return (
             f"SidecarTensor(handle={self._lupine_handle}, "
-            f"shape={tuple(self.shape)}, dtype={self.dtype}, device={self.device})"
+            f"shape={tuple(self.shape)}, dtype={self.dtype}, device={self.device}{state})"
         )
 
     @classmethod
@@ -385,6 +429,10 @@ class SidecarTensor(torch.Tensor):
     ) -> Any:
         kwargs = kwargs or {}
         if func.overloadpacket.__name__ == "detach":
+            if args[0].closed:
+                raise SidecarError(
+                    f"sidecar tensor handle {args[0]._lupine_handle} is closed"
+                )
             return args[0]
         session = _session_from((args, kwargs))
         if session is None:
