@@ -58,7 +58,7 @@ CORE_SAMPLES=(
   quasirandomGenerator_nvrtc
   simpleCudaGraphs streamOrderedAllocation cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP
-  simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
+  simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation
   newdelete
@@ -75,7 +75,7 @@ CORE_SAMPLES=(
   imageDenoising marchingCubes particles simpleGL smokeParticles
   simpleTexture3D volumeFiltering volumeRender
   radixSortThrust segmentationTreeThrust template interval
-  ptxjit matrixMulDynlinkJIT threadMigration
+  ptxgen ptxjit matrixMulDynlinkJIT threadMigration
 )
 
 LIBRARY_SAMPLES=(
@@ -245,10 +245,26 @@ fi
 resolve_sample_exe() {
   local sample="$1"
   local exe=""
+  local group_dir=""
 
   if [[ -x "$CUDA_SAMPLES_BIN/$sample" && ! -d "$CUDA_SAMPLES_BIN/$sample" ]]; then
     printf '%s\n' "$CUDA_SAMPLES_BIN/$sample"
     return 0
+  fi
+
+  group_dir="$(sample_libnvvm_group_dir "$sample")"
+  if [[ -n "$group_dir" ]]; then
+    # In-source build (legacy Makefile route: cmake .. && make install).
+    if [[ -x "$group_dir/install/bin/$sample" ]]; then
+      printf '%s\n' "$group_dir/install/bin/$sample"
+      return 0
+    fi
+    # Out-of-source build (selected-sample CMake route).
+    exe="$CUDA_SAMPLES_BUILD_DIR/selected/$(basename "$group_dir")/install/bin/$sample"
+    if [[ -x "$exe" ]]; then
+      printf '%s\n' "$exe"
+      return 0
+    fi
   fi
 
   if [[ "$cmake_samples" == "1" ]]; then
@@ -283,6 +299,20 @@ resolve_sample_srcdir() {
   fi
 
   return 1
+}
+
+# Samples/7_libNVVM/{simple,ptxgen,dsl,...} link NVVM_LIB/CUDA_LIB, which only
+# the group's own CMakeLists.txt/Makefile resolves. Building/resolving these
+# by their own subdirectory (like every other sample) always fails, so
+# anything under that group must configure/build/install from the group root.
+sample_libnvvm_group_dir() {
+  local sample="$1"
+  local srcdir
+
+  srcdir="$(resolve_sample_srcdir "$sample" || true)"
+  if [[ -n "$srcdir" && "$(basename "$(dirname "$srcdir")")" == "7_libNVVM" ]]; then
+    dirname "$srcdir"
+  fi
 }
 
 sample_args() {
@@ -479,14 +509,27 @@ if [[ "$needs_build" == "1" ]]; then
           echo "missing sample source dir: $sample" >&2
           continue
         fi
-        sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$sample"
+        group_dir="$(sample_libnvvm_group_dir "$sample")"
+        configure_srcdir="${group_dir:-$sample_srcdir}"
+        sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$(basename "$configure_srcdir")"
         build_log="$RESULTS_DIR/.build-$sample.log"
         : > "$build_log"
+        extra_cmake_args=()
+        if [[ -n "$group_dir" ]]; then
+          extra_cmake_args=(-DCMAKE_INSTALL_PREFIX="$sample_build_dir/install")
+        fi
         if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
           # shellcheck disable=SC2086
-          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS >>"$build_log" 2>&1
+          cmake -S "$configure_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release \
+            "${extra_cmake_args[@]}" $CUDA_SAMPLES_CMAKE_ARGS >>"$build_log" 2>&1
         fi
-        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" >>"$build_log" 2>&1 || true
+        if [[ -n "$group_dir" ]]; then
+          # The group's own executables all link NVVM_LIB, so build via its
+          # shared "install" target rather than a single --target.
+          cmake --build "$sample_build_dir" --parallel "$JOBS" --target install >>"$build_log" 2>&1 || true
+        else
+          cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" >>"$build_log" 2>&1 || true
+        fi
       done
     else
       if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
@@ -503,11 +546,13 @@ if [[ "$needs_build" == "1" ]]; then
           echo "missing sample source dir: $sample" >&2
           continue
         fi
-        if [[ ! -f "$sample_srcdir/Makefile" && ! -f "$sample_srcdir/makefile" && ! -f "$sample_srcdir/GNUmakefile" ]]; then
+        group_dir="$(sample_libnvvm_group_dir "$sample")"
+        build_srcdir="${group_dir:-$sample_srcdir}"
+        if [[ ! -f "$build_srcdir/Makefile" && ! -f "$build_srcdir/makefile" && ! -f "$build_srcdir/GNUmakefile" ]]; then
           echo "missing sample Makefile: $sample" >&2
           continue
         fi
-        make -C "$sample_srcdir" -j"$JOBS" || echo "sample build failed: $sample" >&2
+        make -C "$build_srcdir" -j"$JOBS" || echo "sample build failed: $sample" >&2
       done
     else
       make -C "$CUDA_SAMPLES_DIR" -j"$JOBS"
