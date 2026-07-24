@@ -31,7 +31,7 @@ from .tensor import (
 )
 
 
-DEFAULT_IMAGE = "lupine-pytorch-worker:cuda-13.1.0"
+DEFAULT_IMAGE = "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.1.0"
 
 
 def _op_name(func: Any) -> dict[str, str]:
