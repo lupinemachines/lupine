@@ -56,16 +56,34 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG NVIDIA_UTILS_PACKAGE=nvidia-utils-535
 ARG NVIDIA_UTILS_VERSION=
 
+# Ubuntu periodically turns an older nvidia-utils-NNN into an empty
+# transitional package (Depends on a newer NNN, no binaries of its own) as
+# driver branches age out, so the pinned NVIDIA_UTILS_PACKAGE can silently
+# stop shipping nvidia-smi. Try the pin first, then fall back to whichever
+# nvidia-utils-NNN (newest first) actually contains it.
 RUN set -eux; \
     apt-get update; \
     mkdir -p /tmp/nvidia-utils; \
     cd /tmp/nvidia-utils; \
+    try_nvidia_utils() { \
+      rm -f ./*.deb; \
+      rm -rf /tmp/nvidia-utils/root; \
+      apt-get download "$1" >/dev/null 2>&1 || return 1; \
+      dpkg-deb -x ./*.deb /tmp/nvidia-utils/root || return 1; \
+      test -x /tmp/nvidia-utils/root/usr/bin/nvidia-smi; \
+    }; \
+    found=""; \
     if [ -n "$NVIDIA_UTILS_VERSION" ]; then \
-      apt-get download "${NVIDIA_UTILS_PACKAGE}=${NVIDIA_UTILS_VERSION}"; \
+      try_nvidia_utils "${NVIDIA_UTILS_PACKAGE}=${NVIDIA_UTILS_VERSION}" && found=1; \
     else \
-      apt-get download "${NVIDIA_UTILS_PACKAGE}"; \
+      try_nvidia_utils "${NVIDIA_UTILS_PACKAGE}" && found=1; \
     fi; \
-    dpkg-deb -x ./*.deb /tmp/nvidia-utils/root; \
+    if [ -z "$found" ]; then \
+      for pkg in $(apt-cache search --names-only '^nvidia-utils-[0-9]+$' | awk '{print $1}' | sort -t- -k3 -rn); do \
+        if try_nvidia_utils "$pkg"; then found=1; break; fi; \
+      done; \
+    fi; \
+    test -n "$found"; \
     cp /tmp/nvidia-utils/root/usr/bin/nvidia-smi /nvidia-smi; \
     chmod +x /nvidia-smi; \
     rm -rf /var/lib/apt/lists/* /tmp/nvidia-utils
