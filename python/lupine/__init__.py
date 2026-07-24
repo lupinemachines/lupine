@@ -53,6 +53,8 @@ def _normalize_server(host: str, port: int | None = None) -> str:
     host = str(host).strip()
     if not host:
         raise LupineError("host must not be empty")
+    if not host.startswith("[") and host.count(":") > 1:
+        host = f"[{host}]"
     if port is not None:
         return f"{host}:{int(port)}"
     if host.startswith("[") and "]:" in host:
