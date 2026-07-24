@@ -107,7 +107,7 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
-extern "C" CUresult lupine_sync_mapped_device_to_host();
+extern "C" CUresult lupine_sync_mapped_device_to_host_for_route(int route_id);
 
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
@@ -625,7 +625,8 @@ CUresult cuCtxSynchronize() {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxSynchronize",
                                                   &return_value)) {
     if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
+      return_value = lupine_sync_mapped_device_to_host_for_route(
+          lupine_route_identity(route));
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -638,7 +639,8 @@ CUresult cuCtxSynchronize() {
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
+    return_value = lupine_sync_mapped_device_to_host_for_route(
+        lupine_route_identity(route));
   return return_value;
 }
 
@@ -3240,7 +3242,8 @@ CUresult cuStreamQuery(CUstream hStream) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuStreamQuery",
                                                   &return_value, hStream)) {
     if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
+      return_value = lupine_sync_mapped_device_to_host_for_route(
+          lupine_route_identity(route));
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -3251,7 +3254,8 @@ CUresult cuStreamQuery(CUstream hStream) {
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
+    return_value = lupine_sync_mapped_device_to_host_for_route(
+        lupine_route_identity(route));
   return return_value;
 }
 
@@ -3267,7 +3271,8 @@ CUresult cuStreamSynchronize(CUstream hStream) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuStreamSynchronize",
                                                   &return_value, hStream)) {
     if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
+      return_value = lupine_sync_mapped_device_to_host_for_route(
+          lupine_route_identity(route));
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -3281,7 +3286,8 @@ CUresult cuStreamSynchronize(CUstream hStream) {
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
+    return_value = lupine_sync_mapped_device_to_host_for_route(
+        lupine_route_identity(route));
   return return_value;
 }
 
@@ -3456,7 +3462,8 @@ CUresult cuEventQuery(CUevent hEvent) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventQuery",
                                                   &return_value, hEvent)) {
     if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
+      return_value = lupine_sync_mapped_device_to_host_for_route(
+          lupine_route_identity(route));
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -3468,7 +3475,8 @@ CUresult cuEventQuery(CUevent hEvent) {
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
+    return_value = lupine_sync_mapped_device_to_host_for_route(
+        lupine_route_identity(route));
   return return_value;
 }
 
@@ -3483,7 +3491,8 @@ CUresult cuEventSynchronize(CUevent hEvent) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventSynchronize",
                                                   &return_value, hEvent)) {
     if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
+      return_value = lupine_sync_mapped_device_to_host_for_route(
+          lupine_route_identity(route));
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -3497,7 +3506,8 @@ CUresult cuEventSynchronize(CUevent hEvent) {
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
+    return_value = lupine_sync_mapped_device_to_host_for_route(
+        lupine_route_identity(route));
   return return_value;
 }
 

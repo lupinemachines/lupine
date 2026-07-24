@@ -3316,6 +3316,221 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
+struct lupine_mapped_device_shadow {
+  unsigned char *host = nullptr;
+  size_t size = 0;
+  size_t page_size = 0;
+  std::vector<unsigned char> baseline;
+  bool force_full_sync = false;
+};
+
+using lupine_dirty_device_range =
+    lupine_dirty_range<lupine_mapped_device_shadow>;
+
+struct lupine_mapped_device_wire_range {
+  size_t offset = 0;
+  size_t bytes = 0;
+};
+
+static std::mutex &lupine_mapped_device_shadow_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+static std::unordered_map<CUdeviceptr, lupine_mapped_device_shadow> &
+lupine_mapped_device_shadows() {
+  static std::unordered_map<CUdeviceptr, lupine_mapped_device_shadow> shadows;
+  return shadows;
+}
+
+static CUresult lupine_update_mapped_device_shadow(void *host, size_t bytes) {
+  if (host == nullptr || bytes == 0) {
+    return CUDA_SUCCESS;
+  }
+  uintptr_t start = reinterpret_cast<uintptr_t>(host);
+  if (start > UINTPTR_MAX - bytes) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  uintptr_t end = start + bytes;
+
+  std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+  for (auto &entry : lupine_mapped_device_shadows()) {
+    auto &shadow = entry.second;
+    uintptr_t base = reinterpret_cast<uintptr_t>(shadow.host);
+    if (start < base || start >= base + shadow.size ||
+        end > base + shadow.size) {
+      continue;
+    }
+
+    size_t offset = start - base;
+    memcpy(shadow.baseline.data() + offset, shadow.host + offset, bytes);
+    return CUDA_SUCCESS;
+  }
+  return CUDA_ERROR_INVALID_VALUE;
+}
+
+int handle_manual_lupineMappedDeviceRegister(conn_t *conn) {
+  CUdeviceptr server_host_ptr = 0;
+  CUdeviceptr device_ptr = 0;
+  size_t size = 0;
+  size_t page_size = 0;
+  if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
+      rpc_read(conn, &device_ptr, sizeof(device_ptr)) < 0 ||
+      rpc_read(conn, &size, sizeof(size)) < 0 ||
+      rpc_read(conn, &page_size, sizeof(page_size)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  if (server_host_ptr != 0 && device_ptr != 0 && size != 0 && page_size != 0 &&
+      (page_size & (page_size - 1)) == 0 &&
+      size <= SIZE_MAX - (page_size - 1)) {
+    try {
+      lupine_mapped_device_shadow shadow;
+      shadow.host = reinterpret_cast<unsigned char *>(server_host_ptr);
+      shadow.size = size;
+      shadow.page_size = page_size;
+      shadow.baseline.assign(size, 0);
+      memset(shadow.host, 0, size);
+      std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+      lupine_mapped_device_shadows()[device_ptr] = std::move(shadow);
+      result = CUDA_SUCCESS;
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_lupineMappedDeviceUnregister(conn_t *conn) {
+  CUdeviceptr device_ptr = 0;
+  if (rpc_read(conn, &device_ptr, sizeof(device_ptr)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+    lupine_mapped_device_shadows().erase(device_ptr);
+  }
+  CUresult result = CUDA_SUCCESS;
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_lupineMappedDeviceSync(conn_t *conn) {
+  CUdeviceptr device_ptr = 0;
+  if (rpc_read(conn, &device_ptr, sizeof(device_ptr)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = CUDA_SUCCESS;
+  uint32_t range_count = 0;
+  auto scan_started = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(lupine_mapped_device_shadow_mutex());
+  auto shadow_it = lupine_mapped_device_shadows().find(device_ptr);
+  if (shadow_it == lupine_mapped_device_shadows().end()) {
+    result = CUDA_ERROR_INVALID_VALUE;
+  }
+
+  std::vector<lupine_dirty_device_range> dirty_ranges;
+  std::vector<lupine_mapped_device_wire_range> wire_ranges;
+  if (result == CUDA_SUCCESS) {
+    auto &shadow = shadow_it->second;
+    try {
+      for (size_t offset = 0; offset < shadow.size;
+           offset += shadow.page_size) {
+        size_t bytes = std::min(shadow.page_size, shadow.size - offset);
+        if (shadow.force_full_sync ||
+            memcmp(shadow.host + offset, shadow.baseline.data() + offset,
+                   bytes) != 0) {
+          uintptr_t start = reinterpret_cast<uintptr_t>(shadow.host) + offset;
+          dirty_ranges.push_back({&shadow, start, start + bytes});
+        }
+      }
+
+      auto ranges = lupine_sort_and_coalesce_dirty_ranges(
+          std::move(dirty_ranges),
+          [](const lupine_mapped_device_shadow *allocation) {
+            return reinterpret_cast<uintptr_t>(allocation->host);
+          });
+      if (ranges.size() > UINT32_MAX) {
+        throw std::bad_alloc();
+      }
+      wire_ranges.reserve(ranges.size());
+      for (const auto &range : ranges) {
+        size_t offset = range.start - reinterpret_cast<uintptr_t>(shadow.host);
+        size_t bytes = range.end - range.start;
+        memcpy(shadow.baseline.data() + offset, shadow.host + offset, bytes);
+        wire_ranges.push_back({offset, bytes});
+      }
+      range_count = static_cast<uint32_t>(wire_ranges.size());
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+      range_count = 0;
+      wire_ranges.clear();
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      rpc_write(conn, &range_count, sizeof(range_count)) < 0) {
+    if (result == CUDA_SUCCESS) {
+      shadow_it->second.force_full_sync = true;
+    }
+    return -1;
+  }
+  if (result == CUDA_SUCCESS) {
+    auto &shadow = shadow_it->second;
+    size_t dirty_bytes = 0;
+    for (const auto &range : wire_ranges) {
+      dirty_bytes += range.bytes;
+    }
+    auto scan_micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                           std::chrono::steady_clock::now() - scan_started)
+                           .count();
+    LUPINE_TRACE_LOG("LUPINE mapped device sync ptr="
+                     << reinterpret_cast<void *>(device_ptr) << " scan_bytes="
+                     << shadow.size << " dirty_bytes=" << dirty_bytes
+                     << " ranges=" << range_count
+                     << " scan_us=" << scan_micros);
+    for (const auto &range : wire_ranges) {
+      if (rpc_write(conn, &range.offset, sizeof(range.offset)) < 0 ||
+          rpc_write(conn, &range.bytes, sizeof(range.bytes)) < 0 ||
+          rpc_write_payload(conn, shadow.baseline.data() + range.offset,
+                            range.bytes) < 0) {
+        shadow.force_full_sync = true;
+        return -1;
+      }
+    }
+    if (rpc_write_end(conn) < 0) {
+      shadow.force_full_sync = true;
+      return -1;
+    }
+    shadow.force_full_sync = false;
+    return 0;
+  }
+  return rpc_write_end(conn) < 0 ? -1 : 0;
+}
+
 int handle_manual_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
   CUresult result = CUDA_SUCCESS;
@@ -3331,6 +3546,9 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
         rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
         rpc_read(conn, server_host_ptr, bytes) < 0) {
       return -1;
+    }
+    if (result == CUDA_SUCCESS) {
+      result = lupine_update_mapped_device_shadow(server_host_ptr, bytes);
     }
   }
 

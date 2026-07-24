@@ -187,6 +187,9 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",
     "cuStreamGetCaptureInfo_v3",
+    "lupineMappedDeviceRegister",
+    "lupineMappedDeviceSync",
+    "lupineMappedDeviceUnregister",
     "lupineManagedHostFlush",
 ]
 
@@ -802,7 +805,7 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
     if function.name.format() == "cuMemFreeAsync":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_deviceptr_owner(dptr);\n")
     if metadata.synchronize:
-        f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
+        f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host_for_route(lupine_route_identity(route));\n")
 
     if function.name.format() == "cuDevicePrimaryCtxRetain":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_active(dev);\n")
@@ -1282,7 +1285,7 @@ def main():
             'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
-            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
+            'extern "C" CUresult lupine_sync_mapped_device_to_host_for_route(int route_id);\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
