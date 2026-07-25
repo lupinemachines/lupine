@@ -176,6 +176,12 @@ else()
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
 
+    add_executable(lupine_platform_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/lupine_platform_test.cpp
+    )
+    add_test(NAME lupine_platform_test COMMAND lupine_platform_test)
+    set_tests_properties(lupine_platform_test PROPERTIES TIMEOUT 10)
+
     add_library(test_lupinecr_provider SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_checkpoint_provider.c
     )

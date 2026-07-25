@@ -1,6 +1,8 @@
 #ifndef LUPINE_PLATFORM_H
 #define LUPINE_PLATFORM_H
 
+#include <cstdint>
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -211,5 +213,15 @@ inline int lupine_fd_truncate(int fd, off_t length) {
 }
 
 #endif
+
+// a*b, saturating to SIZE_MAX on overflow instead of wrapping. A peer-sent
+// count that wraps a small malloc but keeps its real (huge) value in the
+// matching CUDA call is an out-of-bounds read; saturating instead makes
+// malloc fail and the caller's existing null check reject the request.
+inline size_t lupine_checked_mul_size(size_t a, size_t b) {
+  if (a != 0 && b > SIZE_MAX / a)
+    return SIZE_MAX;
+  return a * b;
+}
 
 #endif

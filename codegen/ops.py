@@ -163,7 +163,10 @@ class ArrayOperation:
     def transfer_size_expr(self) -> str:
         if self.is_void_bytes:
             return self.byte_count_expr()
-        return f"{self.element_count_expr()} * sizeof({self.ptr.ptr_to.format()})"
+        return (
+            f"lupine_checked_mul_size({self.element_count_expr()}, "
+            f"sizeof({self.ptr.ptr_to.format()}))"
+        )
 
     def mutable_ptr_format(self) -> str:
         c = self.ptr.ptr_to.const
@@ -596,7 +599,8 @@ class OptionalArrayOperation:
         f.write("        goto ERROR_0;\n")
         f.write(f"    if ({name}_present && {count}_requested != 0) {{\n")
         f.write(
-            f"        {name} = ({elem} *)malloc({count}_requested * sizeof({elem}));\n"
+            f"        {name} = ({elem} *)malloc("
+            f"lupine_checked_mul_size({count}_requested, sizeof({elem})));\n"
         )
         f.write(f"        if ({name} == nullptr)\n")
         f.write("            goto ERROR_0;\n")
@@ -614,7 +618,7 @@ class OptionalArrayOperation:
         count = self.count.name
         f.write(
             f"        ({name}_present && {count} != 0 && "
-            f"rpc_write(conn, {name}, {count} * sizeof({elem})) < 0) ||\n"
+            f"rpc_write(conn, {name}, lupine_checked_mul_size({count}, sizeof({elem}))) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
@@ -623,7 +627,7 @@ class OptionalArrayOperation:
         count = self.count.name
         f.write(
             f"        ({name} != nullptr && *{count} != 0 && "
-            f"rpc_read(conn, {name}, *{count} * sizeof({elem})) < 0) ||\n"
+            f"rpc_read(conn, {name}, lupine_checked_mul_size(*{count}, sizeof({elem}))) < 0) ||\n"
         )
 
 
@@ -685,9 +689,11 @@ class DeepStructOperation:
         f.write(f"        rpc_read(conn, &{name}, sizeof({name})) < 0 ||\n")
         for member, count in self.members:
             buf = f"{name}_{member}_buf"
+            size = f"lupine_checked_mul_size({name}.{count}, sizeof(*{name}.{member}))"
+            # vector::resize throws past max_size(), so reject an overflowing
+            # count here instead of letting resize see it and crash uncaught.
             f.write(
-                f"        (({buf}.resize({name}.{count} * sizeof(*{name}.{member})),"
-                " false)) ||\n"
+                f"        ({size} == SIZE_MAX || (({buf}.resize({size}), false))) ||\n"
             )
             f.write(
                 f"        ({name}.{count} != 0 && "
@@ -711,7 +717,7 @@ class DeepStructOperation:
             f.write(
                 f"        ({name}.{count} != 0 && "
                 f"rpc_write(conn, {name}.{member}, "
-                f"{name}.{count} * sizeof(*{name}.{member})) < 0) ||\n"
+                f"lupine_checked_mul_size({name}.{count}, sizeof(*{name}.{member}))) < 0) ||\n"
             )
 
     def client_rpc_write(self, f):
@@ -723,7 +729,7 @@ class DeepStructOperation:
             f.write(
                 f"        ({name}->{count} != 0 && "
                 f"rpc_write(conn, {name}->{member}, "
-                f"{name}->{count} * sizeof(*{name}->{member})) < 0) ||\n"
+                f"lupine_checked_mul_size({name}->{count}, sizeof(*{name}->{member}))) < 0) ||\n"
             )
 
     def client_rpc_read(self, f):
@@ -735,7 +741,7 @@ class DeepStructOperation:
         )
         f.write(f"        rpc_read(conn, {name}, sizeof(*{name})) < 0 ||\n")
         for member, count in self.members:
-            esz = f"{name}->{count} * sizeof(*{name}->{member})"
+            esz = f"lupine_checked_mul_size({name}->{count}, sizeof(*{name}->{member}))"
             f.write(
                 f"        (({name}->{member} = ({name}->{count} != 0 ? "
                 f"(decltype({name}->{member}))"

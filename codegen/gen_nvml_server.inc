@@ -82,8 +82,10 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  version = (char *)malloc(length * sizeof(char));
-  if ((length * sizeof(char) != 0 && version == nullptr) || false)
+  version = (char *)malloc(lupine_checked_mul_size(length, sizeof(char)));
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       version == nullptr) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -94,11 +96,14 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn((length * sizeof(char) == 0 ? nullptr : version), length);
+          : fn((lupine_checked_mul_size(length, sizeof(char)) == 0 ? nullptr
+                                                                   : version),
+               length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, version, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_write(conn, version, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -118,8 +123,10 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  version = (char *)malloc(length * sizeof(char));
-  if ((length * sizeof(char) != 0 && version == nullptr) || false)
+  version = (char *)malloc(lupine_checked_mul_size(length, sizeof(char)));
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       version == nullptr) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -130,11 +137,14 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn((length * sizeof(char) == 0 ? nullptr : version), length);
+          : fn((lupine_checked_mul_size(length, sizeof(char)) == 0 ? nullptr
+                                                                   : version),
+               length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, version, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_write(conn, version, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -335,8 +345,9 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  name = (char *)malloc(length * sizeof(char));
-  if ((length * sizeof(char) != 0 && name == nullptr) || false)
+  name = (char *)malloc(lupine_checked_mul_size(length, sizeof(char)));
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 && name == nullptr) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -347,11 +358,15 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(device, (length * sizeof(char) == 0 ? nullptr : name), length);
+          : fn(device,
+               (lupine_checked_mul_size(length, sizeof(char)) == 0 ? nullptr
+                                                                   : name),
+               length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, name, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_write(conn, name, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -373,8 +388,9 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  uuid = (char *)malloc(length * sizeof(char));
-  if ((length * sizeof(char) != 0 && uuid == nullptr) || false)
+  uuid = (char *)malloc(lupine_checked_mul_size(length, sizeof(char)));
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 && uuid == nullptr) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -385,11 +401,15 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(device, (length * sizeof(char) == 0 ? nullptr : uuid), length);
+          : fn(device,
+               (lupine_checked_mul_size(length, sizeof(char)) == 0 ? nullptr
+                                                                   : uuid),
+               length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, uuid, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_write(conn, uuid, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -844,8 +864,10 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  version = (char *)malloc(length * sizeof(char));
-  if ((length * sizeof(char) != 0 && version == nullptr) || false)
+  version = (char *)malloc(lupine_checked_mul_size(length, sizeof(char)));
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       version == nullptr) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -856,12 +878,15 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(device, (length * sizeof(char) == 0 ? nullptr : version),
+          : fn(device,
+               (lupine_checked_mul_size(length, sizeof(char)) == 0 ? nullptr
+                                                                   : version),
                length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, version, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_write(conn, version, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -883,8 +908,10 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  serial = (char *)malloc(length * sizeof(char));
-  if ((length * sizeof(char) != 0 && serial == nullptr) || false)
+  serial = (char *)malloc(lupine_checked_mul_size(length, sizeof(char)));
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       serial == nullptr) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -895,11 +922,15 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(device, (length * sizeof(char) == 0 ? nullptr : serial), length);
+          : fn(device,
+               (lupine_checked_mul_size(length, sizeof(char)) == 0 ? nullptr
+                                                                   : serial),
+               length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, serial, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_write(conn, serial, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -921,8 +952,10 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  partNumber = (char *)malloc(length * sizeof(char));
-  if ((length * sizeof(char) != 0 && partNumber == nullptr) || false)
+  partNumber = (char *)malloc(lupine_checked_mul_size(length, sizeof(char)));
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       partNumber == nullptr) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -930,15 +963,18 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
     goto ERROR_0;
 
   fn = nvml_symbol<fn_t>("nvmlDeviceGetBoardPartNumber");
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(device, (length * sizeof(char) == 0 ? nullptr : partNumber),
-               length);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(device,
+                          (lupine_checked_mul_size(length, sizeof(char)) == 0
+                               ? nullptr
+                               : partNumber),
+                          length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, partNumber, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_write(conn, partNumber,
+                 lupine_checked_mul_size(length, sizeof(char))) < 0) ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

@@ -8,8 +8,9 @@ static nvmlReturn_t lupine_rpc_nvmlSystemGetDriverVersion(conn_t *conn,
       rpc_write_start_request(conn, RPC_nvmlSystemGetDriverVersion) < 0 ||
       rpc_write(conn, &length, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_read(conn, version, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_read(conn, version, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -19,7 +20,8 @@ static nvmlReturn_t lupine_rpc_nvmlSystemGetDriverVersion(conn_t *conn,
 
 extern "C" nvmlReturn_t nvmlSystemGetDriverVersion(char *version,
                                                    unsigned int length) {
-  if ((length * sizeof(char) != 0 && version == nullptr)) {
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       version == nullptr)) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
   conn_t *conn = connection();
@@ -34,8 +36,9 @@ static nvmlReturn_t lupine_rpc_nvmlSystemGetNVMLVersion(conn_t *conn,
       rpc_write_start_request(conn, RPC_nvmlSystemGetNVMLVersion) < 0 ||
       rpc_write(conn, &length, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_read(conn, version, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_read(conn, version, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -45,7 +48,8 @@ static nvmlReturn_t lupine_rpc_nvmlSystemGetNVMLVersion(conn_t *conn,
 
 extern "C" nvmlReturn_t nvmlSystemGetNVMLVersion(char *version,
                                                  unsigned int length) {
-  if ((length * sizeof(char) != 0 && version == nullptr)) {
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       version == nullptr)) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
   conn_t *conn = connection();
@@ -169,8 +173,9 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetUUID(conn_t *conn,
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_write(conn, &length, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_read(conn, uuid, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_read(conn, uuid, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -180,7 +185,7 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetUUID(conn_t *conn,
 
 extern "C" nvmlReturn_t nvmlDeviceGetUUID(nvmlDevice_t device, char *uuid,
                                           unsigned int length) {
-  if ((length * sizeof(char) != 0 && uuid == nullptr)) {
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 && uuid == nullptr)) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
   conn_t *conn = connection_for_device(&device);
@@ -559,8 +564,9 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetVbiosVersion(conn_t *conn,
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_write(conn, &length, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_read(conn, version, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_read(conn, version, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -571,7 +577,8 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetVbiosVersion(conn_t *conn,
 extern "C" nvmlReturn_t nvmlDeviceGetVbiosVersion(nvmlDevice_t device,
                                                   char *version,
                                                   unsigned int length) {
-  if ((length * sizeof(char) != 0 && version == nullptr)) {
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       version == nullptr)) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
   conn_t *conn = connection_for_device(&device);
@@ -588,8 +595,9 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetSerial(conn_t *conn,
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_write(conn, &length, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_read(conn, serial, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_read(conn, serial, lupine_checked_mul_size(length, sizeof(char))) <
+           0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -599,7 +607,8 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetSerial(conn_t *conn,
 
 extern "C" nvmlReturn_t nvmlDeviceGetSerial(nvmlDevice_t device, char *serial,
                                             unsigned int length) {
-  if ((length * sizeof(char) != 0 && serial == nullptr)) {
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       serial == nullptr)) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
   conn_t *conn = connection_for_device(&device);
@@ -615,8 +624,9 @@ lupine_rpc_nvmlDeviceGetBoardPartNumber(conn_t *conn, nvmlDevice_t device,
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_write(conn, &length, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_read(conn, partNumber, length * sizeof(char)) < 0) ||
+      (lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       rpc_read(conn, partNumber,
+                lupine_checked_mul_size(length, sizeof(char))) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -627,7 +637,8 @@ lupine_rpc_nvmlDeviceGetBoardPartNumber(conn_t *conn, nvmlDevice_t device,
 extern "C" nvmlReturn_t nvmlDeviceGetBoardPartNumber(nvmlDevice_t device,
                                                      char *partNumber,
                                                      unsigned int length) {
-  if ((length * sizeof(char) != 0 && partNumber == nullptr)) {
+  if ((lupine_checked_mul_size(length, sizeof(char)) != 0 &&
+       partNumber == nullptr)) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
   conn_t *conn = connection_for_device(&device);
