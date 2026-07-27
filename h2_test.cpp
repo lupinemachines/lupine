@@ -205,29 +205,26 @@ void test_server_to_client_after_request_headers() {
   write_all(&pair.server, {response});
   require(read_string(&pair.client, response.size()) == response,
           "server-to-client payload mismatch");
-  const char *cuda_version = rpc_http2_cuda_version(&pair.client);
-  require(cuda_version != nullptr &&
-              std::string(cuda_version) == LUPINE_CUDA_VERSION,
-          "RPC response omitted CUDA version");
 }
 
-void test_head_probe_returns_cuda_version() {
+void test_head_probe_cuda_version_metadata() {
   h2_pair pair;
   init_pair_sockets(&pair);
 
-  int probe_status = -1;
+  const char *cuda_version = nullptr;
   std::thread probe(
-      [&] { probe_status = rpc_http2_client_probe(&pair.client); });
+      [&] { cuda_version = rpc_http2_client_probe(&pair.client); });
   int server_result = rpc_http2_server_init(&pair.server);
   probe.join();
 
-  require(server_result == LUPINE_HTTP2_SERVER_REQUEST_HANDLED,
-          "HEAD / was not handled as a metadata request");
-  require(probe_status == 200, "HEAD / did not return HTTP 200");
-  const char *cuda_version = rpc_http2_cuda_version(&pair.client);
+  require(server_result == 1, "HEAD / was not handled as a metadata request");
+#ifdef LUPINE_CUDA_VERSION
   require(cuda_version != nullptr &&
               std::string(cuda_version) == LUPINE_CUDA_VERSION,
           "HEAD / omitted CUDA version");
+#else
+  require(cuda_version == nullptr, "HEAD / advertised an unknown CUDA version");
+#endif
 }
 
 void test_fragmented_iovec() {
@@ -714,12 +711,15 @@ void test_rpc_lz4_payload_round_trip() {
 } // namespace
 
 int main() {
+#ifdef LUPINE_H2_UNKNOWN_CUDA_VERSION_TEST
+  test_head_probe_cuda_version_metadata();
+#else
   test_rpc_write_queue_grows();
   test_rpc_lz4_payload_round_trip();
   test_client_to_server();
   test_server_receives_session_id();
   test_server_to_client_after_request_headers();
-  test_head_probe_returns_cuda_version();
+  test_head_probe_cuda_version_metadata();
   test_fragmented_iovec();
   test_fragmented_frames_direct();
   test_partial_read_stages_only_overflow();
@@ -729,6 +729,7 @@ int main() {
   test_framed_payload_round_trip();
   test_payload_larger_than_flow_control_window();
   test_reset_wakes_flow_controlled_writer();
+#endif
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }

@@ -399,7 +399,7 @@ constexpr char kLupineSessionHeader[] = "x-lupine-session";
 #ifdef LUPINE_CUDA_VERSION
 constexpr char kLupineCudaVersion[] = LUPINE_CUDA_VERSION;
 #else
-constexpr char kLupineCudaVersion[] = "unknown";
+constexpr char kLupineCudaVersion[] = "";
 #endif
 
 bool lupine_h2_debug_enabled() {
@@ -411,13 +411,14 @@ bool lupine_h2_debug_enabled() {
 }
 
 int h2_submit_server_response(h2_transport *transport, bool end_stream) {
-  nghttp2_nv headers[] = {
-      h2_nv(":status", "200"),
-      h2_nv(kLupineCudaVersionHeader, kLupineCudaVersion),
-  };
+  std::vector<nghttp2_nv> headers = {h2_nv(":status", "200")};
+  if (kLupineCudaVersion[0] != '\0') {
+    headers.push_back(h2_nv(kLupineCudaVersionHeader, kLupineCudaVersion));
+  }
   uint8_t flags = end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
   if (nghttp2_submit_headers(transport->session, flags, transport->stream_id,
-                             nullptr, headers, 2, nullptr) != 0) {
+                             nullptr, headers.data(), headers.size(),
+                             nullptr) != 0) {
     return -1;
   }
   transport->response_sent = true;
@@ -806,16 +807,6 @@ int rpc_http2_compress_lz4(conn_t *conn) {
   return transport != nullptr && transport->compress_lz4 ? 1 : 0;
 }
 
-const char *rpc_http2_cuda_version(conn_t *conn) {
-  if (conn == nullptr || conn->http2 == nullptr) {
-    return nullptr;
-  }
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  return transport->peer_cuda_version.empty()
-             ? nullptr
-             : transport->peer_cuda_version.c_str();
-}
-
 const char *rpc_http2_session_id(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return nullptr;
@@ -838,18 +829,22 @@ int rpc_http2_client_init(conn_t *conn) {
   return h2_init_direct(conn, false, false);
 }
 
-int rpc_http2_client_probe(conn_t *conn) {
+const char *rpc_http2_client_probe(conn_t *conn) {
   if (h2_init_direct(conn, false, true) < 0) {
-    return -1;
+    return nullptr;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   while (!transport->response_received && !transport->transport_failed) {
     size_t direct_bytes = 0;
     if (h2_read_from_net(transport, nullptr, 0, &direct_bytes) < 0) {
-      return -1;
+      return nullptr;
     }
   }
-  return transport->response_received ? transport->response_status : -1;
+  if (!transport->response_received || transport->response_status != 200 ||
+      transport->peer_cuda_version.empty()) {
+    return nullptr;
+  }
+  return transport->peer_cuda_version.c_str();
 }
 
 int rpc_http2_server_init(conn_t *conn) {
@@ -866,7 +861,7 @@ int rpc_http2_server_init(conn_t *conn) {
   if (!transport->request_received) {
     return -1;
   }
-  return transport->request_handled ? LUPINE_HTTP2_SERVER_REQUEST_HANDLED : 0;
+  return transport->request_handled ? 1 : 0;
 }
 
 void rpc_http2_destroy(conn_t *conn) {
