@@ -38,13 +38,13 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen
     ${CUDAToolkit_INCLUDE_DIRS}
     ${NGHTTP2_INCLUDE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib
 )
 
-# LZ4 is vendored (third_party/lz4, BSD-2-Clause) so builds do not depend on a
-# system liblz4. It is built as a plain C static library to keep it out of the
-# CUDA source handling below.
-add_library(lupine_lz4 STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lz4.c)
+# LZ4 is vendored as a git subtree (third_party/lz4, BSD-2-Clause) so builds do
+# not depend on a system liblz4. It is built as a plain C static library to keep
+# it out of the CUDA source handling below.
+add_library(lupine_lz4 STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c)
 set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Unoptimized LZ4 compresses slower than the wire, turning compression into a
 # slowdown, so keep it optimized even when no CMAKE_BUILD_TYPE is set.
