@@ -21,7 +21,7 @@ jobs:
 
       - name: Run Python tests
         working-directory: python
-        run: uv run pytest
+        run: uv run --all-extras pytest
 
       - name: Build Python package
         working-directory: python

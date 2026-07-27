@@ -18,7 +18,7 @@ jobs:
 
       - name: Run Python tests
         working-directory: python
-        run: uv run pytest
+        run: uv run --all-extras pytest
 
       - name: Build Python package
         working-directory: python
@@ -26,7 +26,7 @@ jobs:
 
       - name: Test minimum supported Python
         working-directory: python
-        run: uv run --python 3.9 pytest
+        run: uv run --python 3.9 --all-extras pytest
 
       - name: Upload Python package artifacts
         uses: actions/upload-artifact@v7
