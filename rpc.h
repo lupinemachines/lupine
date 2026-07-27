@@ -150,6 +150,8 @@ extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
 extern int rpc_http2_client_init(conn_t *conn);
 // Sends HEAD / and returns the x-lupine-cuda-version response header, or
 // nullptr when the request fails or the server does not advertise a version.
+// The returned pointer remains valid until rpc_http2_destroy() or
+// rpc_conn_destroy(); the probe connection must not be reused for RPC.
 extern const char *rpc_http2_client_probe(conn_t *conn);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
