@@ -127,6 +127,7 @@ extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
 #include <vector>
 
 #include "lupine_log.h"
+#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
                                            unsigned int flags, CUdevice device);
@@ -265,10 +266,8 @@ struct lupine_staging_state {
   std::unordered_set<CUdevice> teardown_devices;
 };
 
-struct lupine_staging_registry {
-  std::mutex mutex;
-  std::unordered_map<conn_t *, std::unique_ptr<lupine_staging_state>> states;
-};
+using lupine_staging_registry =
+    libcuckoo::cuckoohash_map<conn_t *, std::unique_ptr<lupine_staging_state>>;
 
 static lupine_staging_registry &lupine_staging_states() {
   static auto *registry = new lupine_staging_registry();
@@ -279,10 +278,12 @@ static lupine_staging_state *lupine_staging_state_for(conn_t *conn) {
   if (conn == nullptr) {
     return nullptr;
   }
-  auto &registry = lupine_staging_states();
-  std::lock_guard<std::mutex> lock(registry.mutex);
-  auto state = registry.states.find(conn);
-  return state == registry.states.end() ? nullptr : state->second.get();
+  lupine_staging_state *state = nullptr;
+  lupine_staging_states().find_fn(
+      conn, [&state](const std::unique_ptr<lupine_staging_state> &stored) {
+        state = stored.get();
+      });
+  return state;
 }
 
 // Called with state.mutex held. Runtime-created primary contexts
@@ -844,9 +845,7 @@ bool lupine_server_initialize_connection(conn_t *conn) {
   if (state == nullptr) {
     return false;
   }
-  auto &registry = lupine_staging_states();
-  std::lock_guard<std::mutex> lock(registry.mutex);
-  return registry.states.emplace(conn, std::move(state)).second;
+  return lupine_staging_states().insert(conn, std::move(state));
 }
 
 static void lupine_server_begin_lifecycle_transaction(conn_t *conn) {
@@ -992,15 +991,12 @@ static void lupine_server_finish_context_detach(conn_t *conn, CUcontext context,
 
 void lupine_server_cleanup_connection(conn_t *conn) {
   std::unique_ptr<lupine_staging_state> owned_state;
-  {
-    auto &registry = lupine_staging_states();
-    std::lock_guard<std::mutex> lock(registry.mutex);
-    auto state = registry.states.find(conn);
-    if (state == registry.states.end()) {
-      return;
-    }
-    owned_state = std::move(state->second);
-    registry.states.erase(state);
+  if (!lupine_staging_states().erase_fn(
+          conn, [&owned_state](std::unique_ptr<lupine_staging_state> &state) {
+            owned_state = std::move(state);
+            return true;
+          })) {
+    return;
   }
   auto *state = owned_state.get();
 
