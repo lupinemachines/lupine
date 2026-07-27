@@ -126,9 +126,7 @@ def _mock_httpx_client(monkeypatch, headers):
 
 
 def test_sidecar_queries_plaintext_server_with_http2_prior_knowledge(monkeypatch):
-    calls = _mock_httpx_client(
-        monkeypatch, {"x-lupine-cuda-version": "12.9.86"}
-    )
+    calls = _mock_httpx_client(monkeypatch, {"x-lupine-cuda-version": "12.9.86"})
 
     version = sidecar._server_cuda_version("host-a:14833")
 
@@ -141,9 +139,7 @@ def test_sidecar_queries_plaintext_server_with_http2_prior_knowledge(monkeypatch
 
 
 def test_sidecar_queries_https_server_with_http2(monkeypatch):
-    calls = _mock_httpx_client(
-        monkeypatch, {"X-Lupine-Cuda-Version": "13.1"}
-    )
+    calls = _mock_httpx_client(monkeypatch, {"X-Lupine-Cuda-Version": "13.1"})
 
     assert sidecar._server_cuda_version("https://host-a:14833") == Version("13.1")
     assert calls["url"] == "https://host-a:14833/"

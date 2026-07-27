@@ -55,9 +55,7 @@ def _server_cuda_version(server: str) -> Version:
             response = client.head(url)
             response.raise_for_status()
     except httpx.HTTPError as exc:
-        raise SidecarError(
-            f"could not query LUPINE server {server!r}: {exc}"
-        ) from exc
+        raise SidecarError(f"could not query LUPINE server {server!r}: {exc}") from exc
 
     version = response.headers.get(_CUDA_VERSION_HEADER)
     if version is None:
