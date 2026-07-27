@@ -32,6 +32,9 @@ struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
+  bool request_received = false;
+  bool request_handled = false;
+  bool response_received = false;
   bool response_sent = false;
   bool compress_lz4 = false;
   int32_t stream_id = 1;
@@ -49,6 +52,9 @@ struct h2_transport {
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   bool transport_failed = false;
+  std::string request_method;
+  std::string request_path;
+  std::string peer_cuda_version;
   std::string session_id;
 };
 
@@ -388,7 +394,13 @@ nghttp2_nv h2_nv(const char *name, const char *value) {
 
 constexpr char kLupineCompressHeader[] = "x-lupine-compress";
 constexpr char kLupineCompressLz4[] = "lz4";
+constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
+#ifdef LUPINE_CUDA_VERSION
+constexpr char kLupineCudaVersion[] = LUPINE_CUDA_VERSION;
+#else
+constexpr char kLupineCudaVersion[] = "unknown";
+#endif
 
 bool lupine_h2_debug_enabled() {
   const char *debug = getenv("LUPINE_DEBUG");
@@ -398,11 +410,14 @@ bool lupine_h2_debug_enabled() {
   return lupine_trace_stream() != nullptr;
 }
 
-int h2_submit_server_response(h2_transport *transport) {
-  nghttp2_nv headers[] = {h2_nv(":status", "200")};
-  if (nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE,
-                             transport->stream_id, nullptr, headers, 1,
-                             nullptr) != 0) {
+int h2_submit_server_response(h2_transport *transport, bool end_stream) {
+  nghttp2_nv headers[] = {
+      h2_nv(":status", "200"),
+      h2_nv(kLupineCudaVersionHeader, kLupineCudaVersion),
+  };
+  uint8_t flags = end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
+  if (nghttp2_submit_headers(transport->session, flags, transport->stream_id,
+                             nullptr, headers, 2, nullptr) != 0) {
     return -1;
   }
   transport->response_sent = true;
@@ -435,9 +450,16 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   if (transport->server && frame->hd.type == NGHTTP2_HEADERS &&
       frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
     transport->stream_id = frame->hd.stream_id;
-    if (!transport->response_sent && h2_submit_server_response(transport) < 0) {
+    transport->request_received = true;
+    transport->request_handled =
+        transport->request_method == "HEAD" && transport->request_path == "/";
+    if (!transport->response_sent &&
+        h2_submit_server_response(transport, transport->request_handled) < 0) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
+  } else if (!transport->server && frame->hd.type == NGHTTP2_HEADERS &&
+             frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
+    transport->response_received = true;
   }
   return 0;
 }
@@ -462,10 +484,16 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   }
   if (transport->server) {
     if (frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
-      if (namelen == strlen(kLupineCompressHeader) &&
-          memcmp(name, kLupineCompressHeader, namelen) == 0 &&
-          valuelen == strlen(kLupineCompressLz4) &&
-          memcmp(value, kLupineCompressLz4, valuelen) == 0) {
+      if (namelen == 7 && memcmp(name, ":method", namelen) == 0) {
+        transport->request_method.assign(reinterpret_cast<const char *>(value),
+                                         valuelen);
+      } else if (namelen == 5 && memcmp(name, ":path", namelen) == 0) {
+        transport->request_path.assign(reinterpret_cast<const char *>(value),
+                                       valuelen);
+      } else if (namelen == strlen(kLupineCompressHeader) &&
+                 memcmp(name, kLupineCompressHeader, namelen) == 0 &&
+                 valuelen == strlen(kLupineCompressLz4) &&
+                 memcmp(value, kLupineCompressLz4, valuelen) == 0) {
         transport->compress_lz4 = true;
       } else if (namelen == strlen(kLupineSessionHeader) &&
                  memcmp(name, kLupineSessionHeader, namelen) == 0) {
@@ -478,7 +506,13 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   if (frame->headers.cat != NGHTTP2_HCAT_RESPONSE) {
     return 0;
   }
-  if (namelen != 7 || memcmp(name, ":status", 7) != 0) {
+  if (namelen == strlen(kLupineCudaVersionHeader) &&
+      memcmp(name, kLupineCudaVersionHeader, namelen) == 0) {
+    transport->peer_cuda_version.assign(reinterpret_cast<const char *>(value),
+                                        valuelen);
+    return 0;
+  }
+  if (namelen != 7 || memcmp(name, ":status", namelen) != 0) {
     return 0;
   }
 
@@ -583,7 +617,7 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
   return result;
 }
 
-int h2_init_direct(conn_t *conn, bool server) {
+int h2_init_direct(conn_t *conn, bool server, bool probe) {
   auto *transport = new h2_transport();
   transport->netfd = conn->connfd;
   transport->tls = conn->tls_session;
@@ -635,19 +669,22 @@ int h2_init_direct(conn_t *conn, bool server) {
   if (!server) {
     const char *session_id = getenv("LUPINE_SESSION");
     std::vector<nghttp2_nv> headers = {
-        h2_nv(":method", "POST"),
+        h2_nv(":method", probe ? "HEAD" : "POST"),
         h2_nv(":scheme", "http"),
         h2_nv(":path", "/"),
         h2_nv(":authority", "lupine"),
-        h2_nv(kLupineCompressHeader, kLupineCompressLz4),
     };
-    if (session_id != nullptr && session_id[0] != '\0') {
-      headers.push_back(h2_nv(kLupineSessionHeader, session_id));
+    if (!probe) {
+      headers.push_back(h2_nv(kLupineCompressHeader, kLupineCompressLz4));
+      if (session_id != nullptr && session_id[0] != '\0') {
+        headers.push_back(h2_nv(kLupineSessionHeader, session_id));
+      }
+      transport->compress_lz4 = true;
     }
-    transport->compress_lz4 = true;
-    int32_t stream_id = nghttp2_submit_headers(
-        transport->session, NGHTTP2_FLAG_NONE, -1, nullptr, headers.data(),
-        headers.size(), nullptr);
+    uint8_t flags = probe ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
+    int32_t stream_id =
+        nghttp2_submit_headers(transport->session, flags, -1, nullptr,
+                               headers.data(), headers.size(), nullptr);
     if (stream_id < 0) {
       nghttp2_session_del(transport->session);
       delete transport;
@@ -769,6 +806,16 @@ int rpc_http2_compress_lz4(conn_t *conn) {
   return transport != nullptr && transport->compress_lz4 ? 1 : 0;
 }
 
+const char *rpc_http2_cuda_version(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return nullptr;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  return transport->peer_cuda_version.empty()
+             ? nullptr
+             : transport->peer_cuda_version.c_str();
+}
+
 const char *rpc_http2_session_id(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return nullptr;
@@ -787,9 +834,40 @@ int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats) {
   return 0;
 }
 
-int rpc_http2_client_init(conn_t *conn) { return h2_init_direct(conn, false); }
+int rpc_http2_client_init(conn_t *conn) {
+  return h2_init_direct(conn, false, false);
+}
 
-int rpc_http2_server_init(conn_t *conn) { return h2_init_direct(conn, true); }
+int rpc_http2_client_probe(conn_t *conn) {
+  if (h2_init_direct(conn, false, true) < 0) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  while (!transport->response_received && !transport->transport_failed) {
+    size_t direct_bytes = 0;
+    if (h2_read_from_net(transport, nullptr, 0, &direct_bytes) < 0) {
+      return -1;
+    }
+  }
+  return transport->response_received ? transport->response_status : -1;
+}
+
+int rpc_http2_server_init(conn_t *conn) {
+  if (h2_init_direct(conn, true, false) < 0) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  while (!transport->request_received && !transport->transport_failed) {
+    size_t direct_bytes = 0;
+    if (h2_read_from_net(transport, nullptr, 0, &direct_bytes) < 0) {
+      return -1;
+    }
+  }
+  if (!transport->request_received) {
+    return -1;
+  }
+  return transport->request_handled ? LUPINE_HTTP2_SERVER_REQUEST_HANDLED : 0;
+}
 
 void rpc_http2_destroy(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {

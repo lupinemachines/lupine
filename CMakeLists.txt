@@ -148,7 +148,10 @@ endif()
 
 add_executable(${SERVER_OUTPUT} ${SERVER_SOURCES} ${SERVER_HEADERS})
 target_include_directories(${SERVER_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_compile_definitions(${SERVER_OUTPUT} PRIVATE LUPINE_RPC_SERVER)
+target_compile_definitions(${SERVER_OUTPUT} PRIVATE
+    LUPINE_RPC_SERVER
+    LUPINE_CUDA_VERSION="${CUDAToolkit_VERSION}"
+)
 target_link_libraries(${SERVER_OUTPUT} PRIVATE CUDA::cuda_driver ${NGHTTP2_LIBRARY} lupine_lz4)
 
 if (WIN32)
@@ -161,6 +164,9 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
+    )
+    target_compile_definitions(h2_test PRIVATE
+        LUPINE_CUDA_VERSION="${CUDAToolkit_VERSION}"
     )
     target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
 

@@ -296,12 +296,18 @@ int client_handler(lupine_socket_t connfd) {
   conn.connfd = connfd;
   conn.request_id = 1;
   conn.local_request_parity = conn.request_id & 1;
+  int http2_init_result = -1;
   if (pthread_mutex_init(&conn.read_mutex, NULL) < 0 ||
       pthread_mutex_init(&conn.write_mutex, NULL) < 0 ||
       pthread_mutex_init(&conn.call_mutex, NULL) < 0 ||
       pthread_cond_init(&conn.read_cond, NULL) < 0 ||
-      rpc_http2_server_init(&conn) < 0) {
+      (http2_init_result = rpc_http2_server_init(&conn)) < 0) {
     LUPINE_LOG_ERROR("Error initializing mutex.");
+    return lupine_server_checkpoint_child_finish();
+  }
+  if (http2_init_result == LUPINE_HTTP2_SERVER_REQUEST_HANDLED) {
+    lupine_socket_close(connfd);
+    rpc_conn_destroy(&conn);
     return lupine_server_checkpoint_child_finish();
   }
   if (!lupine_server_initialize_connection(&conn)) {

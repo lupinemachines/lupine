@@ -50,26 +50,30 @@ void require(bool condition, const char *message) {
 
 void init_rpc_read(conn_t *conn);
 void init_rpc_write(conn_t *conn);
+void init_pair_sockets(h2_pair *pair);
 void exchange_settings(h2_pair *pair);
 
 h2_pair make_pair() {
-  int fds[2] = {-1, -1};
-  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
-
   h2_pair pair;
-  pair.client.connfd = fds[0];
-  pair.server.connfd = fds[1];
-  init_rpc_read(&pair.client);
-  init_rpc_write(&pair.client);
-  require(pthread_mutex_init(&pair.client.call_mutex, nullptr) == 0,
-          "client call mutex init failed");
-  init_rpc_read(&pair.server);
-  init_rpc_write(&pair.server);
-  require(pthread_mutex_init(&pair.server.call_mutex, nullptr) == 0,
-          "server call mutex init failed");
+  init_pair_sockets(&pair);
   require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
   require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
   return pair;
+}
+
+void init_pair_sockets(h2_pair *pair) {
+  int fds[2] = {-1, -1};
+  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
+  pair->client.connfd = fds[0];
+  pair->server.connfd = fds[1];
+  init_rpc_read(&pair->client);
+  init_rpc_write(&pair->client);
+  require(pthread_mutex_init(&pair->client.call_mutex, nullptr) == 0,
+          "client call mutex init failed");
+  init_rpc_read(&pair->server);
+  init_rpc_write(&pair->server);
+  require(pthread_mutex_init(&pair->server.call_mutex, nullptr) == 0,
+          "server call mutex init failed");
 }
 
 void init_rpc_read(conn_t *conn) {
@@ -201,6 +205,29 @@ void test_server_to_client_after_request_headers() {
   write_all(&pair.server, {response});
   require(read_string(&pair.client, response.size()) == response,
           "server-to-client payload mismatch");
+  const char *cuda_version = rpc_http2_cuda_version(&pair.client);
+  require(cuda_version != nullptr &&
+              std::string(cuda_version) == LUPINE_CUDA_VERSION,
+          "RPC response omitted CUDA version");
+}
+
+void test_head_probe_returns_cuda_version() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  int probe_status = -1;
+  std::thread probe(
+      [&] { probe_status = rpc_http2_client_probe(&pair.client); });
+  int server_result = rpc_http2_server_init(&pair.server);
+  probe.join();
+
+  require(server_result == LUPINE_HTTP2_SERVER_REQUEST_HANDLED,
+          "HEAD / was not handled as a metadata request");
+  require(probe_status == 200, "HEAD / did not return HTTP 200");
+  const char *cuda_version = rpc_http2_cuda_version(&pair.client);
+  require(cuda_version != nullptr &&
+              std::string(cuda_version) == LUPINE_CUDA_VERSION,
+          "HEAD / omitted CUDA version");
 }
 
 void test_fragmented_iovec() {
@@ -692,6 +719,7 @@ int main() {
   test_client_to_server();
   test_server_receives_session_id();
   test_server_to_client_after_request_headers();
+  test_head_probe_returns_cuda_version();
   test_fragmented_iovec();
   test_fragmented_frames_direct();
   test_partial_read_stages_only_overflow();

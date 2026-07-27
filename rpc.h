@@ -147,9 +147,19 @@ rpc_read_jit_outputs(conn_t *conn,
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
                             int entry_count);
+// A server init returns this value after fully handling a metadata-only HTTP
+// request. The caller should close the connection without entering RPC
+// dispatch.
+#define LUPINE_HTTP2_SERVER_REQUEST_HANDLED 1
 extern int rpc_http2_client_init(conn_t *conn);
+// Sends HEAD / and waits for the response headers. Returns the HTTP status or
+// -1 on transport failure.
+extern int rpc_http2_client_probe(conn_t *conn);
 extern int rpc_http2_server_init(conn_t *conn);
 extern int rpc_http2_compress_lz4(conn_t *conn);
+// Returns the x-lupine-cuda-version response header after it has been
+// received, or nullptr when the peer did not supply one.
+extern const char *rpc_http2_cuda_version(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.
 extern const char *rpc_http2_session_id(conn_t *conn);
