@@ -359,16 +359,11 @@ lupine_module_functions() {
   return *functions;
 }
 
-static std::unordered_map<int, lupine_primary_context_state> &
+static libcuckoo::cuckoohash_map<int, lupine_primary_context_state> &
 lupine_primary_context_states() {
   static auto *states =
-      new std::unordered_map<int, lupine_primary_context_state>();
+      new libcuckoo::cuckoohash_map<int, lupine_primary_context_state>();
   return *states;
-}
-
-static std::mutex &lupine_primary_context_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
 }
 
 static libcuckoo::cuckoohash_map<lupine_device_attribute_key, int,
@@ -2666,26 +2661,29 @@ extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device) {
 }
 
 extern "C" void lupine_note_primary_context_active(CUdevice dev) {
-  std::lock_guard<std::mutex> lock(lupine_primary_context_mutex());
-  auto it = lupine_primary_context_states().find(static_cast<int>(dev));
-  if (it != lupine_primary_context_states().end() && it->second.valid) {
-    it->second.active = 1;
-  }
+  lupine_primary_context_states().update_fn(
+      static_cast<int>(dev), [](lupine_primary_context_state &state) {
+        if (state.valid) {
+          state.active = 1;
+        }
+      });
 }
 
 extern "C" void lupine_note_primary_context_flags(CUdevice dev,
                                                   unsigned int flags) {
-  std::lock_guard<std::mutex> lock(lupine_primary_context_mutex());
-  auto &state = lupine_primary_context_states()[static_cast<int>(dev)];
-  state.flags = flags;
-  if (!state.valid) {
-    state.active = 0;
-    state.valid = true;
-  }
+  lupine_primary_context_states().upsert(
+      static_cast<int>(dev),
+      [flags](lupine_primary_context_state &state, libcuckoo::UpsertContext) {
+        state.flags = flags;
+        if (!state.valid) {
+          state.active = 0;
+          state.valid = true;
+        }
+      },
+      lupine_primary_context_state{true, flags, 0});
 }
 
 extern "C" void lupine_invalidate_primary_context_state(CUdevice dev) {
-  std::lock_guard<std::mutex> lock(lupine_primary_context_mutex());
   lupine_primary_context_states().erase(static_cast<int>(dev));
 }
 
@@ -2696,14 +2694,12 @@ lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
     return CUDA_ERROR_INVALID_VALUE;
   }
   int local_device = static_cast<int>(dev);
-  {
-    std::lock_guard<std::mutex> lock(lupine_primary_context_mutex());
-    auto it = lupine_primary_context_states().find(local_device);
-    if (it != lupine_primary_context_states().end() && it->second.valid) {
-      *flags = it->second.flags;
-      *active = it->second.active;
-      return CUDA_SUCCESS;
-    }
+  lupine_primary_context_state cached;
+  if (lupine_primary_context_states().find(local_device, cached) &&
+      cached.valid) {
+    *flags = cached.flags;
+    *active = cached.active;
+    return CUDA_SUCCESS;
   }
 
   CUdevice remote_device = dev;
@@ -2716,9 +2712,8 @@ lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
     }
     CUresult result = real(remote_device, flags, active);
     if (result == CUDA_SUCCESS) {
-      std::lock_guard<std::mutex> lock(lupine_primary_context_mutex());
-      lupine_primary_context_states()[local_device] =
-          lupine_primary_context_state{true, *flags, *active};
+      lupine_primary_context_states().insert_or_assign(
+          local_device, lupine_primary_context_state{true, *flags, *active});
     }
     return result;
   }
@@ -2735,9 +2730,8 @@ lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    std::lock_guard<std::mutex> lock(lupine_primary_context_mutex());
-    lupine_primary_context_states()[local_device] =
-        lupine_primary_context_state{true, *flags, *active};
+    lupine_primary_context_states().insert_or_assign(
+        local_device, lupine_primary_context_state{true, *flags, *active});
   }
   return return_value;
 }
