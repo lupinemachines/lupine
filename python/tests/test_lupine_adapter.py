@@ -103,6 +103,9 @@ def test_session_device_returns_one_native_device(lupine_module):
     with lupine.connect(host="host-a") as session:
         assert session.device() == FakeDevice("cuda", 0)
         assert session.device(1) == FakeDevice("cuda", 1)
+        assert session.device(-1) == FakeDevice("cuda", 1)
+        with pytest.raises(IndexError):
+            session.device(2)
 
 
 def test_connect_uses_sidecar_when_torch_has_no_cuda_backend(lupine_module, monkeypatch):
