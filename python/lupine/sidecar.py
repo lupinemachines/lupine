@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import atexit
-import http.client
 import json
 import os
 import shutil
@@ -72,26 +71,25 @@ def _server_cuda_version(server: str) -> Version:
 
 
 def _registry_json(path: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
-    connection = http.client.HTTPSConnection(_WORKER_REGISTRY_HOST, timeout=10)
     try:
-        connection.request("GET", path, headers=headers or {})
-        response = connection.getresponse()
-        body = response.read()
-    except (OSError, http.client.HTTPException) as exc:
+        response = httpx.get(
+            f"https://{_WORKER_REGISTRY_HOST}{path}",
+            headers=headers,
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
         raise SidecarError(
             f"could not query sidecar image registry: {exc}; pass image= explicitly"
         ) from exc
-    finally:
-        connection.close()
 
-    if response.status != 200:
-        detail = body.decode("utf-8", errors="replace").strip()
+    if response.status_code != 200:
+        detail = response.text.strip()
         raise SidecarError(
-            f"could not query sidecar image registry: HTTP {response.status}: "
+            f"could not query sidecar image registry: HTTP {response.status_code}: "
             f"{detail}; pass image= explicitly"
         )
     try:
-        payload = json.loads(body)
+        payload = response.json()
     except json.JSONDecodeError as exc:
         raise SidecarError(
             "sidecar image registry returned invalid JSON; pass image= explicitly"

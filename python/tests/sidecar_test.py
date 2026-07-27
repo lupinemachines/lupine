@@ -152,37 +152,30 @@ def test_sidecar_requires_server_cuda_version_header(monkeypatch):
         sidecar._server_cuda_version("host-a:14833")
 
 
-def test_sidecar_queries_registry_with_http_client(monkeypatch):
+def test_sidecar_queries_registry_with_httpx(monkeypatch):
     calls = []
 
     class FakeResponse:
-        status = 200
+        status_code = 200
 
         @staticmethod
-        def read():
-            return b'{"token":"anonymous-token"}'
+        def json():
+            return {"token": "anonymous-token"}
 
-    class FakeConnection:
-        def __init__(self, host, timeout):
-            calls.append(("connect", host, timeout))
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
 
-        def request(self, method, path, headers):
-            calls.append(("request", method, path, headers))
-
-        @staticmethod
-        def getresponse():
-            return FakeResponse()
-
-        def close(self):
-            calls.append(("close",))
-
-    monkeypatch.setattr(sidecar.http.client, "HTTPSConnection", FakeConnection)
-
+    monkeypatch.setattr(sidecar.httpx, "get", fake_get)
     assert sidecar._registry_json("/token") == {"token": "anonymous-token"}
     assert calls == [
-        ("connect", "ghcr.io", 10),
-        ("request", "GET", "/token", {}),
-        ("close",),
+        (
+            "https://ghcr.io/token",
+            {
+                "headers": None,
+                "timeout": 10,
+            },
+        )
     ]
 
 
