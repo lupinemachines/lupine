@@ -38,13 +38,13 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen
     ${CUDAToolkit_INCLUDE_DIRS}
     ${NGHTTP2_INCLUDE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib
 )
 
-# LZ4 is vendored (third_party/lz4, BSD-2-Clause) so builds do not depend on a
-# system liblz4. It is built as a plain C static library to keep it out of the
-# CUDA source handling below.
-add_library(lupine_lz4 STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lz4.c)
+# LZ4 is vendored as a git subtree (third_party/lz4, BSD-2-Clause) so builds do
+# not depend on a system liblz4. It is built as a plain C static library to keep
+# it out of the CUDA source handling below.
+add_library(lupine_lz4 STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c)
 set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Unoptimized LZ4 compresses slower than the wire, turning compression into a
 # slowdown, so keep it optimized even when no CMAKE_BUILD_TYPE is set.
@@ -148,7 +148,10 @@ endif()
 
 add_executable(${SERVER_OUTPUT} ${SERVER_SOURCES} ${SERVER_HEADERS})
 target_include_directories(${SERVER_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_compile_definitions(${SERVER_OUTPUT} PRIVATE LUPINE_RPC_SERVER)
+target_compile_definitions(${SERVER_OUTPUT} PRIVATE
+    LUPINE_RPC_SERVER
+    LUPINE_CUDA_VERSION="${CUDAToolkit_VERSION}"
+)
 target_link_libraries(${SERVER_OUTPUT} PRIVATE CUDA::cuda_driver ${NGHTTP2_LIBRARY} lupine_lz4)
 
 if (WIN32)
@@ -156,17 +159,29 @@ if (WIN32)
 else()
     target_link_libraries(${SERVER_OUTPUT} PRIVATE dl)
 
-    add_executable(h2_test
+    set(H2_TEST_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
     )
+    add_executable(h2_test ${H2_TEST_SOURCES})
+    target_compile_definitions(h2_test PRIVATE
+        LUPINE_CUDA_VERSION="${CUDAToolkit_VERSION}"
+    )
     target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
+
+    add_executable(h2_unknown_cuda_version_test ${H2_TEST_SOURCES})
+    target_compile_definitions(h2_unknown_cuda_version_test PRIVATE
+        LUPINE_H2_UNKNOWN_CUDA_VERSION_TEST
+    )
+    target_link_libraries(h2_unknown_cuda_version_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
 
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
     set_tests_properties(h2_test PROPERTIES TIMEOUT 30)
+    add_test(NAME h2_unknown_cuda_version_test COMMAND h2_unknown_cuda_version_test)
+    set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT 10)
 
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp

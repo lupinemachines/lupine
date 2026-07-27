@@ -36,6 +36,8 @@ test_cuda_available() {
 }
 
 test_tensor_to_cuda() {
+  pass_message=$1
+
   output=$(LD_PRELOAD="$client_lib_path" python3 -c "
 import torch
 print('Creating a tensor...')
@@ -54,6 +56,8 @@ print('Tensor successfully moved to CUDA')
 }
 
 test_tensor_to_cuda_to_cpu() {
+  pass_message=$1
+
   output=$(LD_PRELOAD="$client_lib_path" python3 -c "
 import torch
 print('Creating a tensor...')
@@ -79,6 +83,8 @@ print('Tensor successfully moved back to CPU:')
 }
 
 test_vector_add() {
+  pass_message=$1
+
   output=$(LD_PRELOAD="$client_lib_path" ./vector.o | tail -n 1)
 
   if [[ "$output" == "PASSED" ]]; then
@@ -90,6 +96,8 @@ test_vector_add() {
 }
 
 test_cudnn() {
+  pass_message=$1
+
   output=$(LD_PRELOAD="$client_lib_path" ./cudnn.o | tail -n 1)
 
   if [[ "$output" == "New array: 0.5 0.731059 0.880797 0.952574 0.982014 0.993307 0.997527 0.999089 0.999665 0.999877 " ]]; then
@@ -101,6 +109,8 @@ test_cudnn() {
 }
 
 test_cublas_batched() {
+  pass_message=$1
+
   output=$(LD_PRELOAD="$client_lib_path" ./cublas_batched.o | tail -n 5)
 
   expected_output=$'=====\nC[1]\n111.00 122.00\n151.00 166.00\n====='
@@ -118,6 +128,8 @@ test_cublas_batched() {
 }
 
 test_unified_mem() {
+  pass_message=$1
+
   output=$(LD_PRELOAD="$client_lib_path" ./unified_pointer.o | tail -n 1)
 
   if [[ "$output" == "Max error: 0" ]]; then
@@ -129,6 +141,8 @@ test_unified_mem() {
 }
 
 test_graphs() {
+  pass_message=$1
+
   output=$(LD_PRELOAD="$client_lib_path" ./cuda_graphs_host_func.o | tail -n 1)
 
   if [[ "$output" == "[cudaGraphsManual] Host callback final reduced sum = 1.000000" ]]; then

@@ -1,0 +1,19 @@
+#!/bin/sh
+# clang-format pre-commit hook
+#
+# To use, store as .git/hooks/pre-commit inside your repository and make sure
+# it has execute permissions.
+#
+# This script does not handle file names that contain spaces.
+
+cfiles=$(git diff --name-only HEAD --diff-filter=d | grep '\.\(cc\|hh\|c\|h\)$')
+numerrors=0
+for f in $cfiles; do
+	diffoutput=$(clang-format $f | diff $f -)
+	if [ -n "$diffoutput" ]; then
+		[ $numerrors -eq 0 ] && echo >&2 "Unformatted files:";
+		echo >&2 "$f";
+		((numerrors++))
+	fi
+done
+exit $numerrors
