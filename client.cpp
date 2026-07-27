@@ -33,6 +33,7 @@
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #if !defined(__GLIBC__)
@@ -56,6 +57,7 @@
 #include "lupine_log.h"
 #include "memcpy.h"
 #include "rpc.h"
+#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 pthread_mutex_t conn_mutex;
 conn_t conns[16];
@@ -6253,16 +6255,23 @@ struct lupine_context_storage_value {
   lupine_context_storage_dtor_t dtor;
 };
 
-static std::mutex &lupine_context_storage_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
+using lupine_context_storage_key = std::pair<CUcontext, void *>;
 
-static std::unordered_map<
-    CUcontext, std::unordered_map<void *, lupine_context_storage_value>> &
+struct lupine_context_storage_key_hash {
+  size_t operator()(const lupine_context_storage_key &value) const {
+    return std::hash<CUcontext>{}(value.first) ^
+           (std::hash<void *>{}(value.second) << 1);
+  }
+};
+
+static libcuckoo::cuckoohash_map<lupine_context_storage_key,
+                                 lupine_context_storage_value,
+                                 lupine_context_storage_key_hash> &
 lupine_context_storage() {
-  static auto *storage = new std::unordered_map<
-      CUcontext, std::unordered_map<void *, lupine_context_storage_value>>();
+  static auto *storage =
+      new libcuckoo::cuckoohash_map<lupine_context_storage_key,
+                                    lupine_context_storage_value,
+                                    lupine_context_storage_key_hash>();
   return *storage;
 }
 
@@ -6295,8 +6304,8 @@ lupine_context_local_storage_put(CUcontext ctx, void *key, void *value,
     return result;
   }
 
-  std::lock_guard<std::mutex> lock(lupine_context_storage_mutex());
-  lupine_context_storage()[ctx][key] = {value, dtor};
+  lupine_context_storage().insert_or_assign(
+      std::make_pair(ctx, key), lupine_context_storage_value{value, dtor});
   LUPINE_TRACE_LOG("LUPINE context storage put ctx=" << ctx << " key=" << key
                                                      << " value=" << value);
   return CUDA_SUCCESS;
@@ -6309,19 +6318,12 @@ extern "C" CUresult lupine_context_local_storage_delete(CUcontext ctx,
     return result;
   }
 
-  std::lock_guard<std::mutex> lock(lupine_context_storage_mutex());
-  auto ctx_it = lupine_context_storage().find(ctx);
-  if (ctx_it == lupine_context_storage().end()) {
-    return CUDA_ERROR_INVALID_HANDLE;
-  }
-  auto value_it = ctx_it->second.find(key);
-  if (value_it == ctx_it->second.end()) {
+  if (!lupine_context_storage().erase(lupine_context_storage_key{ctx, key})) {
     return CUDA_ERROR_INVALID_HANDLE;
   }
   // The private context-local-storage destructor ABI is not stable enough to
   // invoke here; some CUDA libraries call explicit delete during their own
   // teardown and free the value themselves.
-  ctx_it->second.erase(value_it);
   LUPINE_TRACE_LOG("LUPINE context storage delete ctx=" << ctx
                                                         << " key=" << key);
   return CUDA_SUCCESS;
@@ -6337,18 +6339,14 @@ extern "C" CUresult lupine_context_local_storage_get(void **value,
     return result;
   }
 
-  std::lock_guard<std::mutex> lock(lupine_context_storage_mutex());
-  auto ctx_it = lupine_context_storage().find(ctx);
-  if (ctx_it == lupine_context_storage().end()) {
-    return CUDA_ERROR_INVALID_HANDLE;
-  }
-  auto value_it = ctx_it->second.find(key);
-  if (value_it == ctx_it->second.end()) {
+  lupine_context_storage_value stored;
+  if (!lupine_context_storage().find(lupine_context_storage_key{ctx, key},
+                                     stored)) {
     LUPINE_TRACE_LOG(
         "LUPINE context storage get missing key ctx=" << ctx << " key=" << key);
     return CUDA_ERROR_INVALID_HANDLE;
   }
-  *value = value_it->second.value;
+  *value = stored.value;
   LUPINE_TRACE_LOG("LUPINE context storage get ctx=" << ctx << " key=" << key
                                                      << " value=" << *value);
   return lupine_activate_context_local_storage_context(ctx);
