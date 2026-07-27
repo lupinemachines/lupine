@@ -47,6 +47,7 @@
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
+#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 #if CUDA_VERSION < 12020
 #ifdef CU_MEM_LOCATION_TYPE_HOST
@@ -478,15 +479,11 @@ static void lupine_retire_graph_resources(
 using lupine_pending_dtoh_streams =
     std::unordered_map<CUstream, std::vector<lupine_pending_dtoh_copy>>;
 
-static std::unordered_map<conn_t *, lupine_pending_dtoh_streams> &
+static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies() {
-  static std::unordered_map<conn_t *, lupine_pending_dtoh_streams> copies;
+  static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams>
+      copies;
   return copies;
-}
-
-static std::mutex &lupine_pending_dtoh_mutex() {
-  static std::mutex mutex;
-  return mutex;
 }
 
 static std::shared_ptr<lupine_graph_resources>
@@ -717,29 +714,25 @@ static std::vector<lupine_pending_dtoh_copy>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams) {
   std::vector<lupine_pending_dtoh_copy> copies;
-  std::lock_guard<std::mutex> lock(lupine_pending_dtoh_mutex());
-  auto conn_it = lupine_pending_dtoh_copies().find(conn);
-  if (conn_it == lupine_pending_dtoh_copies().end()) {
-    return copies;
-  }
-  auto &streams = conn_it->second;
-  if (all_streams) {
-    for (auto &entry : streams) {
-      auto &stream_copies = entry.second;
-      copies.insert(copies.end(), stream_copies.begin(), stream_copies.end());
-    }
-    lupine_pending_dtoh_copies().erase(conn_it);
-    return copies;
-  }
+  lupine_pending_dtoh_copies().erase_fn(
+      conn, [&](lupine_pending_dtoh_streams &streams) {
+        if (all_streams) {
+          for (auto &entry : streams) {
+            auto &stream_copies = entry.second;
+            copies.insert(copies.end(), stream_copies.begin(),
+                          stream_copies.end());
+          }
+          return true;
+        }
 
-  auto stream_it = streams.find(stream);
-  if (stream_it != streams.end()) {
-    copies.swap(stream_it->second);
-    streams.erase(stream_it);
-    if (streams.empty()) {
-      lupine_pending_dtoh_copies().erase(conn_it);
-    }
-  }
+        auto stream_it = streams.find(stream);
+        if (stream_it == streams.end()) {
+          return false;
+        }
+        copies.swap(stream_it->second);
+        streams.erase(stream_it);
+        return streams.empty();
+      });
   return copies;
 }
 
@@ -3453,10 +3446,15 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     } else {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS && byteCount != 0) {
-        std::lock_guard<std::mutex> lock(lupine_pending_dtoh_mutex());
-        auto &pending = lupine_pending_dtoh_copies()[conn][stream];
-        pending.push_back(
-            {stream, dstHost, host, byteCount, alloc_result == CUDA_SUCCESS});
+        lupine_pending_dtoh_copy copy{stream, dstHost, host, byteCount,
+                                      alloc_result == CUDA_SUCCESS};
+        lupine_pending_dtoh_copies().upsert(
+            conn,
+            [stream, &copy](lupine_pending_dtoh_streams &streams,
+                            libcuckoo::UpsertContext) {
+              streams[stream].push_back(copy);
+            },
+            lupine_pending_dtoh_streams{});
         host = nullptr;
       }
     }
