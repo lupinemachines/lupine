@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import httpx
 import torch
 from packaging.version import InvalidVersion, Version
 
@@ -40,61 +41,36 @@ DEFAULT_IMAGE = f"{_WORKER_IMAGE_REPOSITORY}:cuda-13.1.0"
 _CUDA_VERSION_HEADER = "x-lupine-cuda-version"
 
 
-def _server_http_url(server: str) -> str:
-    if server.startswith(("http://", "https://")):
-        return f"{server.rstrip('/')}/"
-    return f"http://{server}/"
-
-
-def _parse_cuda_version(value: str) -> Version:
+def _server_cuda_version(server: str) -> Version:
+    url = server
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    url = f"{url.rstrip('/')}/"
     try:
-        return Version(value.strip())
-    except InvalidVersion as exc:
+        with httpx.Client(
+            http1=False,
+            http2=True,
+            timeout=httpx.Timeout(10.0, connect=5.0),
+        ) as client:
+            response = client.head(url)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
         raise SidecarError(
-            f"server returned invalid {_CUDA_VERSION_HEADER}: {value!r}"
+            f"could not query LUPINE server {server!r}: {exc}"
         ) from exc
 
-
-def _server_cuda_version(server: str) -> Version:
-    curl = shutil.which("curl")
-    if curl is None:
-        raise SidecarError("curl is required to query the LUPINE server")
-
-    url = _server_http_url(server)
-    http2_flag = "--http2" if url.startswith("https://") else "--http2-prior-knowledge"
-    result = subprocess.run(
-        [
-            curl,
-            http2_flag,
-            "--head",
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--connect-timeout",
-            "5",
-            "--max-time",
-            "10",
-            url,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise SidecarError(f"could not query LUPINE server {server!r}: {detail}")
-
-    version: str | None = None
-    for line in result.stdout.splitlines():
-        name, separator, value = line.partition(":")
-        if separator and name.strip().lower() == _CUDA_VERSION_HEADER:
-            version = value.strip()
+    version = response.headers.get(_CUDA_VERSION_HEADER)
     if version is None:
         raise SidecarError(
             f"LUPINE server {server!r} did not advertise "
             f"{_CUDA_VERSION_HEADER}; pass image= explicitly"
         )
-    return _parse_cuda_version(version)
+    try:
+        return Version(version.strip())
+    except InvalidVersion as exc:
+        raise SidecarError(
+            f"server returned invalid {_CUDA_VERSION_HEADER}: {version!r}"
+        ) from exc
 
 
 def _registry_json(path: str, headers: dict[str, str] | None = None) -> dict[str, Any]:

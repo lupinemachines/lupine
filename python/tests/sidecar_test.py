@@ -96,65 +96,61 @@ def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
     ]
 
 
+def _mock_httpx_client(monkeypatch, headers):
+    calls = {}
+
+    class FakeResponse:
+        def __init__(self):
+            self.headers = sidecar.httpx.Headers(headers)
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class FakeClient:
+        def __init__(self, **options):
+            calls["options"] = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def head(self, url):
+            calls["url"] = url
+            return FakeResponse()
+
+    monkeypatch.setattr(sidecar.httpx, "Client", FakeClient)
+    return calls
+
+
 def test_sidecar_queries_plaintext_server_with_http2_prior_knowledge(monkeypatch):
-    calls = []
-
-    def fake_run(args, **kwargs):
-        calls.append((args, kwargs))
-        return sidecar.subprocess.CompletedProcess(
-            args,
-            0,
-            "HTTP/2 200\r\nx-lupine-cuda-version: 12.9.86\r\n\r\n",
-            "",
-        )
-
-    monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/curl")
-    monkeypatch.setattr(sidecar.subprocess, "run", fake_run)
+    calls = _mock_httpx_client(
+        monkeypatch, {"x-lupine-cuda-version": "12.9.86"}
+    )
 
     version = sidecar._server_cuda_version("host-a:14833")
 
     assert version == Version("12.9.86")
-    assert calls[0][0] == [
-        "/usr/bin/curl",
-        "--http2-prior-knowledge",
-        "--head",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--connect-timeout",
-        "5",
-        "--max-time",
-        "10",
-        "http://host-a:14833/",
-    ]
+    assert calls["url"] == "http://host-a:14833/"
+    assert calls["options"]["http1"] is False
+    assert calls["options"]["http2"] is True
+    assert calls["options"]["timeout"].connect == 5
+    assert calls["options"]["timeout"].read == 10
 
 
-def test_sidecar_queries_https_server_with_negotiated_http2(monkeypatch):
-    def fake_run(args, **kwargs):
-        assert args[1] == "--http2"
-        assert args[-1] == "https://host-a:14833/"
-        return sidecar.subprocess.CompletedProcess(
-            args,
-            0,
-            "HTTP/2 200\r\nX-Lupine-Cuda-Version: 13.1\r\n\r\n",
-            "",
-        )
-
-    monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/curl")
-    monkeypatch.setattr(sidecar.subprocess, "run", fake_run)
+def test_sidecar_queries_https_server_with_http2(monkeypatch):
+    calls = _mock_httpx_client(
+        monkeypatch, {"X-Lupine-Cuda-Version": "13.1"}
+    )
 
     assert sidecar._server_cuda_version("https://host-a:14833") == Version("13.1")
+    assert calls["url"] == "https://host-a:14833/"
 
 
 def test_sidecar_requires_server_cuda_version_header(monkeypatch):
-    monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/curl")
-    monkeypatch.setattr(
-        sidecar.subprocess,
-        "run",
-        lambda args, **kwargs: sidecar.subprocess.CompletedProcess(
-            args, 0, "HTTP/2 200\r\n\r\n", ""
-        ),
-    )
+    _mock_httpx_client(monkeypatch, {})
 
     with pytest.raises(sidecar.SidecarError, match="pass image= explicitly"):
         sidecar._server_cuda_version("host-a:14833")

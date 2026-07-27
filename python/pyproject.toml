@@ -9,7 +9,7 @@ description = "Small PyTorch adapter helpers for LUPINE-backed CUDA devices"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-dependencies = ["packaging>=24"]
+dependencies = ["httpx[http2]>=0.28", "packaging>=24"]
 
 [project.optional-dependencies]
 torch = ["torch"]
