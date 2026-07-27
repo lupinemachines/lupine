@@ -32,6 +32,98 @@ from .tensor import (
 
 
 DEFAULT_IMAGE = "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.1.0"
+_CUDA_VERSION_HEADER = "x-lupine-cuda-version"
+_WORKER_IMAGES = (
+    ((13, 1, 0), DEFAULT_IMAGE),
+    (
+        (13, 0, 2),
+        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.0.2",
+    ),
+    (
+        (12, 9, 1),
+        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.9.1",
+    ),
+    (
+        (12, 8, 1),
+        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.8.1",
+    ),
+    (
+        (12, 6, 2),
+        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.6.2",
+    ),
+)
+
+
+def _server_http_url(server: str) -> str:
+    if server.startswith(("http://", "https://")):
+        return f"{server.rstrip('/')}/"
+    return f"http://{server}/"
+
+
+def _parse_cuda_version(value: str) -> tuple[int, int, int]:
+    try:
+        parts = tuple(int(part) for part in value.strip().split("."))
+    except ValueError as exc:
+        raise SidecarError(
+            f"server returned invalid {_CUDA_VERSION_HEADER}: {value!r}"
+        ) from exc
+    if not 2 <= len(parts) <= 3:
+        raise SidecarError(f"server returned invalid {_CUDA_VERSION_HEADER}: {value!r}")
+    return (parts + (0,))[:3]
+
+
+def _server_cuda_version(server: str) -> tuple[int, int, int]:
+    curl = shutil.which("curl")
+    if curl is None:
+        raise SidecarError("curl is required to query the LUPINE server")
+
+    url = _server_http_url(server)
+    http2_flag = "--http2" if url.startswith("https://") else "--http2-prior-knowledge"
+    result = subprocess.run(
+        [
+            curl,
+            http2_flag,
+            "--head",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "10",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise SidecarError(f"could not query LUPINE server {server!r}: {detail}")
+
+    version: str | None = None
+    for line in result.stdout.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip().lower() == _CUDA_VERSION_HEADER:
+            version = value.strip()
+    if version is None:
+        raise SidecarError(
+            f"LUPINE server {server!r} did not advertise "
+            f"{_CUDA_VERSION_HEADER}; pass image= explicitly"
+        )
+    return _parse_cuda_version(version)
+
+
+def _worker_image_for_server(server: str) -> str:
+    server_version = _server_cuda_version(server)
+    for required_version, image in _WORKER_IMAGES:
+        if required_version <= server_version:
+            return image
+    formatted = ".".join(str(part) for part in server_version)
+    raise SidecarError(
+        f"no published sidecar worker supports server CUDA {formatted}; "
+        "pass image= explicitly"
+    )
 
 
 def _op_name(func: Any) -> dict[str, str]:
@@ -170,11 +262,14 @@ class SidecarSession:
     """Session-scoped macOS frontend for a local Linux CUDA PyTorch sidecar."""
 
     server: str
-    image: str = DEFAULT_IMAGE
+    image: str | None = None
     runtime: str = "auto"
     platform: str = "linux/arm64"
     rosetta: bool = False
     env: dict[str, str] = field(default_factory=dict)
+
+    def _worker_image(self) -> str:
+        return self.image or _worker_image_for_server(self.server)
 
     def __enter__(self) -> "SidecarSession":
         if _get_active_session() is not None:
@@ -187,8 +282,10 @@ class SidecarSession:
         )
         if runtime != "container":
             raise SidecarError("only runtime='container' is implemented")
+        image = self._worker_image()
+        self.image = image
         launcher = ContainerRuntime(
-            image=self.image,
+            image=image,
             server=self.server,
             platform=self.platform,
             rosetta=self.rosetta,
@@ -436,7 +533,7 @@ class SidecarSession:
 def sidecar(
     server: str | None = None,
     *,
-    image: str = DEFAULT_IMAGE,
+    image: str | None = None,
     runtime: str = "auto",
     platform: str = "linux/arm64",
     rosetta: bool = False,

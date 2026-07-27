@@ -64,7 +64,9 @@ def _normalize_server(host: str, port: int | None = None) -> str:
     return f"{host}:{DEFAULT_PORT}"
 
 
-def _normalize_hosts(host: str | Sequence[str], port: int | None = None) -> tuple[str, ...]:
+def _normalize_hosts(
+    host: str | Sequence[str], port: int | None = None
+) -> tuple[str, ...]:
     if isinstance(host, str):
         return (_normalize_server(host, port),)
     return tuple(_normalize_server(item, port) for item in host)
@@ -212,11 +214,11 @@ def sidecar(
 ) -> Any:
     """Create a session-scoped sidecar PyTorch worker frontend."""
 
-    from .sidecar import DEFAULT_IMAGE, sidecar as _sidecar
+    from .sidecar import sidecar as _sidecar
 
     return _sidecar(
         server=server,
-        image=image or DEFAULT_IMAGE,
+        image=image,
         runtime=runtime,
         platform=platform,
         rosetta=rosetta,

@@ -95,6 +95,109 @@ def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
     ]
 
 
+def test_sidecar_queries_plaintext_server_with_http2_prior_knowledge(monkeypatch):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return sidecar.subprocess.CompletedProcess(
+            args,
+            0,
+            "HTTP/2 200\r\nx-lupine-cuda-version: 12.9.86\r\n\r\n",
+            "",
+        )
+
+    monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/curl")
+    monkeypatch.setattr(sidecar.subprocess, "run", fake_run)
+
+    version = sidecar._server_cuda_version("host-a:14833")
+
+    assert version == (12, 9, 86)
+    assert calls[0][0] == [
+        "/usr/bin/curl",
+        "--http2-prior-knowledge",
+        "--head",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "10",
+        "http://host-a:14833/",
+    ]
+
+
+def test_sidecar_queries_https_server_with_negotiated_http2(monkeypatch):
+    def fake_run(args, **kwargs):
+        assert args[1] == "--http2"
+        assert args[-1] == "https://host-a:14833/"
+        return sidecar.subprocess.CompletedProcess(
+            args,
+            0,
+            "HTTP/2 200\r\nX-Lupine-Cuda-Version: 13.1\r\n\r\n",
+            "",
+        )
+
+    monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/curl")
+    monkeypatch.setattr(sidecar.subprocess, "run", fake_run)
+
+    assert sidecar._server_cuda_version("https://host-a:14833") == (13, 1, 0)
+
+
+def test_sidecar_requires_server_cuda_version_header(monkeypatch):
+    monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/curl")
+    monkeypatch.setattr(
+        sidecar.subprocess,
+        "run",
+        lambda args, **kwargs: sidecar.subprocess.CompletedProcess(
+            args, 0, "HTTP/2 200\r\n\r\n", ""
+        ),
+    )
+
+    with pytest.raises(sidecar.SidecarError, match="pass image= explicitly"):
+        sidecar._server_cuda_version("host-a:14833")
+
+
+@pytest.mark.parametrize(
+    ("server_version", "image"),
+    [
+        ((13, 1, 80), "cuda-13.1.0"),
+        ((13, 0, 96), "cuda-13.0.2"),
+        ((12, 9, 86), "cuda-12.9.1"),
+        ((12, 8, 93), "cuda-12.8.1"),
+        ((12, 7, 0), "cuda-12.6.2"),
+    ],
+)
+def test_sidecar_selects_newest_compatible_worker(monkeypatch, server_version, image):
+    monkeypatch.setattr(sidecar, "_server_cuda_version", lambda server: server_version)
+
+    selected = sidecar._worker_image_for_server("host-a:14833")
+
+    assert selected.endswith(image)
+
+
+def test_sidecar_rejects_server_older_than_published_workers(monkeypatch):
+    monkeypatch.setattr(sidecar, "_server_cuda_version", lambda server: (12, 5, 82))
+
+    with pytest.raises(sidecar.SidecarError, match="pass image= explicitly"):
+        sidecar._worker_image_for_server("host-a:14833")
+
+
+def test_sidecar_explicit_image_skips_server_probe(monkeypatch):
+    session = sidecar.SidecarSession(
+        server="host-a:14833",
+        image="registry.example/worker:custom",
+    )
+    monkeypatch.setattr(
+        sidecar,
+        "_worker_image_for_server",
+        lambda server: pytest.fail("explicit image unexpectedly probed server"),
+    )
+
+    assert session._worker_image() == "registry.example/worker:custom"
+
+
 def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
     tensor_support._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
