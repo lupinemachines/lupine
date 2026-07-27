@@ -115,6 +115,16 @@ inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
 }
 
+inline int lupine_socket_wait_readable(lupine_socket_t socket,
+                                       int timeout_milliseconds) {
+  fd_set read_fds;
+  FD_ZERO(&read_fds);
+  FD_SET(socket, &read_fds);
+  timeval timeout = {timeout_milliseconds / 1000,
+                     (timeout_milliseconds % 1000) * 1000};
+  return select(0, &read_fds, nullptr, nullptr, &timeout);
+}
+
 inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
                                   size_t size) {
   int chunk = static_cast<int>(std::min<size_t>(size, INT_MAX));
@@ -161,6 +171,7 @@ inline int lupine_fd_truncate(int fd, long length) {
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -177,6 +188,11 @@ inline int lupine_socket_close(lupine_socket_t socket) { return close(socket); }
 inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   const int enable = 1;
   return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+}
+inline int lupine_socket_wait_readable(lupine_socket_t socket,
+                                       int timeout_milliseconds) {
+  pollfd descriptor = {socket, POLLIN, 0};
+  return poll(&descriptor, 1, timeout_milliseconds);
 }
 inline ssize_t lupine_socket_recv(lupine_socket_t socket, void *data,
                                   size_t size) {

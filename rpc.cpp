@@ -8,8 +8,6 @@
 #include <thread>
 #include <vector>
 
-extern void rpc_http2_destroy(conn_t *conn);
-
 static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
   if (conn == nullptr || capacity < 0) {
     return -1;

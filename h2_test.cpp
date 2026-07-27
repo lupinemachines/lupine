@@ -157,6 +157,124 @@ bool raw_read_exact(lupine_socket_t socket, unsigned char *data, size_t size) {
   return true;
 }
 
+std::string raw_read_http1_headers(lupine_socket_t socket) {
+  std::string headers;
+  while (headers.size() < 16 * 1024) {
+    unsigned char byte = 0;
+    if (!raw_read_exact(socket, &byte, 1)) {
+      return "";
+    }
+    headers.push_back(static_cast<char>(byte));
+    if (headers.size() >= 4 &&
+        headers.compare(headers.size() - 4, 4, "\r\n\r\n") == 0) {
+      return headers;
+    }
+  }
+  return "";
+}
+
+void raw_write_string(lupine_socket_t socket, const std::string &data) {
+  require(raw_write_all(socket,
+                        reinterpret_cast<const unsigned char *>(data.data()),
+                        data.size()),
+          "raw socket write failed");
+}
+
+std::string base64url_encode(const unsigned char *data, size_t size) {
+  constexpr char alphabet[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  std::string encoded;
+  uint32_t accumulator = 0;
+  int bits = 0;
+  for (size_t i = 0; i < size; ++i) {
+    accumulator = (accumulator << 8) | data[i];
+    bits += 8;
+    while (bits >= 6) {
+      bits -= 6;
+      encoded.push_back(alphabet[(accumulator >> bits) & 0x3f]);
+    }
+  }
+  if (bits != 0) {
+    encoded.push_back(alphabet[(accumulator << (6 - bits)) & 0x3f]);
+  }
+  return encoded;
+}
+
+nghttp2_nv test_nv(const char *name, const char *value) {
+  return {reinterpret_cast<uint8_t *>(const_cast<char *>(name)),
+          reinterpret_cast<uint8_t *>(const_cast<char *>(value)), strlen(name),
+          strlen(value),
+          NGHTTP2_NV_FLAG_NO_COPY_NAME | NGHTTP2_NV_FLAG_NO_COPY_VALUE};
+}
+
+struct upgrade_client {
+  lupine_socket_t socket = LUPINE_INVALID_SOCKET;
+  int32_t stream_id = -1;
+  std::string received;
+};
+
+struct upgrade_data_source {
+  const unsigned char *data = nullptr;
+  size_t size = 0;
+};
+
+ssize_t upgrade_client_send_callback(nghttp2_session *, const uint8_t *data,
+                                     size_t length, int, void *user_data) {
+  auto *client = static_cast<upgrade_client *>(user_data);
+  return raw_write_all(client->socket, data, length)
+             ? static_cast<ssize_t>(length)
+             : NGHTTP2_ERR_CALLBACK_FAILURE;
+}
+
+ssize_t upgrade_client_data_source_read_callback(nghttp2_session *, int32_t,
+                                                 uint8_t *buffer, size_t length,
+                                                 uint32_t *data_flags,
+                                                 nghttp2_data_source *source,
+                                                 void *) {
+  auto *input = static_cast<upgrade_data_source *>(source->ptr);
+  size_t chunk = std::min(length, input->size);
+  memcpy(buffer, input->data, chunk);
+  input->data += chunk;
+  input->size -= chunk;
+  if (input->size == 0) {
+    *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
+  }
+  return static_cast<ssize_t>(chunk);
+}
+
+int upgrade_client_data_recv_callback(nghttp2_session *, uint8_t,
+                                      int32_t stream_id, const uint8_t *data,
+                                      size_t length, void *user_data) {
+  auto *client = static_cast<upgrade_client *>(user_data);
+  if (stream_id == client->stream_id) {
+    client->received.append(reinterpret_cast<const char *>(data), length);
+  }
+  return 0;
+}
+
+void read_upgrade_client_data(upgrade_client *client, nghttp2_session *session,
+                              size_t expected_size) {
+  std::array<unsigned char, 4096> buffer = {};
+  while (client->received.size() < expected_size) {
+    ssize_t received =
+        lupine_socket_recv(client->socket, buffer.data(), buffer.size());
+    if (received < 0 && lupine_socket_error_is_intr()) {
+      continue;
+    }
+    require(received > 0, "upgraded HTTP/2 response read failed");
+    size_t offset = 0;
+    while (offset < static_cast<size_t>(received)) {
+      ssize_t consumed =
+          nghttp2_session_mem_recv(session, buffer.data() + offset,
+                                   static_cast<size_t>(received) - offset);
+      require(consumed > 0, "upgraded HTTP/2 response parse failed");
+      offset += static_cast<size_t>(consumed);
+    }
+    require(nghttp2_session_send(session) == 0,
+            "upgraded HTTP/2 acknowledgement send failed");
+  }
+}
+
 void test_client_to_server() {
   h2_pair pair = make_pair();
   std::string message = "hello over h2";
@@ -225,6 +343,183 @@ void test_head_probe_cuda_version_metadata() {
 #else
   require(cuda_version == nullptr, "HEAD / advertised an unknown CUDA version");
 #endif
+}
+
+void test_http1_head_metadata() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  int server_result = -1;
+  std::thread server(
+      [&] { server_result = rpc_http2_server_init(&pair.server); });
+  raw_write_string(pair.client.connfd, "HE");
+  raw_write_string(pair.client.connfd, "AD / HTTP/1.1\r\nhoST: lupine\r\n");
+  raw_write_string(pair.client.connfd, "\r\n");
+  server.join();
+
+  std::string response = raw_read_http1_headers(pair.client.connfd);
+  require(server_result == 1, "HTTP/1.1 HEAD / was not handled");
+  require(response.find("HTTP/1.1 200 OK\r\n") == 0,
+          "HTTP/1.1 HEAD / did not return 200");
+  require(response.find("Content-Length: 0\r\n") != std::string::npos,
+          "HTTP/1.1 HEAD / response can have a body");
+#ifdef LUPINE_CUDA_VERSION
+  require(response.find(std::string("x-lupine-cuda-version: ") +
+                        LUPINE_CUDA_VERSION + "\r\n") != std::string::npos,
+          "HTTP/1.1 HEAD / omitted CUDA version");
+#else
+  require(response.find("x-lupine-cuda-version:") == std::string::npos,
+          "HTTP/1.1 HEAD / advertised an unknown CUDA version");
+#endif
+}
+
+void require_bad_http1_upgrade(const std::string &request) {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  raw_write_string(pair.client.connfd, request);
+  require(rpc_http2_server_init(&pair.server) < 0,
+          "invalid h2c upgrade was accepted");
+  std::string response = raw_read_http1_headers(pair.client.connfd);
+  require(response.find("HTTP/1.1 400 Bad Request\r\n") == 0,
+          "invalid h2c upgrade did not return 400");
+  require(pair.server.http2 == nullptr,
+          "invalid h2c upgrade retained transport state");
+}
+
+void test_http1_rejects_invalid_upgrades() {
+  constexpr char prefix[] = "OPTIONS * HTTP/1.1\r\n"
+                            "Host: lupine\r\n"
+                            "Connection: Upgrade, HTTP2-Settings\r\n"
+                            "Upgrade: h2c\r\n";
+  require_bad_http1_upgrade(std::string(prefix) +
+                            "HTTP2-Settings: not+base64url\r\n\r\n");
+  require_bad_http1_upgrade(std::string(prefix) + "\r\n");
+  require_bad_http1_upgrade(std::string(prefix) +
+                            "HTTP2-Settings: AAMAAABk\r\n"
+                            "HTTP2-Settings: AAMAAABk\r\n\r\n");
+  require_bad_http1_upgrade(std::string(prefix) + "HTTP2-Settings: AA\r\n\r\n");
+}
+
+void test_http1_rejects_oversized_headers() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  int server_result = 0;
+  std::thread server(
+      [&] { server_result = rpc_http2_server_init(&pair.server); });
+  raw_write_string(pair.client.connfd, "OPTIONS * HTTP/1.1\r\nX-Oversized: " +
+                                           std::string(16 * 1024, 'x'));
+  server.join();
+
+  require(server_result < 0, "oversized HTTP/1.1 headers were accepted");
+  std::string response = raw_read_http1_headers(pair.client.connfd);
+  require(response.find("HTTP/1.1 431 Request Header Fields Too Large\r\n") ==
+              0,
+          "oversized HTTP/1.1 headers did not return 431");
+}
+
+void test_http1_header_timeout() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  int server_result = 0;
+  std::thread server(
+      [&] { server_result = rpc_http2_server_init(&pair.server); });
+  raw_write_string(pair.client.connfd, "HEAD / HTTP/1.1\r\n");
+  server.join();
+
+  require(server_result < 0, "incomplete HTTP/1.1 headers did not time out");
+  std::string response = raw_read_http1_headers(pair.client.connfd);
+  require(response.find("HTTP/1.1 408 Request Timeout\r\n") == 0,
+          "incomplete HTTP/1.1 headers did not return 408");
+}
+
+void test_h2c_upgrade_then_rpc_request() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  nghttp2_settings_entry setting = {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
+                                    1024 * 1024};
+  std::array<unsigned char, 6> settings_payload = {};
+  require(nghttp2_pack_settings_payload(settings_payload.data(),
+                                        settings_payload.size(), &setting, 1) ==
+              static_cast<ssize_t>(settings_payload.size()),
+          "failed to pack HTTP2-Settings");
+  std::string encoded_settings =
+      base64url_encode(settings_payload.data(), settings_payload.size());
+  std::string request = "OPTIONS * HTTP/1.1\r\n"
+                        "Host: lupine\r\n"
+                        "cOnNeCtIoN: keep-alive, hTtP2-SeTtInGs, UpGrAdE\r\n"
+                        "uPgRaDe: H2C\r\n"
+                        "HtTp2-SeTtInGs: " +
+                        encoded_settings + "\r\n\r\n";
+
+  int server_result = -1;
+  std::thread server(
+      [&] { server_result = rpc_http2_server_init(&pair.server); });
+  raw_write_string(pair.client.connfd, request.substr(0, 9));
+  raw_write_string(pair.client.connfd, request.substr(9, 23));
+  raw_write_string(pair.client.connfd, request.substr(32));
+  std::string response = raw_read_http1_headers(pair.client.connfd);
+  require(response.find("HTTP/1.1 101 Switching Protocols\r\n") == 0,
+          "valid h2c request did not return 101");
+
+  nghttp2_session_callbacks *callbacks = nullptr;
+  require(nghttp2_session_callbacks_new(&callbacks) == 0,
+          "upgrade client callback allocation failed");
+  nghttp2_session_callbacks_set_send_callback(callbacks,
+                                              upgrade_client_send_callback);
+  nghttp2_session_callbacks_set_on_data_chunk_recv_callback(
+      callbacks, upgrade_client_data_recv_callback);
+  nghttp2_session *session = nullptr;
+  upgrade_client client = {};
+  client.socket = pair.client.connfd;
+  require(nghttp2_session_client_new(&session, callbacks, &client) == 0,
+          "upgrade client session allocation failed");
+  nghttp2_session_callbacks_del(callbacks);
+  require(nghttp2_session_upgrade2(session, settings_payload.data(),
+                                   settings_payload.size(), 0, nullptr) == 0,
+          "upgrade client session transition failed");
+
+  nghttp2_nv headers[] = {test_nv(":method", "POST"),
+                          test_nv(":scheme", "http"), test_nv(":path", "/"),
+                          test_nv(":authority", "lupine"),
+                          test_nv("x-lupine-compress", "lz4")};
+  client.stream_id = nghttp2_submit_headers(session, NGHTTP2_FLAG_NONE, -1,
+                                            nullptr, headers, 5, nullptr);
+  require(client.stream_id == 3,
+          "post-upgrade RPC request did not use stream 3");
+  require(nghttp2_session_send(session) == 0,
+          "post-upgrade RPC request headers send failed");
+  server.join();
+
+  require(server_result == 0,
+          "server did not accept RPC request after h2c upgrade");
+  require(rpc_http2_compress_lz4(&pair.server) == 1,
+          "post-upgrade RPC headers were not processed");
+
+  std::string request_payload = "request over upgraded h2";
+  upgrade_data_source input = {
+      reinterpret_cast<const unsigned char *>(request_payload.data()),
+      request_payload.size()};
+  nghttp2_data_provider provider = {};
+  provider.source.ptr = &input;
+  provider.read_callback = upgrade_client_data_source_read_callback;
+  require(nghttp2_submit_data(session, NGHTTP2_FLAG_NONE, client.stream_id,
+                              &provider) == 0,
+          "post-upgrade RPC payload submit failed");
+  require(nghttp2_session_send(session) == 0,
+          "post-upgrade RPC payload send failed");
+  require(read_string(&pair.server, request_payload.size()) == request_payload,
+          "post-upgrade RPC request payload mismatch");
+
+  std::string response_payload = "response over upgraded h2";
+  write_all(&pair.server, {response_payload});
+  read_upgrade_client_data(&client, session, response_payload.size());
+  require(client.received == response_payload,
+          "post-upgrade RPC response payload mismatch");
+  nghttp2_session_del(session);
 }
 
 void test_fragmented_iovec() {
@@ -713,6 +1008,7 @@ void test_rpc_lz4_payload_round_trip() {
 int main() {
 #ifdef LUPINE_H2_UNKNOWN_CUDA_VERSION_TEST
   test_head_probe_cuda_version_metadata();
+  test_http1_head_metadata();
 #else
   test_rpc_write_queue_grows();
   test_rpc_lz4_payload_round_trip();
@@ -720,6 +1016,11 @@ int main() {
   test_server_receives_session_id();
   test_server_to_client_after_request_headers();
   test_head_probe_cuda_version_metadata();
+  test_http1_head_metadata();
+  test_http1_rejects_invalid_upgrades();
+  test_http1_rejects_oversized_headers();
+  test_http1_header_timeout();
+  test_h2c_upgrade_then_rpc_request();
   test_fragmented_iovec();
   test_fragmented_frames_direct();
   test_partial_read_stages_only_overflow();

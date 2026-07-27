@@ -156,6 +156,7 @@ extern const char *rpc_http2_client_probe(conn_t *conn);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
 extern int rpc_http2_server_init(conn_t *conn);
+extern void rpc_http2_destroy(conn_t *conn);
 extern int rpc_http2_compress_lz4(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.

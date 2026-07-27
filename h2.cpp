@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <climits>
 #include <deque>
 #include <errno.h>
@@ -37,9 +38,10 @@ struct h2_transport {
   bool response_received = false;
   bool response_sent = false;
   bool compress_lz4 = false;
-  int32_t stream_id = 1;
+  int32_t stream_id = -1;
   int response_status = 0;
   nghttp2_session *session = nullptr;
+  std::vector<unsigned char> pending_net_input;
   std::deque<h2_buffer> local_out;
   unsigned char *read_destination = nullptr;
   size_t read_remaining = 0;
@@ -396,6 +398,9 @@ constexpr char kLupineCompressHeader[] = "x-lupine-compress";
 constexpr char kLupineCompressLz4[] = "lz4";
 constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
+constexpr char kH2ClientMagic[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+constexpr size_t kHttp1MaxHeaderBytes = 16 * 1024;
+constexpr int kHttp1HeaderTimeoutMilliseconds = 5000;
 #ifdef LUPINE_CUDA_VERSION
 constexpr char kLupineCudaVersion[] = LUPINE_CUDA_VERSION;
 #else
@@ -423,6 +428,15 @@ int h2_submit_server_response(h2_transport *transport, bool end_stream) {
   }
   transport->response_sent = true;
   return 0;
+}
+
+int h2_submit_upgrade_response(h2_transport *transport) {
+  nghttp2_nv headers[] = {h2_nv(":status", "200"),
+                          h2_nv("content-length", "0")};
+  return nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_END_STREAM, 1,
+                                nullptr, headers, 2, nullptr) == 0
+             ? 0
+             : -1;
 }
 
 int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
@@ -553,30 +567,38 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
     return -1;
   }
   *direct_bytes = 0;
+  std::vector<unsigned char> pending;
   unsigned char buffer[64 * 1024];
+  const unsigned char *input = buffer;
   ssize_t n = 0;
+  if (!transport->pending_net_input.empty()) {
+    pending.swap(transport->pending_net_input);
+    input = pending.data();
+    n = static_cast<ssize_t>(pending.size());
+  } else {
 #ifdef LUPINE_TLS_OPENSSL
-  if (transport->tls != nullptr) {
-    SSL *ssl = static_cast<SSL *>(transport->tls);
-    for (;;) {
-      int r = SSL_read(ssl, buffer, sizeof(buffer));
-      if (r > 0) {
-        n = r;
-        break;
+    if (transport->tls != nullptr) {
+      SSL *ssl = static_cast<SSL *>(transport->tls);
+      for (;;) {
+        int r = SSL_read(ssl, buffer, sizeof(buffer));
+        if (r > 0) {
+          n = r;
+          break;
+        }
+        int err = SSL_get_error(ssl, r);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+          continue;
+        }
+        h2_mark_transport_failed(transport);
+        return -1;
       }
-      int err = SSL_get_error(ssl, r);
-      if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        continue;
-      }
-      h2_mark_transport_failed(transport);
-      return -1;
-    }
-  } else
+    } else
 #endif
-  {
-    do {
-      n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
-    } while (n < 0 && lupine_socket_error_is_intr());
+    {
+      do {
+        n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
+      } while (n < 0 && lupine_socket_error_is_intr());
+    }
   }
   if (n <= 0) {
     h2_mark_transport_failed(transport);
@@ -596,7 +618,7 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
   int result = 0;
   while (offset < static_cast<size_t>(n)) {
     ssize_t consumed = nghttp2_session_mem_recv(
-        transport->session, buffer + offset, static_cast<size_t>(n) - offset);
+        transport->session, input + offset, static_cast<size_t>(n) - offset);
     if (consumed <= 0) {
       result = -1;
       break;
@@ -618,7 +640,7 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
   return result;
 }
 
-int h2_init_direct(conn_t *conn, bool server, bool probe) {
+int h2_init_direct(conn_t *conn, bool server, bool probe, bool flush = true) {
   auto *transport = new h2_transport();
   transport->netfd = conn->connfd;
   transport->tls = conn->tls_session;
@@ -695,13 +717,331 @@ int h2_init_direct(conn_t *conn, bool server, bool probe) {
   }
 
   conn->http2 = transport;
-  if (h2_flush_session(transport) < 0) {
+  if (flush && h2_flush_session(transport) < 0) {
     conn->http2 = nullptr;
     nghttp2_session_del(transport->session);
     delete transport;
     return -1;
   }
   return 0;
+}
+
+enum class h2_server_preamble_kind {
+  direct,
+  metadata,
+  upgrade,
+  error,
+};
+
+struct h2_server_preamble {
+  h2_server_preamble_kind kind = h2_server_preamble_kind::error;
+  std::vector<unsigned char> pending_input;
+  std::vector<unsigned char> settings;
+  bool head_request = false;
+};
+
+bool h2_socket_write_all(lupine_socket_t socket, const char *data,
+                         size_t size) {
+  while (size != 0) {
+    struct iovec iov = {const_cast<char *>(data), size};
+    ssize_t written = lupine_socket_sendv(socket, &iov, 1);
+    if (written < 0 && lupine_socket_error_is_intr()) {
+      continue;
+    }
+    if (written <= 0) {
+      return false;
+    }
+    data += written;
+    size -= static_cast<size_t>(written);
+  }
+  return true;
+}
+
+bool h2_send_http1_response(lupine_socket_t socket, const char *status) {
+  std::string response = "HTTP/1.1 ";
+  response += status;
+  response += "\r\nConnection: close\r\n";
+  response += "Content-Length: 0\r\n\r\n";
+  return h2_socket_write_all(socket, response.data(), response.size());
+}
+
+char h2_ascii_lower(char value) {
+  return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A'))
+                                      : value;
+}
+
+bool h2_ascii_iequals(const std::string &left, const char *right) {
+  size_t right_size = strlen(right);
+  if (left.size() != right_size) {
+    return false;
+  }
+  for (size_t i = 0; i < left.size(); ++i) {
+    if (h2_ascii_lower(left[i]) != h2_ascii_lower(right[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string h2_trim_http_value(const std::string &value) {
+  size_t begin = 0;
+  while (begin < value.size() &&
+         (value[begin] == ' ' || value[begin] == '\t')) {
+    ++begin;
+  }
+  size_t end = value.size();
+  while (end > begin && (value[end - 1] == ' ' || value[end - 1] == '\t')) {
+    --end;
+  }
+  return value.substr(begin, end - begin);
+}
+
+bool h2_http_token_list_contains(const std::string &value,
+                                 const char *expected) {
+  size_t offset = 0;
+  while (offset <= value.size()) {
+    size_t comma = value.find(',', offset);
+    std::string token = h2_trim_http_value(
+        value.substr(offset, comma == std::string::npos ? std::string::npos
+                                                        : comma - offset));
+    if (h2_ascii_iequals(token, expected)) {
+      return true;
+    }
+    if (comma == std::string::npos) {
+      return false;
+    }
+    offset = comma + 1;
+  }
+  return false;
+}
+
+bool h2_decode_base64url(const std::string &encoded,
+                         std::vector<unsigned char> *decoded) {
+  if (encoded.size() % 4 == 1) {
+    return false;
+  }
+  uint32_t accumulator = 0;
+  int bits = 0;
+  for (char character : encoded) {
+    int value;
+    if (character >= 'A' && character <= 'Z') {
+      value = character - 'A';
+    } else if (character >= 'a' && character <= 'z') {
+      value = character - 'a' + 26;
+    } else if (character >= '0' && character <= '9') {
+      value = character - '0' + 52;
+    } else if (character == '-') {
+      value = 62;
+    } else if (character == '_') {
+      value = 63;
+    } else {
+      return false;
+    }
+    accumulator = (accumulator << 6) | static_cast<uint32_t>(value);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      decoded->push_back(
+          static_cast<unsigned char>((accumulator >> bits) & 0xff));
+    }
+  }
+  return bits == 0 ||
+         (accumulator & ((static_cast<uint32_t>(1) << bits) - 1)) == 0;
+}
+
+bool h2_http_header_name_valid(const std::string &name) {
+  if (name.empty()) {
+    return false;
+  }
+  for (unsigned char value : name) {
+    bool valid = (value >= 'a' && value <= 'z') ||
+                 (value >= 'A' && value <= 'Z') ||
+                 (value >= '0' && value <= '9') || value == '!' ||
+                 value == '#' || value == '$' || value == '%' || value == '&' ||
+                 value == '\'' || value == '*' || value == '+' ||
+                 value == '-' || value == '.' || value == '^' || value == '_' ||
+                 value == '`' || value == '|' || value == '~';
+    if (!valid) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool h2_http_value_valid(const std::string &value) {
+  return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+    return character == '\t' || (character >= 0x20 && character <= 0x7e);
+  });
+}
+
+bool h2_parse_http1_request(const std::string &headers,
+                            h2_server_preamble *preamble) {
+  size_t request_line_end = headers.find("\r\n");
+  if (request_line_end == std::string::npos) {
+    return false;
+  }
+  std::string request_line = headers.substr(0, request_line_end);
+  size_t first_space = request_line.find(' ');
+  size_t second_space = first_space == std::string::npos
+                            ? std::string::npos
+                            : request_line.find(' ', first_space + 1);
+  if (first_space == std::string::npos || second_space == std::string::npos ||
+      request_line.find(' ', second_space + 1) != std::string::npos ||
+      request_line.substr(second_space + 1) != "HTTP/1.1") {
+    return false;
+  }
+  std::string method = request_line.substr(0, first_space);
+  std::string target =
+      request_line.substr(first_space + 1, second_space - first_space - 1);
+  if (!h2_http_header_name_valid(method) || target.empty() ||
+      !h2_http_value_valid(target)) {
+    return false;
+  }
+
+  bool connection_upgrade = false;
+  bool connection_settings = false;
+  bool upgrade_h2c = false;
+  bool has_settings = false;
+  bool request_has_body = false;
+  std::string encoded_settings;
+  size_t offset = request_line_end + 2;
+  while (offset < headers.size() - 2) {
+    size_t line_end = headers.find("\r\n", offset);
+    if (line_end == std::string::npos || line_end == offset) {
+      return false;
+    }
+    std::string line = headers.substr(offset, line_end - offset);
+    size_t colon = line.find(':');
+    if (colon == std::string::npos) {
+      return false;
+    }
+    std::string name = line.substr(0, colon);
+    std::string value = h2_trim_http_value(line.substr(colon + 1));
+    if (!h2_http_header_name_valid(name) || !h2_http_value_valid(value)) {
+      return false;
+    }
+    if (h2_ascii_iequals(name, "connection")) {
+      connection_upgrade |= h2_http_token_list_contains(value, "upgrade");
+      connection_settings |=
+          h2_http_token_list_contains(value, "http2-settings");
+    } else if (h2_ascii_iequals(name, "upgrade")) {
+      upgrade_h2c |= h2_http_token_list_contains(value, "h2c");
+    } else if (h2_ascii_iequals(name, "http2-settings")) {
+      if (has_settings) {
+        return false;
+      }
+      has_settings = true;
+      encoded_settings = value;
+    } else if (h2_ascii_iequals(name, "transfer-encoding")) {
+      request_has_body = true;
+    } else if (h2_ascii_iequals(name, "content-length") && value != "0") {
+      request_has_body = true;
+    }
+    offset = line_end + 2;
+  }
+  if (request_has_body) {
+    return false;
+  }
+  if (method == "HEAD" && target == "/") {
+    preamble->kind = h2_server_preamble_kind::metadata;
+    return true;
+  }
+  if (!connection_upgrade || !connection_settings || !upgrade_h2c ||
+      !has_settings ||
+      !h2_decode_base64url(encoded_settings, &preamble->settings) ||
+      preamble->settings.size() % 6 != 0) {
+    return false;
+  }
+  preamble->kind = h2_server_preamble_kind::upgrade;
+  preamble->head_request = method == "HEAD";
+  return true;
+}
+
+h2_server_preamble h2_read_server_preamble(conn_t *conn) {
+  h2_server_preamble preamble;
+  std::vector<unsigned char> input;
+  input.reserve(4096);
+  const auto deadline =
+      std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(kHttp1HeaderTimeoutMilliseconds);
+  for (;;) {
+    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         deadline - std::chrono::steady_clock::now())
+                         .count();
+    if (remaining <= 0) {
+      h2_send_http1_response(conn->connfd, "408 Request Timeout");
+      return preamble;
+    }
+    int readable =
+        lupine_socket_wait_readable(conn->connfd, static_cast<int>(remaining));
+    if (readable == 0) {
+      h2_send_http1_response(conn->connfd, "408 Request Timeout");
+      return preamble;
+    }
+    if (readable < 0) {
+      if (lupine_socket_error_is_intr()) {
+        continue;
+      }
+      return preamble;
+    }
+
+    std::array<unsigned char, 4096> chunk;
+    size_t receive_capacity =
+        std::min(chunk.size(), kHttp1MaxHeaderBytes - input.size());
+    ssize_t received;
+    do {
+      received =
+          lupine_socket_recv(conn->connfd, chunk.data(), receive_capacity);
+    } while (received < 0 && lupine_socket_error_is_intr());
+    if (received <= 0) {
+      return preamble;
+    }
+    input.insert(input.end(), chunk.begin(), chunk.begin() + received);
+
+    const size_t magic_size = sizeof(kH2ClientMagic) - 1;
+    size_t compared = std::min(input.size(), magic_size);
+    if (memcmp(input.data(), kH2ClientMagic, compared) == 0) {
+      if (input.size() >= magic_size) {
+        preamble.kind = h2_server_preamble_kind::direct;
+        preamble.pending_input = std::move(input);
+        return preamble;
+      }
+      continue;
+    }
+
+    const std::string marker = "\r\n\r\n";
+    auto header_end =
+        std::search(input.begin(), input.end(), marker.begin(), marker.end());
+    if (header_end != input.end()) {
+      size_t header_size =
+          static_cast<size_t>(header_end - input.begin()) + marker.size();
+      std::string headers(input.begin(), input.begin() + header_size);
+      preamble.pending_input.assign(input.begin() + header_size, input.end());
+      if (!h2_parse_http1_request(headers, &preamble)) {
+        h2_send_http1_response(conn->connfd, "400 Bad Request");
+      }
+      return preamble;
+    }
+    if (input.size() >= kHttp1MaxHeaderBytes) {
+      h2_send_http1_response(conn->connfd,
+                             "431 Request Header Fields Too Large");
+      return preamble;
+    }
+  }
+}
+
+int h2_finish_server_request(conn_t *conn) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  while (!transport->request_received && !transport->transport_failed) {
+    size_t direct_bytes = 0;
+    if (h2_read_from_net(transport, nullptr, 0, &direct_bytes) < 0) {
+      return -1;
+    }
+  }
+  if (!transport->request_received) {
+    return -1;
+  }
+  return transport->request_handled ? 1 : 0;
 }
 
 } // namespace
@@ -848,20 +1188,66 @@ const char *rpc_http2_client_probe(conn_t *conn) {
 }
 
 int rpc_http2_server_init(conn_t *conn) {
-  if (h2_init_direct(conn, true, false) < 0) {
+  if (conn->tls_session != nullptr) {
+    return h2_init_direct(conn, true, false) < 0
+               ? -1
+               : h2_finish_server_request(conn);
+  }
+
+  h2_server_preamble preamble = h2_read_server_preamble(conn);
+  if (preamble.kind == h2_server_preamble_kind::metadata) {
+    std::string response =
+        "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n";
+    if (kLupineCudaVersion[0] != '\0') {
+      response += kLupineCudaVersionHeader;
+      response += ": ";
+      response += kLupineCudaVersion;
+      response += "\r\n";
+    }
+    response += "\r\n";
+    return h2_socket_write_all(conn->connfd, response.data(), response.size())
+               ? 1
+               : -1;
+  }
+  if (preamble.kind == h2_server_preamble_kind::error) {
+    return -1;
+  }
+
+  bool upgrade = preamble.kind == h2_server_preamble_kind::upgrade;
+  if (h2_init_direct(conn, true, false, !upgrade) < 0) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  while (!transport->request_received && !transport->transport_failed) {
-    size_t direct_bytes = 0;
-    if (h2_read_from_net(transport, nullptr, 0, &direct_bytes) < 0) {
-      return -1;
-    }
+  transport->pending_net_input = std::move(preamble.pending_input);
+  if (!upgrade) {
+    return h2_finish_server_request(conn);
   }
-  if (!transport->request_received) {
+
+  // The HTTP/1.1 upgrade request occupies stream 1 and is half-closed by
+  // nghttp2. Complete that handshake stream, then wait for the normal
+  // long-lived POST / RPC stream, which the client opens as stream 3.
+  if (nghttp2_session_upgrade2(transport->session, preamble.settings.data(),
+                               preamble.settings.size(),
+                               preamble.head_request ? 1 : 0, nullptr) != 0) {
+    h2_send_http1_response(conn->connfd, "400 Bad Request");
+    rpc_http2_destroy(conn);
     return -1;
   }
-  return transport->request_handled ? 1 : 0;
+  if (h2_submit_upgrade_response(transport) < 0) {
+    h2_send_http1_response(conn->connfd, "500 Internal Server Error");
+    rpc_http2_destroy(conn);
+    return -1;
+  }
+  constexpr char switching_protocols[] = "HTTP/1.1 101 Switching Protocols\r\n"
+                                         "Connection: Upgrade\r\n"
+                                         "Upgrade: h2c\r\n\r\n";
+  if (!h2_socket_write_all(conn->connfd, switching_protocols,
+                           sizeof(switching_protocols) - 1) ||
+      h2_flush_session(transport) < 0) {
+    rpc_http2_destroy(conn);
+    return -1;
+  }
+  return h2_finish_server_request(conn);
 }
 
 void rpc_http2_destroy(conn_t *conn) {
