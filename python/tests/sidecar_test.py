@@ -3,6 +3,7 @@ import sys
 import threading
 
 import pytest
+from packaging.version import Version
 
 torch = pytest.importorskip("torch")
 sidecar = pytest.importorskip("lupine.sidecar")
@@ -93,6 +94,189 @@ def test_sidecar_container_runtime_pulls_missing_image(monkeypatch):
         "linux/arm64",
         sidecar.DEFAULT_IMAGE,
     ]
+
+
+def _mock_httpx_client(monkeypatch, headers):
+    calls = {}
+
+    class FakeResponse:
+        def __init__(self):
+            self.headers = sidecar.httpx.Headers(headers)
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class FakeClient:
+        def __init__(self, **options):
+            calls["options"] = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def head(self, url):
+            calls["url"] = url
+            return FakeResponse()
+
+    monkeypatch.setattr(sidecar.httpx, "Client", FakeClient)
+    return calls
+
+
+def test_sidecar_queries_plaintext_server_with_http2_prior_knowledge(monkeypatch):
+    calls = _mock_httpx_client(monkeypatch, {"x-lupine-cuda-version": "12.9.86"})
+
+    version = sidecar._server_cuda_version("host-a:14833")
+
+    assert version == Version("12.9.86")
+    assert calls["url"] == "http://host-a:14833/"
+    assert calls["options"]["http1"] is False
+    assert calls["options"]["http2"] is True
+    assert calls["options"]["timeout"].connect == 5
+    assert calls["options"]["timeout"].read == 10
+
+
+def test_sidecar_queries_https_server_with_http2(monkeypatch):
+    calls = _mock_httpx_client(monkeypatch, {"X-Lupine-Cuda-Version": "13.1"})
+
+    assert sidecar._server_cuda_version("https://host-a:14833") == Version("13.1")
+    assert calls["url"] == "https://host-a:14833/"
+
+
+def test_sidecar_requires_server_cuda_version_header(monkeypatch):
+    _mock_httpx_client(monkeypatch, {})
+
+    with pytest.raises(sidecar.SidecarError, match="pass image= explicitly"):
+        sidecar._server_cuda_version("host-a:14833")
+
+
+def test_sidecar_queries_registry_with_httpx(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"token": "anonymous-token"}
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(sidecar.httpx, "get", fake_get)
+    assert sidecar._registry_json("/token") == {"token": "anonymous-token"}
+    assert calls == [
+        (
+            "https://ghcr.io/token",
+            {
+                "headers": None,
+                "timeout": 10,
+            },
+        )
+    ]
+
+
+def test_sidecar_discovers_cuda_worker_images_from_registry(monkeypatch):
+    calls = []
+
+    def fake_registry_json(path, headers=None):
+        calls.append((path, headers))
+        if path.startswith("/token?"):
+            return {"token": "anonymous-token"}
+        return {
+            "tags": [
+                "cuda-12.8.1",
+                "cuda-13.1.0",
+                "cuda-13.1.0-amd64",
+                "cuda-13.0",
+                "latest",
+            ]
+        }
+
+    monkeypatch.setattr(sidecar, "_registry_json", fake_registry_json)
+
+    assert sidecar._worker_images() == (
+        (
+            Version("13.1.0"),
+            "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.1.0",
+        ),
+        (
+            Version("12.8.1"),
+            "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.8.1",
+        ),
+    )
+    assert calls[0][0].startswith("/token?")
+    assert calls[1] == (
+        "/v2/lupinemachines/lupine-pytorch-worker/tags/list?n=1000",
+        {"Authorization": "Bearer anonymous-token"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("server_version", "image"),
+    [
+        ("13.1.80", "cuda-13.1.0"),
+        ("13.0.96", "cuda-13.0.2"),
+        ("12.9.86", "cuda-12.9.1"),
+        ("12.8.93", "cuda-12.8.1"),
+        ("12.7.0", "cuda-12.6.2"),
+    ],
+)
+def test_sidecar_selects_newest_compatible_worker(monkeypatch, server_version, image):
+    monkeypatch.setattr(
+        sidecar, "_server_cuda_version", lambda server: Version(server_version)
+    )
+    monkeypatch.setattr(
+        sidecar,
+        "_worker_images",
+        lambda: tuple(
+            (
+                Version(version),
+                f"ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-{version}",
+            )
+            for version in ("13.1.0", "13.0.2", "12.9.1", "12.8.1", "12.6.2")
+        ),
+    )
+
+    selected = sidecar._worker_image_for_server("host-a:14833")
+
+    assert selected.endswith(image)
+
+
+def test_sidecar_rejects_server_older_than_published_workers(monkeypatch):
+    monkeypatch.setattr(
+        sidecar, "_server_cuda_version", lambda server: Version("12.5.82")
+    )
+    monkeypatch.setattr(
+        sidecar,
+        "_worker_images",
+        lambda: (
+            (
+                Version("12.6.2"),
+                "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.6.2",
+            ),
+        ),
+    )
+
+    with pytest.raises(sidecar.SidecarError, match="pass image= explicitly"):
+        sidecar._worker_image_for_server("host-a:14833")
+
+
+def test_sidecar_explicit_image_skips_server_probe(monkeypatch):
+    session = sidecar.SidecarSession(
+        server="host-a:14833",
+        image="registry.example/worker:custom",
+    )
+    monkeypatch.setattr(
+        sidecar,
+        "_worker_image_for_server",
+        lambda server: pytest.fail("explicit image unexpectedly probed server"),
+    )
+
+    assert session._worker_image() == "registry.example/worker:custom"
 
 
 def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):

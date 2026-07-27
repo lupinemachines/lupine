@@ -11,8 +11,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
+import httpx
 import torch
+from packaging.version import InvalidVersion, Version
 
 from .tensor import (
     _BACKEND_NAME as _BACKEND_NAME,
@@ -30,8 +33,137 @@ from .tensor import (
     _write_tensor as _write_tensor,
 )
 
+_WORKER_REGISTRY_HOST = "ghcr.io"
+_WORKER_REPOSITORY = "lupinemachines/lupine-pytorch-worker"
+_WORKER_IMAGE_REPOSITORY = f"{_WORKER_REGISTRY_HOST}/{_WORKER_REPOSITORY}"
+DEFAULT_IMAGE = f"{_WORKER_IMAGE_REPOSITORY}:cuda-13.1.0"
+_CUDA_VERSION_HEADER = "x-lupine-cuda-version"
 
-DEFAULT_IMAGE = "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.1.0"
+
+def _server_cuda_version(server: str) -> Version:
+    url = server
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    url = f"{url.rstrip('/')}/"
+    try:
+        with httpx.Client(
+            http1=False,
+            http2=True,
+            timeout=httpx.Timeout(10.0, connect=5.0),
+        ) as client:
+            response = client.head(url)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise SidecarError(f"could not query LUPINE server {server!r}: {exc}") from exc
+
+    version = response.headers.get(_CUDA_VERSION_HEADER)
+    if version is None:
+        raise SidecarError(
+            f"LUPINE server {server!r} did not advertise "
+            f"{_CUDA_VERSION_HEADER}; pass image= explicitly"
+        )
+    try:
+        return Version(version.strip())
+    except InvalidVersion as exc:
+        raise SidecarError(
+            f"server returned invalid {_CUDA_VERSION_HEADER}: {version!r}"
+        ) from exc
+
+
+def _registry_json(path: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    try:
+        response = httpx.get(
+            f"https://{_WORKER_REGISTRY_HOST}{path}",
+            headers=headers,
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
+        raise SidecarError(
+            f"could not query sidecar image registry: {exc}; pass image= explicitly"
+        ) from exc
+
+    if response.status_code != 200:
+        detail = response.text.strip()
+        raise SidecarError(
+            f"could not query sidecar image registry: HTTP {response.status_code}: "
+            f"{detail}; pass image= explicitly"
+        )
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise SidecarError(
+            "sidecar image registry returned invalid JSON; pass image= explicitly"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise SidecarError(
+            "sidecar image registry returned an invalid response; "
+            "pass image= explicitly"
+        )
+    return payload
+
+
+def _worker_images() -> tuple[tuple[Version, str], ...]:
+    query = urlencode(
+        {
+            "service": _WORKER_REGISTRY_HOST,
+            "scope": f"repository:{_WORKER_REPOSITORY}:pull",
+        }
+    )
+    token = _registry_json(f"/token?{query}").get("token")
+    if not isinstance(token, str) or not token:
+        raise SidecarError(
+            "sidecar image registry did not return an access token; "
+            "pass image= explicitly"
+        )
+
+    payload = _registry_json(
+        f"/v2/{_WORKER_REPOSITORY}/tags/list?n=1000",
+        {"Authorization": f"Bearer {token}"},
+    )
+    tags = payload.get("tags")
+    if not isinstance(tags, list):
+        raise SidecarError(
+            "sidecar image registry did not return image tags; pass image= explicitly"
+        )
+
+    images: list[tuple[Version, str]] = []
+    for tag in tags:
+        if not isinstance(tag, str) or not tag.startswith("cuda-"):
+            continue
+        version_text = tag.removeprefix("cuda-")
+        try:
+            version = Version(version_text)
+        except InvalidVersion:
+            continue
+        if (
+            version.epoch
+            or version.pre is not None
+            or version.post is not None
+            or version.dev is not None
+            or version.local is not None
+            or len(version.release) != 3
+            or str(version) != version_text
+        ):
+            continue
+        images.append((version, f"{_WORKER_IMAGE_REPOSITORY}:{tag}"))
+
+    if not images:
+        raise SidecarError(
+            "sidecar image registry has no CUDA-versioned images; "
+            "pass image= explicitly"
+        )
+    return tuple(sorted(images, reverse=True))
+
+
+def _worker_image_for_server(server: str) -> str:
+    server_version = _server_cuda_version(server)
+    for required_version, image in _worker_images():
+        if required_version <= server_version:
+            return image
+    raise SidecarError(
+        f"no published sidecar worker supports server CUDA {server_version}; "
+        "pass image= explicitly"
+    )
 
 
 def _op_name(func: Any) -> dict[str, str]:
@@ -170,11 +302,14 @@ class SidecarSession:
     """Session-scoped macOS frontend for a local Linux CUDA PyTorch sidecar."""
 
     server: str
-    image: str = DEFAULT_IMAGE
+    image: str | None = None
     runtime: str = "auto"
     platform: str = "linux/arm64"
     rosetta: bool = False
     env: dict[str, str] = field(default_factory=dict)
+
+    def _worker_image(self) -> str:
+        return self.image or _worker_image_for_server(self.server)
 
     def __enter__(self) -> "SidecarSession":
         if _get_active_session() is not None:
@@ -187,8 +322,10 @@ class SidecarSession:
         )
         if runtime != "container":
             raise SidecarError("only runtime='container' is implemented")
+        image = self._worker_image()
+        self.image = image
         launcher = ContainerRuntime(
-            image=self.image,
+            image=image,
             server=self.server,
             platform=self.platform,
             rosetta=self.rosetta,
@@ -436,7 +573,7 @@ class SidecarSession:
 def sidecar(
     server: str | None = None,
     *,
-    image: str = DEFAULT_IMAGE,
+    image: str | None = None,
     runtime: str = "auto",
     platform: str = "linux/arm64",
     rosetta: bool = False,
