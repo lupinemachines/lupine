@@ -201,6 +201,9 @@ wheels = [
 name = "lupine"
 version = "0.2.0"
 source = { editable = "." }
+dependencies = [
+    { name = "packaging" },
+]
 
 [package.optional-dependencies]
 torch = [
@@ -215,7 +218,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "torch", marker = "extra == 'torch'" }]
+requires-dist = [
+    { name = "packaging", specifier = ">=24" },
+    { name = "torch", marker = "extra == 'torch'" },
+]
 provides-extras = ["torch"]
 
 [package.metadata.requires-dev]

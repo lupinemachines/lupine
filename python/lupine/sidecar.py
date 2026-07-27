@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import http.client
 import json
 import os
 import shutil
@@ -11,8 +12,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import torch
+from packaging.version import InvalidVersion, Version
 
 from .tensor import (
     _BACKEND_NAME as _BACKEND_NAME,
@@ -30,28 +33,11 @@ from .tensor import (
     _write_tensor as _write_tensor,
 )
 
-
-DEFAULT_IMAGE = "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.1.0"
+_WORKER_REGISTRY_HOST = "ghcr.io"
+_WORKER_REPOSITORY = "lupinemachines/lupine-pytorch-worker"
+_WORKER_IMAGE_REPOSITORY = f"{_WORKER_REGISTRY_HOST}/{_WORKER_REPOSITORY}"
+DEFAULT_IMAGE = f"{_WORKER_IMAGE_REPOSITORY}:cuda-13.1.0"
 _CUDA_VERSION_HEADER = "x-lupine-cuda-version"
-_WORKER_IMAGES = (
-    ((13, 1, 0), DEFAULT_IMAGE),
-    (
-        (13, 0, 2),
-        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.0.2",
-    ),
-    (
-        (12, 9, 1),
-        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.9.1",
-    ),
-    (
-        (12, 8, 1),
-        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.8.1",
-    ),
-    (
-        (12, 6, 2),
-        "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.6.2",
-    ),
-)
 
 
 def _server_http_url(server: str) -> str:
@@ -60,19 +46,16 @@ def _server_http_url(server: str) -> str:
     return f"http://{server}/"
 
 
-def _parse_cuda_version(value: str) -> tuple[int, int, int]:
+def _parse_cuda_version(value: str) -> Version:
     try:
-        parts = tuple(int(part) for part in value.strip().split("."))
-    except ValueError as exc:
+        return Version(value.strip())
+    except InvalidVersion as exc:
         raise SidecarError(
             f"server returned invalid {_CUDA_VERSION_HEADER}: {value!r}"
         ) from exc
-    if not 2 <= len(parts) <= 3:
-        raise SidecarError(f"server returned invalid {_CUDA_VERSION_HEADER}: {value!r}")
-    return (parts + (0,))[:3]
 
 
-def _server_cuda_version(server: str) -> tuple[int, int, int]:
+def _server_cuda_version(server: str) -> Version:
     curl = shutil.which("curl")
     if curl is None:
         raise SidecarError("curl is required to query the LUPINE server")
@@ -114,14 +97,99 @@ def _server_cuda_version(server: str) -> tuple[int, int, int]:
     return _parse_cuda_version(version)
 
 
+def _registry_json(path: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    connection = http.client.HTTPSConnection(_WORKER_REGISTRY_HOST, timeout=10)
+    try:
+        connection.request("GET", path, headers=headers or {})
+        response = connection.getresponse()
+        body = response.read()
+    except (OSError, http.client.HTTPException) as exc:
+        raise SidecarError(
+            f"could not query sidecar image registry: {exc}; pass image= explicitly"
+        ) from exc
+    finally:
+        connection.close()
+
+    if response.status != 200:
+        detail = body.decode("utf-8", errors="replace").strip()
+        raise SidecarError(
+            f"could not query sidecar image registry: HTTP {response.status}: "
+            f"{detail}; pass image= explicitly"
+        )
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise SidecarError(
+            "sidecar image registry returned invalid JSON; pass image= explicitly"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise SidecarError(
+            "sidecar image registry returned an invalid response; "
+            "pass image= explicitly"
+        )
+    return payload
+
+
+def _worker_images() -> tuple[tuple[Version, str], ...]:
+    query = urlencode(
+        {
+            "service": _WORKER_REGISTRY_HOST,
+            "scope": f"repository:{_WORKER_REPOSITORY}:pull",
+        }
+    )
+    token = _registry_json(f"/token?{query}").get("token")
+    if not isinstance(token, str) or not token:
+        raise SidecarError(
+            "sidecar image registry did not return an access token; "
+            "pass image= explicitly"
+        )
+
+    payload = _registry_json(
+        f"/v2/{_WORKER_REPOSITORY}/tags/list?n=1000",
+        {"Authorization": f"Bearer {token}"},
+    )
+    tags = payload.get("tags")
+    if not isinstance(tags, list):
+        raise SidecarError(
+            "sidecar image registry did not return image tags; pass image= explicitly"
+        )
+
+    images: list[tuple[Version, str]] = []
+    for tag in tags:
+        if not isinstance(tag, str) or not tag.startswith("cuda-"):
+            continue
+        version_text = tag.removeprefix("cuda-")
+        try:
+            version = Version(version_text)
+        except InvalidVersion:
+            continue
+        if (
+            version.epoch
+            or version.pre is not None
+            or version.post is not None
+            or version.dev is not None
+            or version.local is not None
+            or len(version.release) != 3
+            or str(version) != version_text
+        ):
+            continue
+        images.append((version, f"{_WORKER_IMAGE_REPOSITORY}:{tag}"))
+
+    if not images:
+        raise SidecarError(
+            "sidecar image registry has no CUDA-versioned images; "
+            "pass image= explicitly"
+        )
+    return tuple(sorted(images, reverse=True))
+
+
 def _worker_image_for_server(server: str) -> str:
     server_version = _server_cuda_version(server)
-    for required_version, image in _WORKER_IMAGES:
+    for required_version, image in _worker_images():
         if required_version <= server_version:
             return image
-    formatted = ".".join(str(part) for part in server_version)
     raise SidecarError(
-        f"no published sidecar worker supports server CUDA {formatted}; "
+        f"no published sidecar worker supports server CUDA {server_version}; "
         "pass image= explicitly"
     )
 

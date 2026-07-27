@@ -3,6 +3,7 @@ import sys
 import threading
 
 import pytest
+from packaging.version import Version
 
 torch = pytest.importorskip("torch")
 sidecar = pytest.importorskip("lupine.sidecar")
@@ -112,7 +113,7 @@ def test_sidecar_queries_plaintext_server_with_http2_prior_knowledge(monkeypatch
 
     version = sidecar._server_cuda_version("host-a:14833")
 
-    assert version == (12, 9, 86)
+    assert version == Version("12.9.86")
     assert calls[0][0] == [
         "/usr/bin/curl",
         "--http2-prior-knowledge",
@@ -142,7 +143,7 @@ def test_sidecar_queries_https_server_with_negotiated_http2(monkeypatch):
     monkeypatch.setattr(sidecar.shutil, "which", lambda name: "/usr/bin/curl")
     monkeypatch.setattr(sidecar.subprocess, "run", fake_run)
 
-    assert sidecar._server_cuda_version("https://host-a:14833") == (13, 1, 0)
+    assert sidecar._server_cuda_version("https://host-a:14833") == Version("13.1")
 
 
 def test_sidecar_requires_server_cuda_version_header(monkeypatch):
@@ -159,18 +160,101 @@ def test_sidecar_requires_server_cuda_version_header(monkeypatch):
         sidecar._server_cuda_version("host-a:14833")
 
 
+def test_sidecar_queries_registry_with_http_client(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status = 200
+
+        @staticmethod
+        def read():
+            return b'{"token":"anonymous-token"}'
+
+    class FakeConnection:
+        def __init__(self, host, timeout):
+            calls.append(("connect", host, timeout))
+
+        def request(self, method, path, headers):
+            calls.append(("request", method, path, headers))
+
+        @staticmethod
+        def getresponse():
+            return FakeResponse()
+
+        def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(sidecar.http.client, "HTTPSConnection", FakeConnection)
+
+    assert sidecar._registry_json("/token") == {"token": "anonymous-token"}
+    assert calls == [
+        ("connect", "ghcr.io", 10),
+        ("request", "GET", "/token", {}),
+        ("close",),
+    ]
+
+
+def test_sidecar_discovers_cuda_worker_images_from_registry(monkeypatch):
+    calls = []
+
+    def fake_registry_json(path, headers=None):
+        calls.append((path, headers))
+        if path.startswith("/token?"):
+            return {"token": "anonymous-token"}
+        return {
+            "tags": [
+                "cuda-12.8.1",
+                "cuda-13.1.0",
+                "cuda-13.1.0-amd64",
+                "cuda-13.0",
+                "latest",
+            ]
+        }
+
+    monkeypatch.setattr(sidecar, "_registry_json", fake_registry_json)
+
+    assert sidecar._worker_images() == (
+        (
+            Version("13.1.0"),
+            "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.1.0",
+        ),
+        (
+            Version("12.8.1"),
+            "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.8.1",
+        ),
+    )
+    assert calls[0][0].startswith("/token?")
+    assert calls[1] == (
+        "/v2/lupinemachines/lupine-pytorch-worker/tags/list?n=1000",
+        {"Authorization": "Bearer anonymous-token"},
+    )
+
+
 @pytest.mark.parametrize(
     ("server_version", "image"),
     [
-        ((13, 1, 80), "cuda-13.1.0"),
-        ((13, 0, 96), "cuda-13.0.2"),
-        ((12, 9, 86), "cuda-12.9.1"),
-        ((12, 8, 93), "cuda-12.8.1"),
-        ((12, 7, 0), "cuda-12.6.2"),
+        ("13.1.80", "cuda-13.1.0"),
+        ("13.0.96", "cuda-13.0.2"),
+        ("12.9.86", "cuda-12.9.1"),
+        ("12.8.93", "cuda-12.8.1"),
+        ("12.7.0", "cuda-12.6.2"),
     ],
 )
 def test_sidecar_selects_newest_compatible_worker(monkeypatch, server_version, image):
-    monkeypatch.setattr(sidecar, "_server_cuda_version", lambda server: server_version)
+    monkeypatch.setattr(
+        sidecar, "_server_cuda_version", lambda server: Version(server_version)
+    )
+    monkeypatch.setattr(
+        sidecar,
+        "_worker_images",
+        lambda: tuple(
+            (
+                Version(version),
+                f"ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-{version}",
+            )
+            for version in ("13.1.0", "13.0.2", "12.9.1", "12.8.1", "12.6.2")
+        ),
+    )
 
     selected = sidecar._worker_image_for_server("host-a:14833")
 
@@ -178,7 +262,19 @@ def test_sidecar_selects_newest_compatible_worker(monkeypatch, server_version, i
 
 
 def test_sidecar_rejects_server_older_than_published_workers(monkeypatch):
-    monkeypatch.setattr(sidecar, "_server_cuda_version", lambda server: (12, 5, 82))
+    monkeypatch.setattr(
+        sidecar, "_server_cuda_version", lambda server: Version("12.5.82")
+    )
+    monkeypatch.setattr(
+        sidecar,
+        "_worker_images",
+        lambda: (
+            (
+                Version("12.6.2"),
+                "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-12.6.2",
+            ),
+        ),
+    )
 
     with pytest.raises(sidecar.SidecarError, match="pass image= explicitly"):
         sidecar._worker_image_for_server("host-a:14833")
