@@ -46,7 +46,7 @@
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
-#include "server_registry.h"
+#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 #if CUDA_VERSION < 12020
 #ifdef CU_MEM_LOCATION_TYPE_HOST
@@ -365,8 +365,9 @@ struct lupine_private_module_node_capture {
   uint64_t count = 0;
 };
 
-static lupine_registry<CUmodule, CUlibrary> &lupine_module_libraries() {
-  static auto *libraries = new lupine_registry<CUmodule, CUlibrary>();
+static libcuckoo::cuckoohash_map<CUmodule, CUlibrary> &
+lupine_module_libraries() {
+  static auto *libraries = new libcuckoo::cuckoohash_map<CUmodule, CUlibrary>();
   return *libraries;
 }
 
@@ -487,73 +488,53 @@ struct lupine_graph_resources {
 // Graph host buffers and callback metadata must remain valid for any queued
 // launch or callback. The per-connection process already owned them until exit;
 // stable raw pointers make that lifetime explicit and avoid reference-count
-// synchronization on every registry access.
-static lupine_registry<CUgraph, lupine_graph_resources *> &
+// synchronization on every map access.
+static libcuckoo::cuckoohash_map<CUgraph, lupine_graph_resources *> &
 lupine_graph_resource_map() {
   static auto *resources =
-      new lupine_registry<CUgraph, lupine_graph_resources *>();
+      new libcuckoo::cuckoohash_map<CUgraph, lupine_graph_resources *>();
   return *resources;
 }
 
-static lupine_registry<CUgraphExec, lupine_graph_resources *> &
+static libcuckoo::cuckoohash_map<CUgraphExec, lupine_graph_resources *> &
 lupine_graph_exec_resource_map() {
   static auto *resources =
-      new lupine_registry<CUgraphExec, lupine_graph_resources *>();
+      new libcuckoo::cuckoohash_map<CUgraphExec, lupine_graph_resources *>();
   return *resources;
 }
 
-static lupine_registry<CUstream, lupine_graph_resources *> &
+static libcuckoo::cuckoohash_map<CUstream, lupine_graph_resources *> &
 lupine_stream_capture_resource_map() {
   static auto *resources =
-      new lupine_registry<CUstream, lupine_graph_resources *>();
+      new libcuckoo::cuckoohash_map<CUstream, lupine_graph_resources *>();
   return *resources;
 }
 
-static lupine_registry<CUevent, lupine_graph_resources *> &
+static libcuckoo::cuckoohash_map<CUevent, lupine_graph_resources *> &
 lupine_event_capture_resource_map() {
   static auto *resources =
-      new lupine_registry<CUevent, lupine_graph_resources *>();
+      new libcuckoo::cuckoohash_map<CUevent, lupine_graph_resources *>();
   return *resources;
 }
 
-struct lupine_pending_dtoh_key {
-  conn_t *conn = nullptr;
-  CUstream stream = nullptr;
+using lupine_pending_dtoh_streams =
+    std::unordered_map<CUstream, std::vector<lupine_pending_dtoh_copy>>;
 
-  bool operator==(const lupine_pending_dtoh_key &other) const {
-    return conn == other.conn && stream == other.stream;
-  }
-};
-
-struct lupine_pending_dtoh_key_hash {
-  size_t operator()(const lupine_pending_dtoh_key &key) const {
-    size_t conn_hash = std::hash<conn_t *>{}(key.conn);
-    size_t stream_hash = std::hash<CUstream>{}(key.stream);
-    return conn_hash ^
-           (stream_hash + 0x9e3779b9 + (conn_hash << 6) + (conn_hash >> 2));
-  }
-};
-
-struct lupine_pending_dtoh_node {
-  explicit lupine_pending_dtoh_node(lupine_pending_dtoh_copy node_copy)
-      : copy(node_copy) {}
-
-  lupine_pending_dtoh_copy copy;
-  lupine_pending_dtoh_node *next = nullptr;
-};
-
-static lupine_registry<lupine_pending_dtoh_key, lupine_pending_dtoh_node *,
-                       lupine_pending_dtoh_key_hash> &
+static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies() {
-  static auto *copies =
-      new lupine_registry<lupine_pending_dtoh_key, lupine_pending_dtoh_node *,
-                          lupine_pending_dtoh_key_hash>();
-  return *copies;
+  static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams>
+      copies;
+  return copies;
 }
 
 static lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
   auto *candidate = new lupine_graph_resources();
-  auto *resources = lupine_graph_resource_map().get_or_store(graph, candidate);
+  auto *resources = candidate;
+  lupine_graph_resource_map().upsert(
+      graph,
+      [&resources](lupine_graph_resources *&existing,
+                   libcuckoo::UpsertContext) { resources = existing; },
+      candidate);
   if (resources != candidate) {
     delete candidate;
   }
@@ -562,8 +543,12 @@ static lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
 
 static lupine_graph_resources *lupine_get_stream_resources(CUstream stream) {
   auto *candidate = new lupine_graph_resources();
-  auto *resources =
-      lupine_stream_capture_resource_map().get_or_store(stream, candidate);
+  auto *resources = candidate;
+  lupine_stream_capture_resource_map().upsert(
+      stream,
+      [&resources](lupine_graph_resources *&existing,
+                   libcuckoo::UpsertContext) { resources = existing; },
+      candidate);
   if (resources != candidate) {
     delete candidate;
   }
@@ -774,48 +759,29 @@ static void *lupine_alloc_process_host_buffer(size_t bytes) {
   return ptr;
 }
 
-static void
-lupine_append_pending_dtoh_nodes(std::vector<lupine_pending_dtoh_copy> *copies,
-                                 lupine_pending_dtoh_node *node) {
-  size_t first = copies->size();
-  while (node != nullptr) {
-    copies->push_back(node->copy);
-    auto *next = node->next;
-    delete node;
-    node = next;
-  }
-  std::reverse(copies->begin() + first, copies->end());
-}
-
-static void lupine_add_pending_dtoh_copy(conn_t *conn,
-                                         const lupine_pending_dtoh_copy &copy) {
-  auto &head = lupine_pending_dtoh_copies().slot({conn, copy.stream});
-  auto *node = new lupine_pending_dtoh_node(copy);
-  node->next = head.load(std::memory_order_relaxed);
-  while (!head.compare_exchange_weak(
-      node->next, node, std::memory_order_release, std::memory_order_relaxed)) {
-  }
-}
-
 static std::vector<lupine_pending_dtoh_copy>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams) {
   std::vector<lupine_pending_dtoh_copy> copies;
-  auto &registry = lupine_pending_dtoh_copies();
-  if (all_streams) {
-    registry.for_each_slot([&](const lupine_pending_dtoh_key &key,
-                               std::atomic<lupine_pending_dtoh_node *> &head) {
-      if (key.conn == conn) {
-        lupine_append_pending_dtoh_nodes(
-            &copies, head.exchange(nullptr, std::memory_order_acq_rel));
-      }
-    });
-    return copies;
-  }
+  lupine_pending_dtoh_copies().erase_fn(
+      conn, [&](lupine_pending_dtoh_streams &streams) {
+        if (all_streams) {
+          for (auto &entry : streams) {
+            auto &stream_copies = entry.second;
+            copies.insert(copies.end(), stream_copies.begin(),
+                          stream_copies.end());
+          }
+          return true;
+        }
 
-  auto &head = registry.slot({conn, stream});
-  lupine_append_pending_dtoh_nodes(
-      &copies, head.exchange(nullptr, std::memory_order_acq_rel));
+        auto stream_it = streams.find(stream);
+        if (stream_it == streams.end()) {
+          return false;
+        }
+        copies.swap(stream_it->second);
+        streams.erase(stream_it);
+        return streams.empty();
+      });
   return copies;
 }
 
@@ -1663,7 +1629,7 @@ int handle_manual_cuLibraryGetModule(conn_t *conn) {
 
   result = cuLibraryGetModule(&module, library);
   if (result == CUDA_SUCCESS) {
-    lupine_module_libraries().store(module, library);
+    lupine_module_libraries().insert_or_assign(module, library);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1717,7 +1683,7 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
   result = cuModuleGetGlobal_v2(&dptr, &bytes, module, name.data());
   if (result != CUDA_SUCCESS) {
     CUlibrary library = nullptr;
-    if (lupine_module_libraries().lookup(module, &library)) {
+    if (lupine_module_libraries().find(module, library)) {
       CUdeviceptr library_dptr = 0;
       size_t library_bytes = 0;
       CUresult library_result = cuLibraryGetGlobal(
@@ -2865,8 +2831,8 @@ int handle_manual_cuEventRecord(conn_t *conn, bool with_flags) {
   }
 
   lupine_graph_resources *resources = nullptr;
-  if (lupine_stream_capture_resource_map().lookup(stream, &resources)) {
-    lupine_event_capture_resource_map().store(event, resources);
+  if (lupine_stream_capture_resource_map().find(stream, resources)) {
+    lupine_event_capture_resource_map().insert_or_assign(event, resources);
   }
 
   result = with_flags ? cuEventRecordWithFlags(event, stream, flags)
@@ -2931,8 +2897,8 @@ int handle_manual_cuStreamWaitEvent(conn_t *conn) {
   }
 
   lupine_graph_resources *event_resources = nullptr;
-  if (lupine_event_capture_resource_map().lookup(event, &event_resources)) {
-    lupine_stream_capture_resource_map().get_or_store(stream, event_resources);
+  if (lupine_event_capture_resource_map().find(event, event_resources)) {
+    lupine_stream_capture_resource_map().insert(stream, event_resources);
   }
 
   result = cuStreamWaitEvent(stream, event, flags);
@@ -3106,8 +3072,12 @@ int handle_manual_cuStreamEndCapture(conn_t *conn) {
   result = cuStreamEndCapture(stream, &graph);
   if (result == CUDA_SUCCESS) {
     lupine_graph_resources *resources = nullptr;
-    if (lupine_stream_capture_resource_map().remove(stream, &resources)) {
-      lupine_graph_resource_map().store(graph, resources);
+    if (lupine_stream_capture_resource_map().erase_fn(
+            stream, [&resources](lupine_graph_resources *&stored) {
+              resources = stored;
+              return true;
+            })) {
+      lupine_graph_resource_map().insert_or_assign(graph, resources);
     }
   }
 
@@ -3137,8 +3107,8 @@ int handle_manual_cuGraphClone(conn_t *conn) {
   result = cuGraphClone(&clone, original);
   if (result == CUDA_SUCCESS) {
     lupine_graph_resources *resources = nullptr;
-    if (lupine_graph_resource_map().lookup(original, &resources)) {
-      lupine_graph_resource_map().store(clone, resources);
+    if (lupine_graph_resource_map().find(original, resources)) {
+      lupine_graph_resource_map().insert_or_assign(clone, resources);
     }
   }
 
@@ -3169,8 +3139,8 @@ int handle_manual_cuGraphInstantiateWithFlags(conn_t *conn) {
   result = cuGraphInstantiateWithFlags(&exec, graph, flags);
   if (result == CUDA_SUCCESS) {
     lupine_graph_resources *resources = nullptr;
-    if (lupine_graph_resource_map().lookup(graph, &resources)) {
-      lupine_graph_exec_resource_map().store(exec, resources);
+    if (lupine_graph_resource_map().find(graph, resources)) {
+      lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
     }
   }
 
@@ -3201,8 +3171,8 @@ int handle_manual_cuGraphInstantiateWithParams(conn_t *conn) {
   result = cuGraphInstantiateWithParams(&exec, graph, &params);
   if (result == CUDA_SUCCESS) {
     lupine_graph_resources *resources = nullptr;
-    if (lupine_graph_resource_map().lookup(graph, &resources)) {
-      lupine_graph_exec_resource_map().store(exec, resources);
+    if (lupine_graph_resource_map().find(graph, resources)) {
+      lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
     }
   }
 
@@ -3225,7 +3195,7 @@ int handle_manual_cuGraphExecDestroy(conn_t *conn) {
     return -1;
   }
   CUresult result = cuGraphExecDestroy(exec);
-  lupine_graph_exec_resource_map().remove(exec);
+  lupine_graph_exec_resource_map().erase(exec);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3243,7 +3213,7 @@ int handle_manual_cuGraphDestroy(conn_t *conn) {
     return -1;
   }
   CUresult result = cuGraphDestroy(graph);
-  lupine_graph_resource_map().remove(graph);
+  lupine_graph_resource_map().erase(graph);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3493,8 +3463,15 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     } else {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS && byteCount != 0) {
-        lupine_add_pending_dtoh_copy(conn, {stream, dstHost, host, byteCount,
-                                            alloc_result == CUDA_SUCCESS});
+        lupine_pending_dtoh_copy copy{stream, dstHost, host, byteCount,
+                                      alloc_result == CUDA_SUCCESS};
+        lupine_pending_dtoh_copies().upsert(
+            conn,
+            [stream, &copy](lupine_pending_dtoh_streams &streams,
+                            libcuckoo::UpsertContext) {
+              streams[stream].push_back(copy);
+            },
+            lupine_pending_dtoh_streams{});
         host = nullptr;
       }
     }
@@ -3556,7 +3533,7 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   lupine_graph_resources *resources = nullptr;
   uint32_t copy_count = 0;
-  lupine_stream_capture_resource_map().lookup(stream, &resources);
+  lupine_stream_capture_resource_map().find(stream, resources);
   std::vector<lupine_graph_host_copy> graph_copies =
       resources == nullptr ? std::vector<lupine_graph_host_copy>()
                            : resources->dtoh_copy_snapshot();
@@ -3602,8 +3579,8 @@ int handle_manual_cuGraphLaunch(conn_t *conn) {
   CUresult result = cuGraphLaunch(exec, stream);
   lupine_graph_resources *resources = nullptr;
   if (result == CUDA_SUCCESS &&
-      lupine_graph_exec_resource_map().lookup(exec, &resources)) {
-    lupine_stream_capture_resource_map().store(stream, resources);
+      lupine_graph_exec_resource_map().find(exec, resources)) {
+    lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
