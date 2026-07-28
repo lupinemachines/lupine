@@ -16,9 +16,11 @@ SUPPORTED_RUNTIMES = ("auto", "container", *_DOCKER_COMPATIBLE_RUNTIMES)
 class ContainerRuntime(Protocol):
     name: str
 
-    def prepare(self) -> None: ...
+    def prepare(self) -> None:
+        raise NotImplementedError
 
-    def command(self, script: str) -> list[str]: ...
+    def command(self, script: str) -> list[str]:
+        raise NotImplementedError
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
