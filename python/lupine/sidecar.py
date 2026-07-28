@@ -3,9 +3,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
-import shutil
 import subprocess
-import sys
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -17,6 +15,7 @@ import httpx
 import torch
 from packaging.version import InvalidVersion, Version
 
+from .container import prepare_runtime
 from .tensor import (
     _BACKEND_NAME as _BACKEND_NAME,
     SidecarDispatchMode as SidecarDispatchMode,
@@ -176,14 +175,6 @@ def _op_name(func: Any) -> dict[str, str]:
     return {"packet": packet, "overload": overload}
 
 
-def _system_running(output: str) -> bool:
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError:
-        return "running" in output.lower()
-    return payload.get("status") == "running"
-
-
 _TENSOR_PATH = Path(__file__).with_name("tensor.py")
 _WORKER_PATH = Path(__file__).with_name("worker.py")
 
@@ -212,99 +203,13 @@ def _worker_source() -> str:
 
 
 @dataclass
-class ContainerRuntime:
-    """Launch a Linux worker with Apple's `container` CLI."""
-
-    image: str = DEFAULT_IMAGE
-    server: str | None = None
-    platform: str = "linux/arm64"
-    rosetta: bool = False
-    env: dict[str, str] = field(default_factory=dict)
-
-    def _container(self) -> str:
-        if sys.platform != "darwin":
-            raise SidecarError("Apple container sidecars are only supported on macOS")
-        container = shutil.which("container")
-        if container is None:
-            raise SidecarError(
-                "Apple container CLI is not installed. Install Apple's `container` "
-                "runtime with `brew install --cask container`, or download the signed "
-                "installer from https://github.com/apple/container/releases. After "
-                "installing, run `container system start` once to initialize it."
-            )
-        return container
-
-    def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [self._container(), *args],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    def prepare(self) -> None:
-        status = self._run(["system", "status", "--format", "json"])
-        if status.returncode != 0 or not _system_running(status.stdout):
-            started = self._run(["system", "start"])
-            if started.returncode != 0:
-                raise SidecarError(
-                    "Apple container services are not running and automatic startup failed:\n"
-                    f"{(started.stderr or started.stdout).strip()}"
-                )
-
-        inspected = self._run(["image", "inspect", self.image])
-        if inspected.returncode == 0:
-            return
-
-        pulled = self._run(
-            [
-                "image",
-                "pull",
-                "--progress",
-                "none",
-                "--platform",
-                self.platform,
-                self.image,
-            ]
-        )
-        if pulled.returncode != 0:
-            raise SidecarError(
-                f"LUPINE sidecar image {self.image!r} is not cached and automatic "
-                "pull failed:\n"
-                f"{(pulled.stderr or pulled.stdout).strip()}"
-            )
-
-    def command(self, script: str) -> list[str]:
-        container = self._container()
-        cmd = [
-            container,
-            "run",
-            "--rm",
-            "--interactive",
-            "--progress",
-            "none",
-            "--platform",
-            self.platform,
-        ]
-        if self.rosetta:
-            cmd.append("--rosetta")
-        environment = dict(self.env)
-        if self.server:
-            environment["LUPINE_SERVER"] = self.server
-        for key, value in environment.items():
-            cmd.extend(["--env", f"{key}={value}"])
-        cmd.extend([self.image, "python3", "-u", "-c", script])
-        return cmd
-
-
-@dataclass
 class SidecarSession:
-    """Session-scoped macOS frontend for a local Linux CUDA PyTorch sidecar."""
+    """Session-scoped frontend for a containerized CUDA PyTorch worker."""
 
     server: str
     image: str | None = None
     runtime: str = "auto"
-    platform: str = "linux/arm64"
+    platform: str | None = None
     rosetta: bool = False
     env: dict[str, str] = field(default_factory=dict)
 
@@ -315,23 +220,16 @@ class SidecarSession:
         if _get_active_session() is not None:
             raise SidecarError("a LUPINE sidecar session is already active")
         _ensure_registered()
-        runtime = (
-            "container"
-            if self.runtime == "auto" and sys.platform == "darwin"
-            else self.runtime
-        )
-        if runtime != "container":
-            raise SidecarError("only runtime='container' is implemented")
         image = self._worker_image()
         self.image = image
-        launcher = ContainerRuntime(
+        launcher = prepare_runtime(
+            self.runtime,
             image=image,
             server=self.server,
             platform=self.platform,
             rosetta=self.rosetta,
             env=self.env,
         )
-        launcher.prepare()
         self._proc = subprocess.Popen(
             launcher.command(_worker_source()),
             stdin=subprocess.PIPE,
@@ -575,7 +473,7 @@ def sidecar(
     *,
     image: str | None = None,
     runtime: str = "auto",
-    platform: str = "linux/arm64",
+    platform: str | None = None,
     rosetta: bool = False,
     env: dict[str, str] | None = None,
 ) -> SidecarSession:

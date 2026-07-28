@@ -150,11 +150,33 @@ class Session:
         return torch.device("cuda", range(count)[index])
 
 
+def _create_sidecar(
+    server: str | None,
+    *,
+    image: str | None = None,
+    runtime: str = "auto",
+    platform: str | None = None,
+    rosetta: bool = False,
+    env: dict[str, str] | None = None,
+) -> Any:
+    from .sidecar import sidecar as create_sidecar
+
+    return create_sidecar(
+        server=server,
+        image=image,
+        runtime=runtime,
+        platform=platform,
+        rosetta=rosetta,
+        env=env,
+    )
+
+
 def connect(
     *,
     host: str | Sequence[str],
     port: int | None = None,
     libcuda: str | os.PathLike[str] | None = None,
+    sidecar: bool | None = None,
 ) -> Any:
     """Create a LUPINE session for one or more remote GPU hosts.
 
@@ -165,24 +187,41 @@ def connect(
     ``s.devices()`` then returns every CUDA ordinal in LUPINE's native virtual
     device topology.
 
-    On macOS with a CPU-only PyTorch build, ``connect()`` automatically returns
-    a sidecar session backed by Apple's container runtime.
+    ``sidecar=None`` automatically selects the sidecar on macOS when PyTorch
+    has no native CUDA backend. Pass ``sidecar=True`` to force the sidecar or
+    ``sidecar=False`` to force the native CUDA path.
     """
+
+    if sidecar is not None and not isinstance(sidecar, bool):
+        raise TypeError("sidecar must be True, False, or None")
 
     servers = _normalize_hosts(host, port)
     if not servers:
+        if sidecar is True:
+            raise LupineError("sidecar mode requires exactly one host")
         return Session(servers=servers, libcuda=libcuda)
-    if not _has_native_cuda_backend():
-        if sys.platform != "darwin":
-            raise LupineError(
-                "PyTorch is not compiled with CUDA and automatic LUPINE sidecar "
-                "fallback is only supported on macOS."
-            )
+
+    has_native_cuda = _has_native_cuda_backend()
+    use_sidecar = sidecar is True or (
+        sidecar is None and sys.platform == "darwin" and not has_native_cuda
+    )
+    if use_sidecar:
         if len(servers) != 1:
-            raise LupineError("automatic LUPINE sidecar fallback supports one host")
+            raise LupineError("sidecar mode requires exactly one host")
         if libcuda is not None:
-            raise LupineError("libcuda is only supported with native CUDA PyTorch")
-        return sidecar(server=servers[0])
+            raise LupineError("libcuda is only supported with sidecar=False")
+        return _create_sidecar(server=servers[0])
+
+    if not has_native_cuda:
+        if sidecar is False:
+            raise LupineError(
+                "PyTorch is not compiled with CUDA and sidecar=False disables "
+                "the LUPINE sidecar."
+            )
+        raise LupineError(
+            "PyTorch is not compiled with CUDA and automatic LUPINE sidecar "
+            "selection is only supported on macOS; pass sidecar=True to force it."
+        )
 
     return Session(
         servers=servers,
@@ -215,15 +254,13 @@ def sidecar(
     *,
     image: str | None = None,
     runtime: str = "auto",
-    platform: str = "linux/arm64",
+    platform: str | None = None,
     rosetta: bool = False,
     env: dict[str, str] | None = None,
 ) -> Any:
     """Create a session-scoped sidecar PyTorch worker frontend."""
 
-    from .sidecar import sidecar as _sidecar
-
-    return _sidecar(
+    return _create_sidecar(
         server=server,
         image=image,
         runtime=runtime,

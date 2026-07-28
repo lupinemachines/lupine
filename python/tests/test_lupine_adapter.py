@@ -32,6 +32,7 @@ class FakeCuda:
     def device_count(self):
         return self.count
 
+
 class FakeTorch(types.SimpleNamespace):
     def __init__(self):
         super().__init__()
@@ -68,7 +69,9 @@ def test_connect_loads_explicit_libcuda(lupine_module, monkeypatch, tmp_path):
     loaded = []
     libcuda = tmp_path / "libcuda.so.1"
     libcuda.write_bytes(b"")
-    monkeypatch.setattr(lupine.ctypes, "CDLL", lambda *args, **kwargs: loaded.append(args))
+    monkeypatch.setattr(
+        lupine.ctypes, "CDLL", lambda *args, **kwargs: loaded.append(args)
+    )
 
     with lupine.connect(host="host-a", libcuda=libcuda):
         pass
@@ -108,7 +111,7 @@ def test_session_device_returns_one_native_device(lupine_module):
             session.device(2)
 
 
-def test_connect_uses_sidecar_when_torch_has_no_cuda_backend(lupine_module, monkeypatch):
+def test_connect_auto_uses_sidecar_on_macos_without_cuda(lupine_module, monkeypatch):
     lupine, fake_torch = lupine_module
     fake_torch.version.cuda = None
     sentinel = object()
@@ -117,7 +120,7 @@ def test_connect_uses_sidecar_when_torch_has_no_cuda_backend(lupine_module, monk
     monkeypatch.setattr(lupine.sys, "platform", "darwin")
     monkeypatch.setattr(
         lupine,
-        "sidecar",
+        "_create_sidecar",
         lambda **kwargs: calls.append(kwargs) or sentinel,
     )
 
@@ -125,22 +128,81 @@ def test_connect_uses_sidecar_when_torch_has_no_cuda_backend(lupine_module, monk
     assert calls == [{"server": "host-a:14833"}]
 
 
-def test_connect_sidecar_fallback_rejects_multiple_hosts(lupine_module, monkeypatch):
+def test_connect_sidecar_true_forces_sidecar(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(lupine.sys, "platform", "linux")
+    monkeypatch.setattr(
+        lupine,
+        "_create_sidecar",
+        lambda **kwargs: calls.append(kwargs) or sentinel,
+    )
+
+    assert lupine.connect(host="host-a", sidecar=True) is sentinel
+    assert calls == [{"server": "host-a:14833"}]
+
+
+def test_connect_sidecar_false_disables_auto_detection(lupine_module, monkeypatch):
     lupine, fake_torch = lupine_module
     fake_torch.version.cuda = None
     monkeypatch.setattr(lupine.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        lupine,
+        "_create_sidecar",
+        lambda **kwargs: pytest.fail("sidecar was unexpectedly selected"),
+    )
 
-    with pytest.raises(lupine.LupineError, match="supports one host"):
-        lupine.connect(host=["host-a:14833", "host-b:14833"])
+    with pytest.raises(lupine.LupineError, match="sidecar=False"):
+        lupine.connect(host="host-a", sidecar=False)
 
 
-def test_connect_sidecar_fallback_rejects_libcuda(lupine_module, monkeypatch, tmp_path):
-    lupine, fake_torch = lupine_module
-    fake_torch.version.cuda = None
+def test_connect_auto_prefers_native_cuda_when_available(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
     monkeypatch.setattr(lupine.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        lupine,
+        "_create_sidecar",
+        lambda **kwargs: pytest.fail("sidecar was unexpectedly selected"),
+    )
+
+    assert isinstance(lupine.connect(host="host-a"), lupine.Session)
+
+
+def test_connect_sidecar_rejects_multiple_hosts(lupine_module):
+    lupine, _ = lupine_module
+
+    with pytest.raises(lupine.LupineError, match="exactly one host"):
+        lupine.connect(
+            host=["host-a:14833", "host-b:14833"],
+            sidecar=True,
+        )
+
+
+def test_connect_sidecar_rejects_libcuda(lupine_module, tmp_path):
+    lupine, _ = lupine_module
 
     with pytest.raises(lupine.LupineError, match="libcuda"):
-        lupine.connect(host="host-a", libcuda=tmp_path / "libcuda.so.1")
+        lupine.connect(
+            host="host-a",
+            libcuda=tmp_path / "libcuda.so.1",
+            sidecar=True,
+        )
+
+
+def test_connect_sidecar_requires_host(lupine_module):
+    lupine, _ = lupine_module
+
+    with pytest.raises(lupine.LupineError, match="exactly one host"):
+        lupine.connect(host=[], sidecar=True)
+
+
+def test_connect_rejects_invalid_sidecar_option(lupine_module):
+    lupine, _ = lupine_module
+
+    with pytest.raises(TypeError, match="True, False, or None"):
+        lupine.connect(host="host-a", sidecar="auto")
 
 
 def test_connect_requires_cuda_backend_off_macos(lupine_module, monkeypatch):

@@ -46,6 +46,27 @@ later changes to `LUPINE_SERVER` are not picked up by the current process.
 
 Exiting the context restores the previous `LUPINE_SERVER` value.
 
+`connect()` selects the native CUDA path by default. On macOS with a CPU-only
+PyTorch build, it automatically starts a containerized PyTorch sidecar instead:
+
+```python
+with lupine.connect(host="<server>:14833") as session:
+    device = session.device()
+```
+
+The `sidecar` option controls that selection explicitly:
+
+- `sidecar=None` (the default) automatically uses the sidecar only on macOS
+  when PyTorch has no native CUDA backend.
+- `sidecar=True` forces the sidecar on any platform.
+- `sidecar=False` disables the sidecar.
+
+The sidecar auto-detects Apple Container, Docker, Podman, or nerdctl. Apple
+Container is preferred on macOS; Docker-compatible runtimes use the host's
+native architecture unless `platform=...` is passed to `lupine.sidecar()`.
+Pass `runtime="container"`, `"docker"`, `"podman"`, or `"nerdctl"` to
+`lupine.sidecar()` to select one explicitly.
+
 The adapter does not create a new PyTorch backend such as
 `torch.device("lupine")`. A true custom PyTorch device would require registering
 PrivateUse1 kernels and backend support. LUPINE already works best when PyTorch
