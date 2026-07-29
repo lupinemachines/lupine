@@ -2780,11 +2780,14 @@ CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  if (count * sizeof(const CUmemAccessDesc) != 0 && map == nullptr)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemPoolSetAccess) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-      rpc_write(conn, &map, sizeof(const CUmemAccessDesc *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
+      (count * sizeof(const CUmemAccessDesc) != 0 &&
+       rpc_write(conn, map, count * sizeof(const CUmemAccessDesc)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -2833,7 +2836,7 @@ CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps) {
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemPoolCreate) < 0 ||
       rpc_write(conn, pool, sizeof(CUmemoryPool)) < 0 ||
-      rpc_write(conn, &poolProps, sizeof(const CUmemPoolProps *)) < 0 ||
+      rpc_write(conn, poolProps, sizeof(const CUmemPoolProps)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3560,8 +3563,8 @@ cuImportExternalMemory(CUexternalMemory *extMem_out,
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuImportExternalMemory) < 0 ||
       rpc_write(conn, extMem_out, sizeof(CUexternalMemory)) < 0 ||
-      rpc_write(conn, &memHandleDesc,
-                sizeof(const CUDA_EXTERNAL_MEMORY_HANDLE_DESC *)) < 0 ||
+      rpc_write(conn, memHandleDesc,
+                sizeof(const CUDA_EXTERNAL_MEMORY_HANDLE_DESC)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, extMem_out, sizeof(CUexternalMemory)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3587,8 +3590,8 @@ CUresult cuExternalMemoryGetMappedBuffer(
       rpc_write_start_request(conn, RPC_cuExternalMemoryGetMappedBuffer) < 0 ||
       rpc_write(conn, devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &extMem, sizeof(CUexternalMemory)) < 0 ||
-      rpc_write(conn, &bufferDesc,
-                sizeof(const CUDA_EXTERNAL_MEMORY_BUFFER_DESC *)) < 0 ||
+      rpc_write(conn, bufferDesc,
+                sizeof(const CUDA_EXTERNAL_MEMORY_BUFFER_DESC)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3616,9 +3619,8 @@ CUresult cuExternalMemoryGetMappedMipmappedArray(
           conn, RPC_cuExternalMemoryGetMappedMipmappedArray) < 0 ||
       rpc_write(conn, mipmap, sizeof(CUmipmappedArray)) < 0 ||
       rpc_write(conn, &extMem, sizeof(CUexternalMemory)) < 0 ||
-      rpc_write(conn, &mipmapDesc,
-                sizeof(const CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC *)) <
-          0 ||
+      rpc_write(conn, mipmapDesc,
+                sizeof(const CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mipmap, sizeof(CUmipmappedArray)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3662,8 +3664,8 @@ CUresult cuImportExternalSemaphore(
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuImportExternalSemaphore) < 0 ||
       rpc_write(conn, extSem_out, sizeof(CUexternalSemaphore)) < 0 ||
-      rpc_write(conn, &semHandleDesc,
-                sizeof(const CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC *)) < 0 ||
+      rpc_write(conn, semHandleDesc,
+                sizeof(const CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, extSem_out, sizeof(CUexternalSemaphore)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3688,12 +3690,23 @@ CUresult cuSignalExternalSemaphoresAsync(
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  if (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
+      extSemArray == nullptr)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (numExtSems * sizeof(const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS) != 0 &&
+      paramsArray == nullptr)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuSignalExternalSemaphoresAsync) < 0 ||
-      rpc_write(conn, &extSemArray, sizeof(const CUexternalSemaphore *)) < 0 ||
-      rpc_write(conn, &paramsArray,
-                sizeof(const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS *)) < 0 ||
       rpc_write(conn, &numExtSems, sizeof(unsigned int)) < 0 ||
+      (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
+       rpc_write(conn, extSemArray,
+                 numExtSems * sizeof(const CUexternalSemaphore)) < 0) ||
+      (numExtSems * sizeof(const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS) != 0 &&
+       rpc_write(conn, paramsArray,
+                 numExtSems *
+                     sizeof(const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS)) <
+           0) ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3718,12 +3731,22 @@ CUresult cuWaitExternalSemaphoresAsync(
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  if (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
+      extSemArray == nullptr)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (numExtSems * sizeof(const CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS) != 0 &&
+      paramsArray == nullptr)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuWaitExternalSemaphoresAsync) < 0 ||
-      rpc_write(conn, &extSemArray, sizeof(const CUexternalSemaphore *)) < 0 ||
-      rpc_write(conn, &paramsArray,
-                sizeof(const CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS *)) < 0 ||
       rpc_write(conn, &numExtSems, sizeof(unsigned int)) < 0 ||
+      (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
+       rpc_write(conn, extSemArray,
+                 numExtSems * sizeof(const CUexternalSemaphore)) < 0) ||
+      (numExtSems * sizeof(const CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS) != 0 &&
+       rpc_write(conn, paramsArray,
+                 numExtSems *
+                     sizeof(const CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS)) < 0) ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5816,7 +5839,7 @@ CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
       rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetAttribute) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &attr, sizeof(CUkernelNodeAttrID)) < 0 ||
-      rpc_write(conn, &value, sizeof(const CUkernelNodeAttrValue *)) < 0 ||
+      rpc_write(conn, value, sizeof(const CUkernelNodeAttrValue)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)

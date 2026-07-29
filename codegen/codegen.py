@@ -651,6 +651,23 @@ def parse_annotation(
                     members=members,
                 )
                 break
+    # An array is sized from another parameter, so that parameter has to be on
+    # the wire before the array. Parameter order does not guarantee it, and the
+    # server would otherwise size its buffer from an unread variable. Move each
+    # length source ahead of the first array that depends on it; both sides walk
+    # this same list, so they stay symmetric.
+    for i, op in enumerate(operations):
+        length = getattr(op, "length", None)
+        if not isinstance(length, Parameter):
+            continue
+        source = next(
+            (j for j, other in enumerate(operations)
+             if other.parameter.name == length.name),
+            None,
+        )
+        if source is not None and source > i:
+            operations.insert(i, operations.pop(source))
+
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
     return metadata

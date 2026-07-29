@@ -3206,7 +3206,7 @@ CUresult cuMemPoolGetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
                                void *value);
 /**
  * @param pool SEND_ONLY
- * @param map SEND_RECV
+ * @param map SEND_ONLY LENGTH:count
  * @param count SEND_ONLY
  */
 CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
@@ -3221,7 +3221,7 @@ CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
 /**
  * @recordowner MEMORY_POOL pool
  * @param pool SEND_RECV
- * @param poolProps SEND_RECV
+ * @param poolProps SEND_ONLY DEREF
  */
 CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps);
 /**
@@ -3540,7 +3540,7 @@ CUresult cuEventDestroy_v2(CUevent hEvent);
 CUresult cuEventElapsedTime(float *pMilliseconds, CUevent hStart, CUevent hEnd);
 /**
  * @param extMem_out SEND_RECV
- * @param memHandleDesc SEND_RECV
+ * @param memHandleDesc SEND_ONLY DEREF
  */
 CUresult
 cuImportExternalMemory(CUexternalMemory *extMem_out,
@@ -3548,7 +3548,7 @@ cuImportExternalMemory(CUexternalMemory *extMem_out,
 /**
  * @param devPtr SEND_RECV
  * @param extMem SEND_ONLY
- * @param bufferDesc SEND_RECV
+ * @param bufferDesc SEND_ONLY DEREF
  */
 CUresult cuExternalMemoryGetMappedBuffer(
     CUdeviceptr *devPtr, CUexternalMemory extMem,
@@ -3556,7 +3556,7 @@ CUresult cuExternalMemoryGetMappedBuffer(
 /**
  * @param mipmap SEND_RECV
  * @param extMem SEND_ONLY
- * @param mipmapDesc SEND_RECV
+ * @param mipmapDesc SEND_ONLY DEREF
  */
 CUresult cuExternalMemoryGetMappedMipmappedArray(
     CUmipmappedArray *mipmap, CUexternalMemory extMem,
@@ -3567,14 +3567,14 @@ CUresult cuExternalMemoryGetMappedMipmappedArray(
 CUresult cuDestroyExternalMemory(CUexternalMemory extMem);
 /**
  * @param extSem_out SEND_RECV
- * @param semHandleDesc SEND_RECV
+ * @param semHandleDesc SEND_ONLY DEREF
  */
 CUresult cuImportExternalSemaphore(
     CUexternalSemaphore *extSem_out,
     const CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC *semHandleDesc);
 /**
- * @param extSemArray SEND_RECV
- * @param paramsArray SEND_RECV
+ * @param extSemArray SEND_ONLY LENGTH:numExtSems
+ * @param paramsArray SEND_ONLY LENGTH:numExtSems
  * @param numExtSems SEND_ONLY
  * @param stream SEND_ONLY
  */
@@ -3583,8 +3583,8 @@ CUresult cuSignalExternalSemaphoresAsync(
     const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS *paramsArray,
     unsigned int numExtSems, CUstream stream);
 /**
- * @param extSemArray SEND_RECV
- * @param paramsArray SEND_RECV
+ * @param extSemArray SEND_ONLY LENGTH:numExtSems
+ * @param paramsArray SEND_ONLY LENGTH:numExtSems
  * @param numExtSems SEND_ONLY
  * @param stream SEND_ONLY
  */
@@ -4360,7 +4360,7 @@ CUresult cuGraphKernelNodeGetAttribute(CUgraphNode hNode,
 /**
  * @param hNode SEND_ONLY
  * @param attr SEND_ONLY
- * @param value SEND_RECV
+ * @param value SEND_ONLY DEREF
  */
 CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
                                        CUkernelNodeAttrID attr,
