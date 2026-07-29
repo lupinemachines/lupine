@@ -2521,7 +2521,6 @@ CUcontext lupine_global_default_context_hint_value() {
 void lupine_accept_current_context_hint(CUcontext ctx) {
   if (lupine_current_context != ctx) {
     lupine_current_context = ctx;
-    lupine_current_context_device_cache_invalidate();
   }
 }
 
@@ -2541,7 +2540,6 @@ extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
     lupine_default_context_hint = ctx;
     lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
   }
-  lupine_current_context_device_cache_invalidate();
 }
 
 extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
@@ -2554,7 +2552,6 @@ extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
     lupine_default_context_hint = ctx;
     lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
   }
-  lupine_current_context_device_cache_invalidate();
 }
 
 extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
@@ -2566,7 +2563,6 @@ extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
       lupine_default_context_hint = ctx;
       lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
     }
-    lupine_current_context_device_cache_invalidate();
   } else {
     lupine_context_stack->pop_back();
   }
@@ -2591,7 +2587,6 @@ extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx) {
       lupine_global_default_context_hint.store(previous,
                                                std::memory_order_relaxed);
     }
-    lupine_current_context_device_cache_invalidate();
   } else {
     lupine_context_stack->push_back(previous);
   }
@@ -2606,7 +2601,6 @@ extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx) {
       lupine_default_context_hint = ctx;
       lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
     }
-    lupine_current_context_device_cache_invalidate();
   }
   return result;
 }

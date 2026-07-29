@@ -698,6 +698,12 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
   if (route.kind == LUPINE_ROUTE_INVALID) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  // The server lane bound to this thread already has ctx current; setting it
+  // again is idempotent, so skip the round trip.
+  if (!lupine_route_is_local(route) &&
+      lupine_lane_context_cache_matches(lupine_route_identity(route), ctx)) {
+    return CUDA_SUCCESS;
+  }
   uint64_t epoch = lupine_lane_context_cache_epoch();
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_route_is_local(route)) {
