@@ -3863,13 +3863,18 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
        lupine_managed_kernel_requires_launch_sync(route_function) ||
        lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   CUcontext launch_context = nullptr;
   if (lupine_current_context != nullptr &&
       lupine_route_identity(lupine_route_for_context(lupine_current_context)) ==
           lupine_route_identity(route)) {
     launch_context = lupine_current_context;
   }
+  // Attribute-free launches are fire-and-forget like cuLaunchKernel; launch
+  // errors are sticky and surface at the next sync. Launches carrying
+  // attributes stay synchronous so attribute validation errors (e.g. invalid
+  // cluster dimensions) are reported from the launch itself. The server
+  // applies the same numAttrs rule when deciding whether to respond.
+  bool fire_and_forget = config->numAttrs == 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
       rpc_write_launch_config(conn, config) < 0 ||
@@ -3878,17 +3883,23 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
       rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
-                                    rpc_params.data()) < 0 ||
-      rpc_wait_for_response(conn) < 0) {
+                                    rpc_params.data()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-
-  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value != CUDA_SUCCESS) {
-    return return_value;
+  if (fire_and_forget) {
+    if (rpc_write_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  } else {
+    CUresult return_value;
+    if (rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (return_value != CUDA_SUCCESS) {
+      return return_value;
+    }
   }
 
   if (sync_after_launch) {

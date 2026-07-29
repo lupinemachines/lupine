@@ -1891,10 +1891,19 @@ int handle_manual_cuLaunchKernelEx(conn_t *conn) {
   }
 #endif
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
+  // Mirror the client: attribute-free launches are fire-and-forget, launches
+  // carrying attributes expect a synchronous result.
+  if (config.numAttrs != 0) {
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &result, sizeof(result)) < 0 ||
+        rpc_write_end(conn) < 0) {
+      return -1;
+    }
+    return 0;
   }
+
+  (void)request_id;
+  (void)result;
   return 0;
 }
 
