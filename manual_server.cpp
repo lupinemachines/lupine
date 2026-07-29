@@ -1099,6 +1099,48 @@ int handle_manual_cuPointerGetAttribute(conn_t *conn) {
   return 0;
 }
 
+int handle_manual_cuPointerSetAttribute(conn_t *conn) {
+  CUpointer_attribute attribute;
+  CUdeviceptr ptr = 0;
+  size_t value_size = 0;
+  int request_id;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  unsigned char value[64] = {};
+
+  if (rpc_read(conn, &attribute, sizeof(attribute)) < 0 ||
+      rpc_read(conn, &ptr, sizeof(ptr)) < 0 ||
+      rpc_read(conn, &value_size, sizeof(value_size)) < 0) {
+    return -1;
+  }
+  // A payload larger than the largest pointer attribute cannot be a request
+  // this server understands; drop the connection rather than leave unread
+  // bytes desynchronizing the stream.
+  if (value_size > sizeof(value)) {
+    return -1;
+  }
+  if (value_size != 0 && rpc_read(conn, value, value_size) < 0) {
+    return -1;
+  }
+  request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  size_t expected_size = 0;
+  if (!lupine_settable_pointer_attribute_size(attribute, &expected_size) ||
+      value_size != expected_size) {
+    result = CUDA_ERROR_INVALID_VALUE;
+  } else {
+    result = cuPointerSetAttribute(value, attribute, ptr);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuPointerGetAttributes(conn_t *conn) {
   unsigned int num_attributes = 0;
   CUdeviceptr ptr = 0;

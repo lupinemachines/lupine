@@ -122,6 +122,8 @@ lupine_manual_handlers() {
        {handle_manual_cuMemPoolGetAttribute, "cuMemPoolGetAttribute"}},
       {RPC_cuPointerGetAttribute,
        {handle_manual_cuPointerGetAttribute, "cuPointerGetAttribute"}},
+      {RPC_cuPointerSetAttribute,
+       {handle_manual_cuPointerSetAttribute, "cuPointerSetAttribute"}},
       {RPC_cuPointerGetAttributes,
        {handle_manual_cuPointerGetAttributes, "cuPointerGetAttributes"}},
       {RPC_cuLinkCreate_v2, {handle_manual_cuLinkCreate_v2, "cuLinkCreate_v2"}},

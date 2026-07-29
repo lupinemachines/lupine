@@ -2980,30 +2980,6 @@ CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
   return return_value;
 }
 
-CUresult cuPointerSetAttribute(const void *value, CUpointer_attribute attribute,
-                               CUdeviceptr ptr) {
-  lupine_route route = lupine_route_for_deviceptr(ptr);
-  CUresult return_value;
-  using real_fn_t =
-      CUresult (*)(const void *, CUpointer_attribute, CUdeviceptr);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuPointerSetAttribute", &return_value, value, attribute,
-          ptr)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
-      rpc_write(conn, &value, sizeof(const void *)) < 0 ||
-      rpc_write(conn, &attribute, sizeof(CUpointer_attribute)) < 0 ||
-      rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags) {
   lupine_route route = lupine_route_for_current_context();
   CUresult return_value;
@@ -7625,7 +7601,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemPoolExportPointer", (void *)cuMemPoolExportPointer},
     {"cuMemPoolImportPointer", (void *)cuMemPoolImportPointer},
     {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
-    {"cuPointerSetAttribute", (void *)cuPointerSetAttribute},
     {"cuPointerGetAttributes", (void *)cuPointerGetAttributes},
     {"cuStreamCreate", (void *)cuStreamCreate},
     {"cuStreamCreateWithPriority", (void *)cuStreamCreateWithPriority},

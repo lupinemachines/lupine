@@ -3317,7 +3317,8 @@ CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
                                  size_t numAttributes, CUdeviceptr devPtr,
                                  size_t count);
 /**
- * @param value SEND_RECV
+ * @disabled - manual client sends the attribute value, not the caller's pointer
+ * @param value SEND_ONLY
  * @param attribute SEND_ONLY
  * @param ptr SEND_ONLY
  */

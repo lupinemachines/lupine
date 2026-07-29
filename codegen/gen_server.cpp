@@ -3683,32 +3683,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuPointerSetAttribute(conn_t *conn) {
-  const void *value;
-  CUpointer_attribute attribute;
-  CUdeviceptr ptr;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &value, sizeof(const void *)) < 0 ||
-      rpc_read(conn, &attribute, sizeof(CUpointer_attribute)) < 0 ||
-      rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuPointerSetAttribute(value, attribute, ptr);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuPointerGetAttributes(conn_t *conn) {
   unsigned int numAttributes;
   CUpointer_attribute attributes;
@@ -8558,7 +8532,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuMemPoolExportPointer, handle_cuMemPoolExportPointer},
     {RPC_cuMemPoolImportPointer, handle_cuMemPoolImportPointer},
     {RPC_cuMemRangeGetAttributes, handle_cuMemRangeGetAttributes},
-    {RPC_cuPointerSetAttribute, handle_cuPointerSetAttribute},
     {RPC_cuPointerGetAttributes, handle_cuPointerGetAttributes},
     {RPC_cuStreamCreate, handle_cuStreamCreate},
     {RPC_cuStreamCreateWithPriority, handle_cuStreamCreateWithPriority},

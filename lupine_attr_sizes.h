@@ -83,4 +83,22 @@ inline bool lupine_pointer_attribute_size(CUpointer_attribute attr,
   }
 }
 
+// Size of the buffer cuPointerSetAttribute reads through its `value` argument.
+// Unlike cuPointerGetAttribute, only a subset of the pointer attributes can be
+// written; as of CUDA 13.1 that subset is exactly
+// CU_POINTER_ATTRIBUTE_SYNC_MEMOPS ("Set attributes on a previously allocated
+// memory region" in cuda.h). Returning false for everything else keeps the
+// remoting layer from reading a length the caller never provided, and lets both
+// ends reject the call cleanly. Sizes come from the table above so the set and
+// get paths can never disagree.
+inline bool lupine_settable_pointer_attribute_size(CUpointer_attribute attr,
+                                                   size_t *size) {
+  switch (attr) {
+  case CU_POINTER_ATTRIBUTE_SYNC_MEMOPS:
+    return lupine_pointer_attribute_size(attr, size);
+  default:
+    return false;
+  }
+}
+
 #endif

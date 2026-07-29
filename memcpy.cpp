@@ -1588,6 +1588,53 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   return return_value;
 }
 
+// `value` points at the attribute payload, so the wire must carry the bytes it
+// points to. Sending the pointer itself would make the server dereference an
+// address from this process's address space.
+extern "C" CUresult cuPointerSetAttribute(const void *value,
+                                          CUpointer_attribute attribute,
+                                          CUdeviceptr ptr) {
+  if (value == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  CUdeviceptr target_ptr = ptr;
+  lupine_translate_managed_host_ptr(ptr, &target_ptr);
+  lupine_route route = lupine_route_for_deviceptr(target_ptr);
+  if (lupine_route_is_local(route)) {
+    using real_fn_t =
+        CUresult (*)(const void *, CUpointer_attribute, CUdeviceptr);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuPointerSetAttribute");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(value, attribute, target_ptr);
+  }
+
+  size_t value_size = 0;
+  if (!lupine_settable_pointer_attribute_size(attribute, &value_size)) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  unsigned char payload[64] = {};
+  if (value_size > sizeof(payload)) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  memcpy(payload, value, value_size);
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
+      rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
+      rpc_write(conn, &target_ptr, sizeof(target_ptr)) < 0 ||
+      rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
+      rpc_write(conn, payload, value_size) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
 extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
                                            CUpointer_attribute *attributes,
                                            void **data, CUdeviceptr ptr) {

@@ -18,6 +18,7 @@ int handle_manual_cuLibraryLoadData(conn_t *conn);
 int handle_manual_cuMemPoolSetAttribute(conn_t *conn);
 int handle_manual_cuMemPoolGetAttribute(conn_t *conn);
 int handle_manual_cuPointerGetAttribute(conn_t *conn);
+int handle_manual_cuPointerSetAttribute(conn_t *conn);
 int handle_manual_cuPointerGetAttributes(conn_t *conn);
 int handle_manual_cuLinkCreate_v2(conn_t *conn);
 int handle_manual_cuLinkAddData_v2(conn_t *conn);
