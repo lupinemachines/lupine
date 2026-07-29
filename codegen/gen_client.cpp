@@ -5991,12 +5991,17 @@ CUresult cuOccupancyMaxPotentialClusterSize(int *clusterSize, CUfunction func,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  if (config == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuOccupancyMaxPotentialClusterSize) <
           0 ||
       rpc_write(conn, clusterSize, sizeof(int)) < 0 ||
       rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
-      rpc_write(conn, &config, sizeof(const CUlaunchConfig *)) < 0 ||
+      rpc_write(conn, config, sizeof(*config)) < 0 ||
+      (config->numAttrs != 0 &&
+       rpc_write(conn, config->attrs,
+                 config->numAttrs * sizeof(*config->attrs)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, clusterSize, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6017,11 +6022,16 @@ CUresult cuOccupancyMaxActiveClusters(int *numClusters, CUfunction func,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  if (config == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuOccupancyMaxActiveClusters) < 0 ||
       rpc_write(conn, numClusters, sizeof(int)) < 0 ||
       rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
-      rpc_write(conn, &config, sizeof(const CUlaunchConfig *)) < 0 ||
+      rpc_write(conn, config, sizeof(*config)) < 0 ||
+      (config->numAttrs != 0 &&
+       rpc_write(conn, config->attrs,
+                 config->numAttrs * sizeof(*config->attrs)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, numClusters, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||

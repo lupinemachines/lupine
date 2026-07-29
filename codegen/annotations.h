@@ -4467,14 +4467,16 @@ CUresult cuOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize,
 /**
  * @param clusterSize SEND_RECV
  * @param func SEND_ONLY
- * @param config SEND_RECV
+ * @param config SEND_ONLY
+ * @deeparray config attrs numAttrs
  */
 CUresult cuOccupancyMaxPotentialClusterSize(int *clusterSize, CUfunction func,
                                             const CUlaunchConfig *config);
 /**
  * @param numClusters SEND_RECV
  * @param func SEND_ONLY
- * @param config SEND_RECV
+ * @param config SEND_ONLY
+ * @deeparray config attrs numAttrs
  */
 CUresult cuOccupancyMaxActiveClusters(int *numClusters, CUfunction func,
                                       const CUlaunchConfig *config);

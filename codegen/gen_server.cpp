@@ -7109,19 +7109,27 @@ ERROR_0:
 int handle_cuOccupancyMaxPotentialClusterSize(conn_t *conn) {
   int clusterSize;
   CUfunction func;
-  const CUlaunchConfig *config;
+  CUlaunchConfig config = {};
+  std::vector<unsigned char> config_attrs_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &clusterSize, sizeof(int)) < 0 ||
       rpc_read(conn, &func, sizeof(CUfunction)) < 0 ||
-      rpc_read(conn, &config, sizeof(const CUlaunchConfig *)) < 0 || false)
+      rpc_read(conn, &config, sizeof(config)) < 0 ||
+      ((config_attrs_buf.resize(config.numAttrs * sizeof(*config.attrs)),
+        false)) ||
+      (config.numAttrs != 0 &&
+       rpc_read(conn, config_attrs_buf.data(), config_attrs_buf.size()) < 0) ||
+      ((config.attrs = (decltype(config.attrs))config_attrs_buf.data()),
+       false) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuOccupancyMaxPotentialClusterSize(&clusterSize, func, config);
+      cuOccupancyMaxPotentialClusterSize(&clusterSize, func, &config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &clusterSize, sizeof(int)) < 0 ||
@@ -7137,19 +7145,27 @@ ERROR_0:
 int handle_cuOccupancyMaxActiveClusters(conn_t *conn) {
   int numClusters;
   CUfunction func;
-  const CUlaunchConfig *config;
+  CUlaunchConfig config = {};
+  std::vector<unsigned char> config_attrs_buf;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &numClusters, sizeof(int)) < 0 ||
       rpc_read(conn, &func, sizeof(CUfunction)) < 0 ||
-      rpc_read(conn, &config, sizeof(const CUlaunchConfig *)) < 0 || false)
+      rpc_read(conn, &config, sizeof(config)) < 0 ||
+      ((config_attrs_buf.resize(config.numAttrs * sizeof(*config.attrs)),
+        false)) ||
+      (config.numAttrs != 0 &&
+       rpc_read(conn, config_attrs_buf.data(), config_attrs_buf.size()) < 0) ||
+      ((config.attrs = (decltype(config.attrs))config_attrs_buf.data()),
+       false) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result =
-      cuOccupancyMaxActiveClusters(&numClusters, func, config);
+      cuOccupancyMaxActiveClusters(&numClusters, func, &config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numClusters, sizeof(int)) < 0 ||
