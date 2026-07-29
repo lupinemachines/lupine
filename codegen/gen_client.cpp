@@ -89,6 +89,10 @@ lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
                                    CUdevice dev);
 extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc,
                                                       CUkernel kernel);
+extern "C" void lupine_invalidate_kernel_attribute_cache();
+extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
+                                                    CUkernel kernel, int attrib,
+                                                    int dev);
 extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel,
                                                        size_t paramIndex,
                                                        size_t *paramOffset,
@@ -1213,31 +1217,6 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
   return return_value;
 }
 
-CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
-                              CUkernel kernel, CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  CUresult return_value;
-  using real_fn_t =
-      CUresult (*)(int *, CUfunction_attribute, CUkernel, CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuKernelGetAttribute",
-                                                  &return_value, pi, attrib,
-                                                  kernel, dev)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuKernelGetAttribute) < 0 ||
-      rpc_write(conn, pi, sizeof(int)) < 0 ||
-      rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
-      rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 || rpc_read(conn, pi, sizeof(int)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
@@ -1246,6 +1225,9 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuKernelSetAttribute",
                                                   &return_value, attrib, val,
                                                   kernel, dev)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
+                                          (int)attrib, (int)dev);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1259,6 +1241,9 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
+                                        (int)attrib, (int)dev);
   return return_value;
 }
 
@@ -3913,6 +3898,8 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
   using real_fn_t = CUresult (*)(CUfunction, CUfunction_attribute, int);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuFuncSetAttribute", &return_value, hfunc, attrib, value)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_invalidate_kernel_attribute_cache();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -3926,6 +3913,8 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_kernel_attribute_cache();
   return return_value;
 }
 

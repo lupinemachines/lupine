@@ -2510,6 +2510,7 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
 CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
                                      const char *symbol);
 /**
+ * @disabled client - manual client caches attributes per kernel and device
  * @param pi SEND_RECV
  * @param attrib SEND_ONLY
  * @param kernel SEND_ONLY
