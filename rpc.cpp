@@ -275,10 +275,73 @@ int rpc_read_end(conn_t *conn) {
   return read_id;
 }
 
+// Per-op RPC statistics, enabled by setting LUPINE_RPC_STATS to an output
+// path. Records how many requests each op sends and how long callers spend
+// blocked waiting for the response; dumped as TSV at process exit.
+#include <chrono>
+#include <unordered_map>
+
+struct lupine_rpc_stat {
+  uint64_t count = 0;
+  uint64_t wait_ns = 0;
+};
+static std::unordered_map<int, lupine_rpc_stat> lupine_rpc_stats;
+static pthread_mutex_t lupine_rpc_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static const char *lupine_rpc_stats_path() {
+  static const char *path = getenv("LUPINE_RPC_STATS");
+  return path;
+}
+
+static void lupine_rpc_stats_dump() {
+  FILE *f = fopen(lupine_rpc_stats_path(), "w");
+  if (f == nullptr) {
+    return;
+  }
+  pthread_mutex_lock(&lupine_rpc_stats_mutex);
+  for (const auto &entry : lupine_rpc_stats) {
+    fprintf(f, "%d\t%llu\t%llu\n", entry.first,
+            (unsigned long long)entry.second.count,
+            (unsigned long long)entry.second.wait_ns);
+  }
+  pthread_mutex_unlock(&lupine_rpc_stats_mutex);
+  fclose(f);
+}
+
+static void lupine_rpc_stats_record(int op, uint64_t count_inc,
+                                    uint64_t wait_ns) {
+  pthread_mutex_lock(&lupine_rpc_stats_mutex);
+  static bool registered = false;
+  if (!registered) {
+    registered = true;
+    atexit(lupine_rpc_stats_dump);
+  }
+  lupine_rpc_stat &stat = lupine_rpc_stats[op];
+  stat.count += count_inc;
+  stat.wait_ns += wait_ns;
+  pthread_mutex_unlock(&lupine_rpc_stats_mutex);
+}
+
+static uint64_t lupine_rpc_stats_now_ns() {
+  return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
 // rpc_wait_for_response is a convenience function that sends the current
 // request and then waits for the corresponding response. this pattern is
 // so common that having this function keeps the codegen much cleaner.
 int rpc_wait_for_response(conn_t *conn) {
+  if (lupine_rpc_stats_path() != nullptr) {
+    int op = conn->write_op;
+    uint64_t start = lupine_rpc_stats_now_ns();
+    int write_id = rpc_write_end(conn);
+    if (write_id < 0 || rpc_read_start(conn, write_id) < 0) {
+      return -1;
+    }
+    lupine_rpc_stats_record(op, 0, lupine_rpc_stats_now_ns() - start);
+    return 0;
+  }
   int write_id = rpc_write_end(conn);
   if (write_id < 0 || rpc_read_start(conn, write_id) < 0) {
     return -1;
@@ -321,6 +384,9 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->write_id = conn->request_id;
   conn->write_op = op;
   conn->write_lane_id = rpc_thread_lane_id(conn);
+  if (lupine_rpc_stats_path() != nullptr) {
+    lupine_rpc_stats_record(op, 1, 0);
+  }
   return 0;
 }
 // rpc_write_start_request starts a new request builder on the given connection
