@@ -2020,6 +2020,27 @@ static bool lupine_private_export_remap_active() {
              std::memory_order_relaxed);
 }
 
+#if defined(__aarch64__)
+// Materializes a 64-bit constant into Xd with a fixed four-word
+// movz/movk/movk/movk sequence. The length is deliberately constant (never
+// elided for zero halfwords) so emitted stubs have a fixed size and are
+// trivially auditable against a disassembler.
+static void lupine_a64_emit_mov_imm64(uint32_t *out, unsigned reg,
+                                      uint64_t value) {
+  // movz Xd, #imm16
+  out[0] = 0xd2800000u | (static_cast<uint32_t>(value & 0xffffu) << 5) | reg;
+  // movk Xd, #imm16, lsl #16
+  out[1] =
+      0xf2a00000u | (static_cast<uint32_t>((value >> 16) & 0xffffu) << 5) | reg;
+  // movk Xd, #imm16, lsl #32
+  out[2] =
+      0xf2c00000u | (static_cast<uint32_t>((value >> 32) & 0xffffu) << 5) | reg;
+  // movk Xd, #imm16, lsl #48
+  out[3] =
+      0xf2e00000u | (static_cast<uint32_t>((value >> 48) & 0xffffu) << 5) | reg;
+}
+#endif
+
 static void *lupine_make_private_export_stub(int slot, const char *table_name) {
 #if defined(__x86_64__)
   constexpr size_t stub_size = 52;
@@ -2060,6 +2081,59 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
       0xc3                    // ret
   };
   memcpy(code + offset, epilogue, sizeof(epilogue));
+  return code;
+#elif defined(__aarch64__)
+  // AAPCS64 mirror of the x86-64 thunk above: the six incoming integer/pointer
+  // arguments are shifted up two slots and the (slot, table_name) pair is
+  // injected in front, then we tail-branch to the handler. The handler takes
+  // eight integer arguments, all of which fit in x0-x7, so no stack shuffling
+  // (and therefore no frame at all) is required and x30 stays untouched.
+  //
+  //   stub(a0..a5) -> lupine_private_export_slot_called(slot, table_name,
+  //                                                     a0..a5)
+  constexpr size_t stub_words = 17;
+  constexpr size_t stub_size = stub_words * sizeof(uint32_t);
+  unsigned char *code = static_cast<unsigned char *>(
+      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  if (code == MAP_FAILED) {
+    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+  }
+
+  void *handler = reinterpret_cast<void *>(&lupine_private_export_slot_called);
+  uint32_t words[stub_words];
+  size_t n = 0;
+  // Shift x0-x5 up into x2-x7. This MUST run highest-destination first so a
+  // source register is never clobbered before it is read.
+  // `mov Xd, Xm` is `orr Xd, xzr, Xm` = 0xaa0003e0 | (Rm << 16) | Rd.
+  words[n++] = 0xaa0503e7u; // mov x7, x5
+  words[n++] = 0xaa0403e6u; // mov x6, x4
+  words[n++] = 0xaa0303e5u; // mov x5, x3
+  words[n++] = 0xaa0203e4u; // mov x4, x2
+  words[n++] = 0xaa0103e3u; // mov x3, x1
+  words[n++] = 0xaa0003e2u; // mov x2, x0
+  // w0 = slot. `int` is 32-bit, and writing w0 zeroes the upper half of x0,
+  // which matches the x86 `mov edi, imm32`.
+  uint32_t slot_bits = static_cast<uint32_t>(slot);
+  // movz w0, #imm16
+  words[n++] = 0x52800000u | ((slot_bits & 0xffffu) << 5) | 0u;
+  // movk w0, #imm16, lsl #16
+  words[n++] = 0x72a00000u | (((slot_bits >> 16) & 0xffffu) << 5) | 0u;
+  // x1 = table_name
+  lupine_a64_emit_mov_imm64(&words[n], 1,
+                            reinterpret_cast<uint64_t>(table_name));
+  n += 4;
+  // x16 = handler (x16/IP0 is the intra-procedure-call scratch register, so it
+  // is free to clobber across this tail branch).
+  lupine_a64_emit_mov_imm64(&words[n], 16, reinterpret_cast<uint64_t>(handler));
+  n += 4;
+  words[n++] = 0xd61f0200u; // br x16
+  memcpy(code, words, stub_size);
+  // Instruction-cache maintenance is mandatory on AArch64: the writes above
+  // land in the data cache and are not otherwise visible to the instruction
+  // fetcher.
+  __builtin___clear_cache(reinterpret_cast<char *>(code),
+                          reinterpret_cast<char *>(code + stub_size));
   return code;
 #else
   (void)slot;
@@ -6769,14 +6843,19 @@ static void *lupine_make_missing_stub(const char *symbol) {
     return nullptr;
   }
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
   static std::unordered_map<std::string, void *> stubs;
   auto existing = stubs.find(symbol);
   if (existing != stubs.end()) {
     return existing->second;
   }
 
+#if defined(__x86_64__)
   constexpr size_t stub_size = 22;
+#else
+  constexpr size_t stub_words = 9;
+  constexpr size_t stub_size = stub_words * sizeof(uint32_t);
+#endif
   unsigned char *code = static_cast<unsigned char *>(
       mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
@@ -6786,6 +6865,7 @@ static void *lupine_make_missing_stub(const char *symbol) {
 
   char *stable_symbol = strdup(symbol);
   void *handler = reinterpret_cast<void *>(&lupine_missing_driver_api_called);
+#if defined(__x86_64__)
   code[0] = 0x48;
   code[1] = 0xbf;
   memcpy(code + 2, &stable_symbol, sizeof(stable_symbol));
@@ -6794,6 +6874,25 @@ static void *lupine_make_missing_stub(const char *symbol) {
   memcpy(code + 12, &handler, sizeof(handler));
   code[20] = 0xff;
   code[21] = 0xe0;
+#else
+  // AAPCS64 mirror of the x86-64 stub above: overwrite the first argument
+  // register with the symbol name and tail-branch to the handler, discarding
+  // whatever the caller passed.
+  //
+  //   stub(...) -> lupine_missing_driver_api_called(stable_symbol)
+  uint32_t words[stub_words];
+  // x0 = stable_symbol
+  lupine_a64_emit_mov_imm64(&words[0], 0,
+                            reinterpret_cast<uint64_t>(stable_symbol));
+  // x16 = handler (IP0 scratch, free to clobber across the tail branch)
+  lupine_a64_emit_mov_imm64(&words[4], 16, reinterpret_cast<uint64_t>(handler));
+  words[8] = 0xd61f0200u; // br x16
+  memcpy(code, words, stub_size);
+  // Mandatory on AArch64: make the freshly written words visible to the
+  // instruction fetcher.
+  __builtin___clear_cache(reinterpret_cast<char *>(code),
+                          reinterpret_cast<char *>(code + stub_size));
+#endif
   stubs[symbol] = code;
   return code;
 #else
