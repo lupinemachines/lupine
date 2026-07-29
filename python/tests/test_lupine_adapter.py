@@ -312,3 +312,12 @@ def test_bare_ipv6_host_gets_bracketed(lupine_module):
     assert lupine._normalize_server("2001:db8::1") == "[2001:db8::1]:14833"
     assert lupine._normalize_server("[::1]") == "[::1]:14833"
     assert lupine._normalize_server("[::1]:14833") == "[::1]:14833"
+
+
+def test_url_server_endpoint_is_preserved(lupine_module):
+    lupine, _ = lupine_module
+
+    assert lupine._normalize_server("https://host-a:9443") == "https://host-a:9443"
+    assert lupine._normalize_server("https://host-a", 9443) == "https://host-a:9443"
+    assert lupine._normalize_server("https://host-a") == "https://host-a"
+    assert lupine._normalize_server("http://host-a") == "http://host-a:14833"

@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_PORT = 14833
 
@@ -53,6 +54,20 @@ def _normalize_server(host: str, port: int | None = None) -> str:
     host = str(host).strip()
     if not host:
         raise LupineError("host must not be empty")
+    if host.startswith(("http://", "https://")):
+        parsed = urlsplit(host)
+        if not parsed.netloc:
+            raise LupineError("host must include a server name")
+        netloc = parsed.netloc
+        if port is not None or (parsed.scheme == "http" and parsed.port is None):
+            endpoint_port = int(port) if port is not None else DEFAULT_PORT
+            hostname = parsed.hostname or ""
+            if ":" in hostname and not hostname.startswith("["):
+                hostname = f"[{hostname}]"
+            netloc = f"{hostname}:{endpoint_port}"
+        return urlunsplit(
+            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+        )
     if not host.startswith("[") and host.count(":") > 1:
         host = f"[{host}]"
     if port is not None:
