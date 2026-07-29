@@ -6,6 +6,7 @@ import ctypes
 import math
 import sys
 import types
+import weakref
 from collections.abc import Mapping, Sequence
 from functools import cache
 from typing import Any
@@ -368,6 +369,8 @@ class SidecarTensor(torch.Tensor):
     ) -> None:
         self._lupine_session = session
         self._lupine_handle = int(handle)
+        finalizer = weakref.finalize(self, session._release_handle, self._lupine_handle)
+        finalizer.atexit = False
 
     def __repr__(self) -> str:
         return (

@@ -1,3 +1,4 @@
+import gc
 import subprocess
 import sys
 import threading
@@ -342,6 +343,61 @@ def test_sidecar_copy_uses_direct_cpu_stream(monkeypatch):
 
     assert result is destination
     assert calls == [(destination, source)]
+
+
+def test_sidecar_releases_handles_of_collected_tensors(monkeypatch):
+    tensor_support._ensure_registered()
+    session = sidecar.SidecarSession(server="host-a:14833")
+    session._proc = object()
+    sent = []
+
+    def fake_send(payload, input_tensors=(), *, decode_result=False):
+        sent.append(payload)
+        return {"torch": "fake"}
+
+    monkeypatch.setattr(session, "_send", fake_send)
+    tensor = tensor_support.SidecarTensor(
+        session=session,
+        handle=7,
+        shape=(2,),
+        dtype=torch.float32,
+        device=session.device(),
+    )
+
+    del tensor
+    gc.collect()
+    session._request({"op": "ping"})
+
+    assert sent == [
+        {"op": "release", "value": [{"__sidecar_tensor__": 7}]},
+        {"op": "ping"},
+    ]
+    assert session._pending_release == []
+
+
+def test_sidecar_keeps_handles_of_live_tensors(monkeypatch):
+    tensor_support._ensure_registered()
+    session = sidecar.SidecarSession(server="host-a:14833")
+    session._proc = object()
+    sent = []
+    monkeypatch.setattr(
+        session,
+        "_send",
+        lambda payload, *args, **kwargs: sent.append(payload),
+    )
+    tensor = tensor_support.SidecarTensor(
+        session=session,
+        handle=7,
+        shape=(2,),
+        dtype=torch.float32,
+        device=session.device(),
+    )
+
+    gc.collect()
+    session._request({"op": "ping"})
+
+    assert sent == [{"op": "ping"}]
+    assert tensor._lupine_handle == 7
 
 
 def test_sidecar_worker_consumes_tensor_stream_before_operation_error(tmp_path):

@@ -212,6 +212,7 @@ class SidecarSession:
     platform: str | None = None
     rosetta: bool = False
     env: dict[str, str] = field(default_factory=dict)
+    _pending_release: list[int] = field(default_factory=list, init=False, repr=False)
 
     def _worker_image(self) -> str:
         return self.image or _worker_image_for_server(self.server)
@@ -271,7 +272,31 @@ class SidecarSession:
             raise SidecarError("sidecar prototype exposes one LUPINE device")
         return torch.device(f"{_BACKEND_NAME}:0")
 
+    def _release_handle(self, handle: int) -> None:
+        self._pending_release.append(handle)
+
+    def _flush_released(self) -> None:
+        # Sent from _request, never from the finalizer, so garbage collection
+        # cannot re-enter the transport lock. pop() keeps an append that lands
+        # mid-drain.
+        handles = []
+        while self._pending_release:
+            handles.append(self._pending_release.pop())
+        if handles and getattr(self, "_proc", None) is not None:
+            values = [{"__sidecar_tensor__": handle} for handle in handles]
+            self._send({"op": "release", "value": values})
+
     def _request(
+        self,
+        payload: dict[str, Any],
+        input_tensors: Sequence[tuple[Any, Mapping[str, Any]]] = (),
+        *,
+        decode_result: bool = False,
+    ) -> Any:
+        self._flush_released()
+        return self._send(payload, input_tensors, decode_result=decode_result)
+
+    def _send(
         self,
         payload: dict[str, Any],
         input_tensors: Sequence[tuple[Any, Mapping[str, Any]]] = (),
