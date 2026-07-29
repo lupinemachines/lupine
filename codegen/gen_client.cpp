@@ -3169,30 +3169,6 @@ CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
   return return_value;
 }
 
-CUresult cuStreamIsCapturing(CUstream hStream,
-                             CUstreamCaptureStatus *captureStatus) {
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUstream, CUstreamCaptureStatus *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuStreamIsCapturing",
-                                                  &return_value, hStream,
-                                                  captureStatus)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuStreamIsCapturing) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_write(conn, captureStatus, sizeof(CUstreamCaptureStatus)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, captureStatus, sizeof(CUstreamCaptureStatus)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags) {
   CUdeviceptr dptr_rpc = dptr;
@@ -7309,15 +7285,6 @@ extern "C" CUresult cuStreamGetCtx_ptsz(CUstream hStream, CUcontext *pctx) {
   return cuStreamGetCtx(hStream, pctx);
 }
 
-#ifdef cuStreamIsCapturing_ptsz
-#undef cuStreamIsCapturing_ptsz
-#endif
-extern "C" CUresult
-cuStreamIsCapturing_ptsz(CUstream hStream,
-                         CUstreamCaptureStatus *captureStatus) {
-  return cuStreamIsCapturing(hStream, captureStatus);
-}
-
 #ifdef cuStreamAttachMemAsync_ptsz
 #undef cuStreamAttachMemAsync_ptsz
 #endif
@@ -7853,7 +7820,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetId_ptsz", (void *)cuStreamGetId},
     {"cuStreamGetFlags_ptsz", (void *)cuStreamGetFlags},
     {"cuStreamGetCtx_ptsz", (void *)cuStreamGetCtx},
-    {"cuStreamIsCapturing_ptsz", (void *)cuStreamIsCapturing},
     {"cuStreamAttachMemAsync_ptsz", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery_ptsz", (void *)cuStreamQuery},
     {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize},

@@ -3412,6 +3412,7 @@ CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph);
 /**
  * @routingkey STREAM hStream
+ * @disabled client - manual client answers from the local capture count
  * @param hStream SEND_ONLY
  * @param captureStatus SEND_RECV
  */

@@ -5840,6 +5840,11 @@ static CUresult lupine_cuStreamGetCaptureInfo(
   return return_value;
 }
 
+// Stream captures started by this client and not yet terminated. A stream can
+// only be capturing if we started the capture, so cuStreamIsCapturing can
+// answer NONE locally while this is zero.
+static std::atomic<int> lupine_active_stream_captures{0};
+
 class lupine_capture_begin_guard {
 public:
   lupine_capture_begin_guard() { lupine_checkpoint::capture_begin(); }
@@ -5853,7 +5858,11 @@ public:
   CUresult complete(CUresult result) {
     if (!completed_) {
       completed_ = true;
-      lupine_checkpoint::capture_begin_complete(result == CUDA_SUCCESS);
+      bool started = result == CUDA_SUCCESS;
+      lupine_checkpoint::capture_begin_complete(started);
+      if (started) {
+        lupine_active_stream_captures.fetch_add(1);
+      }
     }
     return result;
   }
@@ -5870,8 +5879,44 @@ static CUresult lupine_complete_stream_end_capture(CUresult result) {
       result == CUDA_ERROR_STREAM_CAPTURE_INVALIDATED ||
       result == CUDA_ERROR_STREAM_CAPTURE_UNJOINED) {
     lupine_checkpoint::capture_end();
+    lupine_active_stream_captures.fetch_sub(1);
   }
   return result;
+}
+
+extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
+                                        CUstreamCaptureStatus *captureStatus) {
+  if (captureStatus == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  // Libraries poll capture state on the launch path. While this client has no
+  // capture outstanding no stream can be capturing, so answer without a round
+  // trip.
+  if (lupine_active_stream_captures.load() == 0) {
+    *captureStatus = CU_STREAM_CAPTURE_STATUS_NONE;
+    return CUDA_SUCCESS;
+  }
+  lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
+                                          : lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUstream, CUstreamCaptureStatus *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuStreamIsCapturing", &return_value, hStream,
+          captureStatus)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuStreamIsCapturing) < 0 ||
+      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_write(conn, captureStatus, sizeof(CUstreamCaptureStatus)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, captureStatus, sizeof(CUstreamCaptureStatus)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
 }
 
 extern "C" CUresult cuStreamBeginCapture_v2(CUstream hStream,
@@ -5944,6 +5989,15 @@ extern "C" CUresult cuStreamBeginCapture(CUstream hStream,
 extern "C" CUresult cuStreamEndCapture_ptsz(CUstream hStream,
                                             CUgraph *phGraph) {
   return cuStreamEndCapture(hStream, phGraph);
+}
+
+#ifdef cuStreamIsCapturing_ptsz
+#undef cuStreamIsCapturing_ptsz
+#endif
+extern "C" CUresult
+cuStreamIsCapturing_ptsz(CUstream hStream,
+                         CUstreamCaptureStatus *captureStatus) {
+  return cuStreamIsCapturing(hStream, captureStatus);
 }
 
 extern "C" CUresult cuStreamGetCaptureInfo_v3(
@@ -7623,6 +7677,7 @@ lupine_manual_function_map() {
       {"cuStreamAddCallback_ptsz", (void *)cuStreamAddCallback},
       {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
       {"cuStreamEndCapture_ptsz", (void *)cuStreamEndCapture},
+      {"cuStreamIsCapturing_ptsz", (void *)cuStreamIsCapturing},
       {"cuStreamBeginCaptureToGraph", (void *)cuStreamBeginCaptureToGraph},
       {"cuStreamBeginCaptureToGraph_ptsz", (void *)cuStreamBeginCaptureToGraph},
       {"cuStreamUpdateCaptureDependencies",
