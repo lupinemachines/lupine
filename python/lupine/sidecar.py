@@ -313,6 +313,15 @@ class SidecarSession:
             request["tensor_streams"] = [metadata for _, metadata in input_tensors]
             try:
                 header = json.dumps(request).encode("utf-8") + b"\n"
+            except (TypeError, ValueError) as exc:
+                # Nothing reached the worker yet, so the session stays usable.
+                raise SidecarError(
+                    f"sidecar cannot send this operation to the worker: {exc}; "
+                    "arguments must be tensors, numbers, strings, dtypes, "
+                    "devices, layouts, or memory formats. Build the value on "
+                    "CPU and move it with .to(device) instead."
+                ) from exc
+            try:
                 _write_all(proc.stdin, header)
                 for tensor, _ in input_tensors:
                     _write_tensor(proc.stdin, tensor)
