@@ -3,6 +3,9 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <nvml.h>
+#ifdef LUPINE_TLS_OPENSSL
+#include <openssl/ssl.h>
+#endif
 #include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -13,7 +16,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "codegen/gen_api.h"
@@ -98,12 +103,29 @@ int open_connection() {
       continue;
     }
 
+    bool tls = false;
+    if (strncmp(token, "https://", 8) == 0) {
+      tls = true;
+      token += 8;
+    } else if (strncmp(token, "http://", 7) == 0) {
+      token += 7;
+    } else if (strstr(token, "://") != nullptr ||
+               strncmp(token, "http:", 5) == 0 ||
+               strncmp(token, "https:", 6) == 0) {
+      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER URL scheme: " << token);
+      continue;
+    }
+
     char *host = token;
-    char *port = const_cast<char *>(DEFAULT_PORT);
+    char *port = const_cast<char *>(tls ? "443" : DEFAULT_PORT);
     char *colon = strchr(token, ':');
     if (colon != nullptr) {
       *colon = '\0';
       port = colon + 1;
+    }
+    if (host[0] == '\0' || port[0] == '\0') {
+      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER endpoint");
+      continue;
     }
 
     addrinfo hints = {};
@@ -135,6 +157,40 @@ int open_connection() {
         c->connfd = sockfd;
         c->request_id = 0;
         c->local_request_parity = c->request_id & 1;
+        if (tls) {
+#ifdef LUPINE_TLS_OPENSSL
+          static SSL_CTX *tls_ctx = []() {
+            SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+            if (ctx != nullptr) {
+              SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+              SSL_CTX_set_default_verify_paths(ctx);
+              SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
+            }
+            return ctx;
+          }();
+          SSL *ssl = tls_ctx != nullptr ? SSL_new(tls_ctx) : nullptr;
+          if (ssl == nullptr || SSL_set_tlsext_host_name(ssl, host) != 1 ||
+              SSL_set1_host(ssl, host) != 1 || SSL_set_fd(ssl, sockfd) != 1 ||
+              SSL_connect(ssl) != 1) {
+            if (ssl != nullptr) {
+              SSL_free(ssl);
+            }
+            LUPINE_LOG_ERROR("TLS handshake with " << host << " failed");
+            close(sockfd);
+            freeaddrinfo(res);
+            continue;
+          }
+          c->tls_session = ssl;
+#else
+          LUPINE_LOG_ERROR("LUPINE_SERVER entry "
+                           << host << ":" << port
+                           << " uses https:// but this client was built "
+                              "without TLS support");
+          close(sockfd);
+          freeaddrinfo(res);
+          continue;
+#endif
+        }
         if (pthread_mutex_init(&c->read_mutex, nullptr) < 0 ||
             pthread_mutex_init(&c->write_mutex, nullptr) < 0 ||
             pthread_mutex_init(&c->call_mutex, nullptr) < 0 ||
@@ -142,6 +198,12 @@ int open_connection() {
             rpc_http2_client_init(c) < 0 ||
             pthread_create(&c->read_thread, nullptr, rpc_client_dispatch_thread,
                            c) < 0) {
+#ifdef LUPINE_TLS_OPENSSL
+          if (c->tls_session != nullptr) {
+            SSL_free(static_cast<SSL *>(c->tls_session));
+            c->tls_session = nullptr;
+          }
+#endif
           close(sockfd);
           freeaddrinfo(res);
           continue;
@@ -175,6 +237,53 @@ conn_t *connection(unsigned int index = 0) {
     return nullptr;
   }
   return &conns[index];
+}
+
+void close_connections() {
+  if (pthread_mutex_lock(&conn_mutex) != 0) {
+    return;
+  }
+  int count = nconns;
+  for (int i = 0; i < count; ++i) {
+    conn_t *c = &conns[i];
+    if (!c->closed) {
+      c->closed = 1;
+      shutdown(c->connfd, SHUT_RDWR);
+      close(c->connfd);
+    }
+    pthread_mutex_lock(&c->read_mutex);
+    pthread_cond_broadcast(&c->read_cond);
+    pthread_mutex_unlock(&c->read_mutex);
+  }
+  pthread_mutex_unlock(&conn_mutex);
+
+  for (int i = 0; i < count; ++i) {
+    conn_t *c = &conns[i];
+    if (c->read_thread != 0) {
+      pthread_join(c->read_thread, nullptr);
+      c->read_thread = 0;
+    }
+    if (c->rpc_thread != 0) {
+      pthread_join(c->rpc_thread, nullptr);
+      c->rpc_thread = 0;
+    }
+#ifdef LUPINE_TLS_OPENSSL
+    if (c->tls_session != nullptr) {
+      SSL_free(static_cast<SSL *>(c->tls_session));
+      c->tls_session = nullptr;
+    }
+#endif
+    rpc_conn_destroy(c);
+  }
+
+  if (pthread_mutex_lock(&conn_mutex) == 0) {
+    nconns = 0;
+    connected = false;
+    devices_ready = false;
+    devices.clear();
+    conn_labels.clear();
+    pthread_mutex_unlock(&conn_mutex);
+  }
 }
 
 lupine_nvml_remote_device *mapped_device(nvmlDevice_t device) {
@@ -264,6 +373,51 @@ nvmlReturn_t ensure_devices() {
   }
   devices_ready = true;
   return NVML_SUCCESS;
+}
+
+template <typename Lookup>
+nvmlReturn_t lookup_device_on_all_connections(nvmlDevice_t *device,
+                                              Lookup &&lookup) {
+  if (device == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+
+  nvmlReturn_t result = ensure_devices();
+  if (result != NVML_SUCCESS) {
+    return result;
+  }
+
+  nvmlReturn_t first_error = NVML_ERROR_NOT_FOUND;
+  for (int i = 0; i < nconns; ++i) {
+    nvmlDevice_t remote = nullptr;
+    result = lookup(&conns[i], &remote);
+    if (result != NVML_SUCCESS) {
+      if (first_error == NVML_ERROR_NOT_FOUND &&
+          result != NVML_ERROR_NOT_FOUND) {
+        first_error = result;
+      }
+      continue;
+    }
+
+    auto mapped = std::find_if(
+        devices.begin(), devices.end(), [&](const auto &candidate) {
+          return candidate.conn_index == static_cast<unsigned int>(i) &&
+                 candidate.remote_device == remote;
+        });
+    if (mapped == devices.end()) {
+      // The server returned a handle that was not part of the device table
+      // built from nvmlDeviceGetCount/GetHandleByIndex. Never expose that raw
+      // process-local pointer to the caller.
+      if (first_error == NVML_ERROR_NOT_FOUND) {
+        first_error = rpc_error();
+      }
+      continue;
+    }
+
+    *device = reinterpret_cast<nvmlDevice_t>(&*mapped);
+    return NVML_SUCCESS;
+  }
+  return first_error;
 }
 
 conn_t *connection_for_device(nvmlDevice_t *device) {
@@ -458,7 +612,25 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
 }
 
 extern "C" nvmlReturn_t nvmlShutdown(void) {
-  return call_no_args(RPC_nvmlShutdown);
+  if (pthread_mutex_lock(&conn_mutex) != 0) {
+    return rpc_error();
+  }
+  if (!connected) {
+    pthread_mutex_unlock(&conn_mutex);
+    return NVML_SUCCESS;
+  }
+  int count = nconns;
+  pthread_mutex_unlock(&conn_mutex);
+
+  nvmlReturn_t first_error = NVML_SUCCESS;
+  for (int i = 0; i < count; ++i) {
+    nvmlReturn_t result = call_no_args_on(&conns[i], RPC_nvmlShutdown);
+    if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
+      first_error = result;
+    }
+  }
+  close_connections();
+  return first_error;
 }
 
 extern "C" const char *nvmlErrorString(nvmlReturn_t result) {

@@ -46,7 +46,10 @@ inline std::ostream *lupine_trace_stream() {
       return nullptr;
     }
     if (strcmp(value, "1") == 0) {
-      return &std::cout;
+      // fd 1 (stdout) is reserved for capturing device printf during
+      // synchronize, so trace must go to stderr to avoid contaminating the
+      // capture buffer.
+      return &std::cerr;
     }
     if (strcmp(value, "2") == 0) {
       return &std::cerr;

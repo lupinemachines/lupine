@@ -13,14 +13,23 @@
 #include <nvml.h>
 #endif
 
+typedef struct {
+  unsigned int version;
+  nvmlTemperatureSensors_t sensorType;
+  int temperature;
+} lupine_nvmlTemperature_t;
+
 /**
+ * @disabled client - manually initialized on every server connection
  */
 nvmlReturn_t nvmlInit_v2();
 /**
+ * @disabled client - manually initialized on every server connection
  * @param flags SEND_ONLY
  */
 nvmlReturn_t nvmlInitWithFlags(unsigned int flags);
 /**
+ * @disabled client - manually shut down on every server connection
  */
 nvmlReturn_t nvmlShutdown();
 /**
@@ -104,6 +113,7 @@ nvmlReturn_t nvmlUnitGetDevices(nvmlUnit_t unit, unsigned int *deviceCount,
 nvmlReturn_t nvmlSystemGetHicVersion(unsigned int *hwbcCount,
                                      nvmlHwbcEntry_t *hwbcEntries);
 /**
+ * @disabled client - manual client aggregates every server's device count
  * @param deviceCount RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetCount_v2(unsigned int *deviceCount);
@@ -114,6 +124,7 @@ nvmlReturn_t nvmlDeviceGetCount_v2(unsigned int *deviceCount);
 nvmlReturn_t nvmlDeviceGetAttributes_v2(nvmlDevice_t device,
                                         nvmlDeviceAttributes_t *attributes);
 /**
+ * @disabled client - manual client maps the global ordinal to a virtual device handle
  * @param index SEND_ONLY
  * @param device RECV_ONLY
  */
@@ -126,17 +137,22 @@ nvmlReturn_t nvmlDeviceGetHandleByIndex_v2(unsigned int index,
 nvmlReturn_t nvmlDeviceGetHandleBySerial(const char *serial,
                                          nvmlDevice_t *device);
 /**
+ * @routingkey ALL
+ * @recordowner NVML_DEVICE device
  * @param uuid SEND_ONLY NULL_TERMINATED
  * @param device RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetHandleByUUID(const char *uuid, nvmlDevice_t *device);
 /**
+ * @routingkey ALL
+ * @recordowner NVML_DEVICE device
  * @param pciBusId SEND_ONLY NULL_TERMINATED
  * @param device RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetHandleByPciBusId_v2(const char *pciBusId,
                                               nvmlDevice_t *device);
 /**
+ * @disabled client - manual client appends the server label to disambiguate devices
  * @param device SEND_ONLY
  * @param length SEND_ONLY
  * @param name RECV_ONLY LENGTH:length
@@ -149,6 +165,7 @@ nvmlReturn_t nvmlDeviceGetName(nvmlDevice_t device, char *name,
  */
 nvmlReturn_t nvmlDeviceGetBrand(nvmlDevice_t device, nvmlBrandType_t *type);
 /**
+ * @disabled client - manual client returns the virtual global device index
  * @param device SEND_ONLY
  * @param index RECV_ONLY
  */
@@ -508,6 +525,12 @@ nvmlReturn_t nvmlDeviceGetTemperature(nvmlDevice_t device,
                                       unsigned int *temp);
 /**
  * @param device SEND_ONLY
+ * @param temperature SEND_RECV
+ */
+nvmlReturn_t nvmlDeviceGetTemperatureV(
+    nvmlDevice_t device, lupine_nvmlTemperature_t *temperature);
+/**
+ * @param device SEND_ONLY
  * @param thresholdType SEND_ONLY
  * @param temp RECV_ONLY
  */
@@ -612,7 +635,7 @@ nvmlReturn_t nvmlDeviceGetGpuOperationMode(nvmlDevice_t device,
 nvmlReturn_t nvmlDeviceGetMemoryInfo(nvmlDevice_t device, nvmlMemory_t *memory);
 /**
  * @param device SEND_ONLY
- * @param memory RECV_ONLY
+ * @param memory SEND_RECV
  */
 nvmlReturn_t nvmlDeviceGetMemoryInfo_v2(nvmlDevice_t device,
                                         nvmlMemory_v2_t *memory);
@@ -1167,10 +1190,12 @@ nvmlReturn_t nvmlDeviceGetNvLinkRemoteDeviceType(
     nvmlDevice_t device, unsigned int link,
     nvmlIntNvLinkDeviceType_t *pNvLinkDeviceType);
 /**
+ * @disabled client - manual client tracks the server owning the event set
  * @param set RECV_ONLY
  */
 nvmlReturn_t nvmlEventSetCreate(nvmlEventSet_t *set);
 /**
+ * @disabled client - manual client routes through the device owning the registration
  * @param device SEND_ONLY
  * @param eventTypes SEND_ONLY
  * @param set SEND_ONLY
@@ -1185,6 +1210,7 @@ nvmlReturn_t nvmlDeviceRegisterEvents(nvmlDevice_t device,
 nvmlReturn_t nvmlDeviceGetSupportedEventTypes(nvmlDevice_t device,
                                               unsigned long long *eventTypes);
 /**
+ * @disabled client - manual client tracks the server owning the event set
  * @param set SEND_ONLY
  * @param data RECV_ONLY
  * @param timeoutms SEND_ONLY
@@ -1192,6 +1218,7 @@ nvmlReturn_t nvmlDeviceGetSupportedEventTypes(nvmlDevice_t device,
 nvmlReturn_t nvmlEventSetWait_v2(nvmlEventSet_t set, nvmlEventData_t *data,
                                  unsigned int timeoutms);
 /**
+ * @disabled client - manual client tracks the server owning the event set
  * @param set SEND_ONLY
  */
 nvmlReturn_t nvmlEventSetFree(nvmlEventSet_t set);
@@ -2007,6 +2034,7 @@ CUresult cuGetErrorString(CUresult error, const char **pStr);
  */
 CUresult cuGetErrorName(CUresult error, const char **pStr);
 /**
+ * @disabled client - manual client initializes every configured route
  * @param Flags SEND_ONLY
  */
 CUresult cuInit(unsigned int Flags);
@@ -2015,11 +2043,13 @@ CUresult cuInit(unsigned int Flags);
  */
 CUresult cuDriverGetVersion(int *driverVersion);
 /**
+ * @disabled client - manual client maps the virtual device ordinal
  * @param device RECV_ONLY
  * @param ordinal SEND_ONLY
  */
 CUresult cuDeviceGet(CUdevice *device, int ordinal);
 /**
+ * @disabled client - manual client reports the virtual device table size
  * @param count RECV_ONLY
  */
 CUresult cuDeviceGetCount(int *count);
@@ -2116,12 +2146,14 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev);
  */
 CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @recordowner CONTEXT pctx
  * @param pctx RECV_ONLY
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
@@ -2138,6 +2170,7 @@ CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
                                     int *active);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev);
@@ -2158,6 +2191,7 @@ CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice dev);
 CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
                         int numParams, unsigned int flags, CUdevice dev);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxDestroy_v2(CUcontext ctx);
@@ -2191,7 +2225,9 @@ CUresult cuCtxGetFlags(unsigned int *flags);
  */
 CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey CURRENT_CONTEXT
  */
 CUresult cuCtxSynchronize();
 /**
@@ -2241,11 +2277,13 @@ CUresult cuCtxResetPersistingL2Cache();
 CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
                               CUexecAffinityType type);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param pctx RECV_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
 /**
+ * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxDetach(CUcontext ctx);
@@ -2428,6 +2466,24 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
  */
 CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
 /**
+ * @routingkey FUNCTION kernel
+ * @param kernel SEND_ONLY
+ * @param paramIndex SEND_ONLY
+ * @param paramOffset RECV_ONLY
+ * @param paramSize RECV_ONLY
+ */
+CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
+                              size_t *paramOffset, size_t *paramSize);
+/**
+ * @routingkey FUNCTION func
+ * @param func SEND_ONLY
+ * @param paramIndex SEND_ONLY
+ * @param paramOffset RECV_ONLY
+ * @param paramSize RECV_ONLY
+ */
+CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
+                            size_t *paramOffset, size_t *paramSize);
+/**
  * @routingkey LIBRARY library
  * @param dptr RECV_ONLY
  * @param bytes RECV_ONLY
@@ -2454,6 +2510,7 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
 CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
                                      const char *symbol);
 /**
+ * @disabled client - manual client caches attributes per kernel and device
  * @param pi SEND_RECV
  * @param attrib SEND_ONLY
  * @param kernel SEND_ONLY
@@ -2515,25 +2572,25 @@ CUresult cuMemFree_v2(CUdeviceptr dptr);
 CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
                                  CUdeviceptr dptr);
 /**
- * @disabled - client-local host allocation
- * @param pp RECV_ONLY
+ * @disabled client - manual client substitutes a local faulting address
+ * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  */
 CUresult cuMemAllocHost_v2(void **pp, size_t bytesize);
 /**
- * @disabled - client-local host allocation
+ * @disabled client - manual client frees the substituted local address
  * @param p SEND_ONLY
  */
 CUresult cuMemFreeHost(void *p);
 /**
- * @disabled - client-local host allocation
- * @param pp RECV_ONLY
+ * @disabled client - manual client substitutes a local faulting address
+ * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  * @param Flags SEND_ONLY
  */
 CUresult cuMemHostAlloc(void **pp, size_t bytesize, unsigned int Flags);
 /**
- * @disabled - client-local host allocation
+ * @disabled client - manual client translates local host pointers
  * @param pdptr SEND_RECV
  * @param p SEND_ONLY
  * @param Flags SEND_ONLY
@@ -2555,7 +2612,8 @@ CUresult cuMemHostGetFlags(unsigned int *pFlags, void *p);
 CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
                            unsigned int flags);
 /**
- * @param dev SEND_RECV
+ * @routingkey ALL dev
+ * @param dev RECV_ONLY NULLABLE
  * @param pciBusId SEND_ONLY NULL_TERMINATED
  */
 CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId);
@@ -2621,6 +2679,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
                       size_t ByteCount);
 /**
+ * @disabled server - manual server pipelines large host-to-device copies
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
@@ -3075,19 +3134,14 @@ CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
 CUresult cuMemGetAccess(unsigned long long *flags,
                         const CUmemLocation *location, CUdeviceptr ptr);
 /**
- * @param shareableHandle SEND_RECV
- * @param handle SEND_ONLY
- * @param handleType SEND_ONLY
- * @param flags SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemExportToShareableHandle(void *shareableHandle,
                                       CUmemGenericAllocationHandle handle,
                                       CUmemAllocationHandleType handleType,
                                       unsigned long long flags);
 /**
- * @param handle SEND_RECV
- * @param osHandle SEND_RECV
- * @param shHandleType SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemImportFromShareableHandle(CUmemGenericAllocationHandle *handle,
                                         void *osHandle,
@@ -3148,7 +3202,7 @@ CUresult cuMemPoolGetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
                                void *value);
 /**
  * @param pool SEND_ONLY
- * @param map SEND_RECV
+ * @param map SEND_ONLY LENGTH:count
  * @param count SEND_ONLY
  */
 CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
@@ -3163,7 +3217,7 @@ CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
 /**
  * @recordowner MEMORY_POOL pool
  * @param pool SEND_RECV
- * @param poolProps SEND_RECV
+ * @param poolProps SEND_ONLY DEREF
  */
 CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps);
 /**
@@ -3181,20 +3235,13 @@ CUresult cuMemPoolDestroy(CUmemoryPool pool);
 CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
                                  CUmemoryPool pool, CUstream hStream);
 /**
- * @param handle_out SEND_RECV
- * @param pool SEND_ONLY
- * @param handleType SEND_ONLY
- * @param flags SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemPoolExportToShareableHandle(void *handle_out, CUmemoryPool pool,
                                           CUmemAllocationHandleType handleType,
                                           unsigned long long flags);
 /**
- * @recordowner MEMORY_POOL pool_out
- * @param pool_out SEND_RECV
- * @param handle SEND_RECV
- * @param handleType SEND_ONLY
- * @param flags SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult
 cuMemPoolImportFromShareableHandle(CUmemoryPool *pool_out, void *handle,
@@ -3259,7 +3306,8 @@ CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
                                  size_t numAttributes, CUdeviceptr devPtr,
                                  size_t count);
 /**
- * @param value SEND_RECV
+ * @disabled - manual client sends the attribute value, not the caller's pointer
+ * @param value SEND_ONLY
  * @param attribute SEND_ONLY
  * @param ptr SEND_ONLY
  */
@@ -3334,6 +3382,7 @@ CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
 CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
                              void *userData, unsigned int flags);
 /**
+ * @disabled client - manual client coordinates checkpoint capture admission
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param mode SEND_ONLY
@@ -3344,6 +3393,7 @@ CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**
+ * @disabled client - manual client coordinates checkpoint capture completion
  * @recordowner GRAPH phGraph
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
@@ -3352,6 +3402,7 @@ CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph);
 /**
  * @routingkey STREAM hStream
+ * @disabled client - manual client answers from the local capture count
  * @param hStream SEND_ONLY
  * @param captureStatus SEND_RECV
  */
@@ -3384,20 +3435,24 @@ CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
                                            unsigned int flags);
 /**
  * @routingkey STREAM hStream
+ * @routingfallback DEVICEPTR dptr
  * @param hStream SEND_ONLY
- * @param dptr SEND_ONLY
+ * @param dptr SEND_ONLY TRANSLATE_DEVICEPTR
  * @param length SEND_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags);
 /**
+ * @synchronize
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamQuery(CUstream hStream);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamSynchronize(CUstream hStream);
@@ -3450,13 +3505,16 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags);
 /**
- * @disabled - manual client/server handle deferred DtoH copies
+ * @disabled server
+ * @synchronize DEFERRED_DTOH
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
 CUresult cuEventQuery(CUevent hEvent);
 /**
- * @disabled - client wrapper synchronizes mapped host buffers
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
 CUresult cuEventSynchronize(CUevent hEvent);
@@ -3473,7 +3531,7 @@ CUresult cuEventDestroy_v2(CUevent hEvent);
 CUresult cuEventElapsedTime(float *pMilliseconds, CUevent hStart, CUevent hEnd);
 /**
  * @param extMem_out SEND_RECV
- * @param memHandleDesc SEND_RECV
+ * @param memHandleDesc SEND_ONLY DEREF
  */
 CUresult
 cuImportExternalMemory(CUexternalMemory *extMem_out,
@@ -3481,7 +3539,7 @@ cuImportExternalMemory(CUexternalMemory *extMem_out,
 /**
  * @param devPtr SEND_RECV
  * @param extMem SEND_ONLY
- * @param bufferDesc SEND_RECV
+ * @param bufferDesc SEND_ONLY DEREF
  */
 CUresult cuExternalMemoryGetMappedBuffer(
     CUdeviceptr *devPtr, CUexternalMemory extMem,
@@ -3489,7 +3547,7 @@ CUresult cuExternalMemoryGetMappedBuffer(
 /**
  * @param mipmap SEND_RECV
  * @param extMem SEND_ONLY
- * @param mipmapDesc SEND_RECV
+ * @param mipmapDesc SEND_ONLY DEREF
  */
 CUresult cuExternalMemoryGetMappedMipmappedArray(
     CUmipmappedArray *mipmap, CUexternalMemory extMem,
@@ -3500,14 +3558,14 @@ CUresult cuExternalMemoryGetMappedMipmappedArray(
 CUresult cuDestroyExternalMemory(CUexternalMemory extMem);
 /**
  * @param extSem_out SEND_RECV
- * @param semHandleDesc SEND_RECV
+ * @param semHandleDesc SEND_ONLY DEREF
  */
 CUresult cuImportExternalSemaphore(
     CUexternalSemaphore *extSem_out,
     const CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC *semHandleDesc);
 /**
- * @param extSemArray SEND_RECV
- * @param paramsArray SEND_RECV
+ * @param extSemArray SEND_ONLY LENGTH:numExtSems
+ * @param paramsArray SEND_ONLY LENGTH:numExtSems
  * @param numExtSems SEND_ONLY
  * @param stream SEND_ONLY
  */
@@ -3516,8 +3574,8 @@ CUresult cuSignalExternalSemaphoresAsync(
     const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS *paramsArray,
     unsigned int numExtSems, CUstream stream);
 /**
- * @param extSemArray SEND_RECV
- * @param paramsArray SEND_RECV
+ * @param extSemArray SEND_ONLY LENGTH:numExtSems
+ * @param paramsArray SEND_ONLY LENGTH:numExtSems
  * @param numExtSems SEND_ONLY
  * @param stream SEND_ONLY
  */
@@ -4293,7 +4351,7 @@ CUresult cuGraphKernelNodeGetAttribute(CUgraphNode hNode,
 /**
  * @param hNode SEND_ONLY
  * @param attr SEND_ONLY
- * @param value SEND_RECV
+ * @param value SEND_ONLY DEREF
  */
 CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
                                        CUkernelNodeAttrID attr,
@@ -4400,14 +4458,16 @@ CUresult cuOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize,
 /**
  * @param clusterSize SEND_RECV
  * @param func SEND_ONLY
- * @param config SEND_RECV
+ * @param config SEND_ONLY
+ * @deeparray config attrs numAttrs
  */
 CUresult cuOccupancyMaxPotentialClusterSize(int *clusterSize, CUfunction func,
                                             const CUlaunchConfig *config);
 /**
  * @param numClusters SEND_RECV
  * @param func SEND_ONLY
- * @param config SEND_RECV
+ * @param config SEND_ONLY
+ * @deeparray config attrs numAttrs
  */
 CUresult cuOccupancyMaxActiveClusters(int *numClusters, CUfunction func,
                                       const CUlaunchConfig *config);
@@ -4680,6 +4740,7 @@ CUresult cuTensorMapEncodeIm2col(
  */
 CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 /**
+ * @disabled client - manual client handles cross-route peer devices
  * @param canAccessPeer SEND_RECV
  * @param dev SEND_ONLY
  * @param peerDev SEND_ONLY
@@ -4687,15 +4748,18 @@ CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
                                CUdevice peerDev);
 /**
+ * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
  * @param Flags SEND_ONLY
  */
 CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags);
 /**
+ * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
  */
 CUresult cuCtxDisablePeerAccess(CUcontext peerContext);
 /**
+ * @disabled client - manual client translates both devices to one backend
  * @param value SEND_RECV
  * @param attrib SEND_ONLY
  * @param srcDevice SEND_ONLY

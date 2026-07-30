@@ -49,14 +49,14 @@ CORE_SAMPLES=(
   simpleAssert simpleAssert_nvrtc
   simpleAttributes simpleCallback simpleDrvRuntime simplePrintf simpleTemplates
   simpleAtomicIntrinsics simpleAtomicIntrinsics_nvrtc simpleStreams simpleMultiCopy simpleMultiGPU
-  simpleOccupancy simpleCooperativeGroups
+  simpleOccupancy simpleCooperativeGroups simpleIPC systemWideAtomics UnifiedMemoryStreams
   FunctionPointers
   simpleCubemapTexture simpleLayeredTexture simpleSurfaceWrite
   simpleTexture simpleTextureDrv simplePitchLinearTexture
   mergeSort reduction reductionMultiBlockCG scan sortingNetworks histogram scalarProd transpose
   BlackScholes BlackScholes_nvrtc binomialOptions binomialOptions_nvrtc SobolQRNG quasirandomGenerator
   quasirandomGenerator_nvrtc
-  simpleCudaGraphs streamOrderedAllocation streamOrderedAllocationIPC cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter
+  simpleCudaGraphs streamOrderedAllocation streamOrderedAllocationIPC cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP memMapIPCDrv
   simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
@@ -75,7 +75,7 @@ CORE_SAMPLES=(
   imageDenoising marchingCubes particles simpleGL smokeParticles
   simpleTexture3D volumeFiltering volumeRender
   radixSortThrust segmentationTreeThrust template interval
-  dsl ptxgen ptxjit matrixMulDynlinkJIT threadMigration
+  ptxgen ptxjit matrixMulDynlinkJIT threadMigration
 )
 
 LIBRARY_SAMPLES=(
@@ -91,7 +91,11 @@ LIBRARY_SAMPLES=(
   NV12toBGRandResize
   randomFog
   jitLto
+  histEqualizationNPP
   watershedSegmentationNPP
+  boxFilterNPP
+  cannyEdgeDetectorNPP
+  FilterBorderControlNPP
 )
 
 DEFAULT_SAMPLES=(
@@ -114,7 +118,8 @@ Environment:
   CUDA_SAMPLES_REF     Optional branch/tag/commit to checkout after clone.
   BUILD_SAMPLES        auto, 1, or 0. Default: auto.
   BUILD_ONLY           1 to clone/build selected samples and exit before running.
-  CUDA_SAMPLE_JOBS     Number of samples to run concurrently. Default: $CUDA_SAMPLE_JOBS.
+  CUDA_SAMPLE_JOBS     Number of worker processes that drain the sample queue
+                       concurrently. Default: $CUDA_SAMPLE_JOBS.
   SAMPLE_SUITE         compliance, core, libraries, or extended when no samples are given.
                        Default: compliance.
   SAMPLE_TIMEOUT       Default per-sample execution timeout in seconds. Default: $SAMPLE_TIMEOUT.
@@ -133,23 +138,29 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ ! -x "$LUPINE_LIB" ]]; then
-  echo "missing shim: $LUPINE_LIB" >&2
-  exit 1
-fi
+if [[ "$BUILD_ONLY" != "1" ]]; then
+  if [[ ! -x "$LUPINE_LIB" ]]; then
+    echo "missing shim: $LUPINE_LIB" >&2
+    exit 1
+  fi
 
-runtime_exports="$(nm -D --defined-only "$LUPINE_LIB" | awk '{print $3}' | grep -E '^cuda' || true)"
-if [[ -n "$runtime_exports" ]]; then
-  echo "shim exports CUDA Runtime API symbols; keep this driver-only:" >&2
-  echo "$runtime_exports" >&2
-  exit 1
+  runtime_exports="$(nm -D --defined-only "$LUPINE_LIB" | awk '{print $3}' | grep -E '^cuda' || true)"
+  if [[ -n "$runtime_exports" ]]; then
+    echo "shim exports CUDA Runtime API symbols; keep this driver-only:" >&2
+    echo "$runtime_exports" >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$(dirname "$CUDA_SAMPLES_DIR")" "$RESULTS_DIR"
 
 if [[ ! -d "$CUDA_SAMPLES_DIR/.git" ]]; then
+  if [[ -e "$CUDA_SAMPLES_DIR" ]]; then
+    rm -rf "$CUDA_SAMPLES_DIR"
+  fi
   git clone "$CUDA_SAMPLES_URL" "$CUDA_SAMPLES_DIR"
 fi
+git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
 
 detect_cuda_samples_ref() {
   local release=""
@@ -206,6 +217,7 @@ fi
 if [[ -n "$CUDA_SAMPLES_REF" ]]; then
   git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
   git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
+  git -C "$CUDA_SAMPLES_DIR" reset --hard "$CUDA_SAMPLES_REF"
 fi
 
 # The samples hardcode set(CMAKE_CUDA_ARCHITECTURES ...) per CMakeLists, so a
@@ -233,10 +245,26 @@ fi
 resolve_sample_exe() {
   local sample="$1"
   local exe=""
+  local group_dir=""
 
   if [[ -x "$CUDA_SAMPLES_BIN/$sample" && ! -d "$CUDA_SAMPLES_BIN/$sample" ]]; then
     printf '%s\n' "$CUDA_SAMPLES_BIN/$sample"
     return 0
+  fi
+
+  group_dir="$(sample_libnvvm_group_dir "$sample")"
+  if [[ -n "$group_dir" ]]; then
+    # In-source build (legacy Makefile route: cmake .. && make install).
+    if [[ -x "$group_dir/install/bin/$sample" ]]; then
+      printf '%s\n' "$group_dir/install/bin/$sample"
+      return 0
+    fi
+    # Out-of-source build (selected-sample CMake route).
+    exe="$CUDA_SAMPLES_BUILD_DIR/selected/$(basename "$group_dir")/install/bin/$sample"
+    if [[ -x "$exe" ]]; then
+      printf '%s\n' "$exe"
+      return 0
+    fi
   fi
 
   if [[ "$cmake_samples" == "1" ]]; then
@@ -271,6 +299,20 @@ resolve_sample_srcdir() {
   fi
 
   return 1
+}
+
+# Samples/7_libNVVM/{simple,ptxgen,dsl,...} link NVVM_LIB/CUDA_LIB, which only
+# the group's own CMakeLists.txt/Makefile resolves. Building/resolving these
+# by their own subdirectory (like every other sample) always fails, so
+# anything under that group must configure/build/install from the group root.
+sample_libnvvm_group_dir() {
+  local sample="$1"
+  local srcdir
+
+  srcdir="$(resolve_sample_srcdir "$sample" || true)"
+  if [[ -n "$srcdir" && "$(basename "$(dirname "$srcdir")")" == "7_libNVVM" ]]; then
+    dirname "$srcdir"
+  fi
 }
 
 sample_args() {
@@ -363,6 +405,9 @@ sample_args() {
       ;;
     transpose)
       printf '%s\0' -dimX=512 -dimY=512
+      ;;
+    UnifiedMemoryPerf)
+      printf '%s\0' -kernel-iterations=1
       ;;
     volumeFiltering)
       printf '%s\0' -file=data/ref_volumefilter.ppm
@@ -464,12 +509,27 @@ if [[ "$needs_build" == "1" ]]; then
           echo "missing sample source dir: $sample" >&2
           continue
         fi
-        sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$sample"
+        group_dir="$(sample_libnvvm_group_dir "$sample")"
+        configure_srcdir="${group_dir:-$sample_srcdir}"
+        sample_build_dir="$CUDA_SAMPLES_BUILD_DIR/selected/$(basename "$configure_srcdir")"
+        build_log="$RESULTS_DIR/.build-$sample.log"
+        : > "$build_log"
+        extra_cmake_args=()
+        if [[ -n "$group_dir" ]]; then
+          extra_cmake_args=(-DCMAKE_INSTALL_PREFIX="$sample_build_dir/install")
+        fi
         if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
           # shellcheck disable=SC2086
-          cmake -S "$sample_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+          cmake -S "$configure_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release \
+            "${extra_cmake_args[@]}" $CUDA_SAMPLES_CMAKE_ARGS >>"$build_log" 2>&1
         fi
-        cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" || true
+        if [[ -n "$group_dir" ]]; then
+          # The group's own executables all link NVVM_LIB, so build via its
+          # shared "install" target rather than a single --target.
+          cmake --build "$sample_build_dir" --parallel "$JOBS" --target install >>"$build_log" 2>&1 || true
+        else
+          cmake --build "$sample_build_dir" --parallel "$JOBS" --target "$sample" >>"$build_log" 2>&1 || true
+        fi
       done
     else
       if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
@@ -486,11 +546,13 @@ if [[ "$needs_build" == "1" ]]; then
           echo "missing sample source dir: $sample" >&2
           continue
         fi
-        if [[ ! -f "$sample_srcdir/Makefile" && ! -f "$sample_srcdir/makefile" && ! -f "$sample_srcdir/GNUmakefile" ]]; then
+        group_dir="$(sample_libnvvm_group_dir "$sample")"
+        build_srcdir="${group_dir:-$sample_srcdir}"
+        if [[ ! -f "$build_srcdir/Makefile" && ! -f "$build_srcdir/makefile" && ! -f "$build_srcdir/GNUmakefile" ]]; then
           echo "missing sample Makefile: $sample" >&2
           continue
         fi
-        make -C "$sample_srcdir" -j"$JOBS" || echo "sample build failed: $sample" >&2
+        make -C "$build_srcdir" -j"$JOBS" || echo "sample build failed: $sample" >&2
       done
     else
       make -C "$CUDA_SAMPLES_DIR" -j"$JOBS"
@@ -571,15 +633,55 @@ stop_remote_server() {
   " >/dev/null 2>&1 || true
 }
 
+start_remote_server() {
+  local pidfile="$1"
+  local server_log="$2"
+  local port="$3"
+  local attempt
+
+  for attempt in 1 2 3; do
+    stop_remote_server "$pidfile" "$server_log"
+    if ssh_with_timeout "
+      rm -f '$server_log' '$pidfile'
+      LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null &
+      echo \$! >'$pidfile'
+      sleep 0.5
+      test -s '$pidfile'
+    "; then
+      return 0
+    fi
+    sleep "$attempt"
+  done
+
+  return 1
+}
+
 sample_timeout() {
   case "$1" in
-    simpleStreams|scan|LargeKernelParameter|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|scan|LargeKernelParameter|UnifiedMemoryStreams|UnifiedMemoryPerf|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)
       printf '%s\n' "$SAMPLE_TIMEOUT"
       ;;
   esac
+}
+
+compact_signature() {
+  local text="$1"
+
+  text="$(printf '%s' "$text" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' || true)"
+  printf '%.240s' "$text"
+}
+
+compact_file_signature() {
+  local file="$1"
+  local text=""
+
+  if [[ -f "$file" ]]; then
+    text="$(tr '\n' ' ' < "$file" | sed -E 's/[[:space:]]+/ /g' || true)"
+  fi
+  printf '%.240s' "$text"
 }
 
 tsv="$RESULTS_DIR/results.tsv"
@@ -618,12 +720,25 @@ run_sample() {
 
   sample_exe="$(resolve_sample_exe "$sample" || true)"
   if [[ -z "$sample_exe" ]]; then
-    if [[ "$explicit_samples" == "1" ]]; then
-      status="FAIL:missing"
+    if [[ -z "$(resolve_sample_srcdir "$sample" || true)" ]]; then
+      if [[ "$explicit_samples" == "1" ]]; then
+        status="FAIL:missing"
+      else
+        status="SKIP:missing"
+      fi
+      signature="missing sample source dir: $sample"
     else
-      status="SKIP:missing"
+      if [[ "$explicit_samples" == "1" ]]; then
+        status="FAIL:build-failed"
+      else
+        status="SKIP:build-failed"
+      fi
+      build_log="$RESULTS_DIR/.build-$sample.log"
+      signature="$(compact_signature "$(grep -iE 'will not build|fatal error|:[[:space:]]*error:|No rule to make target|not found' "$build_log" 2>/dev/null || true)")"
+      if [[ -z "$signature" ]]; then
+        signature="sample source present but executable not produced: $sample"
+      fi
     fi
-    signature="missing executable: $sample"
     printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
     return 0
   fi
@@ -640,10 +755,7 @@ run_sample() {
     sample_argv+=("$arg")
   done < <(sample_args "$sample")
 
-  stop_remote_server "$pidfile" "$server_log"
-
-  if ! ssh_with_timeout \
-    "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"; then
+  if ! start_remote_server "$pidfile" "$server_log" "$port"; then
     status="FAIL:ssh"
     signature="failed to start remote server on port $port"
     printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
@@ -672,7 +784,7 @@ run_sample() {
     status="FAIL:$rc"
   fi
 
-  signature="$(tr '\n' ' ' < "$log" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
+  signature="$(compact_file_signature "$log")"
   if [[ -z "$signature" && "$rc" == "124" ]]; then
     signature="timed out after ${timeout_seconds}s"
   fi
@@ -680,25 +792,31 @@ run_sample() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] CUDA sample $sample -> $status in $((SECONDS - sample_start_seconds))s" >&2
 }
 
-result_files=()
-running=0
+# Keep a fixed number of samples in flight. When one finishes, launch the next
+# sample immediately so the worker pool stays saturated without a shared FIFO.
+dispatch_samples() {
+  local workers="$CUDA_SAMPLE_JOBS"
+  local active=0
+  local i
 
-for i in "${!samples[@]}"; do
-  result_file="$RESULTS_DIR/.sample-$i.tsv"
-  result_files[$i]="$result_file"
-  run_sample "$i" "$result_file" &
-  running=$((running + 1))
+  for i in "${!samples[@]}"; do
+    result_files[$i]="$RESULTS_DIR/.sample-$i.tsv"
+    run_sample "$i" "$RESULTS_DIR/.sample-$i.tsv" &
+    active=$((active + 1))
+    if (( active >= workers )); then
+      wait -n || true
+      active=$((active - 1))
+    fi
+  done
 
-  if (( running >= CUDA_SAMPLE_JOBS )); then
+  while (( active > 0 )); do
     wait -n || true
-    running=$((running - 1))
-  fi
-done
+    active=$((active - 1))
+  done
+}
 
-while (( running > 0 )); do
-  wait -n || true
-  running=$((running - 1))
-done
+result_files=()
+dispatch_samples
 
 for i in "${!samples[@]}"; do
   result_file="${result_files[$i]}"
@@ -734,6 +852,38 @@ done
   echo "TOTAL $((pass + skip + fail))"
   echo "RESULTS $tsv"
 } | tee "$summary"
+
+# Coverage: how much of the pinned cuda-samples catalog this run exercises.
+if [[ "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/Samples" ]]; then
+  declare -A _enabled=()
+  for _s in "${samples[@]}"; do _enabled["$_s"]=1; done
+
+  graphics=0; ipc=0; mgpu=0; um=0; other=0; covered=0; catalog_total=0
+  while IFS= read -r _c; do
+    [[ -n "$_c" ]] || continue
+    catalog_total=$((catalog_total + 1))
+    if [[ -n "${_enabled[$_c]:-}" ]]; then
+      covered=$((covered + 1))
+    elif [[ "$_c" =~ (D3D|GL|GLES|Vulkan|vulkan|EGL|NvSci|NvMedia|cuDLA|MPI|freeImage|Tegra|fluids|postProcess|CUDA2GL|SLI) ]]; then
+      graphics=$((graphics + 1))
+    elif [[ " memMapIPCDrv simpleIPC streamOrderedAllocationIPC " == *" $_c "* ]]; then
+      ipc=$((ipc + 1))
+    elif [[ " simpleP2P p2pBandwidthLatencyTest streamOrderedAllocationP2P conjugateGradientMultiDeviceCG simpleCUFFT_MGPU simpleCUFFT_2d_MGPU " == *" $_c "* ]]; then
+      mgpu=$((mgpu + 1))
+    elif [[ " UnifiedMemoryPerf UnifiedMemoryStreams systemWideAtomics uvmlite " == *" $_c "* ]]; then
+      um=$((um + 1))
+    else
+      other=$((other + 1))
+    fi
+  done < <(find "$CUDA_SAMPLES_DIR/Samples" -mindepth 2 -maxdepth 2 -type d -printf '%f\n' 2>/dev/null | sort -u)
+
+  _cov_line="CUDA sample coverage: $covered/$catalog_total catalog samples enabled ($CUDA_SAMPLES_REF)"
+  _ne_line="Not enabled: $((catalog_total - covered)) (graphics $graphics, ipc $ipc, multi-gpu $mgpu, unified-memory $um, other $other)"
+  echo ""
+  echo "$_cov_line"
+  echo "$_ne_line"
+  printf '%s\n%s\n' "$_cov_line" "$_ne_line" > "$RESULTS_DIR/coverage.txt"
+fi
 
 if [[ "$fail" -ne 0 ]]; then
   exit 1

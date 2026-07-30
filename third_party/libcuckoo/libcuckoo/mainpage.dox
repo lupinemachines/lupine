@@ -1,0 +1,17 @@
+/*! \mainpage libcuckoo Documentation
+ *
+ *  libcuckoo is a high-performance, memory efficient hash table that
+ *  supports concurrent reads and writes.
+ *
+ *  \ref cuckoohash_map is the class of the hash table. Its interface
+ *  resembles that of STL's unordered_map but does contain some
+ *  important differences.
+ *
+ *  Internally, the hash table is partitioned into an array of
+ *  buckets, each of which contains \c SLOT_PER_BUCKET slots to
+ *  store items.
+ *
+ *  Each bucket has a lock to ensure multiple threads don't modify the
+ *  same elements. Most operations will lock no more than two buckets
+ *  at a time, thereby allowing for concurrent reads and writes.
+ */

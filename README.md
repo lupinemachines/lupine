@@ -16,8 +16,6 @@ $ docker run --rm \
 GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
 ```
 
-Are you interested in a paid, hosted GPU? Send me an email at kevmo314@gmail.com, we're considering this offering.
-
 ## Mac Demo
 
 LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to a Linux GPU server.
@@ -86,6 +84,30 @@ Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
 so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
 as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
 
+## Graceful Server Checkpoints
+
+On Linux, `SIGTERM` stops the server from accepting connections, asks every
+connection child to finish its in-flight CUDA calls, and waits for those
+children to exit. This graceful drain happens in the open-source server with
+no extra runtime dependency.
+
+Each connection child looks for `liblupinecr.so.0`, then `liblupinecr.so`, and
+uses the versioned provider ABI in
+[`checkpoint_provider.h`](checkpoint_provider.h). A missing or incompatible
+provider is a no-op; the server still drains and exits normally. The provider
+is loaded before the child's first CUDA call so it can observe RM/UVM activity
+needed to discover allocations.
+
+Set `LUPINE_SESSION` in the client to attach a stable connection identifier.
+The optional provider receives that identifier to restore the connection
+before its first CUDA RPC and checkpoint it after shutdown has drained. For an
+unkeyed connection, restore is skipped and checkpoint receives a null
+identifier. Providers own storage configuration, file layout, and any fallback
+policy for unkeyed connections; Lupine does not select a checkpoint directory.
+
+`LUPINE_CHECKPOINT_LIBRARY` can override the provider library path for a
+private deployment.
+
 ## Trace Logging
 
 Set `LUPINE_TRACE` on the client, server, or both to enable trace logging.
@@ -106,6 +128,19 @@ LUPINE_TRACE=/tmp/lupine.trace ./your_cuda_program
 
 The same `LUPINE_TRACE` variable controls both client and server tracing;
 `LUPINE_SERVER_TRACE` is no longer used.
+
+## Device `printf` Forwarding
+
+LUPINE inspects uploaded PTX and cubin symbol data for `vprintf`, the CUDA device
+`printf` implementation. Until an image that may use device stdout is loaded,
+synchronization avoids stdout redirection and its process-global lock, allowing
+independent RPC lanes to synchronize concurrently. Fully opaque compressed
+fatbins are treated conservatively as potentially using device stdout.
+
+After a device-output-capable image is loaded, context, stream, and event
+synchronization captures server fd 1 and forwards the bounded CUDA `printf`
+buffer to the client's stdout. Capture remains process-global so output from
+concurrent synchronization lanes is not misattributed.
 
 ## Multi-GPU Across Multiple Servers
 
@@ -150,8 +185,19 @@ docker run --rm --network host \
   ./your_cuda_program
 ```
 
-Cross-server peer access and device-to-device copies are not implemented yet.
+Cross-server device-to-device and peer (`cuMemcpyDtoD` / `cuMemcpyPeer`) copies are
+supported: when the source and destination live on different servers, the client
+transparently stages the data through itself (device->host on one server, then
+host->device on the other). Direct server-to-server transfers that avoid that
+client hop, cross-server peer-access enablement, and `cuMemcpy3DPeer` are not
+implemented yet.
 Same-server operations route by handle ownership.
+
+Prefix an endpoint with `https://` when the Lupine server is behind a
+TLS-terminating proxy. Both CUDA applications and NVML tools such as
+`nvidia-smi` use the scheme and verify the proxy certificate against the
+system trust store. HTTPS defaults to port 443; plain and `http://` endpoints
+default to port 14833.
 
 For a specific CUDA version:
 

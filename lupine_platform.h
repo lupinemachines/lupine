@@ -43,6 +43,8 @@ using pthread_t = std::thread *;
 
 #define PTHREAD_MUTEX_INITIALIZER                                              \
   {}
+#define PTHREAD_COND_INITIALIZER                                               \
+  {}
 #define LUPINE_INVALID_SOCKET INVALID_SOCKET
 #define LUPINE_STDOUT_FD _fileno(stdout)
 
@@ -150,6 +152,9 @@ inline long lupine_fd_seek(int fd, long offset, int origin) {
   return _lseek(fd, offset, origin);
 }
 inline int lupine_fd_fileno(FILE *file) { return _fileno(file); }
+inline int lupine_fd_truncate(int fd, long length) {
+  return _chsize(fd, length);
+}
 
 #else
 
@@ -199,6 +204,11 @@ inline off_t lupine_fd_seek(int fd, off_t offset, int origin) {
   return lseek(fd, offset, origin);
 }
 inline int lupine_fd_fileno(FILE *file) { return fileno(file); }
+// Truncates the open file description behind `fd` to exactly `length` bytes.
+// Used to reset the reused device-printf capture file to empty.
+inline int lupine_fd_truncate(int fd, off_t length) {
+  return ftruncate(fd, length);
+}
 
 #endif
 

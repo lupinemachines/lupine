@@ -2,6 +2,7 @@
   global:
     cu*;
     dlsym;
+    lupine_checkpoint_*;
   local:
     *;
 };

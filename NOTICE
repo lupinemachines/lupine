@@ -14,7 +14,7 @@ cuda-fatbin-decompression
    See the License for the specific language governing permissions and
    limitations under the License.
 
-lz4 (lz4.c and lz4.h, vendored in third_party/lz4)
+lz4 v1.10.0 (vendored as a git subtree in third_party/lz4)
 
    Copyright (c) 2011-2020, Yann Collet
    All rights reserved.

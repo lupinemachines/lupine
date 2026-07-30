@@ -18,7 +18,10 @@ from ops import (
     Operation,
     OwnerAnnotation,
     CrossServerCopyAnnotation,
+    DevicePtrTranslationAnnotation,
     FunctionAnnotationMetadata,
+    RoutingFallbackAnnotation,
+    SynchronizeAnnotation,
 )
 
 # this table is manually generated from the cuda.h headers
@@ -44,6 +47,7 @@ MANUAL_REMAPPINGS = [
     ("cuMemsetD2D8", "cuMemsetD2D8_v2"),
     ("cuMemsetD2D16", "cuMemsetD2D16_v2"),
     ("cuMemsetD2D32", "cuMemsetD2D32_v2"),
+    ("cuIpcOpenMemHandle", "cuIpcOpenMemHandle_v2"),
     ("cuStreamBeginCapture", "cuStreamBeginCapture_v2"),
     ("cuGraphExecUpdate", "cuGraphExecUpdate_v2"),
     ("cuMemcpy_ptds", "cuMemcpy"),
@@ -91,6 +95,11 @@ MANUAL_REMAPPINGS = [
     ("cuMemAllocAsync_ptsz", "cuMemAllocAsync"),
     ("cuMemAllocFromPoolAsync_ptsz", "cuMemAllocFromPoolAsync"),
 ]
+
+KERNEL_PARAM_LAYOUT_INVALIDATORS = {
+    "cuLibraryUnload",
+    "cuModuleUnload",
+}
 
 MANUAL_REMAPPING_GUARDS = {
     "cuGraphExecUpdate": "CUDA_VERSION >= 12000",
@@ -161,10 +170,16 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceGetNvLinkRemotePciInfo_v2",
 ]
 
-NVML_CODEGEN_FUNCTIONS = []
+NVML_MANUAL_SERVER_FUNCTIONS = {
+    "nvmlDeviceGetComputeRunningProcesses",
+    "nvmlDeviceGetComputeRunningProcesses_v2",
+    "nvmlDeviceGetGraphicsRunningProcesses",
+    "nvmlDeviceGetGraphicsRunningProcesses_v2",
+    "nvmlDeviceGetMPSComputeRunningProcesses",
+    "nvmlDeviceGetMPSComputeRunningProcesses_v2",
+}
 
 PRIVATE_RPC_FUNCTIONS = [
-    "cuFuncGetParamLayout",
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
     "cuGraphConditionalHandleCreate",
@@ -172,14 +187,8 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",
     "cuStreamGetCaptureInfo_v3",
+    "lupineManagedHostFlush",
 ]
-
-IPC_SHAREABLE_HANDLE_FUNCTIONS = {
-    "cuMemExportToShareableHandle",
-    "cuMemImportFromShareableHandle",
-    "cuMemPoolExportToShareableHandle",
-    "cuMemPoolImportFromShareableHandle",
-}
 
 
 def rpc_id(name: str) -> int:
@@ -194,740 +203,6 @@ def annotated_rpc_names(annotations: ParsedData) -> list[str]:
             names.add(name)
     return sorted(names)
 
-
-def nvml_codegen_function(name, params, client_body, server_body):
-    NVML_CODEGEN_FUNCTIONS.append(
-        {
-            "name": name,
-            "params": params,
-            "client_body": client_body,
-            "server_body": server_body,
-        }
-    )
-
-
-def nvml_client_string_no_device(name, value_name):
-    return f"""conn_t *_lupine_conn = connection();
-nvmlReturn_t _lupine_result = rpc_error();
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &length, sizeof(length)) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    (length != 0 && rpc_read(_lupine_conn, {value_name}, length) < 0) ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-return _lupine_result;"""
-
-
-def nvml_server_string_no_device(name):
-    return f"""unsigned int _lupine_length = 0;
-if (rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-std::vector<char> _lupine_buffer(std::max(1u, _lupine_length), '\\0');
-using _lupine_fn_t = nvmlReturn_t (*)(char *, unsigned int);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr ? function_not_found()
-                           : _lupine_fn(_lupine_buffer.data(), _lupine_length);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    (_lupine_length != 0 &&
-     rpc_write(conn, _lupine_buffer.data(), _lupine_length) < 0) ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_int_out(name, value_name):
-    return f"""conn_t *_lupine_conn = connection();
-nvmlReturn_t _lupine_result = rpc_error();
-int _lupine_value = 0;
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if ({value_name} != nullptr) {{
-  *{value_name} = _lupine_value;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_int_out(name):
-    return f"""int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-int _lupine_value = 0;
-using _lupine_fn_t = nvmlReturn_t (*)(int *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr ? function_not_found() : _lupine_fn(&_lupine_value);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_from_string(name, value_name):
-    return f"""conn_t *_lupine_conn = connection();
-nvmlReturn_t _lupine_result = rpc_error();
-nvmlDevice_t _lupine_device = nullptr;
-unsigned int _lupine_length =
-    {value_name} == nullptr ? 0 : static_cast<unsigned int>(strlen({value_name}) + 1);
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &_lupine_length, sizeof(_lupine_length)) < 0 ||
-    (_lupine_length != 0 &&
-     rpc_write(_lupine_conn, {value_name}, _lupine_length) < 0) ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if (device != nullptr) {{
-  *device = _lupine_device;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_from_string(name):
-    return f"""unsigned int _lupine_length = 0;
-if (rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
-  return -1;
-}}
-std::vector<char> _lupine_value(std::max(1u, _lupine_length), '\\0');
-if (_lupine_length != 0 &&
-    rpc_read(conn, _lupine_value.data(), _lupine_length) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-nvmlDevice_t _lupine_device = nullptr;
-using _lupine_fn_t = nvmlReturn_t (*)(const char *, nvmlDevice_t *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr
-        ? function_not_found()
-        : _lupine_fn(_lupine_value.data(), &_lupine_device);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_string(name, value_name):
-    return f"""conn_t *_lupine_conn = connection_for_device(&device);
-nvmlReturn_t _lupine_result = rpc_error();
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-    rpc_write(_lupine_conn, &length, sizeof(length)) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    (length != 0 && rpc_read(_lupine_conn, {value_name}, length) < 0) ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_string(name):
-    return f"""nvmlDevice_t _lupine_device = nullptr;
-unsigned int _lupine_length = 0;
-if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_read(conn, &_lupine_length, sizeof(_lupine_length)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-std::vector<char> _lupine_buffer(std::max(1u, _lupine_length), '\\0');
-using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr
-        ? function_not_found()
-        : _lupine_fn(_lupine_device, _lupine_buffer.data(), _lupine_length);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    (_lupine_length != 0 &&
-     rpc_write(conn, _lupine_buffer.data(), _lupine_length) < 0) ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_struct(name, out_type, value_name):
-    return f"""conn_t *_lupine_conn = connection_for_device(&device);
-nvmlReturn_t _lupine_result = rpc_error();
-{out_type} _lupine_value = {value_name} == nullptr ? {out_type}{{}} : *{value_name};
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-    rpc_write(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if ({value_name} != nullptr) {{
-  *{value_name} = _lupine_value;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_struct(name, out_type):
-    return f"""nvmlDevice_t _lupine_device = nullptr;
-{out_type} _lupine_value = {{}};
-if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_read(conn, &_lupine_value, sizeof(_lupine_value)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {out_type} *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr ? function_not_found()
-                           : _lupine_fn(_lupine_device, &_lupine_value);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_value(name, out_type, value_name):
-    return f"""conn_t *_lupine_conn = connection_for_device(&device);
-nvmlReturn_t _lupine_result = rpc_error();
-{out_type} _lupine_value = {{}};
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if ({value_name} != nullptr) {{
-  *{value_name} = _lupine_value;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_value(name, out_type):
-    return f"""nvmlDevice_t _lupine_device = nullptr;
-if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-{out_type} _lupine_value = {{}};
-using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {out_type} *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr ? function_not_found()
-                           : _lupine_fn(_lupine_device, &_lupine_value);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_arg_value(name, arg_name, out_type, value_name):
-    return f"""conn_t *_lupine_conn = connection_for_device(&device);
-nvmlReturn_t _lupine_result = rpc_error();
-{out_type} _lupine_value = {{}};
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-    rpc_write(_lupine_conn, &{arg_name}, sizeof({arg_name})) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if ({value_name} != nullptr) {{
-  *{value_name} = _lupine_value;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_arg_value(name, arg_type, out_type):
-    return f"""nvmlDevice_t _lupine_device = nullptr;
-{arg_type} _lupine_arg = {{}};
-if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_read(conn, &_lupine_arg, sizeof(_lupine_arg)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-{out_type} _lupine_value = {{}};
-using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {arg_type}, {out_type} *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result = _lupine_fn == nullptr
-                                   ? function_not_found()
-                                   : _lupine_fn(_lupine_device, _lupine_arg,
-                                                &_lupine_value);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_two_args_value(name, first_name, second_name, out_type, value_name):
-    return f"""conn_t *_lupine_conn = connection_for_device(&device);
-nvmlReturn_t _lupine_result = rpc_error();
-{out_type} _lupine_value = {{}};
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-    rpc_write(_lupine_conn, &{first_name}, sizeof({first_name})) < 0 ||
-    rpc_write(_lupine_conn, &{second_name}, sizeof({second_name})) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if ({value_name} != nullptr) {{
-  *{value_name} = _lupine_value;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_two_args_value(name, first_type, second_type, out_type):
-    return f"""nvmlDevice_t _lupine_device = nullptr;
-{first_type} _lupine_first = {{}};
-{second_type} _lupine_second = {{}};
-if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
-    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-{out_type} _lupine_value = {{}};
-using _lupine_fn_t =
-    nvmlReturn_t (*)(nvmlDevice_t, {first_type}, {second_type}, {out_type} *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr
-        ? function_not_found()
-        : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
-                     &_lupine_value);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_three_args_value(
-    name, first_name, second_name, third_name, out_type, value_name
-):
-    return f"""conn_t *_lupine_conn = connection_for_device(&device);
-nvmlReturn_t _lupine_result = rpc_error();
-{out_type} _lupine_value = {{}};
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-    rpc_write(_lupine_conn, &{first_name}, sizeof({first_name})) < 0 ||
-    rpc_write(_lupine_conn, &{second_name}, sizeof({second_name})) < 0 ||
-    rpc_write(_lupine_conn, &{third_name}, sizeof({third_name})) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if ({value_name} != nullptr) {{
-  *{value_name} = _lupine_value;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_three_args_value(
-    name, first_type, second_type, third_type, out_type
-):
-    return f"""nvmlDevice_t _lupine_device = nullptr;
-{first_type} _lupine_first = {{}};
-{second_type} _lupine_second = {{}};
-{third_type} _lupine_third = {{}};
-if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0 ||
-    rpc_read(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
-    rpc_read(conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
-    rpc_read(conn, &_lupine_third, sizeof(_lupine_third)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-{out_type} _lupine_value = {{}};
-using _lupine_fn_t = nvmlReturn_t (*)(nvmlDevice_t, {first_type}, {second_type},
-                                      {third_type}, {out_type} *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr
-        ? function_not_found()
-        : _lupine_fn(_lupine_device, _lupine_first, _lupine_second,
-                     _lupine_third, &_lupine_value);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_value, sizeof(_lupine_value)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_client_device_two_values(name, first_name, second_name, first_type, second_type):
-    return f"""conn_t *_lupine_conn = connection_for_device(&device);
-nvmlReturn_t _lupine_result = rpc_error();
-{first_type} _lupine_first = {{}};
-{second_type} _lupine_second = {{}};
-if (_lupine_conn == nullptr ||
-    rpc_write_start_request(_lupine_conn, RPC_{name}) < 0 ||
-    rpc_write(_lupine_conn, &device, sizeof(device)) < 0 ||
-    rpc_wait_for_response(_lupine_conn) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
-    rpc_read(_lupine_conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_read_end(_lupine_conn) < 0) {{
-  return rpc_error();
-}}
-if ({first_name} != nullptr) {{
-  *{first_name} = _lupine_first;
-}}
-if ({second_name} != nullptr) {{
-  *{second_name} = _lupine_second;
-}}
-return _lupine_result;"""
-
-
-def nvml_server_device_two_values(name, first_type, second_type):
-    return f"""nvmlDevice_t _lupine_device = nullptr;
-if (rpc_read(conn, &_lupine_device, sizeof(_lupine_device)) < 0) {{
-  return -1;
-}}
-int _lupine_request_id = rpc_read_end(conn);
-if (_lupine_request_id < 0) {{
-  return -1;
-}}
-
-{first_type} _lupine_first = {{}};
-{second_type} _lupine_second = {{}};
-using _lupine_fn_t =
-    nvmlReturn_t (*)(nvmlDevice_t, {first_type} *, {second_type} *);
-_lupine_fn_t _lupine_fn = nvml_symbol<_lupine_fn_t>("{name}");
-nvmlReturn_t _lupine_result =
-    _lupine_fn == nullptr
-        ? function_not_found()
-        : _lupine_fn(_lupine_device, &_lupine_first, &_lupine_second);
-
-if (rpc_write_start_response(conn, _lupine_request_id) < 0 ||
-    rpc_write(conn, &_lupine_first, sizeof(_lupine_first)) < 0 ||
-    rpc_write(conn, &_lupine_second, sizeof(_lupine_second)) < 0 ||
-    rpc_write(conn, &_lupine_result, sizeof(_lupine_result)) < 0 ||
-    rpc_write_end(conn) < 0) {{
-  return -1;
-}}
-return 0;"""
-
-
-def nvml_string_no_device(name, value_name):
-    nvml_codegen_function(
-        name,
-        f"char *{value_name}, unsigned int length",
-        nvml_client_string_no_device(name, value_name),
-        nvml_server_string_no_device(name),
-    )
-
-
-def nvml_int_out(name, value_name):
-    nvml_codegen_function(
-        name,
-        f"int *{value_name}",
-        nvml_client_int_out(name, value_name),
-        nvml_server_int_out(name),
-    )
-
-
-def nvml_device_from_string(name, value_name):
-    nvml_codegen_function(
-        name,
-        f"const char *{value_name}, nvmlDevice_t *device",
-        nvml_client_device_from_string(name, value_name),
-        nvml_server_device_from_string(name),
-    )
-
-
-def nvml_device_string(name, value_name):
-    nvml_codegen_function(
-        name,
-        f"nvmlDevice_t device, char *{value_name}, unsigned int length",
-        nvml_client_device_string(name, value_name),
-        nvml_server_device_string(name),
-    )
-
-
-def nvml_device_struct(name, out_type, value_name):
-    nvml_codegen_function(
-        name,
-        f"nvmlDevice_t device, {out_type} *{value_name}",
-        nvml_client_device_struct(name, out_type, value_name),
-        nvml_server_device_struct(name, out_type),
-    )
-
-
-def nvml_device_value(name, out_type, value_name):
-    nvml_codegen_function(
-        name,
-        f"nvmlDevice_t device, {out_type} *{value_name}",
-        nvml_client_device_value(name, out_type, value_name),
-        nvml_server_device_value(name, out_type),
-    )
-
-
-def nvml_device_arg_value(name, arg_type, arg_name, out_type, value_name):
-    nvml_codegen_function(
-        name,
-        f"nvmlDevice_t device, {arg_type} {arg_name}, {out_type} *{value_name}",
-        nvml_client_device_arg_value(name, arg_name, out_type, value_name),
-        nvml_server_device_arg_value(name, arg_type, out_type),
-    )
-
-
-def nvml_device_two_args_value(
-    name, first_type, first_name, second_type, second_name, out_type, value_name
-):
-    nvml_codegen_function(
-        name,
-        (
-            f"nvmlDevice_t device, {first_type} {first_name}, "
-            f"{second_type} {second_name}, {out_type} *{value_name}"
-        ),
-        nvml_client_device_two_args_value(
-            name, first_name, second_name, out_type, value_name
-        ),
-        nvml_server_device_two_args_value(name, first_type, second_type, out_type),
-    )
-
-
-def nvml_device_three_args_value(
-    name,
-    first_type,
-    first_name,
-    second_type,
-    second_name,
-    third_type,
-    third_name,
-    out_type,
-    value_name,
-):
-    nvml_codegen_function(
-        name,
-        (
-            f"nvmlDevice_t device, {first_type} {first_name}, "
-            f"{second_type} {second_name}, {third_type} {third_name}, "
-            f"{out_type} *{value_name}"
-        ),
-        nvml_client_device_three_args_value(
-            name, first_name, second_name, third_name, out_type, value_name
-        ),
-        nvml_server_device_three_args_value(
-            name, first_type, second_type, third_type, out_type
-        ),
-    )
-
-
-def nvml_device_two_values(name, first_type, first_name, second_type, second_name):
-    nvml_codegen_function(
-        name,
-        f"nvmlDevice_t device, {first_type} *{first_name}, {second_type} *{second_name}",
-        nvml_client_device_two_values(
-            name, first_name, second_name, first_type, second_type
-        ),
-        nvml_server_device_two_values(name, first_type, second_type),
-    )
-
-
-nvml_string_no_device("nvmlSystemGetDriverVersion", "version")
-nvml_string_no_device("nvmlSystemGetNVMLVersion", "version")
-nvml_int_out("nvmlSystemGetCudaDriverVersion", "cudaDriverVersion")
-nvml_int_out("nvmlSystemGetCudaDriverVersion_v2", "cudaDriverVersion")
-nvml_device_from_string("nvmlDeviceGetHandleByUUID", "uuid")
-nvml_device_from_string("nvmlDeviceGetHandleByPciBusId_v2", "pciBusId")
-nvml_device_string("nvmlDeviceGetUUID", "uuid")
-nvml_device_string("nvmlDeviceGetVbiosVersion", "version")
-nvml_device_string("nvmlDeviceGetSerial", "serial")
-nvml_device_string("nvmlDeviceGetBoardPartNumber", "partNumber")
-nvml_device_struct("nvmlDeviceGetPciInfo_v3", "nvmlPciInfo_t", "pci")
-nvml_device_struct("nvmlDeviceGetMemoryInfo", "nvmlMemory_t", "memory")
-nvml_device_struct(
-    "nvmlDeviceGetUtilizationRates", "nvmlUtilization_t", "utilization"
-)
-nvml_device_struct(
-    "nvmlDeviceGetTemperatureV", "lupine_nvmlTemperature_t", "temperature"
-)
-nvml_device_struct("nvmlDeviceGetMemoryInfo_v2", "nvmlMemory_v2_t", "memory")
-nvml_device_value("nvmlDeviceGetMinorNumber", "unsigned int", "minorNumber")
-nvml_device_value("nvmlDeviceGetPowerUsage", "unsigned int", "power")
-nvml_device_value("nvmlDeviceGetPowerManagementLimit", "unsigned int", "limit")
-nvml_device_value("nvmlDeviceGetEnforcedPowerLimit", "unsigned int", "limit")
-nvml_device_value("nvmlDeviceGetPerformanceState", "nvmlPstates_t", "pState")
-nvml_device_value("nvmlDeviceGetComputeMode", "nvmlComputeMode_t", "mode")
-nvml_device_value("nvmlDeviceGetPersistenceMode", "nvmlEnableState_t", "mode")
-nvml_device_value("nvmlDeviceGetFanSpeed", "unsigned int", "speed")
-nvml_device_value("nvmlDeviceGetBrand", "nvmlBrandType_t", "type")
-nvml_device_value("nvmlDeviceGetDisplayMode", "nvmlEnableState_t", "display")
-nvml_device_value("nvmlDeviceGetDisplayActive", "nvmlEnableState_t", "active")
-nvml_device_value("nvmlDeviceGetCurrPcieLinkGeneration", "unsigned int", "value")
-nvml_device_value("nvmlDeviceGetCurrPcieLinkWidth", "unsigned int", "value")
-nvml_device_value("nvmlDeviceGetMaxPcieLinkGeneration", "unsigned int", "value")
-nvml_device_value("nvmlDeviceGetMaxPcieLinkWidth", "unsigned int", "value")
-nvml_device_value("nvmlDeviceGetPcieReplayCounter", "unsigned int", "value")
-nvml_device_value("nvmlDeviceGetMaxMigDeviceCount", "unsigned int", "count")
-nvml_device_value(
-    "nvmlDeviceGetVirtualizationMode", "nvmlGpuVirtualizationMode_t", "pVirtualMode"
-)
-nvml_device_value("nvmlDeviceIsMigDeviceHandle", "unsigned int", "isMigDevice")
-nvml_device_arg_value(
-    "nvmlDeviceGetTemperature",
-    "nvmlTemperatureSensors_t",
-    "sensorType",
-    "unsigned int",
-    "temp",
-)
-nvml_device_arg_value(
-    "nvmlDeviceGetClockInfo", "nvmlClockType_t", "type", "unsigned int", "clock"
-)
-nvml_device_arg_value(
-    "nvmlDeviceGetMaxClockInfo", "nvmlClockType_t", "type", "unsigned int", "clock"
-)
-nvml_device_arg_value(
-    "nvmlDeviceGetPcieThroughput",
-    "nvmlPcieUtilCounter_t",
-    "counter",
-    "unsigned int",
-    "value",
-)
-nvml_device_arg_value(
-    "nvmlDeviceGetNvLinkRemoteDeviceType",
-    "unsigned int",
-    "link",
-    "nvmlIntNvLinkDeviceType_t",
-    "pNvLinkDeviceType",
-)
-nvml_device_arg_value(
-    "nvmlDeviceGetNvLinkRemotePciInfo_v2",
-    "unsigned int",
-    "link",
-    "nvmlPciInfo_t",
-    "pci",
-)
-nvml_device_two_args_value(
-    "nvmlDeviceGetTotalEccErrors",
-    "nvmlMemoryErrorType_t",
-    "errorType",
-    "nvmlEccCounterType_t",
-    "counterType",
-    "unsigned long long",
-    "eccCounts",
-)
-nvml_device_two_args_value(
-    "nvmlDeviceGetDetailedEccErrors",
-    "nvmlMemoryErrorType_t",
-    "errorType",
-    "nvmlEccCounterType_t",
-    "counterType",
-    "nvmlEccErrorCounts_t",
-    "eccCounts",
-)
-nvml_device_three_args_value(
-    "nvmlDeviceGetMemoryErrorCounter",
-    "nvmlMemoryErrorType_t",
-    "errorType",
-    "nvmlEccCounterType_t",
-    "counterType",
-    "nvmlMemoryLocation_t",
-    "locationType",
-    "unsigned long long",
-    "count",
-)
-nvml_device_two_values(
-    "nvmlDeviceGetEccMode",
-    "nvmlEnableState_t",
-    "current",
-    "nvmlEnableState_t",
-    "pending",
-)
-nvml_device_two_values(
-    "nvmlDeviceGetMigMode", "unsigned int", "currentMode", "unsigned int", "pendingMode"
-)
 
 SKIP_FUNCTIONS = {
     "cuStreamUpdateCaptureDependencies_v2",
@@ -954,6 +229,8 @@ def infer_routing_key(
         if isinstance(param.type, (Pointer, Array)):
             continue
         type_name = param.type.format().replace("const ", "").strip()
+        if type_name == "nvmlDevice_t":
+            return "NVML_DEVICE", param
         if type_name == "CUdevice":
             return "DEVICE", param
         if type_name == "CUcontext":
@@ -1020,6 +297,19 @@ def parse_annotation(
         if line.strip().startswith("@async"):
             metadata.async_fire_forget = True
             continue
+        if line.strip().startswith("@synchronize"):
+            parts = line.split()
+            options = set(parts[1:])
+            unknown = options - {"DEFERRED_DTOH", "STDOUT"}
+            if unknown:
+                raise NotImplementedError(
+                    "Unknown @synchronize option(s): " + ", ".join(sorted(unknown))
+                )
+            metadata.synchronize = SynchronizeAnnotation(
+                deferred_dtoh="DEFERRED_DTOH" in options,
+                stdout="STDOUT" in options,
+            )
+            continue
         if line.startswith("@routingkey"):
             parts = line.split()
             if len(parts) < 2:
@@ -1027,6 +317,15 @@ def parse_annotation(
             metadata.routing_kind = parts[1].upper()
             if len(parts) >= 3:
                 metadata.routing_parameter = annotation_param(params, parts[2])
+            continue
+        if line.startswith("@routingfallback"):
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            metadata.routing_fallback = RoutingFallbackAnnotation(
+                kind=parts[1].upper(),
+                parameter=annotation_param(params, parts[2]),
+            )
             continue
         if line.startswith("@recordowner"):
             parts = line.split()
@@ -1071,6 +370,10 @@ def parse_annotation(
             send = parts[2] == "SEND_ONLY" or parts[2] == "SEND_RECV"
             recv = parts[2] == "RECV_ONLY" or parts[2] == "SEND_RECV"
 
+            if "TRANSLATE_DEVICEPTR" in args:
+                metadata.translate_deviceptrs.append(
+                    DevicePtrTranslationAnnotation(parameter=param)
+                )
             # if there's a length or size arg, use the type, otherwise use the ptr_to type
             length_arg = next((arg for arg in args if arg.startswith("LENGTH:")), None)
 
@@ -1348,21 +651,50 @@ def parse_annotation(
                     members=members,
                 )
                 break
+    # An array is sized from another parameter, so that parameter has to be on
+    # the wire before the array. Parameter order does not guarantee it, and the
+    # server would otherwise size its buffer from an unread variable. Move each
+    # length source ahead of the first array that depends on it; both sides walk
+    # this same list, so they stay symmetric.
+    for i, op in enumerate(operations):
+        length = getattr(op, "length", None)
+        if not isinstance(length, Parameter):
+            continue
+        source = next(
+            (j for j, other in enumerate(operations)
+             if other.parameter.name == length.name),
+            None,
+        )
+        if source is not None and source > i:
+            operations.insert(i, operations.pop(source))
+
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
     return metadata
 
 
-def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
-    kind = metadata.routing_kind
-    param = metadata.routing_parameter
+def client_translated_deviceptr_names(
+    metadata: FunctionAnnotationMetadata,
+) -> set[str]:
+    return {translation.parameter.name for translation in metadata.translate_deviceptrs}
+
+
+def client_param_expr(metadata: FunctionAnnotationMetadata, param: Parameter) -> str:
+    if param.name in client_translated_deviceptr_names(metadata):
+        return f"{param.name}_rpc"
+    return param.name
+
+
+def client_routing_key_expr(
+    kind: Optional[str], param: Optional[Parameter], metadata: FunctionAnnotationMetadata
+) -> str:
     if kind is None:
         return "lupine_route_for_default()"
     if kind == "CURRENT_CONTEXT":
         return "lupine_route_for_current_context()"
     if param is None:
         raise NotImplementedError(f"Routing key {kind} requires a parameter")
-    name = param.name
+    name = client_param_expr(metadata, param)
     if kind == "DEVICE":
         return f"lupine_route_for_device(&{name})"
     if kind == "CONTEXT":
@@ -1374,6 +706,13 @@ def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
     if kind == "FUNCTION":
         return f"lupine_route_for_function({name})"
     if kind == "STREAM":
+        if metadata.routing_fallback is not None:
+            fallback = client_routing_key_expr(
+                metadata.routing_fallback.kind,
+                metadata.routing_fallback.parameter,
+                metadata,
+            )
+            return f"({name} != nullptr ? lupine_route_for_stream({name}) : {fallback})"
         return f"({name} != nullptr ? lupine_route_for_stream({name}) : lupine_route_for_default())"
     if kind == "EVENT":
         return f"lupine_route_for_event({name})"
@@ -1388,6 +727,36 @@ def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
     if kind == "DEVICEPTR":
         return f"lupine_route_for_deviceptr({name})"
     raise NotImplementedError(f"Unknown routing key kind: {kind}")
+
+
+def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
+    return client_routing_key_expr(
+        metadata.routing_kind, metadata.routing_parameter, metadata
+    )
+
+
+def client_call_args(function: Function, metadata: FunctionAnnotationMetadata) -> list[str]:
+    return [
+        client_param_expr(metadata, param)
+        for param in function.parameters
+        if param.name
+    ]
+
+
+def write_client_rpc_write(f, operation: Operation, metadata: FunctionAnnotationMetadata):
+    if (
+        isinstance(operation, OpaqueTypeOperation)
+        and operation.send
+        and operation.parameter.name in client_translated_deviceptr_names(metadata)
+    ):
+        f.write(
+            "        rpc_write(conn, &{param_name}_rpc, sizeof({param_type})) < 0 ||\n".format(
+                param_name=operation.parameter.name,
+                param_type=operation.type_.format(),
+            )
+        )
+        return
+    operation.client_rpc_write(f)
 
 
 def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
@@ -1449,6 +818,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);\n")
     if function.name.format() == "cuMemFreeAsync":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_deviceptr_owner(dptr);\n")
+    if metadata.synchronize:
+        f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
 
     if function.name.format() == "cuDevicePrimaryCtxRetain":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_active(dev);\n")
@@ -1459,387 +830,24 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
     if function.name.format() == "cuDevicePrimaryCtxReset_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
     if function.name.format() == "cuCtxDestroy_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) {\n")
-        f.write("        lupine_forget_context_owner(ctx);\n")
-        f.write("        lupine_invalidate_current_context_cache();\n")
-        f.write("    }\n")
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(ctx);\n")
+    if function.name.format() in {
+        "cuCtxDestroy_v2",
+        "cuCtxDetach",
+        "cuDevicePrimaryCtxRelease_v2",
+        "cuDevicePrimaryCtxReset_v2",
+    }:
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
+    if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_function_caches();\n")
+    if function.name.format() == "cuKernelSetAttribute":
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel, (int)attrib, (int)dev);\n")
+    if function.name.format() == "cuFuncSetAttribute":
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_kernel_attribute_cache();\n")
     if function.name.format() == "cuModuleGetFunction":
-        f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) lupine_record_module_function(*hfunc, hmod, name, route);\n")
+        f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) return_value = lupine_record_module_function(*hfunc, hmod, name, route);\n")
     if function.name.format() == "cuLibraryGetKernel":
-        f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) lupine_record_library_kernel(*pKernel, library, name, route);\n")
-
-
-def write_client_mem_pool_create(f):
-    f.write("""    lupine_route route = lupine_route_for_default();
-    CUresult return_value;
-    using real_fn_t = CUresult (*)(CUmemoryPool *, const CUmemPoolProps *);
-    if (lupine_call_local_cuda_if_routed<real_fn_t>(
-            route, "cuMemPoolCreate", &return_value, pool, poolProps)) {
-        if (return_value == CUDA_SUCCESS && pool != nullptr) {
-            lupine_note_memory_pool_owner_route(*pool, route);
-        }
-        return return_value;
-    }
-    conn_t *conn = lupine_route_remote_conn(route);
-    if (conn == nullptr ||
-        rpc_write_start_request(conn, RPC_cuMemPoolCreate) < 0 ||
-        rpc_write(conn, pool, sizeof(CUmemoryPool)) < 0 ||
-        rpc_write(conn, poolProps, sizeof(CUmemPoolProps)) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, pool, sizeof(CUmemoryPool)) < 0 ||
-        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-        rpc_read_end(conn) < 0)
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    if (return_value == CUDA_SUCCESS && pool != nullptr) {
-        lupine_note_memory_pool_owner_route(*pool, route);
-    }
-    return return_value;
-}
-
-""")
-
-
-def write_client_ipc_shareable_handle(f, name: str):
-    if name == "cuMemExportToShareableHandle":
-        f.write("""    lupine_route route = lupine_route_for_default();
-    CUresult return_value;
-    using real_fn_t =
-        CUresult (*)(void *, CUmemGenericAllocationHandle,
-                     CUmemAllocationHandleType, unsigned long long);
-    if (lupine_call_local_cuda_if_routed<real_fn_t>(
-            route, "cuMemExportToShareableHandle", &return_value,
-            shareableHandle, handle, handleType, flags)) {
-        return return_value;
-    }
-    conn_t *conn = lupine_route_remote_conn(route);
-    lupine_ipc_token token = {};
-    if (conn == nullptr ||
-        rpc_write_start_request(conn, RPC_cuMemExportToShareableHandle) < 0 ||
-        rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
-        rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &token, sizeof(token)) < 0 ||
-        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-        rpc_read_end(conn) < 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    if (return_value == CUDA_SUCCESS && shareableHandle != nullptr) {
-        int proxy_fd = -1;
-        if (lupine_ipc_create_proxy_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &token,
-                                       &proxy_fd) < 0) {
-            return CUDA_ERROR_UNKNOWN;
-        }
-        *reinterpret_cast<int *>(shareableHandle) = proxy_fd;
-    }
-    return return_value;
-}
-
-""")
-    elif name == "cuMemImportFromShareableHandle":
-        f.write("""    lupine_route route = lupine_route_for_default();
-    CUresult return_value;
-    using real_fn_t =
-        CUresult (*)(CUmemGenericAllocationHandle *, void *,
-                     CUmemAllocationHandleType);
-    if (lupine_call_local_cuda_if_routed<real_fn_t>(
-            route, "cuMemImportFromShareableHandle", &return_value, handle,
-            osHandle, shHandleType)) {
-        return return_value;
-    }
-    uint32_t kind = 0;
-    lupine_ipc_token token = {};
-    int proxy_fd = static_cast<int>(reinterpret_cast<uintptr_t>(osHandle));
-    if (lupine_ipc_read_proxy_fd(proxy_fd, &kind, &token) < 0 ||
-        kind != LUPINE_IPC_FD_KIND_VMM_ALLOCATION) {
-        return CUDA_ERROR_INVALID_VALUE;
-    }
-    conn_t *conn = lupine_route_remote_conn(route);
-    if (conn == nullptr ||
-        rpc_write_start_request(conn, RPC_cuMemImportFromShareableHandle) < 0 ||
-        rpc_write(conn, &token, sizeof(token)) < 0 ||
-        rpc_write(conn, &shHandleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
-        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-        rpc_read_end(conn) < 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    return return_value;
-}
-
-""")
-    elif name == "cuMemPoolExportToShareableHandle":
-        f.write("""    lupine_route route = lupine_route_for_memory_pool(pool);
-    CUresult return_value;
-    using real_fn_t = CUresult (*)(void *, CUmemoryPool,
-                                  CUmemAllocationHandleType, unsigned long long);
-    if (lupine_call_local_cuda_if_routed<real_fn_t>(
-            route, "cuMemPoolExportToShareableHandle", &return_value, handle_out,
-            pool, handleType, flags)) {
-        return return_value;
-    }
-    conn_t *conn = lupine_route_remote_conn(route);
-    lupine_ipc_token token = {};
-    if (conn == nullptr ||
-        rpc_write_start_request(conn, RPC_cuMemPoolExportToShareableHandle) < 0 ||
-        rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-        rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &token, sizeof(token)) < 0 ||
-        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-        rpc_read_end(conn) < 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    if (return_value == CUDA_SUCCESS && handle_out != nullptr) {
-        int proxy_fd = -1;
-        if (lupine_ipc_create_proxy_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
-                                       &proxy_fd) < 0) {
-            return CUDA_ERROR_UNKNOWN;
-        }
-        *reinterpret_cast<int *>(handle_out) = proxy_fd;
-    }
-    return return_value;
-}
-
-""")
-    elif name == "cuMemPoolImportFromShareableHandle":
-        f.write("""    lupine_route route = lupine_route_for_default();
-    CUresult return_value;
-    using real_fn_t =
-        CUresult (*)(CUmemoryPool *, void *, CUmemAllocationHandleType,
-                     unsigned long long);
-    if (lupine_call_local_cuda_if_routed<real_fn_t>(
-            route, "cuMemPoolImportFromShareableHandle", &return_value, pool_out,
-            handle, handleType, flags)) {
-        if (return_value == CUDA_SUCCESS && pool_out != nullptr) {
-            lupine_note_memory_pool_owner_route(*pool_out, route);
-        }
-        return return_value;
-    }
-    uint32_t kind = 0;
-    lupine_ipc_token token = {};
-    int proxy_fd = static_cast<int>(reinterpret_cast<uintptr_t>(handle));
-    if (lupine_ipc_read_proxy_fd(proxy_fd, &kind, &token) < 0 ||
-        kind != LUPINE_IPC_FD_KIND_MEMORY_POOL) {
-        return CUDA_ERROR_INVALID_VALUE;
-    }
-    conn_t *conn = lupine_route_remote_conn(route);
-    if (conn == nullptr ||
-        rpc_write_start_request(conn, RPC_cuMemPoolImportFromShareableHandle) < 0 ||
-        rpc_write(conn, &token, sizeof(token)) < 0 ||
-        rpc_write(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, pool_out, sizeof(CUmemoryPool)) < 0 ||
-        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-        rpc_read_end(conn) < 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    if (return_value == CUDA_SUCCESS && pool_out != nullptr) {
-        lupine_note_memory_pool_owner_route(*pool_out, route);
-    }
-    return return_value;
-}
-
-""")
-    else:
-        raise NotImplementedError(f"No IPC client codegen for {name}")
-
-
-def write_server_mem_pool_create(f):
-    f.write("""    CUmemoryPool pool;
-    CUmemPoolProps poolProps;
-    int request_id;
-    CUresult lupine_intercept_result;
-    if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-        rpc_read(conn, &poolProps, sizeof(CUmemPoolProps)) < 0 || false)
-        goto ERROR_0;
-
-    request_id = rpc_read_end(conn);
-    if (request_id < 0)
-        goto ERROR_0;
-    lupine_intercept_result = cuMemPoolCreate(&pool, &poolProps);
-
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-        rpc_write_end(conn) < 0)
-        goto ERROR_0;
-
-    return 0;
-ERROR_0:
-    return -1;
-}
-
-""")
-
-
-def write_server_ipc_shareable_handle(f, name: str):
-    if name == "cuMemExportToShareableHandle":
-        f.write("""    CUmemGenericAllocationHandle handle;
-    CUmemAllocationHandleType handleType;
-    unsigned long long flags;
-    int request_id;
-    int shareable_fd = -1;
-    lupine_ipc_token token = {};
-    CUresult lupine_intercept_result = CUDA_ERROR_NOT_SUPPORTED;
-    if (rpc_read(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
-        rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
-        goto ERROR_0;
-
-    request_id = rpc_read_end(conn);
-    if (request_id < 0)
-        goto ERROR_0;
-
-    if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
-        lupine_ipc_make_token(&token) == 0) {
-        lupine_intercept_result =
-            cuMemExportToShareableHandle(&shareable_fd, handle, handleType, flags);
-        if (lupine_intercept_result == CUDA_SUCCESS) {
-            if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION,
-                                              &token, shareable_fd) < 0) {
-                lupine_intercept_result = CUDA_ERROR_UNKNOWN;
-            }
-            lupine_close_fd(shareable_fd);
-        }
-    }
-
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &token, sizeof(token)) < 0 ||
-        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-        rpc_write_end(conn) < 0)
-        goto ERROR_0;
-
-    return 0;
-ERROR_0:
-    return -1;
-}
-
-""")
-    elif name == "cuMemImportFromShareableHandle":
-        f.write("""    lupine_ipc_token token;
-    CUmemAllocationHandleType shHandleType;
-    CUmemGenericAllocationHandle handle = 0;
-    int request_id;
-    CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
-    if (rpc_read(conn, &token, sizeof(token)) < 0 ||
-        rpc_read(conn, &shHandleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        false)
-        goto ERROR_0;
-
-    request_id = rpc_read_end(conn);
-    if (request_id < 0)
-        goto ERROR_0;
-
-    if (shHandleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
-        int import_fd =
-            lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &token);
-        if (import_fd >= 0) {
-            lupine_intercept_result = cuMemImportFromShareableHandle(
-                &handle, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
-                shHandleType);
-            lupine_close_fd(import_fd);
-        }
-    }
-
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
-        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-        rpc_write_end(conn) < 0)
-        goto ERROR_0;
-
-    return 0;
-ERROR_0:
-    return -1;
-}
-
-""")
-    elif name == "cuMemPoolExportToShareableHandle":
-        f.write("""    CUmemoryPool pool;
-    CUmemAllocationHandleType handleType;
-    unsigned long long flags;
-    int request_id;
-    int shareable_fd = -1;
-    lupine_ipc_token token = {};
-    CUresult lupine_intercept_result = CUDA_ERROR_NOT_SUPPORTED;
-    if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-        rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
-        goto ERROR_0;
-
-    request_id = rpc_read_end(conn);
-    if (request_id < 0)
-        goto ERROR_0;
-
-    if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
-        lupine_ipc_make_token(&token) == 0) {
-        lupine_intercept_result =
-            cuMemPoolExportToShareableHandle(&shareable_fd, pool, handleType, flags);
-        if (lupine_intercept_result == CUDA_SUCCESS) {
-            if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL,
-                                              &token, shareable_fd) < 0) {
-                lupine_intercept_result = CUDA_ERROR_UNKNOWN;
-            }
-            lupine_close_fd(shareable_fd);
-        }
-    }
-
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &token, sizeof(token)) < 0 ||
-        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-        rpc_write_end(conn) < 0)
-        goto ERROR_0;
-
-    return 0;
-ERROR_0:
-    return -1;
-}
-
-""")
-    elif name == "cuMemPoolImportFromShareableHandle":
-        f.write("""    lupine_ipc_token token;
-    CUmemAllocationHandleType handleType;
-    unsigned long long flags;
-    CUmemoryPool pool = nullptr;
-    int request_id;
-    CUresult lupine_intercept_result = CUDA_ERROR_INVALID_VALUE;
-    if (rpc_read(conn, &token, sizeof(token)) < 0 ||
-        rpc_read(conn, &handleType, sizeof(CUmemAllocationHandleType)) < 0 ||
-        rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
-        goto ERROR_0;
-
-    request_id = rpc_read_end(conn);
-    if (request_id < 0)
-        goto ERROR_0;
-
-    if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
-        int import_fd =
-            lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token);
-        if (import_fd >= 0) {
-            lupine_intercept_result = cuMemPoolImportFromShareableHandle(
-                &pool, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
-                handleType, flags);
-            lupine_close_fd(import_fd);
-        }
-    }
-
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-        rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-        rpc_write_end(conn) < 0)
-        goto ERROR_0;
-
-    return 0;
-ERROR_0:
-    return -1;
-}
-
-""")
-    else:
-        raise NotImplementedError(f"No IPC server codegen for {name}")
+        f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) return_value = lupine_record_library_kernel(*pKernel, library, name, route);\n")
 
 
 def error_const(return_type: str) -> str:
@@ -1900,6 +908,192 @@ def server_call_name(function_name: str) -> str:
     if function_name == "cuEventElapsedTime_v2":
         return "cuEventElapsedTime"
     return function_name
+
+
+def collect_nvml_functions(annotations: ParsedData):
+    by_name = {
+        function.name.format(): function
+        for function in annotations.namespace.functions
+    }
+    result = []
+    for name in NVML_RPC_FUNCTIONS:
+        if name in NVML_MANUAL_SERVER_FUNCTIONS:
+            continue
+        function = by_name.get(name)
+        if function is None:
+            raise RuntimeError(f"NVML annotation for {name} not found")
+        metadata = parse_annotation(function.doxygen, function.parameters)
+        for operation in metadata.operations:
+            if isinstance(operation, NullTerminatedOperation):
+                # Preserve the existing NVML wire format. CUDA RPC strings use
+                # size_t lengths, while the NVML protocol historically used
+                # unsigned int lengths.
+                operation.length_type = "unsigned int"
+        result.append((function, function, metadata.operations, metadata))
+    return result
+
+
+def write_nvml_client_validation(f, operations):
+    checks = []
+    for operation in operations:
+        name = operation.parameter.name
+        if isinstance(operation, NullTerminatedOperation) and operation.send:
+            checks.append(f"{name} == nullptr")
+        elif isinstance(operation, DereferenceOperation):
+            checks.append(f"{name} == nullptr")
+        elif isinstance(operation, ArrayOperation):
+            checks.append(
+                f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
+            )
+    if checks:
+        f.write("  if (" + " ||\n      ".join(checks) + ") {\n")
+        f.write("    return NVML_ERROR_INVALID_ARGUMENT;\n")
+        f.write("  }\n")
+
+
+def write_nvml_client_rpc(f, function, operations):
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(f"static nvmlReturn_t lupine_rpc_{name}(conn_t *conn")
+    if params:
+        f.write(f", {params}")
+    f.write(") {\n")
+    f.write("  nvmlReturn_t return_value = rpc_error();\n")
+    for operation in operations:
+        if isinstance(operation, NullTerminatedOperation):
+            f.write(
+                "  {length_type} {name}_len = static_cast<{length_type}>("
+                "std::strlen({name}) + 1);\n".format(
+                    length_type=operation.length_type,
+                    name=operation.parameter.name,
+                )
+            )
+        elif isinstance(operation, NullableOperation) and operation.recv:
+            f.write(
+                "  {type_} {name}_null_check = nullptr;\n".format(
+                    type_=operation.ptr.format(), name=operation.parameter.name
+                )
+            )
+
+    f.write("  if (conn == nullptr ||\n")
+    f.write(f"      rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_write(f)
+    f.write("      rpc_wait_for_response(conn) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_read(f)
+    f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_read_end(conn) < 0) {\n")
+    f.write("    return rpc_error();\n")
+    f.write("  }\n")
+    f.write("  return return_value;\n")
+    f.write("}\n\n")
+
+
+def write_nvml_client_wrapper(f, function, operations, metadata):
+    if metadata.disabled_client:
+        return
+
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(f'extern "C" nvmlReturn_t {name}({params}) {{\n')
+    write_nvml_client_validation(f, operations)
+
+    call_args = format_call_args(function)
+    if metadata.routing_kind == "ALL":
+        owners = [
+            owner
+            for owner in metadata.record_owners
+            if owner.kind == "NVML_DEVICE"
+        ]
+        if len(owners) != 1 or not isinstance(owners[0].parameter.type, Pointer):
+            raise RuntimeError(
+                f"{name}: ALL-routed NVML lookup requires one NVML_DEVICE output"
+            )
+        output_name = owners[0].parameter.name
+        lambda_args = [
+            "remote_device" if arg == output_name else arg for arg in call_args
+        ]
+        f.write(
+            f"  return lookup_device_on_all_connections({output_name},\n"
+            "      [&](conn_t *conn, nvmlDevice_t *remote_device) {\n"
+            f"        return lupine_rpc_{name}(conn, {', '.join(lambda_args)});\n"
+            "      });\n"
+        )
+    else:
+        if metadata.routing_kind == "NVML_DEVICE":
+            if metadata.routing_parameter is None:
+                raise RuntimeError(f"{name}: NVML_DEVICE routing requires a parameter")
+            route_name = metadata.routing_parameter.name
+            f.write(f"  conn_t *conn = connection_for_device(&{route_name});\n")
+        elif metadata.routing_kind is None:
+            f.write("  conn_t *conn = connection();\n")
+        else:
+            raise RuntimeError(
+                f"{name}: unsupported NVML routing key {metadata.routing_kind}"
+            )
+        suffix = f", {', '.join(call_args)}" if call_args else ""
+        f.write(f"  return lupine_rpc_{name}(conn{suffix});\n")
+    f.write("}\n\n")
+
+
+def write_server_buffer_cleanup(f, owned_buffers, indent):
+    for buffer_name in reversed(owned_buffers):
+        f.write(f"{indent}free((void *){buffer_name});\n")
+
+
+def write_nvml_server_handler(f, function, operations):
+    name = function.name.format()
+    fn_params = ", ".join(
+        parameter.type.format() for parameter in function.parameters
+    )
+    f.write(f"int handle_{name}(conn_t *conn) {{\n")
+    owned_buffers = []
+    for operation in operations:
+        f.write(operation.server_declaration)
+        if (
+            isinstance(operation, DereferenceOperation)
+            and operation.recv
+            and not operation.send
+        ):
+            f.write(f"  {operation.parameter.name} = {{}};\n")
+    f.write("  int request_id;\n")
+    f.write("  nvmlReturn_t return_value;\n")
+    f.write(f"  using fn_t = nvmlReturn_t (*)({fn_params});\n")
+    f.write("  fn_t fn = nullptr;\n")
+    f.write("  if (\n")
+    for operation in operations:
+        if owned_buffer := operation.server_rpc_read(f):
+            owned_buffers.append(owned_buffer)
+    f.write("      false)\n")
+    f.write("    goto ERROR_0;\n\n")
+    f.write("  request_id = rpc_read_end(conn);\n")
+    f.write("  if (request_id < 0)\n")
+    f.write("    goto ERROR_0;\n\n")
+
+    call_args = []
+    for parameter in function.parameters:
+        operation = next(
+            op for op in operations if op.parameter.name == parameter.name
+        )
+        call_args.append(operation.server_reference)
+    f.write(f'  fn = nvml_symbol<fn_t>("{name}");\n')
+    f.write(
+        "  return_value = fn == nullptr ? function_not_found()\n"
+        f"                               : fn({', '.join(call_args)});\n\n"
+    )
+    f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+    for operation in operations:
+        operation.server_rpc_write(f)
+    f.write("      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_write_end(conn) < 0)\n")
+    f.write("    goto ERROR_0;\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return 0;\n")
+    f.write("ERROR_0:\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return -1;\n")
+    f.write("}\n\n")
 
 
 # List of possible directories to search for header files
@@ -1968,11 +1162,6 @@ def main():
         except StopIteration:
             print(f"Annotation for {function.name} not found")
             continue
-        if function.name.format() in IPC_SHAREABLE_HANDLE_FUNCTIONS:
-            functions_with_annotations.append(
-                (function, annotation, [], FunctionAnnotationMetadata([]))
-            )
-            continue
         try:
             metadata = parse_annotation(annotation.doxygen, function.parameters)
         except Exception as e:
@@ -1981,6 +1170,8 @@ def main():
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
         )
+
+    nvml_functions_with_annotations = collect_nvml_functions(annotations)
 
     annotated_names = annotated_rpc_names(annotations)
 
@@ -2017,43 +1208,25 @@ def main():
 
     with open("gen_nvml_client.inc", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function in NVML_CODEGEN_FUNCTIONS:
-            f.write(
-                'extern "C" nvmlReturn_t {name}({params}) {{\n'.format(
-                    name=function["name"],
-                    params=function["params"],
-                )
-            )
-            for line in function["client_body"].splitlines():
-                if line:
-                    f.write(f"  {line}\n")
-                else:
-                    f.write("\n")
-            f.write("}\n\n")
+        for function, _, operations, metadata in nvml_functions_with_annotations:
+            if metadata.disabled_client:
+                continue
+            write_nvml_client_rpc(f, function, operations)
+            write_nvml_client_wrapper(f, function, operations, metadata)
 
     with open("gen_nvml_server.inc", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function in NVML_CODEGEN_FUNCTIONS:
-            f.write(
-                "int handle_{name}(conn_t *conn) {{\n".format(
-                    name=function["name"],
-                )
-            )
-            for line in function["server_body"].splitlines():
-                if line:
-                    f.write(f"  {line}\n")
-                else:
-                    f.write("\n")
-            f.write("}\n\n")
+        for function, _, operations, metadata in nvml_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            write_nvml_server_handler(f, function, operations)
 
     with open("gen_nvml_server.h", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function in NVML_CODEGEN_FUNCTIONS:
-            f.write(
-                "int handle_{name}(conn_t *conn);\n".format(
-                    name=function["name"],
-                )
-            )
+        for function, _, _, metadata in nvml_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
 
     with open("gen_client.cpp", "w") as f:
         f.write(
@@ -2072,7 +1245,6 @@ def main():
             "#include <vector>\n\n"
             '#include "gen_api.h"\n\n'
             '#include "client_routing.h"\n'
-            '#include "ipc.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -2080,9 +1252,6 @@ def main():
             'extern "C" void lupine_deep_cache_reset(const void *key);\n'
             'extern "C" void *lupine_deep_cache_add(const void *key, '
             "size_t bytes);\n\n"
-            'extern "C" CUresult lupine_cuInit_multi(unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuDeviceGetCount_multi(int *count);\n'
-            'extern "C" CUresult lupine_cuDeviceGet_multi(CUdevice *device, int ordinal);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
             'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'
@@ -2105,11 +1274,12 @@ def main():
             'extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);\n\n'
             'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
-            'extern "C" void lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
-            'extern "C" void lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
+            'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
+            'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
             'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
             'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
+            'extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr, CUdeviceptr *translated);\n'
             'extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,\n'
             '                                                   CUdeviceptr srcDevice,\n'
             '                                                   size_t ByteCount,\n'
@@ -2121,21 +1291,26 @@ def main():
             'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
-            'extern "C" void lupine_forget_context_owner(CUcontext ctx);\n'
+            'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
+            'extern "C" void lupine_invalidate_function_caches();\n'
             'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
             'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
             'extern "C" void lupine_note_primary_context_flags(CUdevice dev, unsigned int flags);\n'
             'extern "C" void lupine_invalidate_primary_context_state(CUdevice dev);\n'
             'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
+            'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
+            'extern "C" void lupine_kernel_attribute_cache_erase(int route_id, CUkernel kernel, int attrib, int dev);\n'
+            'extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
+            'extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
             'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuDeviceCanAccessPeer_multi(int *canAccessPeer, CUdevice dev, CUdevice peerDev);\n'
-            'extern "C" CUresult lupine_cuCtxEnablePeerAccess_multi(CUcontext peerContext, unsigned int flags);\n'
-            'extern "C" CUresult lupine_cuCtxDisablePeerAccess_multi(CUcontext peerContext);\n\n'
+            'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
+            'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
+            'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
+            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
-            name = function.name.format()
             # We don't generate client function definitions for client-disabled
             # functions; their RPC/server definitions may still be generated.
             if metadata.disabled_client:
@@ -2146,24 +1321,20 @@ def main():
             f.write(
                 "{return_type} {name}({params})\n".format(
                     return_type=function.return_type.format(),
-                    name=name,
+                    name=function.name.format(),
                     params=joined_params,
                 )
             )
             f.write("{\n")
 
-            if name == "cuInit":
-                f.write("    return lupine_cuInit_multi(Flags);\n")
-                f.write("}\n\n")
-                continue
-            if name == "cuDeviceGet":
-                f.write("    return lupine_cuDeviceGet_multi(device, ordinal);\n")
-                f.write("}\n\n")
-                continue
-            if name == "cuDeviceGetCount":
-                f.write("    return lupine_cuDeviceGetCount_multi(count);\n")
-                f.write("}\n\n")
-                continue
+            if metadata.synchronize:
+                f.write(
+                    "    CUresult lupine_sync_result = "
+                    "lupine_flush_dirty_host_pages_to_server();\n"
+                    "    if (lupine_sync_result != CUDA_SUCCESS) {\n"
+                    "        return lupine_sync_result;\n"
+                    "    }\n"
+                )
             direct_wrappers = {
                 "cuDeviceGetAttribute": "lupine_cuDeviceGetAttribute_cached(pi, attrib, dev)",
                 "cuDevicePrimaryCtxGetState": "lupine_cuDevicePrimaryCtxGetState_cached(dev, flags, active)",
@@ -2173,17 +1344,16 @@ def main():
                 "cuCtxGetCurrent": "lupine_cuCtxGetCurrent_virtual(pctx)",
                 "cuCtxGetDevice": "lupine_cuCtxGetDevice_cached(device)",
                 "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
+                "cuKernelGetParamInfo": "lupine_cuKernelGetParamInfo_cached(kernel, paramIndex, paramOffset, paramSize)",
+                "cuFuncGetParamInfo": "lupine_cuFuncGetParamInfo_cached(func, paramIndex, paramOffset, paramSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
                 "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
-                "cuDeviceCanAccessPeer": "lupine_cuDeviceCanAccessPeer_multi(canAccessPeer, dev, peerDev)",
-                "cuCtxEnablePeerAccess": "lupine_cuCtxEnablePeerAccess_multi(peerContext, Flags)",
-                "cuCtxDisablePeerAccess": "lupine_cuCtxDisablePeerAccess_multi(peerContext)",
             }
-            if name in direct_wrappers:
-                f.write("    return {call};\n".format(call=direct_wrappers[name]))
+            if function.name.format() in direct_wrappers:
+                f.write("    return {call};\n".format(call=direct_wrappers[function.name.format()]))
                 f.write("}\n\n")
                 continue
-            if name == "cuModuleGetGlobal_v2":
+            if function.name.format() == "cuModuleGetGlobal_v2":
                 f.write("    conn_t *conn = lupine_rpc_conn_for_module(hmod);\n")
                 f.write("    CUresult return_value;\n")
                 f.write("    size_t remote_bytes = 0;\n")
@@ -2204,7 +1374,7 @@ def main():
                 f.write("    return return_value;\n")
                 f.write("}\n\n")
                 continue
-            if name in {"cuLibraryGetGlobal", "cuLibraryGetManaged"}:
+            if function.name.format() in {"cuLibraryGetGlobal", "cuLibraryGetManaged"}:
                 f.write("    lupine_route route = lupine_route_for_library(library);\n")
                 f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
                 f.write("    CUresult return_value;\n")
@@ -2226,33 +1396,95 @@ def main():
                 f.write("    return return_value;\n")
                 f.write("}\n\n")
                 continue
-            if name == "cuMemPoolCreate":
-                write_client_mem_pool_create(f)
-                continue
-            if name in IPC_SHAREABLE_HANDLE_FUNCTIONS:
-                write_client_ipc_shareable_handle(f, name)
-                continue
 
-            f.write(
-                "    lupine_route route = {route_expr};\n".format(
-                    route_expr=client_routing_route_expr(metadata)
+            for translation in metadata.translate_deviceptrs:
+                name = translation.parameter.name
+                f.write("    CUdeviceptr {name}_rpc = {name};\n".format(name=name))
+                f.write(
+                    "    bool {name}_is_managed_host = "
+                    "lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n".format(
+                        name=name
+                    )
                 )
-            )
+            if metadata.translate_deviceptrs:
+                translated_condition = " || ".join(
+                    "{name}_is_managed_host".format(name=item.parameter.name)
+                    for item in metadata.translate_deviceptrs
+                )
+                f.write("    if ({condition}) {{\n".format(condition=translated_condition))
+                f.write(
+                    "        CUresult managed_result = "
+                    "lupine_flush_dirty_host_pages_to_server();\n"
+                )
+                f.write("        if (managed_result != CUDA_SUCCESS) {\n")
+                f.write("            return managed_result;\n")
+                f.write("        }\n")
+                f.write("    }\n")
+
+            all_output = metadata.routing_parameter
+            if metadata.routing_kind == "ALL":
+                if (
+                    function.return_type.format() != "CUresult"
+                    or all_output is None
+                    or not isinstance(all_output.type, Pointer)
+                    or all_output.type.ptr_to.format() != "CUdevice"
+                ):
+                    raise RuntimeError(
+                        f"{function.name.format()}: ALL routing requires a CUdevice * output"
+                    )
+                if metadata.async_fire_forget:
+                    raise RuntimeError(
+                        f"{function.name.format()}: ALL routing cannot be fire-and-forget"
+                    )
+
+                output_name = all_output.name
+                checks = [f"{output_name} == nullptr"]
+                for operation in operations:
+                    if isinstance(operation, NullTerminatedOperation) and operation.send:
+                        checks.append(f"{operation.parameter.name} == nullptr")
+                    elif (
+                        isinstance(operation, DereferenceOperation)
+                        and operation.parameter.name != output_name
+                    ):
+                        checks.append(f"{operation.parameter.name} == nullptr")
+                    elif isinstance(operation, ArrayOperation):
+                        checks.append(
+                            f"({operation.transfer_size_expr()} != 0 && "
+                            f"{operation.parameter.name} == nullptr)"
+                        )
+                f.write("    if (" + " || ".join(checks) + ") {\n")
+                f.write("        return CUDA_ERROR_INVALID_VALUE;\n")
+                f.write("    }\n")
+                f.write(
+                    f"    return lupine_lookup_device_on_all_routes({output_name},\n"
+                    "        [&](lupine_route route, CUdevice *route_output) {\n"
+                    f"            {all_output.type.format()} {output_name} = route_output;\n"
+                )
+            else:
+                f.write(
+                    "    lupine_route route = {route_expr};\n".format(
+                        route_expr=client_routing_route_expr(metadata)
+                    )
+                )
             if metadata.cross_server_copy is not None:
                 copy = metadata.cross_server_copy
-                stream_arg = copy.stream.name if copy.stream is not None else "nullptr"
+                stream_arg = (
+                    client_param_expr(metadata, copy.stream)
+                    if copy.stream is not None
+                    else "nullptr"
+                )
                 async_arg = "true" if copy.async_ else "false"
                 f.write(
                     "    if (!lupine_deviceptrs_share_route({dst}, {src})) {{\n".format(
-                        dst=copy.dst.name,
-                        src=copy.src.name,
+                        dst=client_param_expr(metadata, copy.dst),
+                        src=client_param_expr(metadata, copy.src),
                     )
                 )
                 f.write(
                     "        return lupine_cuMemcpyDtoD_via_client({dst}, {src}, {bytes}, {stream}, {async_});\n".format(
-                        dst=copy.dst.name,
-                        src=copy.src.name,
-                        bytes=copy.bytes.name,
+                        dst=client_param_expr(metadata, copy.dst),
+                        src=client_param_expr(metadata, copy.src),
+                        bytes=client_param_expr(metadata, copy.bytes),
                         stream=stream_arg,
                         async_=async_arg,
                     )
@@ -2263,12 +1495,13 @@ def main():
                     return_type=function.return_type.format()
                 )
             )
-            if name == "cuCtxDestroy_v2":
-                f.write("    CUcontext current_context = nullptr;\n")
-                f.write("    bool was_current_context =\n")
-                f.write("        lupine_cuCtxGetCurrent_virtual(&current_context) == CUDA_SUCCESS &&\n")
-                f.write("        current_context == ctx;\n")
-                f.write("    if (was_current_context) {\n")
+            if function.name.format() == "cuCtxDestroy_v2":
+                # Destroying the current context implicitly pops it; mirror
+                # that in the client's virtual context state before the call.
+                f.write("    CUcontext lupine_current_before_destroy = nullptr;\n")
+                f.write("    if (lupine_cuCtxGetCurrent_virtual(&lupine_current_before_destroy) ==\n")
+                f.write("            CUDA_SUCCESS &&\n")
+                f.write("        lupine_current_before_destroy == ctx) {\n")
                 f.write("        lupine_cuCtxSetCurrent_virtual(nullptr);\n")
                 f.write("    }\n")
             f.write(
@@ -2277,7 +1510,7 @@ def main():
                     params=", ".join([param.type.format() for param in function.parameters]),
                 )
             )
-            call_args = ", ".join(format_call_args(function))
+            call_args = ", ".join(client_call_args(function, metadata))
             helper_args = f", {call_args}" if call_args else ""
             f.write(
                 "    if (lupine_call_local_cuda_if_routed<real_fn_t>(\n"
@@ -2324,6 +1557,16 @@ def main():
                         )
                     )
 
+            # Reject invalid send buffers before rpc_write_start_request()
+            # acquires the connection's call/write locks. Conditions in the
+            # builder below may skip optional writes, but only rpc_write* calls
+            # themselves are allowed to fail the builder.
+            for operation in operations:
+                if isinstance(operation, ArrayOperation):
+                    operation.client_preflight(
+                        f, error_const(function.return_type.format())
+                    )
+
             if metadata.async_fire_forget:
                 # Fire-and-forget: send without waiting for a response.
                 f.write(
@@ -2333,16 +1576,14 @@ def main():
                     )
                 )
                 for operation in operations:
-                    operation.client_rpc_write(f)
+                    write_client_rpc_write(f, operation, metadata)
                 f.write("        rpc_write_end(conn) < 0) {\n")
-                f.write("        if (conn != nullptr) pthread_mutex_unlock(&conn->call_mutex);\n")
                 f.write(
                     "        return {error_return};\n".format(
                         error_return=error_const(function.return_type.format())
                     )
                 )
                 f.write("    }\n")
-                f.write("    pthread_mutex_unlock(&conn->call_mutex);\n")
                 f.write("    return CUDA_SUCCESS;\n")
                 f.write("}\n\n")
                 continue
@@ -2355,9 +1596,14 @@ def main():
             )
 
             for operation in operations:
-                operation.client_rpc_write(f)
+                write_client_rpc_write(f, operation, metadata)
 
             f.write("        rpc_wait_for_response(conn) < 0 ||\n")
+
+            if metadata.synchronize and metadata.synchronize.deferred_dtoh:
+                f.write("        lupine_read_deferred_dtoh_copies(conn) < 0 ||\n")
+            if metadata.synchronize and metadata.synchronize.stdout:
+                f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
 
             for operation in operations:
                 if isinstance(operation, ArrayOperation):
@@ -2384,6 +1630,8 @@ def main():
                     operation.client_post_rpc_read_success(f)
 
             f.write("    return return_value;\n")
+            if metadata.routing_kind == "ALL":
+                f.write("        });\n")
             f.write("}\n\n")
 
         function_by_name = {
@@ -2422,7 +1670,7 @@ def main():
 
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
-            if metadata.disabled_client:
+            if metadata.disabled_client and metadata.disabled_server:
                 continue
 
             f.write(
@@ -2465,44 +1713,28 @@ def main():
             "\n"
             "#include <cstring>\n"
             "#include <string>\n"
-            "#include <unordered_map>\n"
-            "#ifdef _WIN32\n"
-            "#include <io.h>\n"
-            "#define lupine_close_fd _close\n"
-            "#else\n"
-            "#include <unistd.h>\n"
-            "#define lupine_close_fd close\n"
-            "#endif\n\n"
+            "#include <unordered_map>\n\n"
             '#include "gen_api.h"\n\n'
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "gen_server.h"\n\n'
             '#include <cstdio>\n\n'
-            '#include "ipc.h"\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
-            name = function.name.format()
             if metadata.disabled_server:
                 continue
 
             # parse the annotation doxygen
             f.write(
                 "int handle_{name}(conn_t *conn)\n".format(
-                    name=name,
+                    name=function.name.format(),
                 )
             )
             f.write("{\n")
 
-            if name == "cuMemPoolCreate":
-                write_server_mem_pool_create(f)
-                continue
-            if name in IPC_SHAREABLE_HANDLE_FUNCTIONS:
-                write_server_ipc_shareable_handle(f, name)
-                continue
-
-            defers = []
+            owned_buffers = []
 
             for operation in operations:
                 f.write(operation.server_declaration)
@@ -2521,23 +1753,16 @@ def main():
 
             f.write("    if (\n")
             for operation in operations:
-                if (
-                    isinstance(operation, NullTerminatedOperation)
-                    or isinstance(operation, ArrayOperation)
-                    or isinstance(operation, OptionalArrayOperation)
-                ):
-                    if error := operation.server_rpc_read(f, len(defers)):
-                        defers.append(error)
-                else:
-                    operation.server_rpc_read(f)
+                if owned_buffer := operation.server_rpc_read(f):
+                    owned_buffers.append(owned_buffer)
             f.write("        false)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+            f.write("        goto ERROR_0;\n")
 
             f.write("\n")
 
             f.write("    request_id = rpc_read_end(conn);\n")
             f.write("    if (request_id < 0)\n")
-            f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+            f.write("        goto ERROR_0;\n")
 
             params: list[str] = []
             # these need to be in function param order, not operation order.
@@ -2565,6 +1790,7 @@ def main():
                 # Fire-and-forget: no response is sent.
                 f.write("    (void) lupine_intercept_result;\n")
                 f.write("\n")
+                write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return 0;\n")
             else:
                 f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
@@ -2578,14 +1804,13 @@ def main():
                     )
                 )
                 f.write("        rpc_write_end(conn) < 0)\n")
-                f.write("        goto ERROR_{index};\n".format(index=len(defers)))
+                f.write("        goto ERROR_0;\n")
                 f.write("\n")
+                write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return 0;\n")
 
-            for i, defer in enumerate(defers):
-                f.write("ERROR_{index}:\n".format(index=len(defers) - i))
-                f.write("    free((void *) {param_name});\n".format(param_name=defer))
             f.write("ERROR_0:\n")
+            write_server_buffer_cleanup(f, owned_buffers, "    ")
             f.write("    return -1;\n")
             f.write("}\n\n")
 

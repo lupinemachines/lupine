@@ -1,23 +1,42 @@
 #include "ipc.h"
 
+#ifdef _WIN32
+
+extern "C" int lupine_ipc_create_proxy_fd(uint32_t, const lupine_ipc_token *,
+                                          int *) {
+  return -1;
+}
+extern "C" int lupine_ipc_read_proxy_fd(int, uint32_t *, lupine_ipc_token *) {
+  return -1;
+}
+extern "C" int lupine_ipc_make_token(lupine_ipc_token *) { return -1; }
+extern "C" void lupine_ipc_set_broker_fd(int) {}
+extern "C" int lupine_ipc_broker_register_fd(uint32_t, const lupine_ipc_token *,
+                                             int) {
+  return -1;
+}
+extern "C" int lupine_ipc_broker_get_fd(uint32_t, const lupine_ipc_token *) {
+  return -1;
+}
+extern "C" int lupine_ipc_broker_parent_handle(int) { return -1; }
+
+#else
+
 #include <cerrno>
-#include <cstdlib>
-#include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
-#ifndef _WIN32
 #include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/random.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/syscall.h>
 #include <unistd.h>
-#endif
 
 namespace {
 
-constexpr uint64_t LUPINE_IPC_FD_MAGIC = 0x4446454e4950554cULL;
+constexpr uint64_t LUPINE_IPC_FD_MAGIC = 0x4446454e4950554cULL; // "LUPINEFD"
 constexpr uint32_t LUPINE_IPC_FD_VERSION = 1;
 
 struct lupine_ipc_fd_payload {
@@ -40,7 +59,10 @@ struct lupine_ipc_broker_msg {
   lupine_ipc_token token;
 };
 
-static thread_local int lupine_ipc_broker_fd = -1;
+// One broker socket per forked server child; RPC lanes share it, so requests
+// serialize under a mutex to keep each request/reply exchange atomic.
+int lupine_ipc_broker_fd = -1;
+std::mutex lupine_ipc_broker_mutex;
 
 std::string lupine_ipc_key(uint32_t kind, const lupine_ipc_token &token) {
   std::string key(reinterpret_cast<const char *>(&kind), sizeof(kind));
@@ -48,41 +70,7 @@ std::string lupine_ipc_key(uint32_t kind, const lupine_ipc_token &token) {
   return key;
 }
 
-#ifndef _WIN32
-ssize_t lupine_full_write(int fd, const void *data, size_t size) {
-  const char *ptr = static_cast<const char *>(data);
-  size_t done = 0;
-  while (done < size) {
-    ssize_t n = write(fd, ptr + done, size - done);
-    if (n < 0 && errno == EINTR) {
-      continue;
-    }
-    if (n <= 0) {
-      return -1;
-    }
-    done += static_cast<size_t>(n);
-  }
-  return static_cast<ssize_t>(done);
-}
-
-ssize_t lupine_full_read(int fd, void *data, size_t size) {
-  char *ptr = static_cast<char *>(data);
-  size_t done = 0;
-  while (done < size) {
-    ssize_t n = read(fd, ptr + done, size - done);
-    if (n < 0 && errno == EINTR) {
-      continue;
-    }
-    if (n <= 0) {
-      return -1;
-    }
-    done += static_cast<size_t>(n);
-  }
-  return static_cast<ssize_t>(done);
-}
-
-int lupine_send_broker_msg(int sock, const lupine_ipc_broker_msg &msg,
-                           int fd) {
+int lupine_send_broker_msg(int sock, const lupine_ipc_broker_msg &msg, int fd) {
   struct iovec iov = {const_cast<lupine_ipc_broker_msg *>(&msg), sizeof(msg)};
   char control[CMSG_SPACE(sizeof(int))] = {};
   struct msghdr hdr = {};
@@ -98,14 +86,14 @@ int lupine_send_broker_msg(int sock, const lupine_ipc_broker_msg &msg,
     memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
   }
   while (sendmsg(sock, &hdr, 0) < 0) {
-    if (errno == EINTR) {
-      continue;
+    if (errno != EINTR) {
+      return -1;
     }
-    return -1;
   }
   return 0;
 }
 
+// Receives one broker message; returns the attached fd or -1.
 int lupine_recv_broker_msg(int sock, lupine_ipc_broker_msg *msg) {
   struct iovec iov = {msg, sizeof(*msg)};
   char control[CMSG_SPACE(sizeof(int))] = {};
@@ -119,6 +107,7 @@ int lupine_recv_broker_msg(int sock, lupine_ipc_broker_msg *msg) {
     n = recvmsg(sock, &hdr, 0);
   } while (n < 0 && errno == EINTR);
   if (n != static_cast<ssize_t>(sizeof(*msg))) {
+    memset(msg, 0, sizeof(*msg));
     return -1;
   }
   int fd = -1;
@@ -132,7 +121,20 @@ int lupine_recv_broker_msg(int sock, lupine_ipc_broker_msg *msg) {
   }
   return fd;
 }
-#endif
+
+// Sends one request and waits for the parent's reply; returns the reply fd
+// or -1, with the reply message in *reply.
+int lupine_ipc_broker_exchange(const lupine_ipc_broker_msg &msg, int fd,
+                               lupine_ipc_broker_msg *reply) {
+  std::lock_guard<std::mutex> lock(lupine_ipc_broker_mutex);
+  if (lupine_ipc_broker_fd < 0 ||
+      lupine_send_broker_msg(lupine_ipc_broker_fd, msg, fd) < 0) {
+    memset(reply, 0, sizeof(*reply));
+    reply->status = -1;
+    return -1;
+  }
+  return lupine_recv_broker_msg(lupine_ipc_broker_fd, reply);
+}
 
 } // namespace
 
@@ -140,37 +142,18 @@ extern "C" int lupine_ipc_make_token(lupine_ipc_token *token) {
   if (token == nullptr) {
     return -1;
   }
-#ifndef _WIN32
-#ifdef SYS_getrandom
   size_t done = 0;
   while (done < sizeof(token->bytes)) {
-    ssize_t n = syscall(SYS_getrandom, token->bytes + done,
-                        sizeof(token->bytes) - done, 0);
-    if (n < 0 && errno == EINTR) {
-      continue;
-    }
+    ssize_t n = getrandom(token->bytes + done, sizeof(token->bytes) - done, 0);
     if (n < 0) {
-      break;
+      if (errno == EINTR) {
+        continue;
+      }
+      return -1;
     }
     done += static_cast<size_t>(n);
   }
-  if (done == sizeof(token->bytes)) {
-    return 0;
-  }
-#endif
-  int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    return -1;
-  }
-  int rc = lupine_full_read(fd, token->bytes, sizeof(token->bytes)) ==
-                   static_cast<ssize_t>(sizeof(token->bytes))
-               ? 0
-               : -1;
-  close(fd);
-  return rc;
-#else
-  return -1;
-#endif
+  return 0;
 }
 
 extern "C" int lupine_ipc_create_proxy_fd(uint32_t kind,
@@ -179,29 +162,22 @@ extern "C" int lupine_ipc_create_proxy_fd(uint32_t kind,
   if (token == nullptr || out_fd == nullptr) {
     return -1;
   }
-#ifndef _WIN32
-  char path[] = "/tmp/lupine-ipc-fd-XXXXXX";
-  int fd = mkstemp(path);
+  int fd = memfd_create("lupine-ipc-proxy", 0);
   if (fd < 0) {
     return -1;
   }
-  unlink(path);
   lupine_ipc_fd_payload payload = {};
   payload.magic = LUPINE_IPC_FD_MAGIC;
   payload.version = LUPINE_IPC_FD_VERSION;
   payload.kind = kind;
   payload.token = *token;
-  if (lupine_full_write(fd, &payload, sizeof(payload)) !=
-          static_cast<ssize_t>(sizeof(payload)) ||
-      lseek(fd, 0, SEEK_SET) < 0) {
+  if (pwrite(fd, &payload, sizeof(payload), 0) !=
+      static_cast<ssize_t>(sizeof(payload))) {
     close(fd);
     return -1;
   }
   *out_fd = fd;
   return 0;
-#else
-  return -1;
-#endif
 }
 
 extern "C" int lupine_ipc_read_proxy_fd(int fd, uint32_t *kind,
@@ -209,10 +185,8 @@ extern "C" int lupine_ipc_read_proxy_fd(int fd, uint32_t *kind,
   if (fd < 0 || kind == nullptr || token == nullptr) {
     return -1;
   }
-#ifndef _WIN32
   lupine_ipc_fd_payload payload = {};
-  if (lseek(fd, 0, SEEK_SET) < 0 ||
-      lupine_full_read(fd, &payload, sizeof(payload)) !=
+  if (pread(fd, &payload, sizeof(payload), 0) !=
           static_cast<ssize_t>(sizeof(payload)) ||
       payload.magic != LUPINE_IPC_FD_MAGIC ||
       payload.version != LUPINE_IPC_FD_VERSION) {
@@ -221,55 +195,39 @@ extern "C" int lupine_ipc_read_proxy_fd(int fd, uint32_t *kind,
   *kind = payload.kind;
   *token = payload.token;
   return 0;
-#else
-  return -1;
-#endif
 }
 
-extern "C" void lupine_ipc_set_broker_fd(int fd) {
-  lupine_ipc_broker_fd = fd;
-}
+extern "C" void lupine_ipc_set_broker_fd(int fd) { lupine_ipc_broker_fd = fd; }
 
 extern "C" int lupine_ipc_broker_register_fd(uint32_t kind,
                                              const lupine_ipc_token *token,
                                              int fd) {
-  if (token == nullptr || fd < 0 || lupine_ipc_broker_fd < 0) {
+  if (token == nullptr || fd < 0) {
     return -1;
   }
-#ifndef _WIN32
   lupine_ipc_broker_msg msg = {};
   msg.cmd = LUPINE_IPC_BROKER_REGISTER;
   msg.kind = kind;
   msg.token = *token;
-  if (lupine_send_broker_msg(lupine_ipc_broker_fd, msg, fd) < 0) {
-    return -1;
-  }
-  lupine_ipc_broker_msg reply = {};
-  int reply_fd = lupine_recv_broker_msg(lupine_ipc_broker_fd, &reply);
+  lupine_ipc_broker_msg reply;
+  int reply_fd = lupine_ipc_broker_exchange(msg, fd, &reply);
   if (reply_fd >= 0) {
     close(reply_fd);
   }
   return reply.status == 0 ? 0 : -1;
-#else
-  return -1;
-#endif
 }
 
 extern "C" int lupine_ipc_broker_get_fd(uint32_t kind,
                                         const lupine_ipc_token *token) {
-  if (token == nullptr || lupine_ipc_broker_fd < 0) {
+  if (token == nullptr) {
     return -1;
   }
-#ifndef _WIN32
   lupine_ipc_broker_msg msg = {};
   msg.cmd = LUPINE_IPC_BROKER_GET;
   msg.kind = kind;
   msg.token = *token;
-  if (lupine_send_broker_msg(lupine_ipc_broker_fd, msg, -1) < 0) {
-    return -1;
-  }
-  lupine_ipc_broker_msg reply = {};
-  int fd = lupine_recv_broker_msg(lupine_ipc_broker_fd, &reply);
+  lupine_ipc_broker_msg reply;
+  int fd = lupine_ipc_broker_exchange(msg, -1, &reply);
   if (reply.status != 0) {
     if (fd >= 0) {
       close(fd);
@@ -277,40 +235,32 @@ extern "C" int lupine_ipc_broker_get_fd(uint32_t kind,
     return -1;
   }
   return fd;
-#else
-  return -1;
-#endif
 }
 
 extern "C" int lupine_ipc_broker_parent_handle(int fd) {
-#ifndef _WIN32
+  // Shared across every child's broker socket so fds registered on one
+  // connection can be fetched from another.
   static std::unordered_map<std::string, int> fds;
-  lupine_ipc_broker_msg msg = {};
-  int received_fd = lupine_recv_broker_msg(fd, &msg);
-  if (received_fd < 0 && msg.cmd != LUPINE_IPC_BROKER_GET) {
-    return -1;
-  }
 
+  lupine_ipc_broker_msg msg;
+  int received_fd = lupine_recv_broker_msg(fd, &msg);
   lupine_ipc_broker_msg reply = {};
   reply.kind = msg.kind;
   reply.token = msg.token;
   std::string key = lupine_ipc_key(msg.kind, msg.token);
+
   if (msg.cmd == LUPINE_IPC_BROKER_REGISTER) {
     if (received_fd < 0) {
       reply.status = -1;
-    } else {
-      auto existing = fds.find(key);
-      if (existing != fds.end()) {
-        close(existing->second);
-      }
-      fds[key] = received_fd;
-      received_fd = -1;
-      reply.status = 0;
+      return lupine_send_broker_msg(fd, reply, -1);
     }
-    if (lupine_send_broker_msg(fd, reply, -1) < 0) {
-      return -1;
+    auto existing = fds.find(key);
+    if (existing != fds.end()) {
+      close(existing->second);
     }
-    return 0;
+    fds[key] = received_fd;
+    reply.status = 0;
+    return lupine_send_broker_msg(fd, reply, -1);
   }
   if (msg.cmd == LUPINE_IPC_BROKER_GET) {
     auto found = fds.find(key);
@@ -325,7 +275,6 @@ extern "C" int lupine_ipc_broker_parent_handle(int fd) {
     close(received_fd);
   }
   return -1;
-#else
-  return -1;
-#endif
 }
+
+#endif

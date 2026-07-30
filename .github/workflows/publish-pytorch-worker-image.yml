@@ -1,0 +1,141 @@
+name: Publish PyTorch Worker Image
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - main
+    paths:
+      - deploy/Dockerfile.pytorch-worker
+      - .github/workflows/publish-pytorch-worker-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: PyTorch worker image (CUDA ${{ matrix.cuda.version }} / ${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda:
+          - version: 13.1.0
+            torch_index: cu130
+          - version: 13.0.2
+            torch_index: cu130
+          - version: 12.9.1
+            torch_index: cu129
+          - version: 12.8.1
+            torch_index: cu128
+          - version: 12.6.2
+            torch_index: cu126
+        platform:
+          - arch: amd64
+            docker_platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            docker_platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Free runner disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/.ghcup /usr/share/swift
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare image tags
+        id: image-tags
+        run: |
+          set -euo pipefail
+          {
+            echo 'tags<<EOF'
+            echo 'ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:cuda-${{ matrix.cuda.version }}-${{ matrix.platform.arch }}'
+            if [ '${{ github.event_name }}' = 'release' ]; then
+              echo 'ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}-${{ matrix.platform.arch }}'
+              if [ '${{ matrix.cuda.version }}' = '13.1.0' ]; then
+                echo 'ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:${{ github.event.release.tag_name }}-${{ matrix.platform.arch }}'
+              fi
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish worker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile.pytorch-worker
+          platforms: ${{ matrix.platform.docker_platform }}
+          push: true
+          build-args: |
+            CUDA_VERSION=${{ matrix.cuda.version }}
+            UBUNTU_VERSION=24.04
+            TORCH_CUDA_INDEX=${{ matrix.cuda.torch_index }}
+          tags: ${{ steps.image-tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  publish:
+    name: Publish PyTorch worker manifest (CUDA ${{ matrix.cuda.version }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda:
+          - version: 13.1.0
+          - version: 13.0.2
+          - version: 12.9.1
+          - version: 12.8.1
+          - version: 12.6.2
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish worker manifest
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:cuda-${{ matrix.cuda.version }}"
+          docker buildx imagetools create \
+            --tag "${image}" \
+            "${image}-amd64" \
+            "${image}-arm64"
+          if [ '${{ github.event_name }}' = 'release' ]; then
+            release_image="ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}"
+            docker buildx imagetools create \
+              --tag "${release_image}" \
+              "${release_image}-amd64" \
+              "${release_image}-arm64"
+            if [ '${{ matrix.cuda.version }}' = '13.1.0' ]; then
+              alias="ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:${{ github.event.release.tag_name }}"
+              docker buildx imagetools create \
+                --tag "${alias}" \
+                "${alias}-amd64" \
+                "${alias}-arm64"
+            fi
+          fi

@@ -1,6 +1,8 @@
 name: clang-format Check
 on:
   - pull_request
+permissions:
+  contents: read
 jobs:
   formatting-check:
     name: Formatting Check
@@ -14,7 +16,7 @@ jobs:
           git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}
       - name: Run clang-format on diff
         run: >
-          git diff --name-only origin/${{ github.base_ref }} | grep -E '\.(cpp|h|cu)$' > changed_files.txt || true
+          git diff --name-only origin/${{ github.base_ref }} | grep -E '\.(cpp|h|cu)$' | grep -v '^third_party/' > changed_files.txt || true
 
           while read file; do
             echo "Checking $file"

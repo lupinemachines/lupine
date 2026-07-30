@@ -22,7 +22,7 @@ class NullableOperation:
     ptr: Pointer
 
     def client_rpc_write(self, f):
-        if not self.send:
+        if not (self.send or self.recv):
             return
         f.write(
             "        rpc_write(conn, &{param_name}, sizeof({server_type})) < 0 ||\n".format(
@@ -31,6 +31,8 @@ class NullableOperation:
             )
         )
 
+        if not self.send:
+            return
         f.write(
             "        ({param_name} != nullptr && rpc_write(conn, {param_name}, sizeof({base_type})) < 0) ||\n".format(
                 param_name=self.parameter.name,
@@ -64,7 +66,7 @@ class NullableOperation:
         return s
 
     def server_rpc_read(self, f):
-        if not self.send:
+        if not (self.send or self.recv):
             return
         f.write(
             "        rpc_read(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
@@ -72,6 +74,8 @@ class NullableOperation:
                 server_type=self.ptr.format(),
             )
         )
+        if not self.send:
+            return
         f.write(
             "        ({param_name}_null_check && rpc_read(conn, &{param_name}, sizeof({base_type})) < 0) ||\n".format(
                 param_name=self.parameter.name,
@@ -168,6 +172,29 @@ class ArrayOperation:
         self.ptr.ptr_to.const = c
         return result
 
+    def client_preflight(self, f, error_return: str):
+        """Emit argument rejection before the request builder takes its locks.
+
+        Predicates inside client_rpc_write may decide whether an optional or
+        zero-length field is queued, but they must not reject the call after
+        rpc_write_start_request().
+        """
+        if (
+            self.iter
+            or not self.send
+            or isinstance(self.length, int)
+            or isinstance(self.ptr, Array)
+        ):
+            return
+        f.write(
+            "    if ({size} != 0 && {param_name} == nullptr)\n"
+            "        return {error_return};\n".format(
+                param_name=self.parameter.name,
+                size=self.transfer_size_expr(),
+                error_return=error_return,
+            )
+        )
+
     def client_rpc_write(self, f):
         if self.iter:
             loop_template = """
@@ -207,12 +234,6 @@ class ArrayOperation:
                 )
             )
         else:
-            f.write(
-                "        ({size} != 0 && {param_name} == nullptr) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
             f.write(
                 "        ({size} != 0 && {write_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
                     write_fn="rpc_write_payload" if self.compressible else "rpc_write",
@@ -318,13 +339,13 @@ class ArrayOperation:
         else:
             c = self.ptr.ptr_to.const
             self.ptr.ptr_to.const = False
-            s = f"    {self.ptr.format()} {self.parameter.name};\n"
+            s = f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
             if self.send:
                 s += f"    size_t {self.parameter.name}_size;\n"
             self.ptr.ptr_to.const = c
         return s
 
-    def server_rpc_read(self, f, index) -> Optional[str]:
+    def server_rpc_read(self, f) -> Optional[str]:
         if self.iter:
             lambda_template = """
             [=, &{param_name}]() -> bool {{
@@ -349,7 +370,7 @@ class ArrayOperation:
             # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
             if isinstance(self.ptr, Pointer):
                 f.write("        false)\n")
-                f.write("        goto ERROR_{index};\n".format(index=index))
+                f.write("        goto ERROR_0;\n")
                 f.write(
                     "    {param_name} = ({server_type})malloc({size});\n".format(
                         param_name=self.parameter.name,
@@ -357,12 +378,17 @@ class ArrayOperation:
                         size=self.transfer_size_expr(),
                     )
                 )
-                f.write("    if(")
+                f.write(
+                    "    if (({size} != 0 && {param_name} == nullptr) ||\n".format(
+                        param_name=self.parameter.name,
+                        size=self.transfer_size_expr(),
+                    )
+                )
                 return self.parameter.name
             return
         elif isinstance(self.ptr, Pointer):
             f.write("        false)\n")
-            f.write("        goto ERROR_{index};\n".format(index=index))
+            f.write("        goto ERROR_0;\n")
             f.write(
                 "    {param_name}_size = {size};\n".format(
                     param_name=self.parameter.name,
@@ -381,7 +407,7 @@ class ArrayOperation:
                     param_name=self.parameter.name
                 )
             )
-            f.write("        goto ERROR_{index};\n".format(index=index))
+            f.write("        goto ERROR_0;\n")
             f.write("    if(\n")
             f.write(
                 "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
@@ -390,7 +416,7 @@ class ArrayOperation:
                     size=f"{self.parameter.name}_size",
                 )
             )
-            defer = self.parameter.name
+            return self.parameter.name
         elif isinstance(self.length, int):
             f.write(
                 "        rpc_read(conn, &{param_name}, {size}) < 0 ||\n".format(
@@ -412,8 +438,8 @@ class ArrayOperation:
                     size=self.transfer_size_expr(),
                 )
             )
-        if 'defer' in locals():
-            return defer
+
+        return None
 
     @property
     def server_reference(self) -> str:
@@ -559,7 +585,7 @@ class OptionalArrayOperation:
             f"        rpc_write(conn, &{self.parameter.name}_present, sizeof(uint8_t)) < 0 ||\n"
         )
 
-    def server_rpc_read(self, f, index) -> Optional[str]:
+    def server_rpc_read(self, f) -> Optional[str]:
         elem = self.element_type()
         name = self.parameter.name
         count = self.count.name
@@ -567,13 +593,13 @@ class OptionalArrayOperation:
             f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
         )
         f.write("        false)\n")
-        f.write(f"        goto ERROR_{index};\n")
+        f.write("        goto ERROR_0;\n")
         f.write(f"    if ({name}_present && {count}_requested != 0) {{\n")
         f.write(
             f"        {name} = ({elem} *)malloc({count}_requested * sizeof({elem}));\n"
         )
         f.write(f"        if ({name} == nullptr)\n")
-        f.write(f"            goto ERROR_{index};\n")
+        f.write("            goto ERROR_0;\n")
         f.write("    }\n")
         f.write("    if (\n")
         return name
@@ -735,13 +761,15 @@ class NullTerminatedOperation:
     recv: bool
     parameter: Parameter
     ptr: Pointer
+    length_type: str = "std::size_t"
 
     def client_rpc_write(self, f):
         if not self.send:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
+            "        rpc_write(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
                 param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
         f.write(
@@ -753,8 +781,8 @@ class NullTerminatedOperation:
     @property
     def server_declaration(self) -> str:
         return (
-            f"    {self.ptr.format()} {self.parameter.name};\n"
-            + f"    std::size_t {self.parameter.name}_len;\n"
+            f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
+            + f"    {self.length_type} {self.parameter.name}_len;\n"
         )
 
     def client_unified_copy(self, f, direction, error):
@@ -765,15 +793,16 @@ class NullTerminatedOperation:
         )
         f.write("      return {error};\n".format(error=error))
 
-    def server_rpc_read(self, f, index) -> Optional[str]:
+    def server_rpc_read(self, f) -> Optional[str]:
         if not self.send:
-            return
+            return None
         f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof(std::size_t)) < 0)\n".format(
-                param_name=self.parameter.name
+            "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0)\n".format(
+                param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
-        f.write("        goto ERROR_{index};\n".format(index=index))
+        f.write("        goto ERROR_0;\n")
         f.write(
             "    {param_name} = ({server_type})malloc({param_name}_len);\n".format(
                 param_name=self.parameter.name,
@@ -781,7 +810,8 @@ class NullTerminatedOperation:
             )
         )
         f.write(
-            "    if (rpc_read(conn, (void *){param_name}, {param_name}_len) < 0 ||\n".format(
+            "    if (({param_name}_len != 0 && {param_name} == nullptr) ||\n"
+            "        rpc_read(conn, (void *){param_name}, {param_name}_len) < 0 ||\n".format(
                 param_name=self.parameter.name
             )
         )
@@ -795,8 +825,9 @@ class NullTerminatedOperation:
         if not self.recv:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
+            "        rpc_write(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
                 param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
         f.write(
@@ -809,8 +840,9 @@ class NullTerminatedOperation:
         if not self.recv:
             return
         f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof(std::size_t)) < 0 ||\n".format(
-                param_name=self.parameter.name
+            "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
+                param_name=self.parameter.name,
+                length_type=self.length_type,
             )
         )
         f.write(
@@ -1027,17 +1059,41 @@ class CrossServerCopyAnnotation:
 
 
 @dataclass
+class DevicePtrTranslationAnnotation:
+    parameter: Parameter
+
+
+@dataclass
+class RoutingFallbackAnnotation:
+    kind: str
+    parameter: Parameter
+
+
+@dataclass
+class SynchronizeAnnotation:
+    deferred_dtoh: bool = False
+    stdout: bool = False
+
+
+@dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
     disabled_client: bool = False
     disabled_server: bool = False
     # @async: fire-and-forget op; client does not wait, server sends no response.
     async_fire_forget: bool = False
+    # Optional response fields are emitted by the corresponding manual server
+    # handler before the generated CUDA result.
+    synchronize: Optional[SynchronizeAnnotation] = None
     routing_kind: Optional[str] = None
     routing_parameter: Optional[Parameter] = None
+    routing_fallback: Optional[RoutingFallbackAnnotation] = None
     record_owners: list[OwnerAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
+    translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
+        if self.translate_deviceptrs is None:
+            self.translate_deviceptrs = []
