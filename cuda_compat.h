@@ -46,6 +46,7 @@ CUresult cuGraphExecKernelNodeSetParams_v2(CUgraphExec, CUgraphNode,
                                            const CUDA_KERNEL_NODE_PARAMS *);
 CUresult cuKernelGetParamInfo(CUkernel, size_t, size_t *, size_t *);
 CUresult cuFuncGetParamInfo(CUfunction, size_t, size_t *, size_t *);
+CUresult cuKernelGetAttribute(int *, CUfunction_attribute, CUkernel, CUdevice);
 #ifdef __cplusplus
 }
 #endif
