@@ -238,12 +238,18 @@ class SidecarSession:
             stderr=subprocess.PIPE,
         )
         self._lock = threading.Lock()
-        self.info = self._request({"op": "ping"})
-        if not self.info.get("cuda_available"):
-            raise SidecarError(f"sidecar worker has no CUDA device: {self.info}")
-        _set_active_session(self)
-        self._mode = SidecarDispatchMode(self)
-        self._mode.__enter__()
+        try:
+            self.info = self._request({"op": "ping"})
+            if not self.info.get("cuda_available"):
+                raise SidecarError(f"sidecar worker has no CUDA device: {self.info}")
+            _set_active_session(self)
+            mode = SidecarDispatchMode(self)
+            mode.__enter__()
+            self._mode = mode
+        except BaseException:
+            # __exit__ never runs for a failed __enter__, so stop the worker here.
+            self.close()
+            raise
         atexit.register(self.close)
         return self
 
