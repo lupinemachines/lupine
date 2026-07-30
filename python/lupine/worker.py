@@ -187,6 +187,15 @@ def handle(request, input_stream, descriptions, output_tensors):
         input_tensors.clear()
 
 
+def response_header(response, output_tensors):
+    # Called inside the operation try block so a result JSON cannot encode
+    # answers with an error instead of stopping the worker.
+    response["tensor_streams"] = [
+        _tensor_stream_metadata(tensor, dtype) for tensor, dtype in output_tensors
+    ]
+    return json.dumps(response).encode("utf-8") + b"\n"
+
+
 def main():
     input_stream = sys.stdin.buffer
     output_stream = sys.stdout.buffer
@@ -211,29 +220,32 @@ def main():
             traceback.print_exc(file=sys.stderr)
             break
         try:
-            response = {
-                "ok": True,
-                "result": handle(
-                    request,
-                    input_stream,
-                    descriptions,
-                    output_tensors,
-                ),
-            }
+            header = response_header(
+                {
+                    "ok": True,
+                    "result": handle(
+                        request,
+                        input_stream,
+                        descriptions,
+                        output_tensors,
+                    ),
+                },
+                output_tensors,
+            )
         except TensorStreamError:
             traceback.print_exc(file=sys.stderr)
             break
         except Exception as exc:
             output_tensors = []
-            response = {
-                "ok": False,
-                "error": str(exc),
-                "traceback": traceback.format_exc(),
-            }
-        response["tensor_streams"] = [
-            _tensor_stream_metadata(tensor, dtype) for tensor, dtype in output_tensors
-        ]
-        _write_all(output_stream, json.dumps(response).encode("utf-8") + b"\n")
+            header = response_header(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(),
+                },
+                output_tensors,
+            )
+        _write_all(output_stream, header)
         for tensor, dtype in output_tensors:
             if tensor.device.type == "cpu":
                 _write_tensor(output_stream, tensor)
