@@ -54,9 +54,22 @@ int main() {
   // The payload lives on the client's stack. If its address rather than its
   // contents reaches the server, the server dereferences a client stack
   // address and dies.
-  unsigned int sync_memops = 1;
+  int sync_memops = 1;
   CHECK(cuPointerSetAttribute(&sync_memops, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
                               ptr));
+
+  // SYNC_MEMOPS is readable, so assert the value the driver now reports rather
+  // than trusting the status code. A set that transmitted the wrong bytes can
+  // still return CUDA_SUCCESS, so the status alone does not prove the payload
+  // crossed the wire intact.
+  int observed = -1;
+  CHECK(cuPointerGetAttribute(&observed, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
+                              ptr));
+  if (observed != 1) {
+    std::fprintf(stderr, "SYNC_MEMOPS read back as %d after setting 1\n",
+                 observed);
+    return 1;
+  }
 
   // Prove the connection is still alive after the set.
   size_t free_bytes = 0;
@@ -78,10 +91,20 @@ int main() {
     return 1;
   }
 
-  // Unsetting the attribute must work too.
+  // Unsetting the attribute must work too, and must be observable. Setting a
+  // different value and seeing it reflected rules out a stale or constant
+  // readback masking a broken payload.
   sync_memops = 0;
   CHECK(cuPointerSetAttribute(&sync_memops, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
                               ptr));
+  observed = -1;
+  CHECK(cuPointerGetAttribute(&observed, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
+                              ptr));
+  if (observed != 0) {
+    std::fprintf(stderr, "SYNC_MEMOPS read back as %d after setting 0\n",
+                 observed);
+    return 1;
+  }
   CHECK(cuMemGetInfo(&free_bytes, &total_bytes));
 
   // An attribute that cannot be set must fail cleanly rather than send garbage
