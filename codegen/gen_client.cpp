@@ -7446,6 +7446,61 @@ extern "C" CUresult cuMemAllocFromPoolAsync_ptsz(CUdeviceptr *dptr,
   return cuMemAllocFromPoolAsync(dptr, bytesize, pool, hStream);
 }
 
+extern "C" CUresult cuInit(unsigned int Flags);
+extern "C" CUresult cuDeviceGet(CUdevice *device, int ordinal);
+extern "C" CUresult cuDeviceGetCount(int *count);
+extern "C" CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
+                                                int *greatestPriority);
+extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
+                                    CUjit_option *options, void **optionValues,
+                                    CUlinkState *stateOut);
+extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
+                                     void *data, size_t size, const char *name,
+                                     unsigned int numOptions,
+                                     CUjit_option *options,
+                                     void **optionValues);
+extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
+                                     const char *path, unsigned int numOptions,
+                                     CUjit_option *options,
+                                     void **optionValues);
+extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
+                                   size_t *sizeOut);
+extern "C" CUresult cuLinkDestroy(CUlinkState state);
+extern "C" CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
+                                         CUkernel kernel, CUdevice dev);
+extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr);
+extern "C" CUresult cuMemAllocHost_v2(void **pp, size_t bytesize);
+extern "C" CUresult cuMemFreeHost(void *p);
+extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
+                                   unsigned int Flags);
+extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
+                                                 unsigned int Flags);
+extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
+                                      unsigned int flags);
+extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
+                                           CUpointer_attribute *attributes,
+                                           void **data, CUdeviceptr ptr);
+extern "C" CUresult cuStreamBeginCapture_v2(CUstream hStream,
+                                            CUstreamCaptureMode mode);
+extern "C" CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph);
+extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
+                                        CUstreamCaptureStatus *captureStatus);
+extern "C" CUresult
+cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
+                          unsigned int gridDimY, unsigned int gridDimZ,
+                          unsigned int blockDimX, unsigned int blockDimY,
+                          unsigned int blockDimZ, unsigned int sharedMemBytes,
+                          CUstream hStream, void **kernelParams);
+extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
+                                          CUdevice peerDev);
+extern "C" CUresult cuCtxEnablePeerAccess(CUcontext peerContext,
+                                          unsigned int Flags);
+extern "C" CUresult cuCtxDisablePeerAccess(CUcontext peerContext);
+extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
+                                            CUdevice_P2PAttribute attrib,
+                                            CUdevice srcDevice,
+                                            CUdevice dstDevice);
+
 std::unordered_map<std::string, void *> functionMap = {
     {"cuInit", (void *)cuInit},
     {"cuDriverGetVersion", (void *)cuDriverGetVersion},

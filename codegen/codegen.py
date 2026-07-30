@@ -1656,6 +1656,28 @@ def main():
             if guard is not None:
                 f.write("#endif\n\n")
 
+        # Client-disabled functions are implemented by hand elsewhere, so this
+        # file has no definition to double as their declaration, yet functionMap
+        # below still takes their address. cuda.h only declares APIs that exist
+        # in the toolkit being compiled against, so for anything newer than the
+        # oldest supported CUDA that reference does not compile. Declare them
+        # here rather than relying on cuda_compat.h being updated by hand.
+        hand_written = [
+            function
+            for function, _, _, metadata in functions_with_annotations
+            if metadata.disabled_client and not metadata.disabled_server
+        ]
+        for function in hand_written:
+            f.write(
+                'extern "C" {return_type} {name}({params});\n'.format(
+                    return_type=function.return_type.format(),
+                    name=function.name.format(),
+                    params=", ".join(format_function_params(function)),
+                )
+            )
+        if hand_written:
+            f.write("\n")
+
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
             if metadata.disabled_client and metadata.disabled_server:
