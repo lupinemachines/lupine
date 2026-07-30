@@ -70,11 +70,11 @@ def _normalize_server(host: str, port: int | None = None) -> str:
         )
     if not host.startswith("[") and host.count(":") > 1:
         host = f"[{host}]"
+    has_port = "]:" in host if host.startswith("[") else host.count(":") == 1
     if port is not None:
-        return f"{host}:{int(port)}"
-    if host.startswith("[") and "]:" in host:
-        return host
-    if host.count(":") == 1:
+        # An explicit port replaces the one in the host, as it does for URLs.
+        return f"{host.rsplit(':', 1)[0] if has_port else host}:{int(port)}"
+    if has_port:
         return host
     return f"{host}:{DEFAULT_PORT}"
 

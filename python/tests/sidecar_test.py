@@ -194,6 +194,35 @@ def test_sidecar_explicit_image_skips_server_probe(monkeypatch):
     assert session._worker_image() == "registry.example/worker:custom"
 
 
+def test_sidecar_stops_the_worker_when_startup_fails(monkeypatch):
+    tensor_support._ensure_registered()
+    session = sidecar.SidecarSession(
+        server="host-a:14833",
+        image="registry.example/worker:custom",
+    )
+    workers = []
+
+    class Launcher:
+        @staticmethod
+        def command(script):
+            return [sys.executable, "-c", "import sys; sys.stdin.read()"]
+
+    def without_cuda(self, payload, input_tensors=(), *, decode_result=False):
+        workers.append(self._proc)
+        return {"cuda_available": False}
+
+    monkeypatch.setattr(sidecar, "prepare_runtime", lambda *args, **kwargs: Launcher())
+    monkeypatch.setattr(sidecar.SidecarSession, "_request", without_cuda)
+
+    with pytest.raises(sidecar.SidecarError, match="no CUDA device"):
+        with session:
+            pytest.fail("session unexpectedly started without CUDA")
+
+    assert workers[0].poll() is not None
+    assert session._proc is None
+    assert tensor_support._get_active_session() is None
+
+
 def test_sidecar_dispatch_mode_forwards_factory_ops(monkeypatch):
     tensor_support._ensure_registered()
     session = sidecar.SidecarSession(server="host-a:14833")
