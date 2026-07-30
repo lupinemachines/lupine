@@ -314,6 +314,17 @@ def test_bare_ipv6_host_gets_bracketed(lupine_module):
     assert lupine._normalize_server("[::1]:14833") == "[::1]:14833"
 
 
+def test_explicit_port_replaces_the_host_port(lupine_module):
+    lupine, _ = lupine_module
+
+    assert lupine._normalize_server("host-a", 9443) == "host-a:9443"
+    assert lupine._normalize_server("host-a:14833", 9443) == "host-a:9443"
+    assert lupine._normalize_server("[::1]:14833", 9443) == "[::1]:9443"
+
+    with lupine.connect(host="host-a:14833", port=9443) as session:
+        assert session.servers == ("host-a:9443",)
+
+
 def test_url_server_endpoint_is_preserved(lupine_module):
     lupine, _ = lupine_module
 
