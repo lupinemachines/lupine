@@ -159,34 +159,6 @@ extern "C" nvmlReturn_t nvmlDeviceGetHandleByPciBusId_v2(const char *pciBusId,
       });
 }
 
-static nvmlReturn_t lupine_rpc_nvmlDeviceGetUUID(conn_t *conn,
-                                                 nvmlDevice_t device,
-                                                 char *uuid,
-                                                 unsigned int length) {
-  nvmlReturn_t return_value = rpc_error();
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_nvmlDeviceGetUUID) < 0 ||
-      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
-      rpc_write(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_read(conn, uuid, length * sizeof(char)) < 0) ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetUUID(nvmlDevice_t device, char *uuid,
-                                          unsigned int length) {
-  if ((length * sizeof(char) != 0 && uuid == nullptr)) {
-    return NVML_ERROR_INVALID_ARGUMENT;
-  }
-  conn_t *conn = connection_for_device(&device);
-  return lupine_rpc_nvmlDeviceGetUUID(conn, device, uuid, length);
-}
-
 static nvmlReturn_t
 lupine_rpc_nvmlDeviceGetMinorNumber(conn_t *conn, nvmlDevice_t device,
                                     unsigned int *minorNumber) {
@@ -210,31 +182,6 @@ extern "C" nvmlReturn_t nvmlDeviceGetMinorNumber(nvmlDevice_t device,
   }
   conn_t *conn = connection_for_device(&device);
   return lupine_rpc_nvmlDeviceGetMinorNumber(conn, device, minorNumber);
-}
-
-static nvmlReturn_t lupine_rpc_nvmlDeviceGetPciInfo_v3(conn_t *conn,
-                                                       nvmlDevice_t device,
-                                                       nvmlPciInfo_t *pci) {
-  nvmlReturn_t return_value = rpc_error();
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_nvmlDeviceGetPciInfo_v3) < 0 ||
-      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pci, sizeof(nvmlPciInfo_t)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetPciInfo_v3(nvmlDevice_t device,
-                                                nvmlPciInfo_t *pci) {
-  if (pci == nullptr) {
-    return NVML_ERROR_INVALID_ARGUMENT;
-  }
-  conn_t *conn = connection_for_device(&device);
-  return lupine_rpc_nvmlDeviceGetPciInfo_v3(conn, device, pci);
 }
 
 static nvmlReturn_t lupine_rpc_nvmlDeviceGetMemoryInfo(conn_t *conn,

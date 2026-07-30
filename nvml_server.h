@@ -5,6 +5,8 @@
 
 #include "codegen/gen_nvml_server.h"
 
+int handle_nvmlInit_v2(conn_t *conn);
+int handle_nvmlInitWithFlags(conn_t *conn);
 int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn);
 int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn);
 int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn);

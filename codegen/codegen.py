@@ -171,6 +171,8 @@ NVML_RPC_FUNCTIONS = [
 ]
 
 NVML_MANUAL_SERVER_FUNCTIONS = {
+    "nvmlInit_v2",
+    "nvmlInitWithFlags",
     "nvmlDeviceGetComputeRunningProcesses",
     "nvmlDeviceGetComputeRunningProcesses_v2",
     "nvmlDeviceGetGraphicsRunningProcesses",

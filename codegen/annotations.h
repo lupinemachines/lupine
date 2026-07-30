@@ -249,6 +249,7 @@ nvmlReturn_t nvmlDeviceGetP2PStatus(nvmlDevice_t device1, nvmlDevice_t device2,
                                     nvmlGpuP2PCapsIndex_t p2pIndex,
                                     nvmlGpuP2PStatus_t *p2pStatus);
 /**
+ * @disabled client - served from the device enumeration cache
  * @param device SEND_ONLY
  * @param length SEND_ONLY
  * @param uuid RECV_ONLY LENGTH:length
@@ -321,6 +322,7 @@ nvmlReturn_t nvmlDeviceGetDisplayActive(nvmlDevice_t device,
 nvmlReturn_t nvmlDeviceGetPersistenceMode(nvmlDevice_t device,
                                           nvmlEnableState_t *mode);
 /**
+ * @disabled client - served from the device enumeration cache
  * @param device SEND_ONLY
  * @param pci RECV_ONLY
  */

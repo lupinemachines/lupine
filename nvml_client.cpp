@@ -47,11 +47,26 @@ conn_t conns[16] = {};
 int nconns = 0;
 bool connected = false;
 
+// Fixed wire size for the name/UUID strings in the nvmlInit device
+// enumeration payload, independent of the NVML headers either side was built
+// against.
+constexpr unsigned int kEnumerateIdentifierLength = 96;
+
 struct lupine_nvml_remote_device {
   unsigned int conn_index = 0;
   unsigned int remote_index = 0;
   nvmlDevice_t remote_device = nullptr;
   std::string server_label;
+  // Identity fields shipped alongside the nvmlInit response. identity_cached
+  // stays false when the device table was built without nvmlInit, in which
+  // case identity queries fall back to per-call RPCs.
+  bool identity_cached = false;
+  nvmlReturn_t name_status = NVML_ERROR_UNKNOWN;
+  nvmlReturn_t uuid_status = NVML_ERROR_UNKNOWN;
+  nvmlReturn_t pci_status = NVML_ERROR_UNKNOWN;
+  char name[kEnumerateIdentifierLength] = {};
+  char uuid[kEnumerateIdentifierLength] = {};
+  nvmlPciInfo_t pci = {};
 };
 
 std::vector<lupine_nvml_remote_device> devices;
@@ -340,6 +355,79 @@ nvmlReturn_t call_device_from_index_on(conn_t *c, int op, unsigned int index,
   return result;
 }
 
+// Reads the device enumeration payload that follows a successful nvmlInit
+// response. Returns -1 on a transport error, 0 when the server's enumeration
+// failed, and 1 when `out` was extended with this connection's devices.
+int read_enumeration(conn_t *c, unsigned int conn_index,
+                     std::vector<lupine_nvml_remote_device> *out) {
+  nvmlReturn_t enum_result = rpc_error();
+  unsigned int count = 0;
+  if (rpc_read(c, &enum_result, sizeof(enum_result)) < 0 ||
+      rpc_read(c, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+  const std::string &server_label =
+      conn_index < conn_labels.size() ? conn_labels[conn_index] : "";
+  for (unsigned int i = 0; i < count; ++i) {
+    lupine_nvml_remote_device device;
+    device.conn_index = conn_index;
+    device.remote_index = i;
+    device.server_label = server_label;
+    device.identity_cached = true;
+    if (rpc_read(c, &device.remote_device, sizeof(device.remote_device)) < 0 ||
+        rpc_read(c, &device.name_status, sizeof(device.name_status)) < 0 ||
+        rpc_read(c, device.name, sizeof(device.name)) < 0 ||
+        rpc_read(c, &device.uuid_status, sizeof(device.uuid_status)) < 0 ||
+        rpc_read(c, device.uuid, sizeof(device.uuid)) < 0 ||
+        rpc_read(c, &device.pci_status, sizeof(device.pci_status)) < 0 ||
+        rpc_read(c, &device.pci, sizeof(device.pci)) < 0) {
+      return -1;
+    }
+    out->push_back(device);
+  }
+  return enum_result == NVML_SUCCESS ? 1 : 0;
+}
+
+// Sends nvmlInit_v2 or nvmlInitWithFlags to every connection and populates
+// the device table from the enumeration payload piggybacked on each response.
+nvmlReturn_t init_connections(int op, const unsigned int *flags) {
+  if (open_connection() < 0) {
+    return rpc_error();
+  }
+  std::vector<lupine_nvml_remote_device> enumerated;
+  bool ready = true;
+  nvmlReturn_t first_error = NVML_SUCCESS;
+  for (int i = 0; i < nconns; ++i) {
+    conn_t *c = &conns[i];
+    nvmlReturn_t result = rpc_error();
+    int enum_status = 1;
+    if (rpc_write_start_request(c, op) < 0 ||
+        (flags != nullptr && rpc_write(c, flags, sizeof(*flags)) < 0) ||
+        rpc_wait_for_response(c) < 0 ||
+        rpc_read(c, &result, sizeof(result)) < 0 ||
+        (result == NVML_SUCCESS &&
+         (enum_status = read_enumeration(c, static_cast<unsigned int>(i),
+                                         &enumerated)) < 0) ||
+        rpc_read_end(c) < 0) {
+      result = rpc_error();
+    }
+    if (result != NVML_SUCCESS || enum_status != 1) {
+      ready = false;
+    }
+    if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
+      first_error = result;
+    }
+  }
+  if (ready) {
+    devices = std::move(enumerated);
+    devices_ready = true;
+  } else {
+    devices.clear();
+    devices_ready = false;
+  }
+  return first_error;
+}
+
 nvmlReturn_t ensure_devices() {
   if (open_connection() < 0) {
     return rpc_error();
@@ -436,6 +524,23 @@ conn_t *connection_for_device(nvmlDevice_t *device) {
 }
 
 nvmlReturn_t call_no_args(int op) { return call_no_args_on(connection(), op); }
+
+nvmlReturn_t copy_identifier(nvmlReturn_t status, const char *value, char *out,
+                             unsigned int length) {
+  if (status != NVML_SUCCESS) {
+    return status;
+  }
+  if (out == nullptr || length == 0) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  size_t used = strnlen(value, kEnumerateIdentifierLength);
+  if (used >= length) {
+    return NVML_ERROR_INSUFFICIENT_SIZE;
+  }
+  memcpy(out, value, used);
+  out[used] = '\0';
+  return NVML_SUCCESS;
+}
 
 nvmlReturn_t call_device_string(int op, nvmlDevice_t device, char *value,
                                 unsigned int length) {
@@ -571,44 +676,13 @@ nvmlReturn_t call_device_register_events(nvmlDevice_t device,
 #include "codegen/gen_nvml_client.inc"
 
 extern "C" nvmlReturn_t nvmlInit_v2(void) {
-  if (open_connection() < 0) {
-    return rpc_error();
-  }
-  nvmlReturn_t first_error = NVML_SUCCESS;
-  for (int i = 0; i < nconns; ++i) {
-    nvmlReturn_t result = call_no_args_on(&conns[i], RPC_nvmlInit_v2);
-    if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
-      first_error = result;
-    }
-  }
-  devices_ready = false;
-  devices.clear();
-  return first_error;
+  return init_connections(RPC_nvmlInit_v2, nullptr);
 }
 
 extern "C" nvmlReturn_t nvmlInit(void) { return nvmlInit_v2(); }
 
 extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
-  if (open_connection() < 0) {
-    return rpc_error();
-  }
-  nvmlReturn_t first_error = NVML_SUCCESS;
-  for (int i = 0; i < nconns; ++i) {
-    conn_t *c = &conns[i];
-    nvmlReturn_t result = rpc_error();
-    if (rpc_write_start_request(c, RPC_nvmlInitWithFlags) < 0 ||
-        rpc_write(c, &flags, sizeof(flags)) < 0 ||
-        rpc_wait_for_response(c) < 0 ||
-        rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-      result = rpc_error();
-    }
-    if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
-      first_error = result;
-    }
-  }
-  devices_ready = false;
-  devices.clear();
-  return first_error;
+  return init_connections(RPC_nvmlInitWithFlags, &flags);
 }
 
 extern "C" nvmlReturn_t nvmlShutdown(void) {
@@ -767,13 +841,21 @@ extern "C" nvmlReturn_t nvmlDeviceGetHandleByPciBusId(const char *pciBusId,
 
 extern "C" nvmlReturn_t nvmlDeviceGetName(nvmlDevice_t device, char *name,
                                           unsigned int length) {
-  nvmlReturn_t result =
-      call_device_string(RPC_nvmlDeviceGetName, device, name, length);
+  nvmlReturn_t result = ensure_devices();
+  if (result != NVML_SUCCESS) {
+    return result;
+  }
+  auto *cached = mapped_device(device);
+  if (cached != nullptr && cached->identity_cached) {
+    result = copy_identifier(cached->name_status, cached->name, name, length);
+  } else {
+    result = call_device_string(RPC_nvmlDeviceGetName, device, name, length);
+  }
   if (result != NVML_SUCCESS || name == nullptr || length == 0) {
     return result;
   }
 
-  auto *mapped = mapped_device(device);
+  auto *mapped = cached;
   if (mapped == nullptr || mapped->server_label.empty()) {
     return result;
   }
@@ -786,6 +868,47 @@ extern "C" nvmlReturn_t nvmlDeviceGetName(nvmlDevice_t device, char *name,
   if (used + 1 < length) {
     snprintf(name + used, length - used, " (via lupine %s)",
              mapped->server_label.c_str());
+  }
+  return result;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetUUID(nvmlDevice_t device, char *uuid,
+                                          unsigned int length) {
+  nvmlReturn_t result = ensure_devices();
+  if (result != NVML_SUCCESS) {
+    return result;
+  }
+  auto *cached = mapped_device(device);
+  if (cached != nullptr && cached->identity_cached) {
+    return copy_identifier(cached->uuid_status, cached->uuid, uuid, length);
+  }
+  return call_device_string(RPC_nvmlDeviceGetUUID, device, uuid, length);
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetPciInfo_v3(nvmlDevice_t device,
+                                                nvmlPciInfo_t *pci) {
+  if (pci == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  nvmlReturn_t result = ensure_devices();
+  if (result != NVML_SUCCESS) {
+    return result;
+  }
+  auto *cached = mapped_device(device);
+  if (cached != nullptr && cached->identity_cached) {
+    if (cached->pci_status != NVML_SUCCESS) {
+      return cached->pci_status;
+    }
+    *pci = cached->pci;
+    return NVML_SUCCESS;
+  }
+  conn_t *c = connection_for_device(&device);
+  if (c == nullptr ||
+      rpc_write_start_request(c, RPC_nvmlDeviceGetPciInfo_v3) < 0 ||
+      rpc_write(c, &device, sizeof(device)) < 0 ||
+      rpc_wait_for_response(c) < 0 || rpc_read(c, pci, sizeof(*pci)) < 0 ||
+      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
+    return rpc_error();
   }
   return result;
 }

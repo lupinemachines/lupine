@@ -55,6 +55,96 @@ template <typename Fn> Fn nvml_symbol(const char *name) {
 #endif
 }
 
+// Fixed wire size for the name/UUID strings in the nvmlInit device
+// enumeration payload, independent of the NVML headers either side was built
+// against.
+constexpr unsigned int kEnumerateIdentifierLength = 96;
+
+struct enumerated_device {
+  nvmlDevice_t handle = nullptr;
+  nvmlReturn_t name_status = NVML_ERROR_UNKNOWN;
+  char name[kEnumerateIdentifierLength] = {};
+  nvmlReturn_t uuid_status = NVML_ERROR_UNKNOWN;
+  char uuid[kEnumerateIdentifierLength] = {};
+  nvmlReturn_t pci_status = NVML_ERROR_UNKNOWN;
+  nvmlPciInfo_t pci = {};
+};
+
+nvmlReturn_t enumerate_devices(std::vector<enumerated_device> *devices) {
+  using count_fn_t = nvmlReturn_t (*)(unsigned int *);
+  using handle_fn_t = nvmlReturn_t (*)(unsigned int, nvmlDevice_t *);
+  using string_fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
+  using pci_fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlPciInfo_t *);
+  count_fn_t count_fn = nvml_symbol<count_fn_t>("nvmlDeviceGetCount_v2");
+  handle_fn_t handle_fn =
+      nvml_symbol<handle_fn_t>("nvmlDeviceGetHandleByIndex_v2");
+  if (count_fn == nullptr || handle_fn == nullptr) {
+    return function_not_found();
+  }
+  unsigned int count = 0;
+  nvmlReturn_t result = count_fn(&count);
+  if (result != NVML_SUCCESS) {
+    return result;
+  }
+  string_fn_t name_fn = nvml_symbol<string_fn_t>("nvmlDeviceGetName");
+  string_fn_t uuid_fn = nvml_symbol<string_fn_t>("nvmlDeviceGetUUID");
+  pci_fn_t pci_fn = nvml_symbol<pci_fn_t>("nvmlDeviceGetPciInfo_v3");
+  for (unsigned int i = 0; i < count; ++i) {
+    enumerated_device device;
+    result = handle_fn(i, &device.handle);
+    if (result != NVML_SUCCESS) {
+      return result;
+    }
+    device.name_status =
+        name_fn == nullptr
+            ? function_not_found()
+            : name_fn(device.handle, device.name, sizeof(device.name));
+    device.uuid_status =
+        uuid_fn == nullptr
+            ? function_not_found()
+            : uuid_fn(device.handle, device.uuid, sizeof(device.uuid));
+    device.pci_status = pci_fn == nullptr ? function_not_found()
+                                          : pci_fn(device.handle, &device.pci);
+    devices->push_back(device);
+  }
+  return NVML_SUCCESS;
+}
+
+// The enumeration state must outlive rpc_write_end because rpc_write only
+// queues pointers, so the caller owns it for the duration of the response.
+struct enumeration_payload {
+  nvmlReturn_t result = NVML_ERROR_UNKNOWN;
+  unsigned int count = 0;
+  std::vector<enumerated_device> devices;
+};
+
+void build_enumeration(enumeration_payload *payload) {
+  payload->result = enumerate_devices(&payload->devices);
+  if (payload->result != NVML_SUCCESS) {
+    payload->devices.clear();
+  }
+  payload->count = static_cast<unsigned int>(payload->devices.size());
+}
+
+int write_enumeration(conn_t *conn, const enumeration_payload &payload) {
+  if (rpc_write(conn, &payload.result, sizeof(payload.result)) < 0 ||
+      rpc_write(conn, &payload.count, sizeof(payload.count)) < 0) {
+    return -1;
+  }
+  for (const enumerated_device &device : payload.devices) {
+    if (rpc_write(conn, &device.handle, sizeof(device.handle)) < 0 ||
+        rpc_write(conn, &device.name_status, sizeof(device.name_status)) < 0 ||
+        rpc_write(conn, device.name, sizeof(device.name)) < 0 ||
+        rpc_write(conn, &device.uuid_status, sizeof(device.uuid_status)) < 0 ||
+        rpc_write(conn, device.uuid, sizeof(device.uuid)) < 0 ||
+        rpc_write(conn, &device.pci_status, sizeof(device.pci_status)) < 0 ||
+        rpc_write(conn, &device.pci, sizeof(device.pci)) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 int handle_processes(conn_t *conn, const char *name) {
   nvmlDevice_t device = nullptr;
   unsigned int requested_count = 0;
@@ -99,6 +189,55 @@ int handle_processes(conn_t *conn, const char *name) {
 } // namespace
 
 #include "codegen/gen_nvml_server.inc"
+
+// The init responses carry the device enumeration and identity payload so a
+// fresh client learns every device handle, name, UUID, and PCI info without
+// paying one network round trip per query.
+int handle_nvmlInit_v2(conn_t *conn) {
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  using fn_t = nvmlReturn_t (*)();
+  fn_t fn = nvml_symbol<fn_t>("nvmlInit_v2");
+  nvmlReturn_t result = fn == nullptr ? function_not_found() : fn();
+  enumeration_payload payload;
+  if (result == NVML_SUCCESS) {
+    build_enumeration(&payload);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (result == NVML_SUCCESS && write_enumeration(conn, payload) < 0) ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_nvmlInitWithFlags(conn_t *conn) {
+  unsigned int flags = 0;
+  if (rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  using fn_t = nvmlReturn_t (*)(unsigned int);
+  fn_t fn = nvml_symbol<fn_t>("nvmlInitWithFlags");
+  nvmlReturn_t result = fn == nullptr ? function_not_found() : fn(flags);
+  enumeration_payload payload;
+  if (result == NVML_SUCCESS) {
+    build_enumeration(&payload);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (result == NVML_SUCCESS && write_enumeration(conn, payload) < 0) ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
 
 int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn) {
   return handle_processes(conn, "nvmlDeviceGetComputeRunningProcesses");
