@@ -108,6 +108,28 @@ policy for unkeyed connections; Lupine does not select a checkpoint directory.
 `LUPINE_CHECKPOINT_LIBRARY` can override the provider library path for a
 private deployment.
 
+## Connection Stability
+
+Each client/server connection is a single long-lived TCP stream. Long-running
+workloads sit idle for long stretches (between training steps, during host-side
+data loading, inside long kernels), and stateful middleboxes — cloud load
+balancers, NAT gateways, conntrack tables, firewalls — silently reap idle flows
+far sooner than the kernel's default 2-hour keepalive. The next RPC then fails
+fatally. Lupine keeps these connections alive and resilient without retrying
+RPCs (which would break CUDA semantics):
+
+- **TCP keepalive** is enabled on every connection (client *and* server) with a
+  60s idle interval, 15s between probes, and 3 unanswered probes before giving
+  up. Probes are sent only while idle, so active transfers pay no latency cost,
+  and a dead peer is detected in ~105s instead of hanging on the TCP
+  retransmit timer.
+- **Connect retry** rides out a server that is not reachable yet (e.g. still
+  provisioning): a connection is attempted a few times with exponential
+  backoff, and each attempt is bounded by a deadline so a packet-filtered port
+  is detected quickly rather than blocking for the full SYN-retransmit window.
+
+Socket buffer sizes are left to the OS, which auto-tunes on modern kernels.
+
 ## Trace Logging
 
 Set `LUPINE_TRACE` on the client, server, or both to enable trace logging.

@@ -647,8 +647,11 @@ int main() {
 #endif
 
 #ifndef _WIN32
-    int flag = 1;
-    setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    // TCP_NODELAY keeps small RPC frames latency-low; keepalive (and optional
+    // buffer sizing) keeps this long-lived connection from being silently
+    // reaped by a NAT/load-balancer/firewall during idle gaps. See
+    // lupine_socket_apply_transport_options.
+    lupine_socket_apply_transport_options(connfd);
 #endif
 
 #ifndef _WIN32

@@ -1,5 +1,7 @@
 #include "rpc.h"
+#include "lupine_log.h"
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cstdlib>
 #include <functional>
@@ -7,6 +9,75 @@
 #include <string.h>
 #include <thread>
 #include <vector>
+
+#ifndef _WIN32
+#include <netdb.h>
+#endif
+
+// lupine_tcp_connect resolves host:port and connects with a bounded retry
+// policy (see rpc.h). It only resolves and dials; the caller owns TLS setup
+// and the HTTP/2 session. A transiently unreachable server (e.g. still
+// provisioning) is retried with exponential backoff, and each attempt is
+// bounded by a deadline so a packet-filtered port cannot stall the loop for
+// minutes (the kernel's SYN retransmit backoff).
+lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
+  // Hardcoded connect policy: a few retries with exponential backoff to ride
+  // out a server that is still starting, each capped so a black-holed port is
+  // detected quickly instead of blocking for the full SYN-retransmit window.
+  constexpr int kMaxRetries = 5;
+  constexpr int kInitialBackoffMs = 1000;
+  constexpr int kMaxBackoffMs = 30000;
+  constexpr int kConnectTimeoutMs = 10000;
+
+  for (int attempt = 0;; ++attempt) {
+    addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *res = nullptr;
+    int gai_status = getaddrinfo(host, port, &hints, &res);
+    if (gai_status != 0 || res == nullptr) {
+      LUPINE_LOG_ERROR("Resolving "
+                       << host << " port " << port << " failed: "
+                       << (gai_status != 0 ? gai_strerror(gai_status)
+                                           : strerror(errno)));
+    } else {
+      for (addrinfo *ai = res; ai != nullptr; ai = ai->ai_next) {
+        lupine_socket_t sockfd =
+            socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sockfd == LUPINE_INVALID_SOCKET) {
+          continue;
+        }
+        lupine_socket_apply_transport_options(sockfd);
+        if (lupine_socket_connect_with_timeout(
+                sockfd, ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen),
+                kConnectTimeoutMs) == 0) {
+          freeaddrinfo(res);
+          return sockfd;
+        }
+        lupine_socket_close(sockfd);
+      }
+      freeaddrinfo(res);
+    }
+
+    if (attempt >= kMaxRetries) {
+      return LUPINE_INVALID_SOCKET;
+    }
+
+    int delay_ms = kInitialBackoffMs;
+    for (int i = 0; i < attempt && delay_ms < kMaxBackoffMs; ++i) {
+      delay_ms *= 2;
+    }
+    if (delay_ms > kMaxBackoffMs) {
+      delay_ms = kMaxBackoffMs;
+    }
+    LUPINE_LOG_ERROR("Connecting to "
+                     << host << " port " << port << " failed, retrying in "
+                     << delay_ms << "ms (" << (kMaxRetries - attempt)
+                     << " retries left)");
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+  }
+}
 
 extern void rpc_http2_destroy(conn_t *conn);
 
