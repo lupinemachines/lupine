@@ -195,6 +195,14 @@ else()
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
 
+    add_executable(ipc_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/ipc_test.cpp
+    )
+    target_link_libraries(ipc_test PRIVATE pthread)
+    add_test(NAME ipc_test COMMAND ipc_test)
+    set_tests_properties(ipc_test PROPERTIES TIMEOUT 10)
+
     add_library(test_lupinecr_provider SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_checkpoint_provider.c
     )
