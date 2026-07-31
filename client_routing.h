@@ -107,6 +107,7 @@ extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
                                                  conn_t *conn);
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
+extern "C" void lupine_forget_context_owner(CUcontext ctx);
 
 extern "C" void lupine_note_context_owner_route(CUcontext ctx,
                                                 lupine_route route);

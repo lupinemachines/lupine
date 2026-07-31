@@ -32,9 +32,5 @@ jobs:
 
       - name: Build and run CMake _test targets
         run: |
-          docker run --rm --entrypoint bash lupine-unit-tests -lc '
-            set -euo pipefail
-            cmake --build /opt/lupine/build --parallel
-            ctest --test-dir /opt/lupine/build \
-              --output-on-failure -R "_test$"
-          '
+          docker run --rm --entrypoint bash lupine-unit-tests -lc \
+            'BUILD_DIR=/opt/lupine/build /opt/lupine/test/run_unit_tests.sh'

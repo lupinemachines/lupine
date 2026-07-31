@@ -829,6 +829,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_flags(dev, flags);\n")
     if function.name.format() == "cuDevicePrimaryCtxReset_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
+    if function.name.format() == "cuCtxDestroy_v2":
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(ctx);\n")
     if function.name.format() in {
         "cuCtxDestroy_v2",
         "cuCtxDetach",
@@ -1289,6 +1291,7 @@ def main():
             'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
             'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
+            'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
             'extern "C" void lupine_invalidate_function_caches();\n'
             'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
             'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
@@ -1492,6 +1495,15 @@ def main():
                     return_type=function.return_type.format()
                 )
             )
+            if function.name.format() == "cuCtxDestroy_v2":
+                # Destroying the current context implicitly pops it; mirror
+                # that in the client's virtual context state before the call.
+                f.write("    CUcontext lupine_current_before_destroy = nullptr;\n")
+                f.write("    if (lupine_cuCtxGetCurrent_virtual(&lupine_current_before_destroy) ==\n")
+                f.write("            CUDA_SUCCESS &&\n")
+                f.write("        lupine_current_before_destroy == ctx) {\n")
+                f.write("        lupine_cuCtxSetCurrent_virtual(nullptr);\n")
+                f.write("    }\n")
             f.write(
                 "    using real_fn_t = {return_type} (*)({params});\n".format(
                     return_type=function.return_type.format(),

@@ -11,18 +11,23 @@
 #include <unordered_set>
 
 #ifndef _WIN32
+#include <algorithm>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
 #endif
 
 #include "checkpoint.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "copy_pipeline.h"
+#include "ipc.h"
 #include "lupine_log.h"
 #include "manual_server.h"
 #include "rpc.h"
@@ -120,6 +125,18 @@ lupine_manual_handlers() {
        {handle_manual_cuMemPoolSetAttribute, "cuMemPoolSetAttribute"}},
       {RPC_cuMemPoolGetAttribute,
        {handle_manual_cuMemPoolGetAttribute, "cuMemPoolGetAttribute"}},
+      {RPC_cuMemExportToShareableHandle,
+       {handle_manual_cuMemExportToShareableHandle,
+        "cuMemExportToShareableHandle"}},
+      {RPC_cuMemImportFromShareableHandle,
+       {handle_manual_cuMemImportFromShareableHandle,
+        "cuMemImportFromShareableHandle"}},
+      {RPC_cuMemPoolExportToShareableHandle,
+       {handle_manual_cuMemPoolExportToShareableHandle,
+        "cuMemPoolExportToShareableHandle"}},
+      {RPC_cuMemPoolImportFromShareableHandle,
+       {handle_manual_cuMemPoolImportFromShareableHandle,
+        "cuMemPoolImportFromShareableHandle"}},
       {RPC_cuPointerGetAttribute,
        {handle_manual_cuPointerGetAttribute, "cuPointerGetAttribute"}},
       {RPC_cuPointerSetAttribute,
@@ -561,6 +578,9 @@ int main() {
     exit(EXIT_FAILURE);
   }
   std::unordered_set<pid_t> connection_children;
+  // One broker socket per connection child; children park and fetch CUDA IPC
+  // shareable fds through the parent, which never touches CUDA (see ipc.h).
+  std::vector<int> broker_fds;
 #endif
 
   // Server loop
@@ -571,6 +591,33 @@ int main() {
     }
     if (lupine_parent_termination_requested != 0) {
       break;
+    }
+
+    // Wait for a new connection or a broker request from a child.
+    std::vector<struct pollfd> poll_fds;
+    poll_fds.push_back({sockfd, POLLIN, 0});
+    for (int broker_fd : broker_fds) {
+      poll_fds.push_back({broker_fd, POLLIN, 0});
+    }
+    if (poll(poll_fds.data(), poll_fds.size(), -1) < 0) {
+      if (errno != EINTR) {
+        LUPINE_LOG_ERROR("Server poll failed.");
+      }
+      continue;
+    }
+    for (size_t i = 1; i < poll_fds.size(); ++i) {
+      if ((poll_fds[i].revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
+        continue;
+      }
+      if (lupine_ipc_broker_parent_handle(poll_fds[i].fd) < 0) {
+        close(poll_fds[i].fd);
+        broker_fds.erase(
+            std::remove(broker_fds.begin(), broker_fds.end(), poll_fds[i].fd),
+            broker_fds.end());
+      }
+    }
+    if ((poll_fds[0].revents & POLLIN) == 0) {
+      continue;
     }
 #endif
     socklen_t len = sizeof(cli);
@@ -624,10 +671,20 @@ int main() {
       continue;
     }
 
+    int broker_pair[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, broker_pair) < 0) {
+      (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
+      LUPINE_LOG_ERROR("Server broker socketpair failed.");
+      lupine_socket_close(connfd);
+      continue;
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
       (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
       LUPINE_LOG_ERROR("Server fork failed.");
+      close(broker_pair[0]);
+      close(broker_pair[1]);
       lupine_socket_close(connfd);
       continue;
     }
@@ -638,6 +695,13 @@ int main() {
       (void)sigaction(SIGCHLD, &child_action, nullptr);
 
       lupine_socket_close(sockfd);
+      // Drop inherited parent ends of sibling broker sockets so the parent
+      // sees hangups when their owning children exit.
+      for (int broker_fd : broker_fds) {
+        close(broker_fd);
+      }
+      close(broker_pair[0]);
+      lupine_ipc_set_broker_fd(broker_pair[1]);
       if (!lupine_server_checkpoint_child_start(connfd)) {
         LUPINE_LOG_ERROR("Failed to initialize graceful child shutdown.");
         lupine_socket_close(connfd);
@@ -647,6 +711,8 @@ int main() {
       int checkpoint_result = client_handler(connfd);
       exit(checkpoint_result == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
     }
+    close(broker_pair[1]);
+    broker_fds.push_back(broker_pair[0]);
     connection_children.insert(pid);
     (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
     lupine_socket_close(connfd);

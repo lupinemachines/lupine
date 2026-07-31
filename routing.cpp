@@ -610,6 +610,11 @@ extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
   lupine_deviceptr_allocations().erase(ptr);
 }
 
+extern "C" void lupine_forget_context_owner(CUcontext ctx) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  lupine_owners<CUcontext>().erase(ctx);
+}
+
 template <typename Handle>
 static lupine_route lupine_route_for_known_owner(Handle handle) {
   if (handle == Handle{}) {

@@ -56,6 +56,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
@@ -75,6 +76,7 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.cpp
 )
 
@@ -89,6 +91,7 @@ set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
@@ -101,6 +104,7 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.h
 )
@@ -190,6 +194,14 @@ else()
     target_link_libraries(checkpoint_test PRIVATE pthread)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
+
+    add_executable(ipc_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/ipc_test.cpp
+    )
+    target_link_libraries(ipc_test PRIVATE pthread)
+    add_test(NAME ipc_test COMMAND ipc_test)
+    set_tests_properties(ipc_test PROPERTIES TIMEOUT 10)
 
     add_library(test_lupinecr_provider SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_checkpoint_provider.c

@@ -3134,19 +3134,14 @@ CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
 CUresult cuMemGetAccess(unsigned long long *flags,
                         const CUmemLocation *location, CUdeviceptr ptr);
 /**
- * @param shareableHandle SEND_RECV
- * @param handle SEND_ONLY
- * @param handleType SEND_ONLY
- * @param flags SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemExportToShareableHandle(void *shareableHandle,
                                       CUmemGenericAllocationHandle handle,
                                       CUmemAllocationHandleType handleType,
                                       unsigned long long flags);
 /**
- * @param handle SEND_RECV
- * @param osHandle SEND_RECV
- * @param shHandleType SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemImportFromShareableHandle(CUmemGenericAllocationHandle *handle,
                                         void *osHandle,
@@ -3240,20 +3235,13 @@ CUresult cuMemPoolDestroy(CUmemoryPool pool);
 CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
                                  CUmemoryPool pool, CUstream hStream);
 /**
- * @param handle_out SEND_RECV
- * @param pool SEND_ONLY
- * @param handleType SEND_ONLY
- * @param flags SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemPoolExportToShareableHandle(void *handle_out, CUmemoryPool pool,
                                           CUmemAllocationHandleType handleType,
                                           unsigned long long flags);
 /**
- * @recordowner MEMORY_POOL pool_out
- * @param pool_out SEND_RECV
- * @param handle SEND_RECV
- * @param handleType SEND_ONLY
- * @param flags SEND_ONLY
+ * @disabled both - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult
 cuMemPoolImportFromShareableHandle(CUmemoryPool *pool_out, void *handle,

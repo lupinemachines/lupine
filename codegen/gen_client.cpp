@@ -76,6 +76,7 @@ extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);
 extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);
 extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);
 extern "C" void lupine_invalidate_current_context_cache();
+extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
 extern "C" void lupine_invalidate_function_caches();
 extern "C" CUresult
 lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
@@ -541,9 +542,17 @@ CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
 CUresult cuCtxDestroy_v2(CUcontext ctx) {
   lupine_route route = lupine_route_for_context(ctx);
   CUresult return_value;
+  CUcontext lupine_current_before_destroy = nullptr;
+  if (lupine_cuCtxGetCurrent_virtual(&lupine_current_before_destroy) ==
+          CUDA_SUCCESS &&
+      lupine_current_before_destroy == ctx) {
+    lupine_cuCtxSetCurrent_virtual(nullptr);
+  }
   using real_fn_t = CUresult (*)(CUcontext);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxDestroy_v2",
                                                   &return_value, ctx)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_forget_destroyed_context(ctx);
     if (return_value == CUDA_SUCCESS)
       lupine_invalidate_current_context_cache();
     return return_value;
@@ -556,6 +565,8 @@ CUresult cuCtxDestroy_v2(CUcontext ctx) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_destroyed_context(ctx);
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_current_context_cache();
   return return_value;
