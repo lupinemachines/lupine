@@ -1186,7 +1186,7 @@ def main():
             if macro_name in emitted_macros:
                 return
             value = rpc_id(operation_name)
-            if value in seen_rpc_ids:
+            if value in seen_rpc_ids and seen_rpc_ids[value] != operation_name:
                 raise RuntimeError(
                     f"RPC id collision: {operation_name} and {seen_rpc_ids[value]} "
                     f"both hash to {value}"
