@@ -162,18 +162,14 @@ inline int lupine_fd_truncate(int fd, long length) {
 
 #include <algorithm>
 #include <cerrno>
-#include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <fcntl.h>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
-#include <thread>
 #include <unistd.h>
 
 using lupine_socket_t = int;
@@ -222,21 +218,6 @@ inline int lupine_fd_truncate(int fd, off_t length) {
 
 #endif
 
-// Parses a non-negative integer environment variable, returning `fallback`
-// when unset, empty, or invalid. Used by the transport-option helpers below.
-inline int lupine_env_int(const char *name, int fallback) {
-  const char *value = getenv(name);
-  if (value == nullptr || value[0] == '\0') {
-    return fallback;
-  }
-  char *end = nullptr;
-  long parsed = strtol(value, &end, 10);
-  if (end == value || *end != '\0' || parsed < 0) {
-    return fallback;
-  }
-  return static_cast<int>(parsed);
-}
-
 // lupine_socket_apply_transport_options sets the TCP options every lupine
 // connection uses:
 //
@@ -247,44 +228,34 @@ inline int lupine_env_int(const char *name, int fallback) {
 //     flows far sooner than the kernel's default 2-hour keepalive; a transient
 //     blip then surfaces as a fatal RPC error. Keepalive probes are emitted
 //     only while the connection is idle, so active transfers pay no latency.
-//   * Optional SO_SNDBUF/SO_RCVBUF for high-bandwidth, high-BDP transfers
-//     (the transport streams multi-MB GPU memcpy payloads).
+//     With the defaults a dead peer is detected in ~105s instead of hanging on
+//     the retransmit timer. Socket buffer sizing is left to the OS, which
+//     auto-tunes on modern kernels.
 //
-// Configure or disable with the LUPINE_TCP_* environment variables documented
-// in the README. Returns 0 on success, -1 on an invalid descriptor.
+// Returns 0 on success, -1 on an invalid descriptor.
 inline int lupine_socket_apply_transport_options(lupine_socket_t fd) {
   if (fd == LUPINE_INVALID_SOCKET) {
     return -1;
   }
 
+  // Seconds a connection may sit idle before the first keepalive probe, the
+  // interval between probes, and how many unanswered probes declare the peer
+  // dead. Chosen to keep NAT/load-balancer conntrack entries warm (60s is
+  // shorter than every common middlebox idle timeout) while bounding dead-peer
+  // detection to ~105s.
+  constexpr int kKeepidleSec = 60;
+  constexpr int kKeepintvlSec = 15;
+  constexpr int kKeepcnt = 3;
+
   int enabled = 1;
-  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char *>(&enabled),
-             sizeof(enabled));
-
-  int sndbuf = lupine_env_int("LUPINE_TCP_SNDBUF", 0);
-  if (sndbuf > 0) {
-    setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
-               reinterpret_cast<const char *>(&sndbuf), sizeof(sndbuf));
-  }
-  int rcvbuf = lupine_env_int("LUPINE_TCP_RCVBUF", 0);
-  if (rcvbuf > 0) {
-    setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
-               reinterpret_cast<const char *>(&rcvbuf), sizeof(rcvbuf));
-  }
-
-  // Keepalive is on by default: persistent RPC connections are exactly the
-  // workload that gets silently dropped, and idle probes never stall an
-  // active transfer. Set LUPINE_TCP_KEEPALIVE=0 to disable.
-  if (lupine_env_int("LUPINE_TCP_KEEPALIVE", 1) == 0) {
-    return 0;
-  }
-
+  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+             reinterpret_cast<const char *>(&enabled), sizeof(enabled));
   setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE,
              reinterpret_cast<const char *>(&enabled), sizeof(enabled));
 
-  int keepidle = lupine_env_int("LUPINE_TCP_KEEPIDLE", 60);
-  int keepintvl = lupine_env_int("LUPINE_TCP_KEEPINTVL", 15);
-  int keepcnt = lupine_env_int("LUPINE_TCP_KEEPCNT", 3);
+  int keepidle = kKeepidleSec;
+  int keepintvl = kKeepintvlSec;
+  int keepcnt = kKeepcnt;
 #ifdef _WIN32
   // SIO_KEEPALIVE_VALS sets the idle and probe intervals in one ioctl.
   tcp_keepalive ka;
@@ -295,8 +266,8 @@ inline int lupine_socket_apply_transport_options(lupine_socket_t fd) {
   WSAIoctl(fd, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0,
            &bytes_returned, nullptr, nullptr);
 #ifdef TCP_KEEPCNT
-  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT,
-             reinterpret_cast<const char *>(&keepcnt), sizeof(keepcnt));
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, reinterpret_cast<const char *>(&keepcnt),
+             sizeof(keepcnt));
 #endif
 #else
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE,

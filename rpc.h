@@ -82,10 +82,9 @@ extern void rpc_conn_destroy(conn_t *conn);
 // lupine_tcp_connect resolves host:port and returns a connected socket with
 // the standard transport options applied (TCP_NODELAY + keepalive; see
 // lupine_socket_apply_transport_options). A server that is not reachable yet
-// (e.g. still provisioning) can be retried with exponential backoff via
-// LUPINE_CONNECT_RETRIES / LUPINE_CONNECT_BACKOFF_MS, and each attempt is
-// bounded by LUPINE_CONNECT_TIMEOUT_MS so a packet-filtered port cannot stall
-// the loop for minutes. Returns the socket, or LUPINE_INVALID_SOCKET on
+// (e.g. still provisioning) is retried a few times with exponential backoff,
+// and each attempt is bounded by a deadline so a packet-filtered port cannot
+// stall the loop for minutes. Returns the socket, or LUPINE_INVALID_SOCKET on
 // permanent failure.
 extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port);
 

@@ -118,34 +118,17 @@ far sooner than the kernel's default 2-hour keepalive. The next RPC then fails
 fatally. Lupine keeps these connections alive and resilient without retrying
 RPCs (which would break CUDA semantics):
 
-- **TCP keepalive** is enabled by default on every connection (client *and*
-  server). Probes are sent only while the connection is idle, so active
-  transfers pay no latency cost. Disable or tune with:
-  - `LUPINE_TCP_KEEPALIVE` — `1` (default) to enable, `0` to disable.
-  - `LUPINE_TCP_KEEPIDLE` — seconds idle before the first probe (default `60`).
-  - `LUPINE_TCP_KEEPINTVL` — seconds between probes (default `15`).
-  - `LUPINE_TCP_KEEPCNT` — probes before declaring the peer dead (default `3`).
-    With the defaults a dead peer is detected in ~105s instead of hanging on
-    the TCP retransmit timer.
-- **Socket buffer sizing** is available for high-bandwidth, high-BDP transfers
-  (the transport streams multi-MB GPU payloads). Defaults are left to the OS:
-  - `LUPINE_TCP_SNDBUF` — send buffer bytes (0 = OS default).
-  - `LUPINE_TCP_RCVBUF` — receive buffer bytes (0 = OS default).
-- **Connect retry and timeout** make startup robust when the server is still
-  being provisioned or a port is packet-filtered. Each is opt-in:
-  - `LUPINE_CONNECT_RETRIES` — extra connect attempts after the first
-    (default `0`, i.e. fail fast as before).
-  - `LUPINE_CONNECT_BACKOFF_MS` — initial backoff, doubling up to 30s
-    (default `1000`).
-  - `LUPINE_CONNECT_TIMEOUT_MS` — per-attempt deadline so a black-holed port
-    cannot stall the loop for minutes (default `0` = blocking connect).
+- **TCP keepalive** is enabled on every connection (client *and* server) with a
+  60s idle interval, 15s between probes, and 3 unanswered probes before giving
+  up. Probes are sent only while idle, so active transfers pay no latency cost,
+  and a dead peer is detected in ~105s instead of hanging on the TCP
+  retransmit timer.
+- **Connect retry** rides out a server that is not reachable yet (e.g. still
+  provisioning): a connection is attempted a few times with exponential
+  backoff, and each attempt is bounded by a deadline so a packet-filtered port
+  is detected quickly rather than blocking for the full SYN-retransmit window.
 
-For example, to ride out a slow server start and keep NAT entries warm:
-
-```bash
-export LUPINE_CONNECT_RETRIES=10 LUPINE_CONNECT_TIMEOUT_MS=5000
-export LUPINE_TCP_KEEPIDLE=30 LUPINE_TCP_KEEPINTVL=10
-```
+Socket buffer sizes are left to the OS, which auto-tunes on modern kernels.
 
 ## Trace Logging
 

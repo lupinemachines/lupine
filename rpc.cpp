@@ -14,14 +14,20 @@
 #include <netdb.h>
 #endif
 
-// lupine_tcp_connect resolves host:port and connects with optional retry and
-// per-attempt timeout (see rpc.h). It only resolves and dials; the caller
-// owns TLS setup and the HTTP/2 session. Backoff is capped at 30s and sleeps
-// in bounded chunks so the process stays responsive to signals.
+// lupine_tcp_connect resolves host:port and connects with a bounded retry
+// policy (see rpc.h). It only resolves and dials; the caller owns TLS setup
+// and the HTTP/2 session. A transiently unreachable server (e.g. still
+// provisioning) is retried with exponential backoff, and each attempt is
+// bounded by a deadline so a packet-filtered port cannot stall the loop for
+// minutes (the kernel's SYN retransmit backoff).
 lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
-  int retries = lupine_env_int("LUPINE_CONNECT_RETRIES", 0);
-  int backoff_ms = lupine_env_int("LUPINE_CONNECT_BACKOFF_MS", 1000);
-  int timeout_ms = lupine_env_int("LUPINE_CONNECT_TIMEOUT_MS", 0);
+  // Hardcoded connect policy: a few retries with exponential backoff to ride
+  // out a server that is still starting, each capped so a black-holed port is
+  // detected quickly instead of blocking for the full SYN-retransmit window.
+  constexpr int kMaxRetries = 5;
+  constexpr int kInitialBackoffMs = 1000;
+  constexpr int kMaxBackoffMs = 30000;
+  constexpr int kConnectTimeoutMs = 10000;
 
   for (int attempt = 0;; ++attempt) {
     addrinfo hints;
@@ -45,7 +51,7 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
         lupine_socket_apply_transport_options(sockfd);
         if (lupine_socket_connect_with_timeout(
                 sockfd, ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen),
-                timeout_ms) == 0) {
+                kConnectTimeoutMs) == 0) {
           freeaddrinfo(res);
           return sockfd;
         }
@@ -54,20 +60,20 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
       freeaddrinfo(res);
     }
 
-    if (attempt >= retries) {
+    if (attempt >= kMaxRetries) {
       return LUPINE_INVALID_SOCKET;
     }
 
-    int delay_ms = backoff_ms;
-    for (int i = 0; i < attempt && delay_ms < 30000; ++i) {
+    int delay_ms = kInitialBackoffMs;
+    for (int i = 0; i < attempt && delay_ms < kMaxBackoffMs; ++i) {
       delay_ms *= 2;
     }
-    if (delay_ms > 30000) {
-      delay_ms = 30000;
+    if (delay_ms > kMaxBackoffMs) {
+      delay_ms = kMaxBackoffMs;
     }
     LUPINE_LOG_ERROR("Connecting to "
                      << host << " port " << port << " failed, retrying in "
-                     << delay_ms << "ms (" << (retries - attempt)
+                     << delay_ms << "ms (" << (kMaxRetries - attempt)
                      << " retries left)");
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
   }
