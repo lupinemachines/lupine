@@ -108,6 +108,45 @@ policy for unkeyed connections; Lupine does not select a checkpoint directory.
 `LUPINE_CHECKPOINT_LIBRARY` can override the provider library path for a
 private deployment.
 
+## Connection Stability
+
+Each client/server connection is a single long-lived TCP stream. Long-running
+workloads sit idle for long stretches (between training steps, during host-side
+data loading, inside long kernels), and stateful middleboxes — cloud load
+balancers, NAT gateways, conntrack tables, firewalls — silently reap idle flows
+far sooner than the kernel's default 2-hour keepalive. The next RPC then fails
+fatally. Lupine keeps these connections alive and resilient without retrying
+RPCs (which would break CUDA semantics):
+
+- **TCP keepalive** is enabled by default on every connection (client *and*
+  server). Probes are sent only while the connection is idle, so active
+  transfers pay no latency cost. Disable or tune with:
+  - `LUPINE_TCP_KEEPALIVE` — `1` (default) to enable, `0` to disable.
+  - `LUPINE_TCP_KEEPIDLE` — seconds idle before the first probe (default `60`).
+  - `LUPINE_TCP_KEEPINTVL` — seconds between probes (default `15`).
+  - `LUPINE_TCP_KEEPCNT` — probes before declaring the peer dead (default `3`).
+    With the defaults a dead peer is detected in ~105s instead of hanging on
+    the TCP retransmit timer.
+- **Socket buffer sizing** is available for high-bandwidth, high-BDP transfers
+  (the transport streams multi-MB GPU payloads). Defaults are left to the OS:
+  - `LUPINE_TCP_SNDBUF` — send buffer bytes (0 = OS default).
+  - `LUPINE_TCP_RCVBUF` — receive buffer bytes (0 = OS default).
+- **Connect retry and timeout** make startup robust when the server is still
+  being provisioned or a port is packet-filtered. Each is opt-in:
+  - `LUPINE_CONNECT_RETRIES` — extra connect attempts after the first
+    (default `0`, i.e. fail fast as before).
+  - `LUPINE_CONNECT_BACKOFF_MS` — initial backoff, doubling up to 30s
+    (default `1000`).
+  - `LUPINE_CONNECT_TIMEOUT_MS` — per-attempt deadline so a black-holed port
+    cannot stall the loop for minutes (default `0` = blocking connect).
+
+For example, to ride out a slow server start and keep NAT entries warm:
+
+```bash
+export LUPINE_CONNECT_RETRIES=10 LUPINE_CONNECT_TIMEOUT_MS=5000
+export LUPINE_TCP_KEEPIDLE=30 LUPINE_TCP_KEEPINTVL=10
+```
+
 ## Trace Logging
 
 Set `LUPINE_TRACE` on the client, server, or both to enable trace logging.

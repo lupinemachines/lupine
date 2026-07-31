@@ -504,26 +504,12 @@ static int lupine_connect_endpoint(conn_t *conn,
     return -1;
   }
 
-  addrinfo hints, *res = nullptr;
-  int sockfd = -1;
-  int flag = 1;
-  int gai_status = 0;
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
-  if ((gai_status = getaddrinfo(endpoint.host.c_str(), endpoint.port.c_str(),
-                                &hints, &res)) != 0 ||
-      (sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) <
-          0 ||
-      setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag,
-                 sizeof(flag)) < 0 ||
-      connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-    LUPINE_LOG_ERROR("Connecting to "
-                     << endpoint.host << " port " << endpoint.port
-                     << " failed: "
-                     << (gai_status != 0 ? gai_strerror(gai_status)
-                                         : strerror(errno)));
-    goto error;
+  lupine_socket_t sockfd =
+      lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str());
+  if (sockfd == LUPINE_INVALID_SOCKET) {
+    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
+                     << endpoint.port << " failed");
+    return -1;
   }
 
   rpc_write_queue_free(conn);
@@ -558,16 +544,16 @@ static int lupine_connect_endpoint(conn_t *conn,
         SSL_free(ssl);
       }
       LUPINE_LOG_ERROR("TLS handshake with " << endpoint.host << " failed");
-      close(sockfd);
-      goto error;
+      lupine_socket_close(sockfd);
+      return -1;
     }
 #else
     LUPINE_LOG_ERROR("LUPINE_SERVER entry "
                      << endpoint.host << ":" << endpoint.port
                      << " uses https:// but this client was built "
                         "without TLS support");
-    close(sockfd);
-    goto error;
+    lupine_socket_close(sockfd);
+    return -1;
 #endif
   }
   if (pthread_mutex_init(&conn->read_mutex, NULL) != 0 ||
@@ -577,20 +563,11 @@ static int lupine_connect_endpoint(conn_t *conn,
       rpc_http2_client_init(conn) < 0 ||
       pthread_create(&conn->read_thread, NULL, rpc_client_dispatch_thread,
                      (void *)conn) != 0) {
-    goto error;
+    lupine_socket_close(sockfd);
+    return -1;
   }
 
-  freeaddrinfo(res);
   return 0;
-
-error:
-  if (res != nullptr) {
-    freeaddrinfo(res);
-  }
-  if (sockfd != -1) {
-    close(sockfd);
-  }
-  return -1;
 }
 
 static void lupine_join_connection_threads(conn_t *conn) {
