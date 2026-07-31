@@ -1075,6 +1075,19 @@ class SynchronizeAnnotation:
     stdout: bool = False
 
 
+# @precall/@postcall/@onsuccess EXPR: a single C++ call statement injected
+# around the generated driver call. The expression is emitted verbatim (it may
+# reference parameter names, `route`, and `return_value`); anything needing
+# more than one call belongs in a named helper declared in client_hooks.h.
+@dataclass
+class HookAnnotation:
+    # "precall": before the call, both local and remote paths.
+    # "postcall": after the call, unconditionally.
+    # "onsuccess": after the call, only when return_value == CUDA_SUCCESS.
+    when: str
+    expr: str
+
+
 @dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
@@ -1091,9 +1104,12 @@ class FunctionAnnotationMetadata:
     record_owners: list[OwnerAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
+    hooks: list[HookAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
         if self.translate_deviceptrs is None:
             self.translate_deviceptrs = []
+        if self.hooks is None:
+            self.hooks = []

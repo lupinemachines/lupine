@@ -42,6 +42,16 @@ Generated wrappers can record ownership for handles returned by an API with
 `GRAPH_EXEC`, and `DEVICEPTR`. Ownership is recorded only after the CUDA call
 returns `CUDA_SUCCESS`.
 
+Client wrappers can inject side effects around the driver call with
+`@precall <expr>`, `@postcall <expr>`, and `@onsuccess <expr>`. The rest of
+the line is a single C++ call statement emitted verbatim into both the local
+and remote dispatch paths; it may reference parameter names, `route`, and
+`return_value` (`@onsuccess` wraps it in a `return_value == CUDA_SUCCESS`
+check, and hooks emit in annotation order). Hook helpers are declared in
+`client_hooks.h` and defined in manual client code; anything needing more
+than one call, or a null check on an output parameter, belongs inside a
+null-safe helper rather than in the expression.
+
 Some APIs need small, reusable behaviors beyond plain parameter send/receive
 layout. These should be expressed as annotations when the behavior is generic
 enough for more than one API or can be described without API-specific C++.

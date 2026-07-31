@@ -2039,6 +2039,7 @@ CUresult cuGetErrorName(CUresult error, const char **pStr);
  */
 CUresult cuInit(unsigned int Flags);
 /**
+ * @postcall lupine_apply_driver_version_override(driverVersion)
  * @param driverVersion RECV_ONLY
  */
 CUresult cuDriverGetVersion(int *driverVersion);
@@ -2091,6 +2092,7 @@ CUresult cuDeviceGetTexture1DLinearMaxWidth(size_t *maxWidthInElements,
                                             CUarray_format format,
                                             unsigned numChannels, CUdevice dev);
 /**
+ * @disabled client - manual client answers from the device attribute cache
  * @param pi RECV_ONLY
  * @param attrib SEND_ONLY
  * @param dev SEND_ONLY
@@ -2146,6 +2148,7 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev);
  */
 CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
 /**
+ * @onsuccess lupine_note_primary_context_active(dev)
  * @disabled server - manual server coordinates retained staging lifecycle
  * @recordowner CONTEXT pctx
  * @param pctx RECV_ONLY
@@ -2153,16 +2156,20 @@ CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
  */
 CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
 /**
+ * @onsuccess lupine_invalidate_primary_context_state(dev)
+ * @onsuccess lupine_invalidate_current_context_cache()
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
 /**
+ * @onsuccess lupine_note_primary_context_flags(dev, flags)
  * @param dev SEND_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 /**
+ * @disabled client - manual client answers from the primary context cache
  * @param dev SEND_ONLY
  * @param flags RECV_ONLY
  * @param active RECV_ONLY
@@ -2170,6 +2177,8 @@ CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
                                     int *active);
 /**
+ * @onsuccess lupine_invalidate_primary_context_state(dev)
+ * @onsuccess lupine_invalidate_current_context_cache()
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
@@ -2191,27 +2200,35 @@ CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice dev);
 CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
                         int numParams, unsigned int flags, CUdevice dev);
 /**
+ * @precall lupine_pop_context_if_current(ctx)
+ * @onsuccess lupine_forget_destroyed_context(ctx)
+ * @onsuccess lupine_invalidate_current_context_cache()
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxDestroy_v2(CUcontext ctx);
 /**
+ * @disabled client - manual client tracks the virtual current context
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxPushCurrent_v2(CUcontext ctx);
 /**
+ * @disabled client - manual client tracks the virtual current context
  * @param pctx RECV_ONLY
  */
 CUresult cuCtxPopCurrent_v2(CUcontext *pctx);
 /**
+ * @disabled client - manual client tracks the virtual current context
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxSetCurrent(CUcontext ctx);
 /**
+ * @disabled client - manual client tracks the virtual current context
  * @param pctx RECV_ONLY
  */
 CUresult cuCtxGetCurrent(CUcontext *pctx);
 /**
+ * @disabled client - manual client answers from the context device cache
  * @param device RECV_ONLY
  */
 CUresult cuCtxGetDevice(CUdevice *device);
@@ -2283,6 +2300,7 @@ CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
  */
 CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
 /**
+ * @onsuccess lupine_invalidate_current_context_cache()
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
@@ -2317,6 +2335,7 @@ CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
  */
 CUresult cuModuleLoadFatBinary(CUmodule *module, const void *fatCubin);
 /**
+ * @onsuccess lupine_invalidate_function_caches()
  * @routingkey MODULE hmod
  * @param hmod SEND_ONLY
  */
@@ -2326,6 +2345,7 @@ CUresult cuModuleUnload(CUmodule hmod);
  */
 CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
 /**
+ * @onsuccess return_value = lupine_record_module_function_out(hfunc, hmod, name, route)
  * @routingkey MODULE hmod
  * @recordowner FUNCTION hfunc
  * @param hfunc RECV_ONLY
@@ -2335,6 +2355,7 @@ CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
 CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
                              const char *name);
 /**
+ * @disabled client - manual client marshals optional outputs and records the allocation
  * @routingkey MODULE hmod
  * @recordowner DEVICEPTR dptr
  * @param dptr RECV_ONLY
@@ -2441,11 +2462,13 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
                                void **libraryOptionValues,
                                unsigned int numLibraryOptions);
 /**
+ * @onsuccess lupine_invalidate_function_caches()
  * @routingkey LIBRARY library
  * @param library SEND_ONLY
  */
 CUresult cuLibraryUnload(CUlibrary library);
 /**
+ * @onsuccess return_value = lupine_record_library_kernel_out(pKernel, library, name, route)
  * @routingkey LIBRARY library
  * @param pKernel RECV_ONLY
  * @param library SEND_ONLY
@@ -2461,11 +2484,13 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
  */
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
 /**
+ * @disabled client - manual client answers from the kernel query cache
  * @param pFunc RECV_ONLY
  * @param kernel SEND_ONLY
  */
 CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
 /**
+ * @disabled client - manual client answers from the kernel query cache
  * @routingkey FUNCTION kernel
  * @param kernel SEND_ONLY
  * @param paramIndex SEND_ONLY
@@ -2475,6 +2500,7 @@ CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
 CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
                               size_t *paramOffset, size_t *paramSize);
 /**
+ * @disabled client - manual client answers from the kernel query cache
  * @routingkey FUNCTION func
  * @param func SEND_ONLY
  * @param paramIndex SEND_ONLY
@@ -2484,6 +2510,7 @@ CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
 CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
                             size_t *paramOffset, size_t *paramSize);
 /**
+ * @disabled client - manual client marshals optional outputs and records the allocation
  * @routingkey LIBRARY library
  * @param dptr RECV_ONLY
  * @param bytes RECV_ONLY
@@ -2493,6 +2520,7 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name);
 /**
+ * @disabled client - manual client marshals optional outputs and records the allocation
  * @routingkey LIBRARY library
  * @param dptr RECV_ONLY
  * @param bytes RECV_ONLY
@@ -2519,6 +2547,7 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
 CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
                               CUkernel kernel, CUdevice dev);
 /**
+ * @onsuccess lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel, (int)attrib, (int)dev)
  * @param attrib SEND_ONLY
  * @param val SEND_ONLY
  * @param kernel SEND_ONLY
@@ -2540,6 +2569,7 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
  */
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
 /**
+ * @onsuccess lupine_note_deviceptr_allocation_out(dptr, bytesize, route)
  * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
@@ -2547,6 +2577,7 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
  */
 CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize);
 /**
+ * @onsuccess lupine_note_pitch_allocation_out(dptr, pPitch, WidthInBytes, Height, route)
  * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
@@ -3168,12 +3199,14 @@ cuMemGetAllocationPropertiesFromHandle(CUmemAllocationProp *prop,
 CUresult cuMemRetainAllocationHandle(CUmemGenericAllocationHandle *handle,
                                      void *addr);
 /**
+ * @onsuccess lupine_forget_deviceptr_owner(dptr)
  * @routingkey DEVICEPTR dptr
  * @param dptr SEND_ONLY
  * @param hStream SEND_ONLY
  */
 CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream);
 /**
+ * @onsuccess lupine_note_deviceptr_allocation_out(dptr, bytesize, route)
  * @routingkey STREAM hStream
  * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
@@ -3225,6 +3258,7 @@ CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps);
  */
 CUresult cuMemPoolDestroy(CUmemoryPool pool);
 /**
+ * @onsuccess lupine_note_deviceptr_allocation_out(dptr, bytesize, route)
  * @routingkey STREAM hStream
  * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
@@ -3637,6 +3671,7 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
 CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
                             CUfunction hfunc);
 /**
+ * @onsuccess lupine_invalidate_kernel_attribute_cache()
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
  * @param attrib SEND_ONLY
@@ -4399,6 +4434,7 @@ CUresult cuGraphRetainUserObject(CUgraph graph, CUuserObject object,
 CUresult cuGraphReleaseUserObject(CUgraph graph, CUuserObject object,
                                   unsigned int count);
 /**
+ * @disabled client - manual client answers from the occupancy cache
  * @param numBlocks SEND_RECV
  * @param func SEND_ONLY
  * @param blockSize SEND_ONLY
@@ -4409,6 +4445,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
                                                      int blockSize,
                                                      size_t dynamicSMemSize);
 /**
+ * @disabled client - manual client answers from the occupancy cache
  * @param numBlocks SEND_RECV
  * @param func SEND_ONLY
  * @param blockSize SEND_ONLY

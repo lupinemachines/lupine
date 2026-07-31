@@ -20,6 +20,7 @@ from ops import (
     CrossServerCopyAnnotation,
     DevicePtrTranslationAnnotation,
     FunctionAnnotationMetadata,
+    HookAnnotation,
     RoutingFallbackAnnotation,
     SynchronizeAnnotation,
 )
@@ -95,11 +96,6 @@ MANUAL_REMAPPINGS = [
     ("cuMemAllocAsync_ptsz", "cuMemAllocAsync"),
     ("cuMemAllocFromPoolAsync_ptsz", "cuMemAllocFromPoolAsync"),
 ]
-
-KERNEL_PARAM_LAYOUT_INVALIDATORS = {
-    "cuLibraryUnload",
-    "cuModuleUnload",
-}
 
 MANUAL_REMAPPING_GUARDS = {
     "cuGraphExecUpdate": "CUDA_VERSION >= 12000",
@@ -333,6 +329,13 @@ def parse_annotation(
                 continue
             param = annotation_param(params, parts[2])
             metadata.record_owners.append(OwnerAnnotation(parts[1].upper(), param))
+            continue
+        if line.startswith(("@precall", "@postcall", "@onsuccess")):
+            tag, _, expr = line.strip().partition(" ")
+            expr = expr.strip()
+            if not expr:
+                raise RuntimeError(f"{tag} requires a C++ call expression")
+            metadata.hooks.append(HookAnnotation(when=tag[1:], expr=expr))
             continue
         if line.startswith("@crossservercopy"):
             parts = line.split()
@@ -795,59 +798,24 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
     )
 
 
-def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMetadata):
-    if function.name.format() == "cuDriverGetVersion":
-        f.write("    if (driverVersion != nullptr) {\n")
-        f.write("        const char *override_version = getenv(\"LUPINE_DRIVER_VERSION_OVERRIDE\");\n")
-        f.write("        if (override_version != nullptr) *driverVersion = atoi(override_version);\n")
-        f.write("    }\n")
+def write_client_pre_call(f, metadata: FunctionAnnotationMetadata):
+    for hook in metadata.hooks:
+        if hook.when == "precall":
+            f.write(f"    {hook.expr};\n")
 
+
+def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMetadata):
     for owner in metadata.record_owners:
         f.write(client_record_owner_stmt(owner))
 
-    if function.name.format() == "cuMemAlloc_v2":
-        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);\n")
-    if function.name.format() == "cuMemAllocPitch_v2":
-        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) {\n")
-        f.write("        size_t allocation_size = 0;\n")
-        f.write("        if (pPitch != nullptr) allocation_size = (*pPitch) * Height;\n")
-        f.write("        else allocation_size = WidthInBytes * Height;\n")
-        f.write("        lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);\n")
-        f.write("    }\n")
-    if function.name.format() in {"cuMemAllocAsync", "cuMemAllocFromPoolAsync"}:
-        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);\n")
-    if function.name.format() == "cuMemFreeAsync":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_deviceptr_owner(dptr);\n")
+    for hook in metadata.hooks:
+        if hook.when == "postcall":
+            f.write(f"    {hook.expr};\n")
+        elif hook.when == "onsuccess":
+            f.write(f"    if (return_value == CUDA_SUCCESS) {hook.expr};\n")
+
     if metadata.synchronize:
         f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
-
-    if function.name.format() == "cuDevicePrimaryCtxRetain":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_active(dev);\n")
-    if function.name.format() == "cuDevicePrimaryCtxRelease_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
-    if function.name.format() == "cuDevicePrimaryCtxSetFlags_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_flags(dev, flags);\n")
-    if function.name.format() == "cuDevicePrimaryCtxReset_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
-    if function.name.format() == "cuCtxDestroy_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(ctx);\n")
-    if function.name.format() in {
-        "cuCtxDestroy_v2",
-        "cuCtxDetach",
-        "cuDevicePrimaryCtxRelease_v2",
-        "cuDevicePrimaryCtxReset_v2",
-    }:
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
-    if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_function_caches();\n")
-    if function.name.format() == "cuKernelSetAttribute":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel, (int)attrib, (int)dev);\n")
-    if function.name.format() == "cuFuncSetAttribute":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_kernel_attribute_cache();\n")
-    if function.name.format() == "cuModuleGetFunction":
-        f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) return_value = lupine_record_module_function(*hfunc, hmod, name, route);\n")
-    if function.name.format() == "cuLibraryGetKernel":
-        f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) return_value = lupine_record_library_kernel(*pKernel, library, name, route);\n")
 
 
 def error_const(return_type: str) -> str:
@@ -1244,71 +1212,9 @@ def main():
             "#include <unordered_map>\n"
             "#include <vector>\n\n"
             '#include "gen_api.h"\n\n'
+            '#include "client_hooks.h"\n'
             '#include "client_routing.h"\n'
             '#include "rpc.h"\n\n'
-            "extern int rpc_size();\n"
-            "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
-            "extern void rpc_close(conn_t *conn);\n"
-            'extern "C" void lupine_deep_cache_reset(const void *key);\n'
-            'extern "C" void *lupine_deep_cache_add(const void *key, '
-            "size_t bytes);\n\n"
-            'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
-            'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
-            'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'
-            'extern "C" conn_t *lupine_rpc_conn_for_module(CUmodule module);\n'
-            'extern "C" conn_t *lupine_rpc_conn_for_function(CUfunction function);\n'
-            'extern "C" conn_t *lupine_rpc_conn_for_stream(CUstream stream);\n'
-            'extern "C" conn_t *lupine_rpc_conn_for_event(CUevent event);\n'
-            'extern "C" conn_t *lupine_rpc_conn_for_deviceptr(CUdeviceptr ptr);\n'
-            'extern "C" CUfunction lupine_translate_private_function_for_rpc(CUfunction function);\n'
-            'extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);\n'
-            'extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);\n'
-            'extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn);\n'
-            'extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn);\n'
-            'extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn);\n'
-            'extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn);\n'
-            'extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn);\n'
-            'extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn);\n'
-            'extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn);\n'
-            'extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn);\n'
-            'extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);\n\n'
-            'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
-            'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
-            'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
-            'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
-            'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
-            'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
-            'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
-            'extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr, CUdeviceptr *translated);\n'
-            'extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,\n'
-            '                                                   CUdeviceptr srcDevice,\n'
-            '                                                   size_t ByteCount,\n'
-            '                                                   CUstream hStream,\n'
-            '                                                   bool async);\n\n'
-            'extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx);\n'
-            'extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx);\n'
-            'extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);\n'
-            'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
-            'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
-            'extern "C" void lupine_invalidate_current_context_cache();\n'
-            'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
-            'extern "C" void lupine_invalidate_function_caches();\n'
-            'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
-            'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
-            'extern "C" void lupine_note_primary_context_flags(CUdevice dev, unsigned int flags);\n'
-            'extern "C" void lupine_invalidate_primary_context_state(CUdevice dev);\n'
-            'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
-            'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
-            'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
-            'extern "C" void lupine_kernel_attribute_cache_erase(int route_id, CUkernel kernel, int attrib, int dev);\n'
-            'extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
-            'extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
-            'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
-            'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
-            'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
-            'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
-            'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
-            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1335,68 +1241,6 @@ def main():
                     "        return lupine_sync_result;\n"
                     "    }\n"
                 )
-            direct_wrappers = {
-                "cuDeviceGetAttribute": "lupine_cuDeviceGetAttribute_cached(pi, attrib, dev)",
-                "cuDevicePrimaryCtxGetState": "lupine_cuDevicePrimaryCtxGetState_cached(dev, flags, active)",
-                "cuCtxPushCurrent_v2": "lupine_cuCtxPushCurrent_virtual(ctx)",
-                "cuCtxPopCurrent_v2": "lupine_cuCtxPopCurrent_virtual(pctx)",
-                "cuCtxSetCurrent": "lupine_cuCtxSetCurrent_virtual(ctx)",
-                "cuCtxGetCurrent": "lupine_cuCtxGetCurrent_virtual(pctx)",
-                "cuCtxGetDevice": "lupine_cuCtxGetDevice_cached(device)",
-                "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
-                "cuKernelGetParamInfo": "lupine_cuKernelGetParamInfo_cached(kernel, paramIndex, paramOffset, paramSize)",
-                "cuFuncGetParamInfo": "lupine_cuFuncGetParamInfo_cached(func, paramIndex, paramOffset, paramSize)",
-                "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
-                "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
-            }
-            if function.name.format() in direct_wrappers:
-                f.write("    return {call};\n".format(call=direct_wrappers[function.name.format()]))
-                f.write("}\n\n")
-                continue
-            if function.name.format() == "cuModuleGetGlobal_v2":
-                f.write("    conn_t *conn = lupine_rpc_conn_for_module(hmod);\n")
-                f.write("    CUresult return_value;\n")
-                f.write("    size_t remote_bytes = 0;\n")
-                f.write("    std::size_t name_len = std::strlen(name) + 1;\n")
-                f.write("    if (conn == nullptr ||\n")
-                f.write("        rpc_write_start_request(conn, RPC_cuModuleGetGlobal_v2) < 0 ||\n")
-                f.write("        rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||\n")
-                f.write("        rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||\n")
-                f.write("        rpc_write(conn, name, name_len) < 0 ||\n")
-                f.write("        rpc_wait_for_response(conn) < 0 ||\n")
-                f.write("        (dptr != nullptr && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||\n")
-                f.write("        rpc_read(conn, &remote_bytes, sizeof(size_t)) < 0 ||\n")
-                f.write("        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||\n")
-                f.write("        rpc_read_end(conn) < 0)\n")
-                f.write("        return CUDA_ERROR_DEVICE_UNAVAILABLE;\n")
-                f.write("    if (bytes != nullptr) *bytes = remote_bytes;\n")
-                f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation(*dptr, remote_bytes, conn);\n")
-                f.write("    return return_value;\n")
-                f.write("}\n\n")
-                continue
-            if function.name.format() in {"cuLibraryGetGlobal", "cuLibraryGetManaged"}:
-                f.write("    lupine_route route = lupine_route_for_library(library);\n")
-                f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-                f.write("    CUresult return_value;\n")
-                f.write("    size_t remote_bytes = 0;\n")
-                f.write("    std::size_t name_len = std::strlen(name) + 1;\n")
-                f.write("    if (conn == nullptr ||\n")
-                f.write("        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(name=function.name.format()))
-                f.write("        rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||\n")
-                f.write("        rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||\n")
-                f.write("        rpc_write(conn, name, name_len) < 0 ||\n")
-                f.write("        rpc_wait_for_response(conn) < 0 ||\n")
-                f.write("        (dptr != nullptr && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||\n")
-                f.write("        rpc_read(conn, &remote_bytes, sizeof(size_t)) < 0 ||\n")
-                f.write("        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||\n")
-                f.write("        rpc_read_end(conn) < 0)\n")
-                f.write("        return CUDA_ERROR_DEVICE_UNAVAILABLE;\n")
-                f.write("    if (bytes != nullptr) *bytes = remote_bytes;\n")
-                f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation(*dptr, remote_bytes, conn);\n")
-                f.write("    return return_value;\n")
-                f.write("}\n\n")
-                continue
-
             for translation in metadata.translate_deviceptrs:
                 name = translation.parameter.name
                 f.write("    CUdeviceptr {name}_rpc = {name};\n".format(name=name))
@@ -1495,15 +1339,7 @@ def main():
                     return_type=function.return_type.format()
                 )
             )
-            if function.name.format() == "cuCtxDestroy_v2":
-                # Destroying the current context implicitly pops it; mirror
-                # that in the client's virtual context state before the call.
-                f.write("    CUcontext lupine_current_before_destroy = nullptr;\n")
-                f.write("    if (lupine_cuCtxGetCurrent_virtual(&lupine_current_before_destroy) ==\n")
-                f.write("            CUDA_SUCCESS &&\n")
-                f.write("        lupine_current_before_destroy == ctx) {\n")
-                f.write("        lupine_cuCtxSetCurrent_virtual(nullptr);\n")
-                f.write("    }\n")
+            write_client_pre_call(f, metadata)
             f.write(
                 "    using real_fn_t = {return_type} (*)({params});\n".format(
                     return_type=function.return_type.format(),
@@ -1679,10 +1515,13 @@ def main():
                 )
             )
         # write manual overrides
+        # Client-disabled functions still have handwritten definitions in
+        # client.cpp, so remappings may target them; only fully disabled
+        # functions have no symbol to point at (matching the map above).
         function_names = set(
             f.name.format()
             for f, _, _, metadata in functions_with_annotations
-            if not metadata.disabled_client
+            if not (metadata.disabled_client and metadata.disabled_server)
         )
         for x, y in MANUAL_REMAPPINGS:
             # ensure y exists in the function list

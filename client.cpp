@@ -49,6 +49,7 @@
 
 #include "cache.h"
 #include "checkpoint.h"
+#include "client_hooks.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
@@ -698,6 +699,27 @@ extern "C" CUresult cuDeviceGet(CUdevice *device, int ordinal) {
   return lupine_virtual_device_for_ordinal(device, ordinal);
 }
 
+// Hook helpers referenced from @precall/@postcall/@onsuccess annotations.
+
+extern "C" void lupine_apply_driver_version_override(int *driverVersion) {
+  if (driverVersion == nullptr) {
+    return;
+  }
+  const char *override_version = getenv("LUPINE_DRIVER_VERSION_OVERRIDE");
+  if (override_version != nullptr) {
+    *driverVersion = atoi(override_version);
+  }
+}
+
+extern "C" void lupine_pop_context_if_current(CUcontext ctx) {
+  // Destroying the current context implicitly pops it; mirror that in the
+  // client's virtual context state before the call.
+  CUcontext current = nullptr;
+  if (cuCtxGetCurrent(&current) == CUDA_SUCCESS && current == ctx) {
+    cuCtxSetCurrent(nullptr);
+  }
+}
+
 extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
                                             CUdevice_P2PAttribute attrib,
                                             CUdevice srcDevice,
@@ -930,6 +952,89 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
     record.functions_by_route[route_id] = function;
   }
   return CUDA_SUCCESS;
+}
+
+extern "C" CUresult lupine_record_module_function_out(CUfunction *hfunc,
+                                                      CUmodule hmod,
+                                                      const char *name,
+                                                      lupine_route route) {
+  if (hfunc == nullptr) {
+    return CUDA_SUCCESS;
+  }
+  return lupine_record_module_function(*hfunc, hmod, name, route);
+}
+
+extern "C" CUresult lupine_record_library_kernel_out(CUkernel *pKernel,
+                                                     CUlibrary library,
+                                                     const char *name,
+                                                     lupine_route route) {
+  if (pKernel == nullptr) {
+    return CUDA_SUCCESS;
+  }
+  return lupine_record_library_kernel(*pKernel, library, name, route);
+}
+
+// Module/library global lookups marshal optional outputs (dptr may be null)
+// and record the returned allocation, which the generated wire format cannot
+// express; see the @disabled client notes in codegen/annotations.h.
+
+extern "C" CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes,
+                                         CUmodule hmod, const char *name) {
+  conn_t *conn = lupine_rpc_conn_for_module(hmod);
+  CUresult return_value;
+  size_t remote_bytes = 0;
+  std::size_t name_len = std::strlen(name) + 1;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuModuleGetGlobal_v2) < 0 ||
+      rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
+      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
+      (dptr != nullptr && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &remote_bytes, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (bytes != nullptr)
+    *bytes = remote_bytes;
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation(*dptr, remote_bytes, conn);
+  return return_value;
+}
+
+static CUresult lupine_library_get_global(int rpc_op, CUdeviceptr *dptr,
+                                          size_t *bytes, CUlibrary library,
+                                          const char *name) {
+  lupine_route route = lupine_route_for_library(library);
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  size_t remote_bytes = 0;
+  std::size_t name_len = std::strlen(name) + 1;
+  if (conn == nullptr || rpc_write_start_request(conn, rpc_op) < 0 ||
+      rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
+      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
+      (dptr != nullptr && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &remote_bytes, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (bytes != nullptr)
+    *bytes = remote_bytes;
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation(*dptr, remote_bytes, conn);
+  return return_value;
+}
+
+extern "C" CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes,
+                                       CUlibrary library, const char *name) {
+  return lupine_library_get_global(RPC_cuLibraryGetGlobal, dptr, bytes, library,
+                                   name);
+}
+
+extern "C" CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
+                                        CUlibrary library, const char *name) {
+  return lupine_library_get_global(RPC_cuLibraryGetManaged, dptr, bytes,
+                                   library, name);
 }
 
 static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
@@ -1543,7 +1648,7 @@ lupine_translate_private_function_for_rpc(CUfunction function) {
   return lupine_translate_private_function(function);
 }
 
-extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);
+extern "C" CUresult cuCtxGetCurrent(CUcontext *pctx);
 
 static bool lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
   switch (attrib) {
@@ -1569,9 +1674,8 @@ static bool lupine_cuda_device_attr_is_virtualized(unsigned int attr) {
   }
 }
 
-extern "C" CUresult
-lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
-                                   CUdevice dev) {
+extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
+                                         CUdevice dev) {
   if (pi == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -1682,30 +1786,26 @@ static CUresult lupine_cuGetParamInfo_cached(uintptr_t handle,
   return result;
 }
 
-extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel,
-                                                       size_t paramIndex,
-                                                       size_t *paramOffset,
-                                                       size_t *paramSize) {
+extern "C" CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
+                                         size_t *paramOffset,
+                                         size_t *paramSize) {
   return lupine_cuGetParamInfo_cached(reinterpret_cast<uintptr_t>(kernel),
                                       paramIndex, paramOffset, paramSize, true);
 }
 
-extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func,
-                                                     size_t paramIndex,
-                                                     size_t *paramOffset,
-                                                     size_t *paramSize) {
+extern "C" CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
+                                       size_t *paramOffset, size_t *paramSize) {
   return lupine_cuGetParamInfo_cached(reinterpret_cast<uintptr_t>(func),
                                       paramIndex, paramOffset, paramSize,
                                       false);
 }
 
-extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc,
-                                                      CUkernel kernel) {
+extern "C" CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel) {
   if (pFunc == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   CUcontext current_context = nullptr;
-  CUresult context_status = lupine_cuCtxGetCurrent_virtual(&current_context);
+  CUresult context_status = cuCtxGetCurrent(&current_context);
   if (context_status != CUDA_SUCCESS) {
     return context_status;
   }
@@ -1890,14 +1990,13 @@ static CUresult lupine_cuOccupancy_cached(int *numBlocks, CUfunction func,
   return return_value;
 }
 
-extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(
+extern "C" CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize) {
   return lupine_cuOccupancy_cached(numBlocks, func, blockSize, dynamicSMemSize,
                                    0, false);
 }
 
-extern "C" CUresult
-lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(
+extern "C" CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags) {
   return lupine_cuOccupancy_cached(numBlocks, func, blockSize, dynamicSMemSize,
@@ -2895,7 +2994,7 @@ extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
   }
 }
 
-extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
+extern "C" CUresult cuCtxPushCurrent_v2(CUcontext ctx) {
   lupine_context_stack->push_back(lupine_current_context);
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
@@ -2910,7 +3009,7 @@ extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx) {
+extern "C" CUresult cuCtxPopCurrent_v2(CUcontext *pctx) {
   CUcontext popped = lupine_current_context;
   if (pctx != nullptr) {
     *pctx = popped;
@@ -2934,7 +3033,7 @@ extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx) {
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx) {
+extern "C" CUresult cuCtxSetCurrent(CUcontext ctx) {
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
     lupine_current_context = ctx;
@@ -2946,7 +3045,7 @@ extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx) {
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx) {
+extern "C" CUresult cuCtxGetCurrent(CUcontext *pctx) {
   if (pctx == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -2954,7 +3053,7 @@ extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx) {
   return CUDA_SUCCESS;
 }
 
-extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device) {
+extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -3023,8 +3122,7 @@ extern "C" void lupine_invalidate_primary_context_state(CUdevice dev) {
 }
 
 extern "C" CUresult
-lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
-                                         int *active) {
+cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags, int *active) {
   if (flags == nullptr || active == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -6630,7 +6728,7 @@ static CUresult lupine_normalize_context(CUcontext *ctx) {
 }
 
 static CUresult lupine_activate_context_local_storage_context(CUcontext ctx) {
-  CUresult result = lupine_cuCtxSetCurrent_virtual(ctx);
+  CUresult result = cuCtxSetCurrent(ctx);
   LUPINE_TRACE_LOG("LUPINE context storage activate ctx="
                    << ctx << " result=" << static_cast<int>(result));
   return result;

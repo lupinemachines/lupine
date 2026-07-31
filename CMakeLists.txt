@@ -90,6 +90,7 @@ set(NVML_CLIENT_SOURCES
 set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_hooks.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h

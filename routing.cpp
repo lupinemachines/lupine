@@ -610,6 +610,27 @@ extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
   lupine_deviceptr_allocations().erase(ptr);
 }
 
+extern "C" void lupine_note_deviceptr_allocation_out(CUdeviceptr *dptr,
+                                                     size_t size,
+                                                     lupine_route route) {
+  if (dptr != nullptr) {
+    lupine_note_deviceptr_allocation_route(*dptr, size, route);
+  }
+}
+
+extern "C" void lupine_note_pitch_allocation_out(CUdeviceptr *dptr,
+                                                 size_t *pPitch,
+                                                 size_t WidthInBytes,
+                                                 size_t Height,
+                                                 lupine_route route) {
+  if (dptr == nullptr) {
+    return;
+  }
+  size_t allocation_size =
+      pPitch != nullptr ? *pPitch * Height : WidthInBytes * Height;
+  lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);
+}
+
 extern "C" void lupine_forget_context_owner(CUcontext ctx) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   lupine_owners<CUcontext>().erase(ctx);
