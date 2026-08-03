@@ -32,8 +32,9 @@ def _mock_httpx_client(monkeypatch, headers):
         def __exit__(self, exc_type, exc, traceback):
             return False
 
-        def head(self, url):
+        def head(self, url, headers=None):
             calls["url"] = url
+            calls["headers"] = dict(headers or {})
             return FakeResponse()
 
     monkeypatch.setattr(sidecar.httpx, "Client", FakeClient)
@@ -515,3 +516,19 @@ def test_sidecar_worker_consumes_tensor_stream_before_operation_error(tmp_path):
         if proc.poll() is None:
             proc.terminate()
         proc.wait(timeout=5)
+
+
+def test_sidecar_probe_sends_lease_header(monkeypatch):
+    monkeypatch.setenv("LUPINE_SESSION", "lease-123")
+    calls = _mock_httpx_client(monkeypatch, {"x-lupine-cuda-version": "13.1.80"})
+
+    assert sidecar._server_cuda_version("https://gw:9443") == Version("13.1.80")
+    assert calls["headers"] == {"x-lupine-session": "lease-123"}
+
+
+def test_sidecar_probe_omits_lease_header_when_unset(monkeypatch):
+    monkeypatch.delenv("LUPINE_SESSION", raising=False)
+    calls = _mock_httpx_client(monkeypatch, {"x-lupine-cuda-version": "13.1.80"})
+
+    sidecar._server_cuda_version("https://gw:9443")
+    assert calls["headers"] == {}

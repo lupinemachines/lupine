@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,11 @@ from .tensor import SidecarError
 
 _DOCKER_COMPATIBLE_RUNTIMES = ("docker", "podman", "nerdctl")
 SUPPORTED_RUNTIMES = ("auto", "container", *_DOCKER_COMPATIBLE_RUNTIMES)
+
+# Inherited by the worker so its LUPINE client authenticates the same way the
+# host process would. LUPINE_SESSION carries the lease a hosted gateway routes
+# on; without it the gateway drops the worker's connection.
+_INHERITED_ENV = ("LUPINE_SESSION",)
 
 
 class ContainerRuntime(Protocol):
@@ -44,6 +50,11 @@ def _environment(
     server: str | None,
 ) -> dict[str, str]:
     environment = dict(env)
+    for name in _INHERITED_ENV:
+        value = os.environ.get(name)
+        # An explicit env= entry wins over the inherited one.
+        if value and name not in environment:
+            environment[name] = value
     if server:
         environment["LUPINE_SERVER"] = server
     return environment

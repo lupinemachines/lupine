@@ -231,3 +231,28 @@ def test_prepare_runtime_rejects_unknown_runtime():
             rosetta=False,
             env={},
         )
+
+
+def test_environment_inherits_lease_from_process(monkeypatch):
+    monkeypatch.setenv("LUPINE_SESSION", "lease-123")
+
+    environment = container_support._environment({}, "host-a:14833")
+
+    assert environment == {
+        "LUPINE_SESSION": "lease-123",
+        "LUPINE_SERVER": "host-a:14833",
+    }
+
+
+def test_environment_prefers_explicit_lease(monkeypatch):
+    monkeypatch.setenv("LUPINE_SESSION", "inherited")
+
+    environment = container_support._environment({"LUPINE_SESSION": "explicit"}, None)
+
+    assert environment == {"LUPINE_SESSION": "explicit"}
+
+
+def test_environment_omits_lease_when_unset(monkeypatch):
+    monkeypatch.delenv("LUPINE_SESSION", raising=False)
+
+    assert container_support._environment({}, None) == {}

@@ -188,7 +188,7 @@ def _create_sidecar(
 
 def connect(
     *,
-    host: str | Sequence[str],
+    host: str | Sequence[str] | None = None,
     port: int | None = None,
     libcuda: str | os.PathLike[str] | None = None,
     sidecar: bool | None = None,
@@ -198,6 +198,9 @@ def connect(
     Use the session before any PyTorch CUDA operation:
 
     ``with lupine.connect(host=["a:14833", "b:14833"]) as s:``
+
+    ``host`` defaults to ``LUPINE_SERVER``, which is how a launcher such as
+    ``lupine run`` hands the session its already-bound hosts.
 
     ``s.devices()`` then returns every CUDA ordinal in LUPINE's native virtual
     device topology.
@@ -209,6 +212,11 @@ def connect(
 
     if sidecar is not None and not isinstance(sidecar, bool):
         raise TypeError("sidecar must be True, False, or None")
+
+    if host is None:
+        host = _servers_from_env()
+        if not host:
+            raise LupineError("pass host=... or set LUPINE_SERVER")
 
     servers = _normalize_hosts(host, port)
     if not servers:

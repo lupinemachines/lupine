@@ -37,6 +37,7 @@ _WORKER_REPOSITORY = "lupinemachines/lupine-pytorch-worker"
 _WORKER_IMAGE_REPOSITORY = f"{_WORKER_REGISTRY_HOST}/{_WORKER_REPOSITORY}"
 DEFAULT_IMAGE = f"{_WORKER_IMAGE_REPOSITORY}:cuda-13.1.0"
 _CUDA_VERSION_HEADER = "x-lupine-cuda-version"
+_SESSION_HEADER = "x-lupine-session"
 
 
 def _server_cuda_version(server: str) -> Version:
@@ -44,13 +45,19 @@ def _server_cuda_version(server: str) -> Version:
     if not url.startswith(("http://", "https://")):
         url = f"http://{url}"
     url = f"{url.rstrip('/')}/"
+    # A hosted gateway routes on the lease and drops any connection whose first
+    # HEADERS frame omits it, so the probe has to carry it too.
+    headers = {}
+    session = os.environ.get("LUPINE_SESSION")
+    if session:
+        headers[_SESSION_HEADER] = session
     try:
         with httpx.Client(
             http1=False,
             http2=True,
             timeout=httpx.Timeout(10.0, connect=5.0),
         ) as client:
-            response = client.head(url)
+            response = client.head(url, headers=headers)
             response.raise_for_status()
     except httpx.HTTPError as exc:
         raise SidecarError(f"could not query LUPINE server {server!r}: {exc}") from exc

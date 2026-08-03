@@ -15,6 +15,14 @@ with lupine.connect(host="<server>:14833"):
     model = model.to(device)
 ```
 
+`host` defaults to `LUPINE_SERVER`, so a launcher that already bound a session —
+such as `lupine run` — needs no argument at all:
+
+```python
+with lupine.connect() as s:
+    device = s.device()
+```
+
 `connect()` loads the LUPINE `libcuda.so.1` from `../build/libcuda.so.1` when
 used from this repository. For an installed package, pass `libcuda=...` or set
 `LUPINE_LIBCUDA` if the library lives somewhere else:

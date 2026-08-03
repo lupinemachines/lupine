@@ -332,3 +332,28 @@ def test_url_server_endpoint_is_preserved(lupine_module):
     assert lupine._normalize_server("https://host-a", 9443) == "https://host-a:9443"
     assert lupine._normalize_server("https://host-a") == "https://host-a"
     assert lupine._normalize_server("http://host-a") == "http://host-a:14833"
+
+
+def test_connect_defaults_host_to_server_env(lupine_module, monkeypatch):
+    lupine, fake_torch = lupine_module
+    fake_torch.cuda.count = 1
+    monkeypatch.setenv("LUPINE_SERVER", "host-a:14833")
+
+    with lupine.connect() as session:
+        assert session.servers == ("host-a:14833",)
+
+
+def test_connect_defaults_to_every_host_in_server_env(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
+    monkeypatch.setenv("LUPINE_SERVER", "host-a:14833,host-b:14833")
+
+    with lupine.connect() as session:
+        assert session.servers == ("host-a:14833", "host-b:14833")
+
+
+def test_connect_without_host_requires_server_env(lupine_module, monkeypatch):
+    lupine, _ = lupine_module
+    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+
+    with pytest.raises(lupine.LupineError, match="pass host=... or set LUPINE_SERVER"):
+        lupine.connect()
