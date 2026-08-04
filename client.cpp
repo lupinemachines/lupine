@@ -6600,9 +6600,13 @@ static CUresult lupine_normalize_context(CUcontext *ctx) {
   if (ctx == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  if (*ctx != nullptr) {
+  // The context-local-storage export table accepts (CUcontext)-1 as well as
+  // NULL for "the calling thread's current context".
+  if (*ctx != nullptr &&
+      *ctx != reinterpret_cast<CUcontext>(~static_cast<uintptr_t>(0))) {
     return CUDA_SUCCESS;
   }
+  *ctx = nullptr;
   return cuCtxGetCurrent(ctx);
 }
 
