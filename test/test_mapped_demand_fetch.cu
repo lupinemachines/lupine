@@ -159,6 +159,37 @@ int main() {
           "ok readback");
   EXPECT(ok == 1, "htod from stale mirror carries device bytes");
 
+  // Chunked fetch: device writes single bytes scattered across the mapping;
+  // random-order reads must fetch only what they touch and still be correct,
+  // and a long sequential scan must survive the readahead escalation.
+  const size_t kSpots[] = {0, (1u << 20) + 123, (32u << 20) + 4096,
+                           kBytes - 1};
+  for (size_t spot : kSpots) {
+    write_bytes<<<1, 1>>>(mapped_dev + spot, 0x99, 1);
+  }
+  REQUIRE(cudaDeviceSynchronize(), "scatter sync");
+  EXPECT(mapped_host[kBytes - 1] == 0x99, "scatter: last byte");
+  EXPECT(mapped_host[0] == 0x99, "scatter: first byte");
+  EXPECT(mapped_host[(32u << 20) + 4096] == 0x99, "scatter: middle byte");
+  size_t nonzero = 0;
+  for (size_t i = 0; i < (16u << 20); ++i) {
+    nonzero += mapped_host[i] != 0;
+  }
+  EXPECT(mapped_host[(1u << 20) + 123] == 0x99 && nonzero >= 2,
+         "scatter: sequential scan sees device bytes");
+
+  // Host write into a freshly fetched chunk while most of the mapping is
+  // still stale must reach the device.
+  mapped_host[(1u << 20) + 200] = 0xAB;
+  int one2 = 1;
+  REQUIRE(cudaMemcpy(dev_ok, &one2, sizeof(one2), cudaMemcpyHostToDevice),
+          "ok reset 2");
+  check_bytes<<<1, 1>>>(mapped_dev + (1u << 20) + 200, 0xAB, 1, dev_ok);
+  REQUIRE(cudaDeviceSynchronize(), "mixed-state flush sync");
+  REQUIRE(cudaMemcpy(&ok, dev_ok, sizeof(ok), cudaMemcpyDeviceToHost),
+          "ok readback 2");
+  EXPECT(ok == 1, "host write in fresh chunk reaches device");
+
   // Post-sync polling with no host access should not move the allocation.
   write_bytes<<<(unsigned)(kPage / 256), 256>>>(mapped_dev, 0x77, kPage);
   REQUIRE(cudaDeviceSynchronize(), "poll warmup sync");
