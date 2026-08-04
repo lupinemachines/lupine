@@ -734,6 +734,12 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
 }
 
 CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version) {
+  // The CUDA runtime probes this entry with sentinel handles such as
+  // (CUcontext)-1 and expects CUDA_ERROR_INVALID_CONTEXT. Forwarding an
+  // unknown handle lets the server dereference it inside the real driver,
+  // which kills the connection's server process.
+  if (ctx != nullptr && !lupine_context_is_known(ctx))
+    return CUDA_ERROR_INVALID_CONTEXT;
   lupine_route route = lupine_route_for_context(ctx);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUcontext, unsigned int *);

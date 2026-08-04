@@ -40,6 +40,7 @@ extern "C" lupine_route lupine_route_for_default();
 extern "C" lupine_route lupine_route_for_device(CUdevice *device);
 extern "C" lupine_route lupine_route_for_current_context();
 extern "C" lupine_route lupine_route_for_context(CUcontext ctx);
+extern "C" bool lupine_context_is_known(CUcontext ctx);
 extern "C" lupine_route lupine_route_for_module(CUmodule module);
 extern "C" lupine_route lupine_route_for_library(CUlibrary library);
 extern "C" lupine_route lupine_route_for_function(CUfunction function);
