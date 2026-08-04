@@ -221,14 +221,39 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   lupine_call_previous_sigsegv(sig, info, uctx);
 }
 
+// A thread_local array would silently overflow into neighboring thread-local
+// data if the handler ever outgrows it, so the alternate stack is a dedicated
+// mapping behind a guard page.
+struct lupine_signal_stack {
+  void *mapping = MAP_FAILED;
+  size_t mapping_size = 0;
+  ~lupine_signal_stack() {
+    if (mapping != MAP_FAILED) {
+      munmap(mapping, mapping_size);
+    }
+  }
+};
+
 static void lupine_install_sigsegv_handler() {
-  alignas(16) static thread_local unsigned char signal_stack[64 * 1024];
+  constexpr size_t kSignalStackBytes = 1024 * 1024;
+  static thread_local lupine_signal_stack signal_stack;
   static thread_local bool signal_stack_installed = false;
   if (!signal_stack_installed) {
-    stack_t stack = {};
-    stack.ss_sp = signal_stack;
-    stack.ss_size = sizeof(signal_stack);
-    signal_stack_installed = sigaltstack(&stack, nullptr) == 0;
+    size_t page_size = lupine_page_size();
+    size_t mapping_size = kSignalStackBytes + page_size;
+    void *mapping = mmap(nullptr, mapping_size, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapping != MAP_FAILED &&
+        mprotect(mapping, page_size, PROT_NONE) == 0) {
+      signal_stack.mapping = mapping;
+      signal_stack.mapping_size = mapping_size;
+      stack_t stack = {};
+      stack.ss_sp = static_cast<unsigned char *>(mapping) + page_size;
+      stack.ss_size = kSignalStackBytes;
+      signal_stack_installed = sigaltstack(&stack, nullptr) == 0;
+    } else if (mapping != MAP_FAILED) {
+      munmap(mapping, mapping_size);
+    }
   }
   if (lupine_sigsegv_handler_installed) {
     return;
