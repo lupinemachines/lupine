@@ -84,6 +84,8 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
+extern "C" void lupine_ensure_mapped_host_readable(const void *host,
+                                                   size_t size);
 
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
@@ -136,8 +138,7 @@ CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_mark_host_range_clean(name, len * sizeof(char));
+  lupine_mark_host_range_clean(name, len * sizeof(char));
   return return_value;
 }
 
@@ -161,8 +162,7 @@ CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_mark_host_range_clean(uuid, 16 * sizeof(CUuuid));
+  lupine_mark_host_range_clean(uuid, 16 * sizeof(CUuuid));
   return return_value;
 }
 
@@ -188,8 +188,7 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_mark_host_range_clean(luid, 8 * sizeof(char));
+  lupine_mark_host_range_clean(luid, 8 * sizeof(char));
   return return_value;
 }
 
@@ -713,6 +712,8 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
 }
 
 CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version) {
+  if (ctx != nullptr && !lupine_context_is_known(ctx))
+    return CUDA_ERROR_INVALID_CONTEXT;
   lupine_route route = lupine_route_for_context(ctx);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUcontext, unsigned int *);
@@ -1496,8 +1497,7 @@ CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_mark_host_range_clean(pciBusId, len * sizeof(char));
+  lupine_mark_host_range_clean(pciBusId, len * sizeof(char));
   return return_value;
 }
 
@@ -1673,6 +1673,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   conn_t *conn = lupine_route_remote_conn(route);
   if (ByteCount != 0 && srcHost == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
+  lupine_ensure_mapped_host_readable(srcHost, ByteCount);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||

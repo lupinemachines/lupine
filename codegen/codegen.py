@@ -1315,7 +1315,8 @@ def main():
             'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
-            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
+            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
+            'extern "C" void lupine_ensure_mapped_host_readable(const void *host, size_t size);\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1407,6 +1408,16 @@ def main():
                     f"            {all_output.type.format()} {output_name} = route_output;\n"
                 )
             else:
+                if function.name.format() == "cuCtxGetApiVersion":
+                    # The CUDA runtime probes this entry with sentinel handles
+                    # such as (CUcontext)-1 and expects
+                    # CUDA_ERROR_INVALID_CONTEXT. Forwarding an unknown handle
+                    # lets the server dereference it inside the real driver,
+                    # which kills the connection's server process.
+                    f.write(
+                        "    if (ctx != nullptr && !lupine_context_is_known(ctx))\n"
+                        "        return CUDA_ERROR_INVALID_CONTEXT;\n"
+                    )
                 f.write(
                     "    lupine_route route = {route_expr};\n".format(
                         route_expr=client_routing_route_expr(metadata)

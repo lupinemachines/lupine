@@ -194,6 +194,16 @@ class ArrayOperation:
                 error_return=error_return,
             )
         )
+        if self.compressible:
+            # Reading a demand-invalidated mapped mirror after
+            # rpc_write_start_request() would fault while this thread holds the
+            # connection, deadlocking the fetch. Refresh it first.
+            f.write(
+                "    lupine_ensure_mapped_host_readable({param_name}, {size});\n".format(
+                    param_name=self.parameter.name,
+                    size=self.transfer_size_expr(),
+                )
+            )
 
     def client_rpc_write(self, f):
         if self.iter:
@@ -255,8 +265,11 @@ class ArrayOperation:
     def client_post_rpc_read_success(self, f):
         if not self.recv:
             return
+        # Unconditional: lupine_prepare_host_range_write pinned the target
+        # allocation against mirror invalidation, and the pin must drop even
+        # when the call returns an error.
         f.write(
-            "    if (return_value == CUDA_SUCCESS) lupine_mark_host_range_clean({param_name}, {size});\n".format(
+            "    lupine_mark_host_range_clean({param_name}, {size});\n".format(
                 param_name=self.parameter.name,
                 size=self.transfer_size_expr(),
             )

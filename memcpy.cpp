@@ -5,8 +5,10 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <sys/uio.h>
 #include <unistd.h>
 #include <vector>
@@ -51,6 +53,23 @@ struct lupine_host_allocation {
   bool device_dirty = false;
   bool tracking_enabled = false;
   int fault_slot = -1;
+  // Demand-fetch state for device-to-host synchronization: 0 = mirror fresh,
+  // 1 = mirror invalidated (PROT_NONE, fetch on fault), 2 = a fault handler is
+  // fetching, 3 = a synchronization point is invalidating. Only the handler
+  // moves 1 -> 2; only normal-context code moves through 3.
+  volatile sig_atomic_t device_stale = 0;
+  // Captured at invalidation time so the fault handler never calls
+  // rpc_client_get_connection(), which takes a global mutex.
+  conn_t *stale_fetch_conn = nullptr;
+  // Thread running the in-flight demand fetch. Its own nested faults (a
+  // concurrent lupine_mark_host_range_clean can re-protect a page mid-fetch)
+  // unprotect and retry instead of waiting on themselves.
+  volatile pid_t stale_fetch_tid = 0;
+  // In-flight RPC payload writes into the mirror, bracketed by
+  // lupine_prepare_host_range_write / lupine_mark_host_range_clean. The
+  // invalidator waits for zero: re-protecting mid-write would fault a thread
+  // that already holds its connection, and the recovery fetch needs one.
+  volatile sig_atomic_t io_pins = 0;
   volatile sig_atomic_t full_dirty = 0;
   volatile sig_atomic_t retiring = 0;
   uint32_t pending_dirty_ranges = 0;
@@ -92,6 +111,9 @@ static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES =
 static constexpr size_t LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES = 16;
 static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES = 1024;
 static constexpr uint32_t LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES = 64 * 1024;
+// Bounded wait for in-flight fetches and payload writes before a
+// synchronization point gives up on invalidation and copies eagerly.
+static constexpr int LUPINE_MAPPED_INVALIDATE_MAX_ATTEMPTS = 10000;
 
 struct lupine_dirty_host_range {
   lupine_host_allocation *allocation = nullptr;
@@ -129,6 +151,10 @@ static size_t lupine_page_size() {
   return page_size > 0 ? static_cast<size_t>(page_size) : 4096;
 }
 
+static pid_t lupine_gettid() {
+  return static_cast<pid_t>(syscall(SYS_gettid));
+}
+
 static size_t lupine_round_up(size_t value, size_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -150,6 +176,8 @@ static void lupine_call_previous_sigsegv(int sig, siginfo_t *info, void *uctx) {
   sigaction(sig, &lupine_previous_sigsegv_action, nullptr);
   raise(sig);
 }
+
+static bool lupine_fetch_stale_mirror(lupine_host_allocation *allocation);
 
 static bool lupine_reserve_dirty_host_range(
     lupine_dirty_host_range_queue &queue, uint32_t *slot) {
@@ -201,6 +229,63 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
       __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
       return;
     }
+
+    sig_atomic_t stale =
+        __atomic_load_n(&allocation->device_stale, __ATOMIC_ACQUIRE);
+    if (stale != 0) {
+      if (stale == 2 &&
+          __atomic_load_n(&allocation->stale_fetch_tid, __ATOMIC_ACQUIRE) ==
+              lupine_gettid()) {
+        // Our own fetch tripped over a page a concurrent
+        // lupine_mark_host_range_clean re-protected; the fetch re-protects
+        // the whole mirror when it finishes.
+        mprotect(reinterpret_cast<void *>(page), page_size,
+                 PROT_READ | PROT_WRITE);
+        __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
+        return;
+      }
+      sig_atomic_t expected = 1;
+      if (stale == 1 &&
+          __atomic_compare_exchange_n(&allocation->device_stale, &expected, 2,
+                                      false, __ATOMIC_ACQ_REL,
+                                      __ATOMIC_ACQUIRE)) {
+        __atomic_store_n(&allocation->stale_fetch_tid, lupine_gettid(),
+                         __ATOMIC_RELEASE);
+        mprotect(reinterpret_cast<void *>(entry.base),
+                 allocation->storage_size, PROT_READ | PROT_WRITE);
+        bool fetched = lupine_fetch_stale_mirror(allocation);
+        if (fetched) {
+          mprotect(reinterpret_cast<void *>(entry.base),
+                   allocation->storage_size, PROT_READ);
+        }
+        __atomic_store_n(&allocation->stale_fetch_tid, 0, __ATOMIC_RELEASE);
+        if (fetched) {
+          __atomic_store_n(&allocation->device_stale, 0, __ATOMIC_RELEASE);
+        } else {
+          // The route is gone and the mirror content cannot be recovered.
+          // Fall through to the previous handler rather than let the
+          // application read stale bytes.
+          __atomic_store_n(&allocation->device_stale, 1, __ATOMIC_RELEASE);
+          __atomic_sub_fetch(&lupine_active_fault_handlers, 1,
+                             __ATOMIC_RELEASE);
+          lupine_call_previous_sigsegv(sig, info, uctx);
+          return;
+        }
+      } else {
+        // Another thread is fetching (2) or a synchronization point is
+        // invalidating (3); wait it out, then retry the faulting access.
+        while (true) {
+          sig_atomic_t state =
+              __atomic_load_n(&allocation->device_stale, __ATOMIC_ACQUIRE);
+          if (state != 2 && state != 3) {
+            break;
+          }
+        }
+      }
+      __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
+      return;
+    }
+
     uint32_t slot = 0;
     __atomic_add_fetch(&allocation->pending_dirty_ranges, 1,
                        __ATOMIC_ACQ_REL);
@@ -224,9 +309,10 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   lupine_call_previous_sigsegv(sig, info, uctx);
 }
 
-// A thread_local array would silently overflow into neighboring thread-local
-// data if the handler ever outgrows it, so the alternate stack is a dedicated
-// mapping behind a guard page.
+// The fault handler runs full RPC reads for demand fetches, and the transport
+// keeps 64 KiB receive buffers on the stack. A small thread_local array would
+// silently overflow into neighboring thread-local data, so the alternate
+// stack is a dedicated mapping behind a guard page.
 struct lupine_signal_stack {
   void *mapping = MAP_FAILED;
   size_t mapping_size = 0;
@@ -402,6 +488,15 @@ extern "C" void lupine_mark_host_range_clean(void *host, size_t size) {
   if (start >= end) {
     return;
   }
+  if (__atomic_load_n(&allocation.io_pins, __ATOMIC_ACQUIRE) > 0) {
+    __atomic_sub_fetch(&allocation.io_pins, 1, __ATOMIC_ACQ_REL);
+  }
+  if (__atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE) == 2) {
+    // A demand fetch owns the mirror's protection; re-protecting a range
+    // now would fault the fetch's own payload writes. The fetch re-protects
+    // the whole mirror when it finishes.
+    return;
+  }
 
   size_t first_page = (start - base) / allocation.page_size;
   size_t last_page = (end - 1 - base) / allocation.page_size;
@@ -429,6 +524,7 @@ extern "C" void lupine_prepare_host_range_write(void *host, size_t size) {
   if (start >= end) {
     return;
   }
+  __atomic_add_fetch(&it->second.io_pins, 1, __ATOMIC_ACQ_REL);
 
   size_t first_page = (start - base) / it->second.page_size;
   size_t last_page = (end - 1 - base) / it->second.page_size;
@@ -467,6 +563,7 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     queue.start = 0;
   }
 
+  std::vector<uintptr_t> stale_full_dirty_probes;
   if (has_full_dirty &&
       __atomic_exchange_n(&queue.full_dirty_pending, 0, __ATOMIC_ACQ_REL) !=
           0) {
@@ -485,11 +582,23 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
                          __ATOMIC_ACQ_REL);
       ranges.push_back({&allocation, allocation.host_base,
                         allocation.host_base + allocation.storage_size});
+      if (__atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE) != 0) {
+        stale_full_dirty_probes.push_back(allocation.host_base);
+      }
     }
   }
 
   if (ranges.empty()) {
     return CUDA_SUCCESS;
+  }
+
+  // A whole-allocation flush must not push an invalidated mirror back to the
+  // server; touch each stale allocation so the fault handler refetches it
+  // before the ranges below become readable.
+  for (uintptr_t probe : stale_full_dirty_probes) {
+    volatile const unsigned char *byte =
+        reinterpret_cast<volatile const unsigned char *>(probe);
+    (void)*byte;
   }
 
   auto release_ranges = [&](bool restore) {
@@ -717,9 +826,153 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
   return lupine_flush_dirty_host_pages_to_server();
 }
 
+// Fetch the entire server-side backing of an invalidated mirror over the
+// route's regular DtoH protocol. Runs inside the fault handler: it must not
+// take lupine_host_allocation_mutex(), and the caller has already made the
+// mirror writable.
+static bool lupine_fetch_stale_mirror(lupine_host_allocation *allocation) {
+  conn_t *conn = allocation->stale_fetch_conn;
+  auto *dst = reinterpret_cast<unsigned char *>(allocation->host_base);
+  size_t bytes = allocation->size;
+  CUdeviceptr src = allocation->device_ptr;
+  if (conn == nullptr || dst == nullptr || bytes == 0 || src == 0) {
+    return false;
+  }
+  if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
+      rpc_write(conn, &src, sizeof(src)) < 0 ||
+      rpc_write(conn, &bytes, sizeof(bytes)) < 0) {
+    return false;
+  }
+  int request_id = rpc_write_end(conn);
+  if (request_id < 0 || rpc_read_start(conn, request_id) < 0) {
+    return false;
+  }
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  size_t offset = 0;
+  do {
+    size_t chunk =
+        std::min(bytes - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+    if (rpc_read(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS && chunk != 0 &&
+         rpc_read_payload(conn, dst + offset, chunk) < 0)) {
+      rpc_read_end(conn);
+      return false;
+    }
+    bool final_chunk = result != CUDA_SUCCESS || offset + chunk == bytes;
+    if (rpc_read_end(conn) < 0) {
+      return false;
+    }
+    if (result != CUDA_SUCCESS) {
+      return false;
+    }
+    offset += chunk;
+    if (!final_chunk && rpc_read_start(conn, request_id) < 0) {
+      return false;
+    }
+  } while (offset < bytes);
+  return true;
+}
+
+// Touch one byte in every invalidated mirror that overlaps [host, host+size)
+// so the fault handler refetches it now, in normal context. RPC paths that
+// read caller-supplied host memory while holding connection locks must call
+// this first: a demand fetch cannot start once this thread holds the route's
+// connection.
+extern "C" void lupine_ensure_mapped_host_readable(const void *host,
+                                                   size_t size) {
+  if (host == nullptr || size == 0) {
+    return;
+  }
+  uintptr_t start = reinterpret_cast<uintptr_t>(host);
+  if (start > UINTPTR_MAX - size) {
+    return;
+  }
+  std::vector<uintptr_t> probes;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    for (const auto &entry : lupine_mutable_host_allocations_locked()) {
+      const auto &allocation = entry.second;
+      if (!allocation.tracking_enabled ||
+          __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE) == 0) {
+        continue;
+      }
+      uintptr_t base = reinterpret_cast<uintptr_t>(entry.first);
+      if (base + allocation.size <= start || base >= start + size) {
+        continue;
+      }
+      probes.push_back(base);
+    }
+  }
+  for (uintptr_t probe : probes) {
+    volatile const unsigned char *byte =
+        reinterpret_cast<volatile const unsigned char *>(probe);
+    (void)*byte;
+  }
+}
+
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
   for (const auto &mapping : lupine_mapped_host_snapshots()) {
     if (!mapping.device_dirty || mapping.size == 0) {
+      continue;
+    }
+    // Invalidate the mirror instead of copying it back: the server backing is
+    // authoritative once the device is synchronized, so the fault handler can
+    // fetch it if and when the host actually touches the mapping.
+    //
+    // The retry loop never waits while holding a lock: an in-flight demand
+    // fetch (state 2) needs the route connection and an in-flight payload
+    // write (io_pins) holds it, so blocking them from here could deadlock.
+    // If neither drains, fall back to the eager copy, which stays correct in
+    // every state.
+    bool invalidated = false;
+    bool give_up = false;
+    for (int attempt = 0; !invalidated && !give_up; ++attempt) {
+      {
+        std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+        auto it = lupine_mutable_host_allocations_locked().find(mapping.host);
+        if (it == lupine_mutable_host_allocations_locked().end()) {
+          break;
+        }
+        auto &allocation = it->second;
+        conn_t *conn = lupine_route_remote_conn(
+            lupine_route_from_identity(allocation.route_id));
+        if (!allocation.tracking_enabled || conn == nullptr ||
+            __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
+          give_up = true;
+          break;
+        }
+        sig_atomic_t previous =
+            __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
+        if (previous != 2 &&
+            __atomic_load_n(&allocation.io_pins, __ATOMIC_ACQUIRE) == 0) {
+          sig_atomic_t expected = previous;
+          if (__atomic_compare_exchange_n(&allocation.device_stale, &expected,
+                                          3, false, __ATOMIC_ACQ_REL,
+                                          __ATOMIC_ACQUIRE)) {
+            allocation.stale_fetch_conn = conn;
+            if (lupine_protect_host_range(mapping.host,
+                                          allocation.storage_size,
+                                          PROT_NONE)) {
+              __atomic_store_n(&allocation.device_stale, 1, __ATOMIC_RELEASE);
+              allocation.device_dirty = false;
+              invalidated = true;
+            } else {
+              __atomic_store_n(&allocation.device_stale, previous,
+                               __ATOMIC_RELEASE);
+              give_up = true;
+            }
+          }
+        }
+      }
+      if (!invalidated && !give_up) {
+        if (attempt >= LUPINE_MAPPED_INVALIDATE_MAX_ATTEMPTS) {
+          give_up = true;
+        } else {
+          sched_yield();
+        }
+      }
+    }
+    if (invalidated) {
       continue;
     }
     CUresult result =
