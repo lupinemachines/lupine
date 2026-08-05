@@ -227,12 +227,6 @@ static std::vector<CUmodule> &lupine_loaded_modules() {
   return modules;
 }
 
-struct lupine_primary_context_state {
-  bool valid = false;
-  unsigned int flags = 0;
-  int active = 0;
-};
-
 struct lupine_device_attribute_key {
   int device = 0;
   int attribute = 0;
@@ -383,13 +377,6 @@ lupine_module_functions() {
   static auto *functions =
       new std::unordered_map<CUfunction, lupine_module_function_record>();
   return *functions;
-}
-
-static libcuckoo::cuckoohash_map<int, lupine_primary_context_state> &
-lupine_primary_context_states() {
-  static auto *states =
-      new libcuckoo::cuckoohash_map<int, lupine_primary_context_state>();
-  return *states;
 }
 
 static libcuckoo::cuckoohash_map<lupine_device_attribute_key, int,
@@ -921,6 +908,15 @@ static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto it = lupine_module_images().find(source_module);
     if (it == lupine_module_images().end()) {
+      // No recorded image, so the module cannot be replicated elsewhere. It is
+      // still valid on the route that already owns it (cuModuleLoad, for one,
+      // never records an image), so hand that handle back untouched and only
+      // fail when a genuinely different route is asked for.
+      if (lupine_route_identity(lupine_route_for_module(source_module)) ==
+          route_id) {
+        *module = source_module;
+        return CUDA_SUCCESS;
+      }
       return CUDA_ERROR_NOT_FOUND;
     }
     auto cached = it->second.modules_by_route.find(route_id);
@@ -1052,6 +1048,13 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto it = lupine_library_images().find(source_library);
     if (it == lupine_library_images().end()) {
+      // See lupine_load_recorded_module_on_route: without a recorded image the
+      // library only exists on the route that loaded it.
+      if (lupine_route_identity(lupine_route_for_library(source_library)) ==
+          route_id) {
+        *library = source_library;
+        return CUDA_SUCCESS;
+      }
       return CUDA_ERROR_NOT_FOUND;
     }
     auto cached = it->second.libraries_by_route.find(route_id);
@@ -1484,7 +1487,10 @@ static CUresult lupine_resolve_private_function_for_route(
   }
 
   if (mapping.module == nullptr) {
-    return CUDA_ERROR_NOT_FOUND;
+    // Nothing to replicate from; leave the handle alone and let the server the
+    // launch lands on decide whether it is valid, exactly as for a function
+    // this client never mapped at all.
+    return CUDA_SUCCESS;
   }
   CUmodule module = nullptr;
   CUresult result =
@@ -2974,85 +2980,6 @@ extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device) {
   if (return_value == CUDA_SUCCESS) {
     *device = lupine_local_device_for_remote(conn, remote_device);
     lupine_current_context_device_cache_insert(lupine_current_context, *device);
-  }
-  return return_value;
-}
-
-extern "C" void lupine_note_primary_context_active(CUdevice dev) {
-  lupine_primary_context_states().update_fn(
-      static_cast<int>(dev), [](lupine_primary_context_state &state) {
-        if (state.valid) {
-          state.active = 1;
-        }
-      });
-}
-
-extern "C" void lupine_note_primary_context_flags(CUdevice dev,
-                                                  unsigned int flags) {
-  lupine_primary_context_states().upsert(
-      static_cast<int>(dev),
-      [flags](lupine_primary_context_state &state, libcuckoo::UpsertContext) {
-        state.flags = flags;
-        if (!state.valid) {
-          state.active = 0;
-          state.valid = true;
-        }
-      },
-      lupine_primary_context_state{true, flags, 0});
-}
-
-extern "C" void lupine_invalidate_primary_context_state(CUdevice dev) {
-  lupine_primary_context_states().erase(static_cast<int>(dev));
-}
-
-extern "C" CUresult
-lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
-                                         int *active) {
-  if (flags == nullptr || active == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  int local_device = static_cast<int>(dev);
-  lupine_primary_context_state cached;
-  if (lupine_primary_context_states().find(local_device, cached) &&
-      cached.valid) {
-    *flags = cached.flags;
-    *active = cached.active;
-    return CUDA_SUCCESS;
-  }
-
-  CUdevice remote_device = dev;
-  lupine_route route = lupine_route_for_device(&remote_device);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
-    return CUDA_ERROR_INVALID_DEVICE;
-  }
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUdevice, unsigned int *, int *);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuDevicePrimaryCtxGetState");
-    if (real == nullptr) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    CUresult result = real(remote_device, flags, active);
-    if (result == CUDA_SUCCESS) {
-      lupine_primary_context_states().insert_or_assign(
-          local_device, lupine_primary_context_state{true, *flags, *active});
-    }
-    return result;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxGetState) < 0 ||
-      rpc_write(conn, &remote_device, sizeof(remote_device)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, flags, sizeof(*flags)) < 0 ||
-      rpc_read(conn, active, sizeof(*active)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
-    lupine_primary_context_states().insert_or_assign(
-        local_device, lupine_primary_context_state{true, *flags, *active});
   }
   return return_value;
 }
@@ -7346,17 +7273,33 @@ extern "C" CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel) {
       return CUDA_SUCCESS;
     }
   }
+  // Only kernels handed out by cuLibraryGetKernel are recorded above. Anything
+  // else has to be resolved by whoever owns the handle, not guessed at here.
   lupine_route route =
       lupine_route_for_function(reinterpret_cast<CUfunction>(kernel));
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(CUlibrary *, CUkernel);
     auto real = lupine_real_cuda_fn<real_fn_t>("cuKernelGetLibrary");
-    if (real != nullptr) {
-      return real(pLib, kernel);
+    if (real == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
+    return real(pLib, kernel);
   }
-  *pLib = nullptr;
-  return CUDA_ERROR_NOT_FOUND;
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuKernelGetLibrary) < 0 ||
+      rpc_write(conn, &kernel, sizeof(kernel)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pLib, sizeof(*pLib)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && *pLib != nullptr) {
+    lupine_note_library_owner_route(*pLib, route);
+  }
+  return return_value;
 }
 
 static void *lupine_get_unsupported_stub(const char *symbol) {
@@ -7852,7 +7795,22 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
 
 extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
                                      int cudaVersion, cuuint64_t flags) {
-  return cuGetProcAddress_v2(symbol, pfn, cudaVersion, flags, nullptr);
+  // The v1 entry point predates symbolStatus, so the driver reports a missing
+  // symbol as CUDA_ERROR_NOT_FOUND and leaves *pfn untouched, where v2 reports
+  // CUDA_SUCCESS with CU_GET_PROC_ADDRESS_SYMBOL_NOT_FOUND. Verified against
+  // driver 590.48.01 (CUDA 13.1).
+  void *resolved = nullptr;
+  CUdriverProcAddressQueryResult status = CU_GET_PROC_ADDRESS_SUCCESS;
+  CUresult result =
+      cuGetProcAddress_v2(symbol, &resolved, cudaVersion, flags, &status);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  if (status == CU_GET_PROC_ADDRESS_SYMBOL_NOT_FOUND) {
+    return CUDA_ERROR_NOT_FOUND;
+  }
+  *pfn = resolved;
+  return CUDA_SUCCESS;
 }
 
 void *dlsym(void *handle, const char *name) __THROW {

@@ -823,14 +823,6 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
     if metadata.synchronize:
         f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
 
-    if function.name.format() == "cuDevicePrimaryCtxRetain":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_active(dev);\n")
-    if function.name.format() == "cuDevicePrimaryCtxRelease_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
-    if function.name.format() == "cuDevicePrimaryCtxSetFlags_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_note_primary_context_flags(dev, flags);\n")
-    if function.name.format() == "cuDevicePrimaryCtxReset_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_primary_context_state(dev);\n")
     if function.name.format() == "cuCtxDestroy_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(ctx);\n")
     if function.name.format() in {
@@ -1306,10 +1298,6 @@ def main():
             'extern "C" void lupine_invalidate_current_context_cache();\n'
             'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
             'extern "C" void lupine_invalidate_function_caches();\n'
-            'extern "C" CUresult lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags, int *active);\n'
-            'extern "C" void lupine_note_primary_context_active(CUdevice dev);\n'
-            'extern "C" void lupine_note_primary_context_flags(CUdevice dev, unsigned int flags);\n'
-            'extern "C" void lupine_invalidate_primary_context_state(CUdevice dev);\n'
             'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
             'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
             'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
@@ -1350,7 +1338,6 @@ def main():
                 )
             direct_wrappers = {
                 "cuDeviceGetAttribute": "lupine_cuDeviceGetAttribute_cached(pi, attrib, dev)",
-                "cuDevicePrimaryCtxGetState": "lupine_cuDevicePrimaryCtxGetState_cached(dev, flags, active)",
                 "cuCtxPushCurrent_v2": "lupine_cuCtxPushCurrent_virtual(ctx)",
                 "cuCtxPopCurrent_v2": "lupine_cuCtxPopCurrent_virtual(pctx)",
                 "cuCtxSetCurrent": "lupine_cuCtxSetCurrent_virtual(ctx)",

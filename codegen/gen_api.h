@@ -68,6 +68,7 @@
 #define RPC_cuLibraryGetKernel 1052861029
 #define RPC_cuLibraryGetModule 1865932518
 #define RPC_cuKernelGetFunction 1887699705
+#define RPC_cuKernelGetLibrary 1537366344
 #define RPC_cuLibraryGetGlobal 186020685
 #define RPC_cuLibraryGetManaged 1917807783
 #define RPC_cuLibraryGetUnifiedFunction 616076438

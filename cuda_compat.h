@@ -198,6 +198,24 @@ typedef int CUdriverProcAddressQueryResult;
 #define CU_GET_PROC_ADDRESS_SYMBOL_NOT_FOUND 1
 #endif
 
+// cuKernelGetLibrary was added in CUDA 12.5.
+#if CUDA_VERSION < 12050
+#ifdef LUPINE_CUDA_COMPAT_TYPES_ONLY
+#ifdef __cplusplus
+extern "C" {
+#endif
+CUresult cuKernelGetLibrary(CUlibrary *, CUkernel);
+#ifdef __cplusplus
+}
+#endif
+#endif
+#ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
+static inline CUresult cuKernelGetLibrary(CUlibrary *, CUkernel) {
+  return CUDA_ERROR_NOT_SUPPORTED;
+}
+#endif
+#endif
+
 #if CUDA_VERSION < 11080
 typedef struct CUlaunchAttribute_st {
   int id;

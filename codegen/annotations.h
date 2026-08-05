@@ -2466,6 +2466,12 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
  */
 CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
 /**
+ * @disabled client
+ * @param pLib RECV_ONLY
+ * @param kernel SEND_ONLY
+ */
+CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel);
+/**
  * @routingkey FUNCTION kernel
  * @param kernel SEND_ONLY
  * @param paramIndex SEND_ONLY

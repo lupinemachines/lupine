@@ -1478,6 +1478,30 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuKernelGetLibrary(conn_t *conn) {
+  CUlibrary pLib;
+  CUkernel kernel;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuKernelGetLibrary(&pLib, kernel);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pLib, sizeof(CUlibrary)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_cuLibraryGetGlobal(conn_t *conn) {
   CUdeviceptr dptr;
   size_t bytes;
@@ -8524,6 +8548,7 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuLibraryGetKernel, handle_cuLibraryGetKernel},
     {RPC_cuLibraryGetModule, handle_cuLibraryGetModule},
     {RPC_cuKernelGetFunction, handle_cuKernelGetFunction},
+    {RPC_cuKernelGetLibrary, handle_cuKernelGetLibrary},
     {RPC_cuLibraryGetGlobal, handle_cuLibraryGetGlobal},
     {RPC_cuLibraryGetManaged, handle_cuLibraryGetManaged},
     {RPC_cuLibraryGetUnifiedFunction, handle_cuLibraryGetUnifiedFunction},
