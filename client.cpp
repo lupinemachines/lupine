@@ -693,20 +693,12 @@ extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
     return CUDA_ERROR_INVALID_DEVICE;
   }
 
-#if CUDA_VERSION >= 13010
-  constexpr CUdevice_P2PAttribute max_attribute =
-      CU_DEVICE_P2P_ATTRIBUTE_ONLY_PARTIAL_NATIVE_ATOMIC_SUPPORTED;
-#else
-  constexpr CUdevice_P2PAttribute max_attribute =
-      CU_DEVICE_P2P_ATTRIBUTE_CUDA_ARRAY_ACCESS_SUPPORTED;
-#endif
-  int attribute = static_cast<int>(attrib);
-  if (attribute < static_cast<int>(CU_DEVICE_P2P_ATTRIBUTE_PERFORMANCE_RANK) ||
-      attribute > static_cast<int>(max_attribute)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
+  // The attribute is not validated here: it travels the wire verbatim so the
+  // driver that owns the devices, not this client's CUDA headers, decides.
 
   if (!lupine_routes_share_server(src_route, dst_route)) {
+    // No driver owns both devices; 0 matches the driver's answer for non-peer
+    // pairs, PERFORMANCE_RANK included.
     *value = 0;
     return CUDA_SUCCESS;
   }
