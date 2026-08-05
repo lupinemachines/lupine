@@ -13,6 +13,9 @@ struct lupine_kernel_param_layout;
 static constexpr int LUPINE_ROUTE_REMOTE = 0;
 static constexpr int LUPINE_ROUTE_LOCAL = 1;
 static constexpr int LUPINE_ROUTE_INVALID = 2;
+// A device ordinal outside the virtual device table, as opposed to a route
+// that exists but could not be reached.
+static constexpr int LUPINE_ROUTE_UNKNOWN_DEVICE = 3;
 
 struct lupine_route {
   int kind = LUPINE_ROUTE_INVALID;

@@ -688,9 +688,13 @@ extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
 
   lupine_route src_route = lupine_route_for_device(&srcDevice);
   lupine_route dst_route = lupine_route_for_device(&dstDevice);
+  if (src_route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE ||
+      dst_route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
   if (src_route.kind == LUPINE_ROUTE_INVALID ||
       dst_route.kind == LUPINE_ROUTE_INVALID) {
-    return CUDA_ERROR_INVALID_DEVICE;
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
 #if CUDA_VERSION >= 13010
@@ -739,10 +743,14 @@ extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
   if (canAccessPeer == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
+  CUdevice peer = peerDev;
   lupine_route route = lupine_route_for_device(&dev);
+  lupine_route peer_route = lupine_route_for_device(&peer);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE ||
+      peer_route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
   if (lupine_route_is_local(route)) {
-    CUdevice peer = peerDev;
-    lupine_route peer_route = lupine_route_for_device(&peer);
     if (!lupine_route_is_local(peer_route)) {
       *canAccessPeer = 0;
       return CUDA_SUCCESS;
@@ -754,7 +762,7 @@ extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr) {
-    return CUDA_ERROR_INVALID_DEVICE;
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (!lupine_translate_device_for_conn(conn, &peerDev)) {
     *canAccessPeer = 0;
@@ -1560,6 +1568,9 @@ lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
 
   CUdevice remote_dev = dev;
   lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(int *, CUdevice_attribute, CUdevice);
     auto real = lupine_real_cuda_fn<real_fn_t>("cuDeviceGetAttribute");
@@ -1748,6 +1759,9 @@ extern "C" CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
     return CUDA_ERROR_INVALID_VALUE;
   }
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
   lupine_kernel_attribute_key key{lupine_route_identity(route), kernel,
                                   static_cast<int>(attrib),
                                   static_cast<int>(dev)};
@@ -3016,6 +3030,9 @@ lupine_cuDevicePrimaryCtxGetState_cached(CUdevice dev, unsigned int *flags,
 
   CUdevice remote_device = dev;
   lupine_route route = lupine_route_for_device(&remote_device);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(CUdevice, unsigned int *, int *);
     auto real = lupine_real_cuda_fn<real_fn_t>("cuDevicePrimaryCtxGetState");
@@ -3517,6 +3534,9 @@ extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
   }
 
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(CUcontext *, unsigned int, CUdevice);
     auto real = lupine_real_cuda_fn<real_fn_t>("cuCtxCreate_v2");

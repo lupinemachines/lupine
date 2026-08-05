@@ -872,6 +872,16 @@ def error_const(return_type: str) -> str:
     raise NotImplementedError("Unknown return type: %s" % return_type)
 
 
+def invalid_device_const(return_type: str) -> str:
+    if return_type == "CUresult":
+        return "CUDA_ERROR_INVALID_DEVICE"
+    if return_type == "cudaError_t":
+        return "cudaErrorInvalidDevice"
+    raise NotImplementedError(
+        "No invalid-device error for return type: %s" % return_type
+    )
+
+
 def prefix_std(type: str) -> str:
     # if type in ["size_t", "std::size_t"]:
     #     return "std::size_t"
@@ -1466,6 +1476,15 @@ def main():
                         route_expr=client_routing_route_expr(metadata)
                     )
                 )
+                if metadata.routing_kind == "DEVICE":
+                    f.write("    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)\n")
+                    f.write(
+                        "        return {error_return};\n".format(
+                            error_return=invalid_device_const(
+                                function.return_type.format()
+                            )
+                        )
+                    )
             if metadata.cross_server_copy is not None:
                 copy = metadata.cross_server_copy
                 stream_arg = (

@@ -1753,6 +1753,9 @@ static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
   if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
     CUdevice route_device = location.id;
     route = lupine_route_for_device(&route_device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+      return CUDA_ERROR_INVALID_DEVICE;
+    }
     route_location.id = route_device;
   } else {
     route = hStream != nullptr ? lupine_route_for_stream(hStream)

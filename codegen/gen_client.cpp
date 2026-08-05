@@ -145,6 +145,8 @@ CUresult cuDriverGetVersion(int *driverVersion) {
 
 CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(char *, int, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -170,6 +172,8 @@ CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
 
 CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUuuid *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuDeviceGetUuid_v2",
@@ -194,6 +198,8 @@ CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
 CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
                          CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(char *, unsigned int *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -218,6 +224,8 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
 
 CUresult cuDeviceTotalMem_v2(size_t *bytes, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(size_t *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuDeviceTotalMem_v2",
@@ -241,6 +249,8 @@ CUresult cuDeviceGetTexture1DLinearMaxWidth(size_t *maxWidthInElements,
                                             unsigned numChannels,
                                             CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(size_t *, CUarray_format, unsigned, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -270,6 +280,8 @@ CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
 
 CUresult cuDeviceSetMemPool(CUdevice dev, CUmemoryPool pool) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUdevice, CUmemoryPool);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuDeviceSetMemPool",
@@ -290,6 +302,8 @@ CUresult cuDeviceSetMemPool(CUdevice dev, CUmemoryPool pool) {
 
 CUresult cuDeviceGetMemPool(CUmemoryPool *pool, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUmemoryPool *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuDeviceGetMemPool",
@@ -316,6 +330,8 @@ CUresult cuDeviceGetMemPool(CUmemoryPool *pool, CUdevice dev) {
 
 CUresult cuDeviceGetDefaultMemPool(CUmemoryPool *pool_out, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUmemoryPool *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -343,6 +359,8 @@ CUresult cuDeviceGetDefaultMemPool(CUmemoryPool *pool_out, CUdevice dev) {
 CUresult cuDeviceGetExecAffinitySupport(int *pi, CUexecAffinityType type,
                                         CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(int *, CUexecAffinityType, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -386,6 +404,8 @@ CUresult cuFlushGPUDirectRDMAWrites(CUflushGPUDirectRDMAWritesTarget target,
 
 CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUdevprop *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -406,6 +426,8 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev) {
 
 CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(int *, int *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -428,6 +450,8 @@ CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev) {
 
 CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUcontext *, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -458,6 +482,8 @@ CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
 
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -485,6 +511,8 @@ CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
 
 CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUdevice, unsigned int);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -514,6 +542,8 @@ CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
 
 CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -1231,6 +1261,8 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUfunction_attribute, int, CUkernel, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuKernelSetAttribute",
@@ -1261,6 +1293,8 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
 CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
                                 CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUkernel, CUfunc_cache, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -1448,6 +1482,8 @@ CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId) {
 
 CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(char *, int, CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
@@ -2212,6 +2248,8 @@ CUresult
 cuArrayGetMemoryRequirements(CUDA_ARRAY_MEMORY_REQUIREMENTS *memoryRequirements,
                              CUarray array, CUdevice device) {
   lupine_route route = lupine_route_for_device(&device);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t =
       CUresult (*)(CUDA_ARRAY_MEMORY_REQUIREMENTS *, CUarray, CUdevice);
@@ -2240,6 +2278,8 @@ CUresult cuMipmappedArrayGetMemoryRequirements(
     CUDA_ARRAY_MEMORY_REQUIREMENTS *memoryRequirements, CUmipmappedArray mipmap,
     CUdevice device) {
   lupine_route route = lupine_route_for_device(&device);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUDA_ARRAY_MEMORY_REQUIREMENTS *,
                                  CUmipmappedArray, CUdevice);
@@ -5128,6 +5168,8 @@ CUresult cuGraphMemFreeNodeGetParams(CUgraphNode hNode, CUdeviceptr *dptr_out) {
 
 CUresult cuDeviceGraphMemTrim(CUdevice device) {
   lupine_route route = lupine_route_for_device(&device);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUdevice);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuDeviceGraphMemTrim",

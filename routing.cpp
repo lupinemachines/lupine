@@ -376,9 +376,6 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
     CUdevice virtual_device =
         lupine_virtual_device_for_route(route, route_device);
     if (virtual_device < 0) {
-      if (first_error == CUDA_ERROR_INVALID_DEVICE) {
-        first_error = CUDA_ERROR_DEVICE_UNAVAILABLE;
-      }
       continue;
     }
 
@@ -401,7 +398,7 @@ extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
   int local = static_cast<int>(*device);
   auto &devices = lupine_device_table();
   if (local < 0 || local >= static_cast<int>(devices.size())) {
-    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+    return lupine_route{LUPINE_ROUTE_UNKNOWN_DEVICE, nullptr};
   }
   const lupine_device_entry &mapped = devices[local];
   if (mapped.local) {
