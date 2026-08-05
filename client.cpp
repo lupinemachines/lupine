@@ -1526,8 +1526,6 @@ lupine_translate_private_function_for_rpc(CUfunction function) {
   return lupine_translate_private_function(function);
 }
 
-extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);
-
 static bool lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
   switch (attrib) {
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS:
@@ -1540,9 +1538,8 @@ static bool lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
   }
 }
 
-extern "C" CUresult
-lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
-                                   CUdevice dev) {
+extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
+                                         CUdevice dev) {
   if (pi == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -1653,30 +1650,26 @@ static CUresult lupine_cuGetParamInfo_cached(uintptr_t handle,
   return result;
 }
 
-extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel,
-                                                       size_t paramIndex,
-                                                       size_t *paramOffset,
-                                                       size_t *paramSize) {
+extern "C" CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
+                                         size_t *paramOffset,
+                                         size_t *paramSize) {
   return lupine_cuGetParamInfo_cached(reinterpret_cast<uintptr_t>(kernel),
                                       paramIndex, paramOffset, paramSize, true);
 }
 
-extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func,
-                                                     size_t paramIndex,
-                                                     size_t *paramOffset,
-                                                     size_t *paramSize) {
+extern "C" CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
+                                       size_t *paramOffset, size_t *paramSize) {
   return lupine_cuGetParamInfo_cached(reinterpret_cast<uintptr_t>(func),
                                       paramIndex, paramOffset, paramSize,
                                       false);
 }
 
-extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc,
-                                                      CUkernel kernel) {
+extern "C" CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel) {
   if (pFunc == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   CUcontext current_context = nullptr;
-  CUresult context_status = lupine_cuCtxGetCurrent_virtual(&current_context);
+  CUresult context_status = cuCtxGetCurrent(&current_context);
   if (context_status != CUDA_SUCCESS) {
     return context_status;
   }
@@ -1864,14 +1857,13 @@ static CUresult lupine_cuOccupancy_cached(int *numBlocks, CUfunction func,
   return return_value;
 }
 
-extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(
+extern "C" CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize) {
   return lupine_cuOccupancy_cached(numBlocks, func, blockSize, dynamicSMemSize,
                                    0, false);
 }
 
-extern "C" CUresult
-lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(
+extern "C" CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags) {
   return lupine_cuOccupancy_cached(numBlocks, func, blockSize, dynamicSMemSize,
@@ -2869,7 +2861,7 @@ extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
   }
 }
 
-extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
+extern "C" CUresult cuCtxPushCurrent_v2(CUcontext ctx) {
   lupine_context_stack->push_back(lupine_current_context);
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
@@ -2884,7 +2876,14 @@ extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx) {
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx) {
+#ifdef cuCtxPushCurrent
+#undef cuCtxPushCurrent
+#endif
+extern "C" CUresult cuCtxPushCurrent(CUcontext ctx) {
+  return cuCtxPushCurrent_v2(ctx);
+}
+
+extern "C" CUresult cuCtxPopCurrent_v2(CUcontext *pctx) {
   CUcontext popped = lupine_current_context;
   if (pctx != nullptr) {
     *pctx = popped;
@@ -2908,7 +2907,14 @@ extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx) {
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx) {
+#ifdef cuCtxPopCurrent
+#undef cuCtxPopCurrent
+#endif
+extern "C" CUresult cuCtxPopCurrent(CUcontext *pctx) {
+  return cuCtxPopCurrent_v2(pctx);
+}
+
+extern "C" CUresult cuCtxSetCurrent(CUcontext ctx) {
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
     lupine_current_context = ctx;
@@ -2920,7 +2926,7 @@ extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx) {
   return result;
 }
 
-extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx) {
+extern "C" CUresult cuCtxGetCurrent(CUcontext *pctx) {
   if (pctx == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -2928,7 +2934,7 @@ extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx) {
   return CUDA_SUCCESS;
 }
 
-extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device) {
+extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -6563,7 +6569,7 @@ static CUresult lupine_normalize_context(CUcontext *ctx) {
 }
 
 static CUresult lupine_activate_context_local_storage_context(CUcontext ctx) {
-  CUresult result = lupine_cuCtxSetCurrent_virtual(ctx);
+  CUresult result = cuCtxSetCurrent(ctx);
   LUPINE_TRACE_LOG("LUPINE context storage activate ctx="
                    << ctx << " result=" << static_cast<int>(result));
   return result;
@@ -7866,6 +7872,8 @@ lupine_manual_function_map() {
       {"cuCtxCreate", (void *)cuCtxCreate_v2},
 #endif
       {"cuCtxCreate_v2", (void *)cuCtxCreate_v2},
+      {"cuCtxPushCurrent", (void *)cuCtxPushCurrent_v2},
+      {"cuCtxPopCurrent", (void *)cuCtxPopCurrent_v2},
       {"cuOccupancyMaxPotentialBlockSize",
        (void *)cuOccupancyMaxPotentialBlockSize},
       {"cuOccupancyMaxPotentialBlockSizeWithFlags",

@@ -72,37 +72,13 @@ extern "C" CUresult
 lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                                size_t ByteCount, CUstream hStream, bool async);
 
-extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx);
-extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx);
-extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);
-extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);
-extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);
 extern "C" void lupine_invalidate_current_context_cache();
 extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
 extern "C" void lupine_invalidate_function_caches();
-extern "C" CUresult
-lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
-                                   CUdevice dev);
-extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc,
-                                                      CUkernel kernel);
 extern "C" void lupine_invalidate_kernel_attribute_cache();
 extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
                                                     CUkernel kernel, int attrib,
                                                     int dev);
-extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel,
-                                                       size_t paramIndex,
-                                                       size_t *paramOffset,
-                                                       size_t *paramSize);
-extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func,
-                                                     size_t paramIndex,
-                                                     size_t *paramOffset,
-                                                     size_t *paramSize);
-extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(
-    int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);
-extern "C" CUresult
-lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(
-    int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
-    unsigned int flags);
 extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
@@ -266,11 +242,6 @@ CUresult cuDeviceGetTexture1DLinearMaxWidth(size_t *maxWidthInElements,
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
-}
-
-CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
-                              CUdevice dev) {
-  return lupine_cuDeviceGetAttribute_cached(pi, attrib, dev);
 }
 
 CUresult cuDeviceSetMemPool(CUdevice dev, CUmemoryPool pool) {
@@ -572,10 +543,9 @@ CUresult cuCtxDestroy_v2(CUcontext ctx) {
   lupine_route route = lupine_route_for_context(ctx);
   CUresult return_value;
   CUcontext lupine_current_before_destroy = nullptr;
-  if (lupine_cuCtxGetCurrent_virtual(&lupine_current_before_destroy) ==
-          CUDA_SUCCESS &&
+  if (cuCtxGetCurrent(&lupine_current_before_destroy) == CUDA_SUCCESS &&
       lupine_current_before_destroy == ctx) {
-    lupine_cuCtxSetCurrent_virtual(nullptr);
+    cuCtxSetCurrent(nullptr);
   }
   using real_fn_t = CUresult (*)(CUcontext);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxDestroy_v2",
@@ -599,26 +569,6 @@ CUresult cuCtxDestroy_v2(CUcontext ctx) {
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_current_context_cache();
   return return_value;
-}
-
-CUresult cuCtxPushCurrent_v2(CUcontext ctx) {
-  return lupine_cuCtxPushCurrent_virtual(ctx);
-}
-
-CUresult cuCtxPopCurrent_v2(CUcontext *pctx) {
-  return lupine_cuCtxPopCurrent_virtual(pctx);
-}
-
-CUresult cuCtxSetCurrent(CUcontext ctx) {
-  return lupine_cuCtxSetCurrent_virtual(ctx);
-}
-
-CUresult cuCtxGetCurrent(CUcontext *pctx) {
-  return lupine_cuCtxGetCurrent_virtual(pctx);
-}
-
-CUresult cuCtxGetDevice(CUdevice *device) {
-  return lupine_cuCtxGetDevice_cached(device);
 }
 
 CUresult cuCtxGetFlags(unsigned int *flags) {
@@ -1199,10 +1149,6 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   return return_value;
 }
 
-CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel) {
-  return lupine_cuKernelGetFunction_cached(pFunc, kernel);
-}
-
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name) {
   lupine_route route = lupine_route_for_library(library);
@@ -1367,12 +1313,6 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
-}
-
-CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
-                              size_t *paramOffset, size_t *paramSize) {
-  return lupine_cuKernelGetParamInfo_cached(kernel, paramIndex, paramOffset,
-                                            paramSize);
 }
 
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
@@ -4051,12 +3991,6 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc) {
   return return_value;
 }
 
-CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
-                            size_t *paramOffset, size_t *paramSize) {
-  return lupine_cuFuncGetParamInfo_cached(func, paramIndex, paramOffset,
-                                          paramSize);
-}
-
 CUresult
 cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
                                      unsigned int numDevices,
@@ -6011,21 +5945,6 @@ CUresult cuGraphReleaseUserObject(CUgraph graph, CUuserObject object,
   return return_value;
 }
 
-CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
-                                                     CUfunction func,
-                                                     int blockSize,
-                                                     size_t dynamicSMemSize) {
-  return lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(
-      numBlocks, func, blockSize, dynamicSMemSize);
-}
-
-CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
-    int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
-    unsigned int flags) {
-  return lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(
-      numBlocks, func, blockSize, dynamicSMemSize, flags);
-}
-
 CUresult cuOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize,
                                                  CUfunction func, int numBlocks,
                                                  int blockSize) {
@@ -7158,20 +7077,6 @@ extern "C" CUresult cuDevicePrimaryCtxReset(CUdevice dev) {
 #endif
 extern "C" CUresult cuCtxDestroy(CUcontext ctx) { return cuCtxDestroy_v2(ctx); }
 
-#ifdef cuCtxPopCurrent
-#undef cuCtxPopCurrent
-#endif
-extern "C" CUresult cuCtxPopCurrent(CUcontext *pctx) {
-  return cuCtxPopCurrent_v2(pctx);
-}
-
-#ifdef cuCtxPushCurrent
-#undef cuCtxPushCurrent
-#endif
-extern "C" CUresult cuCtxPushCurrent(CUcontext ctx) {
-  return cuCtxPushCurrent_v2(ctx);
-}
-
 #ifdef cuModuleGetGlobal
 #undef cuModuleGetGlobal
 #endif
@@ -7902,8 +7807,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuDevicePrimaryCtxSetFlags", (void *)cuDevicePrimaryCtxSetFlags_v2},
     {"cuDevicePrimaryCtxReset", (void *)cuDevicePrimaryCtxReset_v2},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
-    {"cuCtxPopCurrent", (void *)cuCtxPopCurrent_v2},
-    {"cuCtxPushCurrent", (void *)cuCtxPushCurrent_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},

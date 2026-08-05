@@ -2091,6 +2091,7 @@ CUresult cuDeviceGetTexture1DLinearMaxWidth(size_t *maxWidthInElements,
                                             CUarray_format format,
                                             unsigned numChannels, CUdevice dev);
 /**
+ * @disabled client - manual client caches attributes per device
  * @param pi RECV_ONLY
  * @param attrib SEND_ONLY
  * @param dev SEND_ONLY
@@ -2196,22 +2197,27 @@ CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
  */
 CUresult cuCtxDestroy_v2(CUcontext ctx);
 /**
+ * @disabled client - manual client maintains the virtual context stack
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxPushCurrent_v2(CUcontext ctx);
 /**
+ * @disabled client - manual client maintains the virtual context stack
  * @param pctx RECV_ONLY
  */
 CUresult cuCtxPopCurrent_v2(CUcontext *pctx);
 /**
+ * @disabled client - manual client maintains the virtual current context
  * @param ctx SEND_ONLY
  */
 CUresult cuCtxSetCurrent(CUcontext ctx);
 /**
+ * @disabled client - manual client maintains the virtual current context
  * @param pctx RECV_ONLY
  */
 CUresult cuCtxGetCurrent(CUcontext *pctx);
 /**
+ * @disabled client - manual client resolves the device of the virtual context
  * @param device RECV_ONLY
  */
 CUresult cuCtxGetDevice(CUdevice *device);
@@ -2461,6 +2467,7 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
  */
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
 /**
+ * @disabled client - manual client caches functions per kernel and context
  * @param pFunc RECV_ONLY
  * @param kernel SEND_ONLY
  */
@@ -2472,6 +2479,7 @@ CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
  */
 CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel);
 /**
+ * @disabled client - manual client caches the parameter layout per kernel
  * @routingkey FUNCTION kernel
  * @param kernel SEND_ONLY
  * @param paramIndex SEND_ONLY
@@ -2481,6 +2489,7 @@ CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel);
 CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
                               size_t *paramOffset, size_t *paramSize);
 /**
+ * @disabled client - manual client caches the parameter layout per function
  * @routingkey FUNCTION func
  * @param func SEND_ONLY
  * @param paramIndex SEND_ONLY
@@ -4407,6 +4416,7 @@ CUresult cuGraphRetainUserObject(CUgraph graph, CUuserObject object,
 CUresult cuGraphReleaseUserObject(CUgraph graph, CUuserObject object,
                                   unsigned int count);
 /**
+ * @disabled client - manual client caches occupancy per function
  * @param numBlocks SEND_RECV
  * @param func SEND_ONLY
  * @param blockSize SEND_ONLY
@@ -4417,6 +4427,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
                                                      int blockSize,
                                                      size_t dynamicSMemSize);
 /**
+ * @disabled client - manual client caches occupancy per function
  * @param numBlocks SEND_RECV
  * @param func SEND_ONLY
  * @param blockSize SEND_ONLY

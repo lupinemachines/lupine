@@ -1307,22 +1307,11 @@ def main():
             '                                                   size_t ByteCount,\n'
             '                                                   CUstream hStream,\n'
             '                                                   bool async);\n\n'
-            'extern "C" CUresult lupine_cuCtxPushCurrent_virtual(CUcontext ctx);\n'
-            'extern "C" CUresult lupine_cuCtxPopCurrent_virtual(CUcontext *pctx);\n'
-            'extern "C" CUresult lupine_cuCtxSetCurrent_virtual(CUcontext ctx);\n'
-            'extern "C" CUresult lupine_cuCtxGetCurrent_virtual(CUcontext *pctx);\n'
-            'extern "C" CUresult lupine_cuCtxGetDevice_cached(CUdevice *device);\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
             'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
             'extern "C" void lupine_invalidate_function_caches();\n'
-            'extern "C" CUresult lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib, CUdevice dev);\n'
-            'extern "C" CUresult lupine_cuKernelGetFunction_cached(CUfunction *pFunc, CUkernel kernel);\n'
             'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
             'extern "C" void lupine_kernel_attribute_cache_erase(int route_id, CUkernel kernel, int attrib, int dev);\n'
-            'extern "C" CUresult lupine_cuKernelGetParamInfo_cached(CUkernel kernel, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
-            'extern "C" CUresult lupine_cuFuncGetParamInfo_cached(CUfunction func, size_t paramIndex, size_t *paramOffset, size_t *paramSize);\n'
-            'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize);\n'
-            'extern "C" CUresult lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize, unsigned int flags);\n'
             'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
@@ -1353,23 +1342,6 @@ def main():
                     "        return lupine_sync_result;\n"
                     "    }\n"
                 )
-            direct_wrappers = {
-                "cuDeviceGetAttribute": "lupine_cuDeviceGetAttribute_cached(pi, attrib, dev)",
-                "cuCtxPushCurrent_v2": "lupine_cuCtxPushCurrent_virtual(ctx)",
-                "cuCtxPopCurrent_v2": "lupine_cuCtxPopCurrent_virtual(pctx)",
-                "cuCtxSetCurrent": "lupine_cuCtxSetCurrent_virtual(ctx)",
-                "cuCtxGetCurrent": "lupine_cuCtxGetCurrent_virtual(pctx)",
-                "cuCtxGetDevice": "lupine_cuCtxGetDevice_cached(device)",
-                "cuKernelGetFunction": "lupine_cuKernelGetFunction_cached(pFunc, kernel)",
-                "cuKernelGetParamInfo": "lupine_cuKernelGetParamInfo_cached(kernel, paramIndex, paramOffset, paramSize)",
-                "cuFuncGetParamInfo": "lupine_cuFuncGetParamInfo_cached(func, paramIndex, paramOffset, paramSize)",
-                "cuOccupancyMaxActiveBlocksPerMultiprocessor": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessor_cached(numBlocks, func, blockSize, dynamicSMemSize)",
-                "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags": "lupine_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags_cached(numBlocks, func, blockSize, dynamicSMemSize, flags)",
-            }
-            if function.name.format() in direct_wrappers:
-                f.write("    return {call};\n".format(call=direct_wrappers[function.name.format()]))
-                f.write("}\n\n")
-                continue
 
             for translation in metadata.translate_deviceptrs:
                 name = translation.parameter.name
@@ -1482,10 +1454,10 @@ def main():
                 # Destroying the current context implicitly pops it; mirror
                 # that in the client's virtual context state before the call.
                 f.write("    CUcontext lupine_current_before_destroy = nullptr;\n")
-                f.write("    if (lupine_cuCtxGetCurrent_virtual(&lupine_current_before_destroy) ==\n")
+                f.write("    if (cuCtxGetCurrent(&lupine_current_before_destroy) ==\n")
                 f.write("            CUDA_SUCCESS &&\n")
                 f.write("        lupine_current_before_destroy == ctx) {\n")
-                f.write("        lupine_cuCtxSetCurrent_virtual(nullptr);\n")
+                f.write("        cuCtxSetCurrent(nullptr);\n")
                 f.write("    }\n")
             f.write(
                 "    using real_fn_t = {return_type} (*)({params});\n".format(
