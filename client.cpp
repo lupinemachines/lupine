@@ -1574,7 +1574,6 @@ lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    // Remote-only, and deliberate: unified memory cannot span the wire.
     if (lupine_device_attribute_is_virtualized(attrib)) {
       value = 0;
     }
@@ -6683,7 +6682,6 @@ extern "C" CUresult lupine_device_get_attribute_ext(CUdevice dev,
     return CUDA_ERROR_INVALID_VALUE;
   }
   int value = 0;
-  // cuDeviceGetAttribute already virtualizes remote managed-memory attributes.
   CUresult status = cuDeviceGetAttribute(
       &value, static_cast<CUdevice_attribute>(attribute), dev);
   if (status == CUDA_SUCCESS) {
