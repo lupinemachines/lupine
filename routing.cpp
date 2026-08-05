@@ -642,10 +642,6 @@ extern "C" lupine_route lupine_route_for_context(CUcontext ctx) {
   return lupine_route_for_owner_or_default(ctx);
 }
 
-extern "C" bool lupine_context_is_known(CUcontext ctx) {
-  return lupine_route_for_known_owner(ctx).kind != LUPINE_ROUTE_INVALID;
-}
-
 extern "C" lupine_route lupine_route_for_module(CUmodule module) {
   return lupine_route_for_owner_or_default(module);
 }

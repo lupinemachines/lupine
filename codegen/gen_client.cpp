@@ -712,8 +712,6 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
 }
 
 CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version) {
-  if (ctx != nullptr && !lupine_context_is_known(ctx))
-    return CUDA_ERROR_INVALID_CONTEXT;
   lupine_route route = lupine_route_for_context(ctx);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUcontext, unsigned int *);

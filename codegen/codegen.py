@@ -1408,15 +1408,6 @@ def main():
                     f"            {all_output.type.format()} {output_name} = route_output;\n"
                 )
             else:
-                if function.name.format() == "cuCtxGetApiVersion":
-                    f.write(
-                        "    // The CUDA runtime probes this entry with sentinel handles such as\n"
-                        "    // (CUcontext)-1 and expects CUDA_ERROR_INVALID_CONTEXT. Forwarding an\n"
-                        "    // unknown handle lets the server dereference it inside the real driver,\n"
-                        "    // which kills the connection's server process.\n"
-                        "    if (ctx != nullptr && !lupine_context_is_known(ctx))\n"
-                        "        return CUDA_ERROR_INVALID_CONTEXT;\n"
-                    )
                 f.write(
                     "    lupine_route route = {route_expr};\n".format(
                         route_expr=client_routing_route_expr(metadata)
