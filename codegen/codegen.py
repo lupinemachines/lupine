@@ -820,6 +820,9 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_deviceptr_owner(dptr);\n")
     if function.name.format() == "cuStreamDestroy_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_stream_owner(hStream);\n")
+    # Record the global's size so offset pointers into it route by range.
+    if function.name.format() in {"cuModuleGetGlobal_v2", "cuLibraryGetGlobal", "cuLibraryGetManaged"}:
+        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr) lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);\n")
     if metadata.synchronize:
         f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
 
@@ -882,6 +885,20 @@ def invalid_device_const(return_type: str) -> str:
     raise NotImplementedError(
         "No invalid-device error for return type: %s" % return_type
     )
+
+
+def invalid_argument_const(return_type: str) -> str:
+    if return_type == "nvmlReturn_t":
+        return "NVML_ERROR_INVALID_ARGUMENT"
+    if return_type == "CUresult":
+        return "CUDA_ERROR_INVALID_VALUE"
+    if return_type == "cudaError_t":
+        return "cudaErrorInvalidValue"
+    if return_type == "cublasStatus_t":
+        return "CUBLAS_STATUS_INVALID_VALUE"
+    if return_type == "cudnnStatus_t":
+        return "CUDNN_STATUS_BAD_PARAM"
+    return error_const(return_type)
 
 
 def prefix_std(type: str) -> str:
@@ -1366,49 +1383,6 @@ def main():
                 f.write("    return {call};\n".format(call=direct_wrappers[function.name.format()]))
                 f.write("}\n\n")
                 continue
-            if function.name.format() == "cuModuleGetGlobal_v2":
-                f.write("    conn_t *conn = lupine_rpc_conn_for_module(hmod);\n")
-                f.write("    CUresult return_value;\n")
-                f.write("    size_t remote_bytes = 0;\n")
-                f.write("    std::size_t name_len = std::strlen(name) + 1;\n")
-                f.write("    if (conn == nullptr ||\n")
-                f.write("        rpc_write_start_request(conn, RPC_cuModuleGetGlobal_v2) < 0 ||\n")
-                f.write("        rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||\n")
-                f.write("        rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||\n")
-                f.write("        rpc_write(conn, name, name_len) < 0 ||\n")
-                f.write("        rpc_wait_for_response(conn) < 0 ||\n")
-                f.write("        (dptr != nullptr && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||\n")
-                f.write("        rpc_read(conn, &remote_bytes, sizeof(size_t)) < 0 ||\n")
-                f.write("        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||\n")
-                f.write("        rpc_read_end(conn) < 0)\n")
-                f.write("        return CUDA_ERROR_DEVICE_UNAVAILABLE;\n")
-                f.write("    if (bytes != nullptr) *bytes = remote_bytes;\n")
-                f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation(*dptr, remote_bytes, conn);\n")
-                f.write("    return return_value;\n")
-                f.write("}\n\n")
-                continue
-            if function.name.format() in {"cuLibraryGetGlobal", "cuLibraryGetManaged"}:
-                f.write("    lupine_route route = lupine_route_for_library(library);\n")
-                f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-                f.write("    CUresult return_value;\n")
-                f.write("    size_t remote_bytes = 0;\n")
-                f.write("    std::size_t name_len = std::strlen(name) + 1;\n")
-                f.write("    if (conn == nullptr ||\n")
-                f.write("        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(name=function.name.format()))
-                f.write("        rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||\n")
-                f.write("        rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||\n")
-                f.write("        rpc_write(conn, name, name_len) < 0 ||\n")
-                f.write("        rpc_wait_for_response(conn) < 0 ||\n")
-                f.write("        (dptr != nullptr && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||\n")
-                f.write("        rpc_read(conn, &remote_bytes, sizeof(size_t)) < 0 ||\n")
-                f.write("        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||\n")
-                f.write("        rpc_read_end(conn) < 0)\n")
-                f.write("        return CUDA_ERROR_DEVICE_UNAVAILABLE;\n")
-                f.write("    if (bytes != nullptr) *bytes = remote_bytes;\n")
-                f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation(*dptr, remote_bytes, conn);\n")
-                f.write("    return return_value;\n")
-                f.write("}\n\n")
-                continue
 
             for translation in metadata.translate_deviceptrs:
                 name = translation.parameter.name
@@ -1586,7 +1560,7 @@ def main():
             for operation in operations:
                 if isinstance(operation, ArrayOperation):
                     operation.client_preflight(
-                        f, error_const(function.return_type.format())
+                        f, invalid_argument_const(function.return_type.format())
                     )
 
             if metadata.async_fire_forget:

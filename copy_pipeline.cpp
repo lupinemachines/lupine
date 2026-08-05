@@ -83,7 +83,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                            : real(dstDevice, srcHost, ByteCount, hStream);
   }
   if (ByteCount != 0 && srcHost == nullptr) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    return CUDA_ERROR_INVALID_VALUE;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;

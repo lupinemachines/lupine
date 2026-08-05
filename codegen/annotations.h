@@ -2337,8 +2337,8 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
 /**
  * @routingkey MODULE hmod
  * @recordowner DEVICEPTR dptr
- * @param dptr RECV_ONLY
- * @param bytes RECV_ONLY
+ * @param dptr RECV_ONLY NULLABLE
+ * @param bytes RECV_ONLY NULLABLE
  * @param hmod SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
  */
@@ -2485,8 +2485,9 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
                             size_t *paramOffset, size_t *paramSize);
 /**
  * @routingkey LIBRARY library
- * @param dptr RECV_ONLY
- * @param bytes RECV_ONLY
+ * @recordowner DEVICEPTR dptr
+ * @param dptr RECV_ONLY NULLABLE
+ * @param bytes RECV_ONLY NULLABLE
  * @param library SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
  */
@@ -2494,8 +2495,9 @@ CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name);
 /**
  * @routingkey LIBRARY library
- * @param dptr RECV_ONLY
- * @param bytes RECV_ONLY
+ * @recordowner DEVICEPTR dptr
+ * @param dptr RECV_ONLY NULLABLE
+ * @param bytes RECV_ONLY NULLABLE
  * @param library SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
  */

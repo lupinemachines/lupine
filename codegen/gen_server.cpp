@@ -981,14 +981,18 @@ ERROR_0:
 }
 
 int handle_cuModuleGetGlobal_v2(conn_t *conn) {
+  CUdeviceptr *dptr_null_check;
   CUdeviceptr dptr;
+  size_t *bytes_null_check;
   size_t bytes;
   CUmodule hmod;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
+  if (rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+      rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
   name = (const char *)malloc(name_len);
@@ -999,11 +1003,15 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuModuleGetGlobal_v2(&dptr, &bytes, hmod, name);
+  lupine_intercept_result =
+      cuModuleGetGlobal_v2(dptr_null_check ? &dptr : nullptr,
+                           bytes_null_check ? &bytes : nullptr, hmod, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      (dptr_null_check && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_write(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+      (bytes_null_check && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1479,14 +1487,18 @@ ERROR_0:
 }
 
 int handle_cuLibraryGetGlobal(conn_t *conn) {
+  CUdeviceptr *dptr_null_check;
   CUdeviceptr dptr;
+  size_t *bytes_null_check;
   size_t bytes;
   CUlibrary library;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
+  if (rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+      rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
   name = (const char *)malloc(name_len);
@@ -1497,11 +1509,15 @@ int handle_cuLibraryGetGlobal(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuLibraryGetGlobal(&dptr, &bytes, library, name);
+  lupine_intercept_result =
+      cuLibraryGetGlobal(dptr_null_check ? &dptr : nullptr,
+                         bytes_null_check ? &bytes : nullptr, library, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      (dptr_null_check && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_write(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+      (bytes_null_check && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1514,14 +1530,18 @@ ERROR_0:
 }
 
 int handle_cuLibraryGetManaged(conn_t *conn) {
+  CUdeviceptr *dptr_null_check;
   CUdeviceptr dptr;
+  size_t *bytes_null_check;
   size_t bytes;
   CUlibrary library;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
   CUresult lupine_intercept_result;
-  if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
+  if (rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+      rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
   name = (const char *)malloc(name_len);
@@ -1532,11 +1552,15 @@ int handle_cuLibraryGetManaged(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuLibraryGetManaged(&dptr, &bytes, library, name);
+  lupine_intercept_result =
+      cuLibraryGetManaged(dptr_null_check ? &dptr : nullptr,
+                          bytes_null_check ? &bytes : nullptr, library, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      (dptr_null_check && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_write(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+      (bytes_null_check && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

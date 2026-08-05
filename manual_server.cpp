@@ -1866,6 +1866,8 @@ int handle_manual_cuLibraryUnload(conn_t *conn) {
 }
 
 int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
+  CUdeviceptr *dptr_null_check = nullptr;
+  size_t *bytes_null_check = nullptr;
   CUdeviceptr dptr = 0;
   size_t bytes = 0;
   CUmodule module = nullptr;
@@ -1873,7 +1875,9 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &module, sizeof(module)) < 0 ||
+  if (rpc_read(conn, &dptr_null_check, sizeof(dptr_null_check)) < 0 ||
+      rpc_read(conn, &bytes_null_check, sizeof(bytes_null_check)) < 0 ||
+      rpc_read(conn, &module, sizeof(module)) < 0 ||
       rpc_read(conn, &name_len, sizeof(name_len)) < 0) {
     return -1;
   }
@@ -1886,7 +1890,9 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
     return -1;
   }
 
-  result = cuModuleGetGlobal_v2(&dptr, &bytes, module, name.data());
+  result = cuModuleGetGlobal_v2(dptr_null_check ? &dptr : nullptr,
+                                bytes_null_check ? &bytes : nullptr, module,
+                                name.data());
   if (result != CUDA_SUCCESS) {
     CUlibrary library = nullptr;
     if (lupine_module_libraries().find(module, library)) {
@@ -1906,8 +1912,10 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
                                                     << " bytes=" << bytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr, sizeof(dptr)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_write(conn, &dptr_null_check, sizeof(dptr_null_check)) < 0 ||
+      (dptr_null_check && rpc_write(conn, &dptr, sizeof(dptr)) < 0) ||
+      rpc_write(conn, &bytes_null_check, sizeof(bytes_null_check)) < 0 ||
+      (bytes_null_check && rpc_write(conn, &bytes, sizeof(bytes)) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
