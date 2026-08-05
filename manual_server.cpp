@@ -3707,6 +3707,26 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   return 0;
 }
 
+int handle_manual_cuMemHostGetFlags(conn_t *conn) {
+  unsigned int flags = 0;
+  void *p = nullptr;
+  if (rpc_read(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_read(conn, &p, sizeof(p)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result = cuMemHostGetFlags(&flags, p);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuCtxSynchronize(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
