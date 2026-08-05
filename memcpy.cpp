@@ -53,35 +53,22 @@ struct lupine_host_allocation {
   bool device_dirty = false;
   bool tracking_enabled = false;
   int fault_slot = -1;
-  // Demand-fetch state for device-to-host synchronization: 0 = mirror fresh,
-  // 1 = mirror invalidated (PROT_NONE, fetch on fault), 2 = a fault handler is
-  // fetching, 3 = a synchronization point is invalidating. Only the handler
-  // moves 1 -> 2; only normal-context code moves through 3.
+  // 0 fresh, 1 invalidated (PROT_NONE), 2 fetching (handler-only 1->2),
+  // 3 invalidating (normal-context only).
   volatile sig_atomic_t device_stale = 0;
-  // Captured at invalidation time so the fault handler never calls
-  // rpc_client_get_connection(), which takes a global mutex.
+  // Captured at invalidation; the handler must not take rpc_open()'s mutex.
   conn_t *stale_fetch_conn = nullptr;
-  // Thread running the in-flight demand fetch. Its own nested faults (a
-  // concurrent lupine_mark_host_range_clean can re-protect a page mid-fetch)
-  // unprotect and retry instead of waiting on themselves.
+  // Fetch owner; its own nested faults unprotect instead of self-waiting.
   volatile pid_t stale_fetch_tid = 0;
-  // In-flight RPC payload writes into the mirror, bracketed by
-  // lupine_prepare_host_range_write / lupine_mark_host_range_clean. The
-  // invalidator waits for zero: re-protecting mid-write would fault a thread
-  // that already holds its connection, and the recovery fetch needs one.
+  // Payload writes bracketed by prepare/mark; invalidation waits for zero,
+  // since faulting a conn-holding writer would deadlock the recovery fetch.
   volatile sig_atomic_t io_pins = 0;
-  // One flag per LUPINE_DEMAND_FETCH_CHUNK_BYTES chunk: nonzero once the
-  // chunk has been fetched in the current stale epoch. Written by the fetch
-  // owner (state 2) and cleared by the invalidator (state 3).
+  // Per-chunk fetched flags; owner (state 2) sets, invalidator (3) clears.
   unsigned char *fresh_chunks = nullptr;
   size_t fresh_chunk_count = 0;
-  // Sequential-read detection for the fetch owner: the next offset a
-  // sequential reader would fault on, and the current readahead window.
   size_t fetch_seq_next = 0;
   size_t fetch_readahead = 0;
-  // Set when a fetch finished while payload writes were pinned and the
-  // bitmap-derived protections still need to be applied; the last unpinner
-  // performs the restore.
+  // Protections deferred to the last unpinner.
   volatile sig_atomic_t restore_pending = 0;
   volatile sig_atomic_t full_dirty = 0;
   volatile sig_atomic_t retiring = 0;
@@ -124,13 +111,8 @@ static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES =
 static constexpr size_t LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES = 16;
 static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES = 1024;
 static constexpr uint32_t LUPINE_MAX_MANAGED_HOST_DIRTY_RANGES = 64 * 1024;
-// Bounded wait for in-flight fetches and payload writes before a
-// synchronization point gives up on invalidation and copies eagerly.
 static constexpr int LUPINE_MAPPED_INVALIDATE_MAX_ATTEMPTS = 10000;
-// Demand fetches are tracked and transferred at this granularity. Sequential
-// faults double the fetch window up to the cap; a sequential fault at the cap
-// fetches the rest of the allocation so dense readers pay one round trip
-// instead of one per chunk.
+// Sequential faults double the window to the cap, then fetch to the end.
 static constexpr size_t LUPINE_DEMAND_FETCH_CHUNK_BYTES = 64 * 1024;
 static constexpr size_t LUPINE_DEMAND_FETCH_READAHEAD_CAP = 4 * 1024 * 1024;
 
@@ -263,14 +245,10 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
                        fault_chunk < allocation->fresh_chunk_count &&
                        __atomic_load_n(&allocation->fresh_chunks[fault_chunk],
                                        __ATOMIC_ACQUIRE) != 0;
-    // A write fault on an already-fetched chunk is ordinary dirty tracking;
-    // everything else on a stale allocation goes through the fetch machinery.
     if (stale != 0 && !chunk_fresh) {
       if (stale == 2 && __atomic_load_n(&allocation->stale_fetch_tid,
                                         __ATOMIC_ACQUIRE) == lupine_gettid()) {
-        // Our own fetch tripped over a page a concurrent
-        // lupine_mark_host_range_clean re-protected; protections are
-        // restored from the freshness map when the fetch finishes.
+        // Our own fetch faulted on a concurrently re-protected page.
         mprotect(reinterpret_cast<void *>(page), page_size,
                  PROT_READ | PROT_WRITE);
         __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
@@ -291,9 +269,7 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
         }
         __atomic_store_n(&allocation->stale_fetch_tid, 0, __ATOMIC_RELEASE);
         if (!fetched) {
-          // The route is gone and the mirror content cannot be recovered.
-          // Fall through to the previous handler rather than let the
-          // application read stale bytes.
+          // Unrecoverable; crash rather than serve stale bytes.
           __atomic_store_n(&allocation->device_stale, 1, __ATOMIC_RELEASE);
           __atomic_sub_fetch(&lupine_active_fault_handlers, 1,
                              __ATOMIC_RELEASE);
@@ -301,8 +277,6 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
           return;
         }
       } else {
-        // Another thread is fetching (2) or a synchronization point is
-        // invalidating (3); wait it out, then retry the faulting access.
         while (true) {
           sig_atomic_t state =
               __atomic_load_n(&allocation->device_stale, __ATOMIC_ACQUIRE);
@@ -337,10 +311,8 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   lupine_call_previous_sigsegv(sig, info, uctx);
 }
 
-// The fault handler runs full RPC reads for demand fetches, and the transport
-// keeps 64 KiB receive buffers on the stack. A small thread_local array would
-// silently overflow into neighboring thread-local data, so the alternate
-// stack is a dedicated mapping behind a guard page.
+// Handler RPC reads need real stack; the guard page turns overflow into a
+// fault instead of silent TLS corruption.
 struct lupine_signal_stack {
   void *mapping = MAP_FAILED;
   size_t mapping_size = 0;
@@ -541,29 +513,22 @@ extern "C" void lupine_mark_host_range_clean(void *host, size_t size) {
   sig_atomic_t state =
       __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
   if (state == 2) {
-    // A demand fetch owns the mirror's protection; re-protecting a range
-    // now would fault the fetch's own payload writes. Protections are
-    // restored from the freshness map when the fetch finishes.
+    // The fetch owns the protections; re-protecting now would fault it.
     return;
   }
   if (remaining_pins == 0 &&
       __atomic_load_n(&allocation.restore_pending, __ATOMIC_ACQUIRE) != 0 &&
       state != 3) {
-    // A fetch finished while this payload write was in flight and left the
-    // mirror writable; the last unpinner applies the deferred protections.
     __atomic_store_n(&allocation.restore_pending, 0, __ATOMIC_RELEASE);
     lupine_apply_fresh_protections(&allocation);
     return;
   }
   if (state == 1 &&
       __atomic_load_n(&allocation.restore_pending, __ATOMIC_ACQUIRE) != 0) {
-    // Another payload write is still pinned; the deferred restore will
-    // protect this range too.
     return;
   }
   if (state == 1 && allocation.fresh_chunks != nullptr) {
-    // The payload replaced this range's content wholesale; mark fully
-    // covered chunks fresh so a later readahead fetch cannot clobber it.
+    // Mark covered chunks fresh so a readahead fetch cannot clobber them.
     size_t chunk_bytes = LUPINE_DEMAND_FETCH_CHUNK_BYTES;
     size_t first_chunk =
         (lupine_round_up(start - base, chunk_bytes)) / chunk_bytes;
@@ -665,10 +630,8 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     return CUDA_SUCCESS;
   }
 
-  // A whole-allocation flush must not push an invalidated mirror back to the
-  // server; fetch each stale allocation in full before the ranges below
-  // become readable. The pushed full-dirty ranges above hold pending
-  // references, so the allocations cannot retire underneath the fetch.
+  // A full flush must not push an invalidated mirror; fetch it first. The
+  // pushed ranges hold pending references, so retirement waits.
   for (lupine_host_allocation *allocation : stale_full_dirty_fetches) {
     lupine_make_mapped_range_fresh(allocation, 0, allocation->size);
   }
@@ -897,10 +860,8 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
   return lupine_flush_dirty_host_pages_to_server();
 }
 
-// Fetch [offset, offset + bytes) of the server-side backing over the route's
-// regular DtoH protocol. Runs inside the fault handler: it must not take
-// lupine_host_allocation_mutex(), and the caller has already made the target
-// range writable.
+// Wire-fetch [offset, offset + bytes) of the backing. Handler-safe: must
+// not take lupine_host_allocation_mutex(); caller made the range writable.
 static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
                                      size_t offset, size_t bytes) {
   conn_t *conn = allocation->stale_fetch_conn;
@@ -945,10 +906,8 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   return true;
 }
 
-// Apply the freshness map to page protections: fetched chunks become
-// readable, stale chunks fault again. Only the fetch owner (state 2) or a
-// caller holding lupine_host_allocation_mutex() with no fetch in flight may
-// call this; the map must not change underneath it.
+// Apply the freshness map to protections. Only the fetch owner (state 2)
+// or a mutex holder with no fetch in flight may call this.
 static void lupine_apply_fresh_protections(lupine_host_allocation *allocation) {
   if (allocation->fresh_chunks == nullptr || allocation->host_base == 0) {
     return;
@@ -973,13 +932,9 @@ static void lupine_apply_fresh_protections(lupine_host_allocation *allocation) {
   }
 }
 
-// Publish a finished fetch: make the fetched span readable (or defer to the
-// last unpinner while payload writes are in flight) and drop the stale state
-// once every chunk is fresh. Chunks outside [span_start, span_end) keep
-// their protections, so only a deferred restore pays the full-map walk.
-// Serialized against lupine_prepare_host_range_write /
-// lupine_mark_host_range_clean by the allocation mutex; nothing may touch
-// mirror memory while holding it.
+// Publish a finished fetch: protect the span (or defer while payloads are
+// pinned) and drop the stale state once every chunk is fresh. The allocation
+// mutex serializes against prepare/mark; never touch mirror memory under it.
 static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
                                        size_t span_start, size_t span_end) {
   bool all_fresh = true;
@@ -1005,10 +960,8 @@ static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
                    __ATOMIC_RELEASE);
 }
 
-// Fetch the stale chunk run containing fault_offset, widened by the
-// sequential readahead window and clipped at the first fresh chunk so a
-// refetch can never clobber tracked host writes. Caller owns state 2;
-// [*out_start, *out_end) reports the fetched span for the finish step.
+// Fetch the stale run at fault_offset, widened by readahead and clipped at
+// the first fresh chunk so a refetch cannot clobber tracked host writes.
 static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
                                     size_t fault_offset, size_t *out_start,
                                     size_t *out_end) {
@@ -1043,7 +996,6 @@ static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
   *out_start = start;
   *out_end = end;
   if (end <= start) {
-    // The faulting chunk became fresh concurrently; nothing to transfer.
     allocation->fetch_seq_next = start + chunk_bytes;
     return true;
   }
@@ -1066,10 +1018,8 @@ static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
   return true;
 }
 
-// Make [start_offset, end_offset) of a mirror fresh from normal context, for
-// callers that are about to read it while holding the route connection (RPC
-// payload sends, whole-allocation flushes). Must not be called while holding
-// the allocation mutex or any connection.
+// Make a mirror range fresh from normal context. Must not be called while
+// holding the allocation mutex or any connection.
 static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
                                            size_t start_offset,
                                            size_t end_offset) {
@@ -1142,10 +1092,8 @@ static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
   return ok;
 }
 
-// Fetch every invalidated mirror region overlapping [host, host+size) now,
-// in normal context. RPC paths that read caller-supplied host memory while
-// holding connection locks must call this first: a demand fetch cannot start
-// once this thread holds the route's connection.
+// RPC paths that read caller memory under connection locks call this first:
+// a demand fetch cannot start once this thread holds the route's connection.
 extern "C" void lupine_ensure_mapped_host_readable(const void *host,
                                                    size_t size) {
   if (host == nullptr || size == 0) {
@@ -1174,8 +1122,6 @@ extern "C" void lupine_ensure_mapped_host_readable(const void *host,
       if (base + allocation.size <= start || base >= start + size) {
         continue;
       }
-      // Hold a pending reference so the retire path cannot free the
-      // allocation while the fetch runs outside the lock.
       __atomic_add_fetch(&allocation.pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
       size_t overlap_start = start > base ? start - base : 0;
       size_t overlap_end = std::min(start + size - base, allocation.size);
@@ -1195,15 +1141,9 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     if (!mapping.device_dirty || mapping.size == 0) {
       continue;
     }
-    // Invalidate the mirror instead of copying it back: the server backing is
-    // authoritative once the device is synchronized, so the fault handler can
-    // fetch it if and when the host actually touches the mapping.
-    //
-    // The retry loop never waits while holding a lock: an in-flight demand
-    // fetch (state 2) needs the route connection and an in-flight payload
-    // write (io_pins) holds it, so blocking them from here could deadlock.
-    // If neither drains, fall back to the eager copy, which stays correct in
-    // every state.
+    // Invalidate instead of copying back; the fault handler fetches on
+    // touch. Never wait while holding a lock (state-2 fetches and pinned
+    // payload writes need the connection); fall back to the eager copy.
     bool invalidated = false;
     bool give_up = false;
     for (int attempt = 0; !invalidated && !give_up; ++attempt) {

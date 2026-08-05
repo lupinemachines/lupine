@@ -1,14 +1,10 @@
 // Integration test for demand-fetched mapped/managed device-to-host sync.
-//
-// Synchronization points invalidate the client mirror (PROT_NONE) instead of
-// copying the whole allocation back; the first host touch after that fetches
-// the server backing through the fault handler. This exercises:
-//   - device writes at a page-sized granularity visible after sync (mapped
-//     and managed, base and offset pointers, default and created streams)
-//   - host writes flushed to the device after a demand fetch
-//   - cudaMemcpy with a stale mirror as the host source (the pre-touch that
-//     keeps the fault out of the connection-locked payload write)
-//   - repeated post-sync polling with no host access (no transfer expected)
+// Synchronization points invalidate the client mirror instead of copying it
+// back; the first host touch fetches the affected chunks. Covers device
+// writes at page granularity (mapped and managed, base and offset pointers,
+// default and created streams), host writes flushed after a fetch, cudaMemcpy
+// with a stale mirror as the host source, scattered and sequential reads
+// through the chunked fetch path, and post-sync polling with no host access.
 #include <chrono>
 #include <cuda_runtime.h>
 #include <stdio.h>
@@ -20,22 +16,20 @@ static const size_t kSparseOffset = 33ull << 20;
 
 static int failures = 0;
 
-#define REQUIRE(err, what)                                                     \
-  do {                                                                         \
-    cudaError_t e_ = (err);                                                    \
-    if (e_ != cudaSuccess) {                                                   \
-      printf("RESULT: ERROR %s %s\n", what, cudaGetErrorString(e_));           \
-      return 2;                                                                \
-    }                                                                          \
-  } while (0)
+static int fatal(cudaError_t err, const char *what) {
+  if (err == cudaSuccess) {
+    return 0;
+  }
+  printf("RESULT: ERROR %s %s\n", what, cudaGetErrorString(err));
+  return 1;
+}
 
-#define EXPECT(cond, what)                                                     \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      printf("FAIL: %s\n", what);                                              \
-      failures++;                                                              \
-    }                                                                          \
-  } while (0)
+static void expect(bool ok, const char *what) {
+  if (!ok) {
+    printf("FAIL: %s\n", what);
+    failures++;
+  }
+}
 
 __global__ void write_bytes(unsigned char *dst, unsigned char value,
                             size_t count) {
@@ -53,146 +47,174 @@ __global__ void check_bytes(const unsigned char *src, unsigned char expect,
   }
 }
 
+static int check_device_bytes(const unsigned char *device, unsigned char value,
+                              int *dev_ok, const char *what) {
+  int one = 1;
+  if (fatal(cudaMemcpy(dev_ok, &one, sizeof(one), cudaMemcpyHostToDevice),
+            what)) {
+    return -1;
+  }
+  check_bytes<<<(unsigned)(kPage / 256), 256>>>(device, value, kPage, dev_ok);
+  if (fatal(cudaDeviceSynchronize(), what)) {
+    return -1;
+  }
+  int ok = 0;
+  if (fatal(cudaMemcpy(&ok, dev_ok, sizeof(ok), cudaMemcpyDeviceToHost),
+            what)) {
+    return -1;
+  }
+  return ok;
+}
+
 static int run_case(const char *label, unsigned char *host,
                     unsigned char *device, cudaStream_t stream, int *dev_ok) {
   const unsigned char kHostA = 0x11, kHostB = 0x22, kDevC = 0x33,
                       kDevD = 0x44, kHostE = 0x55;
   char what[128];
 
-  // Host writes two pages, device writes one page at an offset pointer, all
-  // visible after one synchronization.
   memset(host, kHostA, kPage);
   memset(host + (kBytes / 2), kHostB, kPage);
   write_bytes<<<(unsigned)(kPage / 256), 256, 0, stream>>>(
       device + kSparseOffset, kDevC, kPage);
-  REQUIRE(cudaStreamSynchronize(stream), label);
+  if (fatal(cudaStreamSynchronize(stream), label)) {
+    return 1;
+  }
 
   snprintf(what, sizeof(what), "%s: device write visible after sync", label);
-  EXPECT(host[kSparseOffset] == kDevC &&
+  expect(host[kSparseOffset] == kDevC &&
              host[kSparseOffset + kPage - 1] == kDevC,
          what);
   snprintf(what, sizeof(what), "%s: host writes survive sync", label);
-  EXPECT(host[0] == kHostA && host[kBytes / 2] == kHostB, what);
+  expect(host[0] == kHostA && host[kBytes / 2] == kHostB, what);
 
-  // The device must observe the pre-launch host writes (flush still works).
-  int one = 1;
-  REQUIRE(cudaMemcpy(dev_ok, &one, sizeof(one), cudaMemcpyHostToDevice),
-          label);
-  check_bytes<<<(unsigned)(kPage / 256), 256>>>(device, kHostA, kPage, dev_ok);
-  REQUIRE(cudaDeviceSynchronize(), label);
-  int ok = 0;
-  REQUIRE(cudaMemcpy(&ok, dev_ok, sizeof(ok), cudaMemcpyDeviceToHost), label);
+  int ok = check_device_bytes(device, kHostA, dev_ok, label);
+  if (ok < 0) {
+    return 1;
+  }
   snprintf(what, sizeof(what), "%s: device sees host writes", label);
-  EXPECT(ok == 1, what);
+  expect(ok == 1, what);
 
-  // Invalidate again, then write a different page first: the write fault must
-  // fetch before tracking so the flush cannot push stale bytes, and the
-  // device-written page must still be intact afterwards.
   write_bytes<<<(unsigned)(kPage / 256), 256>>>(device + kSparseOffset, kDevD,
                                                 kPage);
-  REQUIRE(cudaDeviceSynchronize(), label);
+  if (fatal(cudaDeviceSynchronize(), label)) {
+    return 1;
+  }
   memset(host + kPage, kHostE, kPage);
   snprintf(what, sizeof(what), "%s: fetch-before-write keeps device bytes",
            label);
-  EXPECT(host[kSparseOffset] == kDevD, what);
+  expect(host[kSparseOffset] == kDevD, what);
 
-  check_bytes<<<(unsigned)(kPage / 256), 256>>>(device + kPage, kHostE, kPage,
-                                                dev_ok);
-  REQUIRE(cudaDeviceSynchronize(), label);
-  REQUIRE(cudaMemcpy(&ok, dev_ok, sizeof(ok), cudaMemcpyDeviceToHost), label);
+  ok = check_device_bytes(device + kPage, kHostE, dev_ok, label);
+  if (ok < 0) {
+    return 1;
+  }
   snprintf(what, sizeof(what), "%s: post-fetch host write reaches device",
            label);
-  EXPECT(ok == 1, what);
+  expect(ok == 1, what);
   return 0;
 }
 
 int main() {
   int device_count = 0;
-  REQUIRE(cudaGetDeviceCount(&device_count), "device count");
+  if (fatal(cudaGetDeviceCount(&device_count), "device count")) {
+    return 2;
+  }
   if (device_count == 0) {
     printf("RESULT: ERROR no devices\n");
     return 2;
   }
 
   int *dev_ok = nullptr;
-  REQUIRE(cudaMalloc((void **)&dev_ok, sizeof(int)), "cudaMalloc ok flag");
+  if (fatal(cudaMalloc((void **)&dev_ok, sizeof(int)), "cudaMalloc ok flag")) {
+    return 2;
+  }
 
-  // Mapped host allocation.
   unsigned char *mapped_host = nullptr;
   unsigned char *mapped_dev = nullptr;
-  REQUIRE(cudaHostAlloc((void **)&mapped_host, kBytes, cudaHostAllocMapped),
-          "cudaHostAlloc");
-  REQUIRE(cudaHostGetDevicePointer((void **)&mapped_dev, mapped_host, 0),
-          "cudaHostGetDevicePointer");
+  if (fatal(cudaHostAlloc((void **)&mapped_host, kBytes, cudaHostAllocMapped),
+            "cudaHostAlloc") ||
+      fatal(cudaHostGetDevicePointer((void **)&mapped_dev, mapped_host, 0),
+            "cudaHostGetDevicePointer")) {
+    return 2;
+  }
   cudaStream_t stream;
-  REQUIRE(cudaStreamCreate(&stream), "stream create");
+  if (fatal(cudaStreamCreate(&stream), "stream create")) {
+    return 2;
+  }
   if (run_case("mapped", mapped_host, mapped_dev, stream, dev_ok) != 0) {
     return 2;
   }
 
-  // Managed allocation, same expectations through the default stream.
   unsigned char *managed = nullptr;
-  REQUIRE(cudaMallocManaged((void **)&managed, kBytes), "cudaMallocManaged");
+  if (fatal(cudaMallocManaged((void **)&managed, kBytes),
+            "cudaMallocManaged")) {
+    return 2;
+  }
   if (run_case("managed", managed, managed, (cudaStream_t)0, dev_ok) != 0) {
     return 2;
   }
 
-  // Stale mirror as a cudaMemcpy host source: the copy has to refresh the
-  // mirror before it enters the connection-locked payload write, and the
-  // destination must receive the device-written bytes.
+  // Stale mirror as a cudaMemcpy host source.
   const unsigned char kDevF = 0x66;
   write_bytes<<<(unsigned)(kPage / 256), 256>>>(mapped_dev + kSparseOffset,
                                                 kDevF, kPage);
-  REQUIRE(cudaDeviceSynchronize(), "htod source sync");
+  if (fatal(cudaDeviceSynchronize(), "htod source sync")) {
+    return 2;
+  }
   unsigned char *scratch = nullptr;
-  REQUIRE(cudaMalloc((void **)&scratch, kPage), "scratch alloc");
-  REQUIRE(cudaMemcpy(scratch, mapped_host + kSparseOffset, kPage,
-                     cudaMemcpyHostToDevice),
-          "htod from stale mirror");
-  int one = 1;
-  REQUIRE(cudaMemcpy(dev_ok, &one, sizeof(one), cudaMemcpyHostToDevice),
-          "ok reset");
-  check_bytes<<<(unsigned)(kPage / 256), 256>>>(scratch, kDevF, kPage, dev_ok);
-  REQUIRE(cudaDeviceSynchronize(), "scratch check sync");
-  int ok = 0;
-  REQUIRE(cudaMemcpy(&ok, dev_ok, sizeof(ok), cudaMemcpyDeviceToHost),
-          "ok readback");
-  EXPECT(ok == 1, "htod from stale mirror carries device bytes");
+  if (fatal(cudaMalloc((void **)&scratch, kPage), "scratch alloc") ||
+      fatal(cudaMemcpy(scratch, mapped_host + kSparseOffset, kPage,
+                       cudaMemcpyHostToDevice),
+            "htod from stale mirror")) {
+    return 2;
+  }
+  int ok = check_device_bytes(scratch, kDevF, dev_ok, "scratch check");
+  if (ok < 0) {
+    return 2;
+  }
+  expect(ok == 1, "htod from stale mirror carries device bytes");
 
-  // Chunked fetch: device writes single bytes scattered across the mapping;
-  // random-order reads must fetch only what they touch and still be correct,
-  // and a long sequential scan must survive the readahead escalation.
+  // Scattered single-byte device writes read back in random order, then a
+  // long sequential scan through the readahead escalation.
   const size_t kSpots[] = {0, (1u << 20) + 123, (32u << 20) + 4096,
                            kBytes - 1};
   for (size_t spot : kSpots) {
     write_bytes<<<1, 1>>>(mapped_dev + spot, 0x99, 1);
   }
-  REQUIRE(cudaDeviceSynchronize(), "scatter sync");
-  EXPECT(mapped_host[kBytes - 1] == 0x99, "scatter: last byte");
-  EXPECT(mapped_host[0] == 0x99, "scatter: first byte");
-  EXPECT(mapped_host[(32u << 20) + 4096] == 0x99, "scatter: middle byte");
+  if (fatal(cudaDeviceSynchronize(), "scatter sync")) {
+    return 2;
+  }
+  expect(mapped_host[kBytes - 1] == 0x99, "scatter: last byte");
+  expect(mapped_host[0] == 0x99, "scatter: first byte");
+  expect(mapped_host[(32u << 20) + 4096] == 0x99, "scatter: middle byte");
   size_t nonzero = 0;
   for (size_t i = 0; i < (16u << 20); ++i) {
     nonzero += mapped_host[i] != 0;
   }
-  EXPECT(mapped_host[(1u << 20) + 123] == 0x99 && nonzero >= 2,
+  expect(mapped_host[(1u << 20) + 123] == 0x99 && nonzero >= 2,
          "scatter: sequential scan sees device bytes");
 
   // Host write into a freshly fetched chunk while most of the mapping is
   // still stale must reach the device.
   mapped_host[(1u << 20) + 200] = 0xAB;
-  int one2 = 1;
-  REQUIRE(cudaMemcpy(dev_ok, &one2, sizeof(one2), cudaMemcpyHostToDevice),
-          "ok reset 2");
+  int one = 1;
+  if (fatal(cudaMemcpy(dev_ok, &one, sizeof(one), cudaMemcpyHostToDevice),
+            "ok reset 2")) {
+    return 2;
+  }
   check_bytes<<<1, 1>>>(mapped_dev + (1u << 20) + 200, 0xAB, 1, dev_ok);
-  REQUIRE(cudaDeviceSynchronize(), "mixed-state flush sync");
-  REQUIRE(cudaMemcpy(&ok, dev_ok, sizeof(ok), cudaMemcpyDeviceToHost),
-          "ok readback 2");
-  EXPECT(ok == 1, "host write in fresh chunk reaches device");
+  if (fatal(cudaDeviceSynchronize(), "mixed-state flush sync") ||
+      fatal(cudaMemcpy(&ok, dev_ok, sizeof(ok), cudaMemcpyDeviceToHost),
+            "ok readback 2")) {
+    return 2;
+  }
+  expect(ok == 1, "host write in fresh chunk reaches device");
 
   // Post-sync polling with no host access should not move the allocation.
   write_bytes<<<(unsigned)(kPage / 256), 256>>>(mapped_dev, 0x77, kPage);
-  REQUIRE(cudaDeviceSynchronize(), "poll warmup sync");
+  if (fatal(cudaDeviceSynchronize(), "poll warmup sync")) {
+    return 2;
+  }
   auto poll_start = std::chrono::steady_clock::now();
   for (int i = 0; i < 200; ++i) {
     cudaStreamQuery(0);
@@ -202,7 +224,7 @@ int main() {
                          .count();
   printf("INFO: 200 post-sync polls with a %zu MiB stale mapping: %lld us\n",
          kBytes >> 20, (long long)poll_micros);
-  EXPECT(mapped_host[0] == 0x77, "demand fetch after polling");
+  expect(mapped_host[0] == 0x77, "demand fetch after polling");
 
   cudaFree(scratch);
   cudaFree(dev_ok);

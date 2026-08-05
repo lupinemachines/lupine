@@ -195,9 +195,7 @@ class ArrayOperation:
             )
         )
         if self.compressible:
-            # Reading a demand-invalidated mapped mirror after
-            # rpc_write_start_request() would fault while this thread holds the
-            # connection, deadlocking the fetch. Refresh it first.
+            # Refresh stale mapped mirrors before the connection is held.
             f.write(
                 "    lupine_ensure_mapped_host_readable({param_name}, {size});\n".format(
                     param_name=self.parameter.name,
@@ -265,9 +263,7 @@ class ArrayOperation:
     def client_post_rpc_read_success(self, f):
         if not self.recv:
             return
-        # Unconditional: lupine_prepare_host_range_write pinned the target
-        # allocation against mirror invalidation, and the pin must drop even
-        # when the call returns an error.
+        # Unconditional: the prepare pin must drop even on error returns.
         f.write(
             "    lupine_mark_host_range_clean({param_name}, {size});\n".format(
                 param_name=self.parameter.name,
