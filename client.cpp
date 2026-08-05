@@ -617,6 +617,14 @@ extern "C" void *lupine_real_cuda_symbol(const char *name) {
 
 static bool lupine_is_local_address(const void *ptr);
 
+// Client-answered entry points must fail with NOT_INITIALIZED until cuInit;
+// forwarded ones get the server's own state.
+static std::atomic<bool> lupine_cuda_initialized{false};
+
+static bool lupine_cuda_is_initialized() {
+  return lupine_cuda_initialized.load(std::memory_order_acquire);
+}
+
 static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cuInit) < 0 ||
@@ -651,7 +659,11 @@ extern "C" CUresult cuInit(unsigned int flags) {
       }
     }
   }
-  return initialized_any ? CUDA_SUCCESS : first_error;
+  if (initialized_any) {
+    lupine_cuda_initialized.store(true, std::memory_order_release);
+    return CUDA_SUCCESS;
+  }
+  return first_error;
 }
 
 extern "C" CUresult cuDeviceGetCount(int *count) {
@@ -2517,12 +2529,19 @@ extern "C" CUresult cuGetErrorString(CUresult error, const char **pStr) {
 
 extern "C" CUresult cuProfilerInitialize(const char *, const char *,
                                          CUoutput_mode) {
-  return CUDA_SUCCESS;
+  return lupine_cuda_is_initialized() ? CUDA_SUCCESS
+                                      : CUDA_ERROR_NOT_INITIALIZED;
 }
 
-extern "C" CUresult cuProfilerStart(void) { return CUDA_SUCCESS; }
+extern "C" CUresult cuProfilerStart(void) {
+  return lupine_cuda_is_initialized() ? CUDA_SUCCESS
+                                      : CUDA_ERROR_NOT_INITIALIZED;
+}
 
-extern "C" CUresult cuProfilerStop(void) { return CUDA_SUCCESS; }
+extern "C" CUresult cuProfilerStop(void) {
+  return lupine_cuda_is_initialized() ? CUDA_SUCCESS
+                                      : CUDA_ERROR_NOT_INITIALIZED;
+}
 
 CUresult cuStreamDestroy_v2(CUstream hStream);
 CUresult cuEventDestroy_v2(CUevent hEvent);
@@ -2862,6 +2881,9 @@ extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
 }
 
 extern "C" CUresult cuCtxPushCurrent_v2(CUcontext ctx) {
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
   lupine_context_stack->push_back(lupine_current_context);
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
@@ -2884,6 +2906,9 @@ extern "C" CUresult cuCtxPushCurrent(CUcontext ctx) {
 }
 
 extern "C" CUresult cuCtxPopCurrent_v2(CUcontext *pctx) {
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
   CUcontext popped = lupine_current_context;
   if (pctx != nullptr) {
     *pctx = popped;
@@ -2915,6 +2940,9 @@ extern "C" CUresult cuCtxPopCurrent(CUcontext *pctx) {
 }
 
 extern "C" CUresult cuCtxSetCurrent(CUcontext ctx) {
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
     lupine_current_context = ctx;
@@ -2927,6 +2955,9 @@ extern "C" CUresult cuCtxSetCurrent(CUcontext ctx) {
 }
 
 extern "C" CUresult cuCtxGetCurrent(CUcontext *pctx) {
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
   if (pctx == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -2935,8 +2966,13 @@ extern "C" CUresult cuCtxGetCurrent(CUcontext *pctx) {
 }
 
 extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
+  // Unlike cuCtxGetCurrent, the driver validates the argument before the init
+  // state here.
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
   }
   if (lupine_current_context_device_cache_lookup(lupine_current_context,
                                                  device)) {
