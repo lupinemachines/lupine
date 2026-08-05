@@ -3950,6 +3950,90 @@ static CUresult lupine_resolve_launch_function_for_route(
   return result;
 }
 
+struct lupine_launch_limits {
+  unsigned int max_block_dim[3];
+  unsigned int max_threads_per_block;
+  unsigned int max_grid_dim[3];
+};
+
+// CUDA programming-model ceilings, used when no context pins a device yet.
+static constexpr lupine_launch_limits kLupineArchLaunchLimits = {
+    {1024u, 1024u, 64u}, 1024u, {2147483647u, 65535u, 65535u}};
+
+// Limits are fixed per device, so cache one entry per thread.
+static const lupine_launch_limits &lupine_launch_limits_for_current_device() {
+  struct cache_entry {
+    CUdevice device = -1;
+    lupine_launch_limits limits;
+  };
+  static thread_local cache_entry cache;
+
+  CUdevice device = -1;
+  if (lupine_cuCtxGetDevice_cached(&device) != CUDA_SUCCESS) {
+    return kLupineArchLaunchLimits;
+  }
+  if (cache.device == device) {
+    return cache.limits;
+  }
+
+  static constexpr CUdevice_attribute kBlockAttrs[3] = {
+      CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X, CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Y,
+      CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Z};
+  static constexpr CUdevice_attribute kGridAttrs[3] = {
+      CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X, CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Y,
+      CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Z};
+  lupine_launch_limits limits = kLupineArchLaunchLimits;
+  int value = 0;
+  for (int i = 0; i < 3; ++i) {
+    if (lupine_cuDeviceGetAttribute_cached(&value, kBlockAttrs[i], device) ==
+            CUDA_SUCCESS &&
+        value > 0) {
+      limits.max_block_dim[i] = static_cast<unsigned int>(value);
+    }
+    if (lupine_cuDeviceGetAttribute_cached(&value, kGridAttrs[i], device) ==
+            CUDA_SUCCESS &&
+        value > 0) {
+      limits.max_grid_dim[i] = static_cast<unsigned int>(value);
+    }
+  }
+  if (lupine_cuDeviceGetAttribute_cached(
+          &value, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, device) ==
+          CUDA_SUCCESS &&
+      value > 0) {
+    limits.max_threads_per_block = static_cast<unsigned int>(value);
+  }
+  cache.device = device;
+  cache.limits = limits;
+  return cache.limits;
+}
+
+// Fire-and-forget launches never see a response, so the driver's synchronous
+// configuration check has to happen here. Register/shared memory overcommit
+// stays deferred: it depends on per-function attributes the client cannot see.
+static CUresult
+lupine_validate_launch_dims(unsigned int gridDimX, unsigned int gridDimY,
+                            unsigned int gridDimZ, unsigned int blockDimX,
+                            unsigned int blockDimY, unsigned int blockDimZ) {
+  if (gridDimX == 0 || gridDimY == 0 || gridDimZ == 0 || blockDimX == 0 ||
+      blockDimY == 0 || blockDimZ == 0) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  const lupine_launch_limits &limits =
+      lupine_launch_limits_for_current_device();
+  if (blockDimX > limits.max_block_dim[0] ||
+      blockDimY > limits.max_block_dim[1] ||
+      blockDimZ > limits.max_block_dim[2] ||
+      gridDimX > limits.max_grid_dim[0] || gridDimY > limits.max_grid_dim[1] ||
+      gridDimZ > limits.max_grid_dim[2]) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (static_cast<unsigned long long>(blockDimX) * blockDimY * blockDimZ >
+      limits.max_threads_per_block) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  return CUDA_SUCCESS;
+}
+
 extern "C" CUresult
 cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                unsigned int gridDimZ, unsigned int blockDimX,
@@ -3988,6 +4072,12 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                ? CUDA_ERROR_DEVICE_UNAVAILABLE
                : real(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
                       blockDimZ, sharedMemBytes, hStream, kernelParams, extra);
+  }
+
+  status = lupine_validate_launch_dims(gridDimX, gridDimY, gridDimZ, blockDimX,
+                                       blockDimY, blockDimZ);
+  if (status != CUDA_SUCCESS) {
+    return status;
   }
 
   lupine_kernel_param_layout layout;
@@ -4114,6 +4204,16 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     auto real = lupine_real_cuda_fn<real_fn_t>("cuLaunchKernelEx");
     return real == nullptr ? CUDA_ERROR_NOT_SUPPORTED
                            : real(config, f, kernelParams, extra);
+  }
+
+  // Attribute-carrying launches stay synchronous; the server validates those.
+  if (config->numAttrs == 0) {
+    status = lupine_validate_launch_dims(config->gridDimX, config->gridDimY,
+                                         config->gridDimZ, config->blockDimX,
+                                         config->blockDimY, config->blockDimZ);
+    if (status != CUDA_SUCCESS) {
+      return status;
+    }
   }
 
   lupine_kernel_param_layout layout;
