@@ -615,6 +615,11 @@ extern "C" void lupine_forget_context_owner(CUcontext ctx) {
   lupine_owners<CUcontext>().erase(ctx);
 }
 
+extern "C" void lupine_forget_stream_owner(CUstream stream) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  lupine_owners<CUstream>().erase(stream);
+}
+
 template <typename Handle>
 static lupine_route lupine_route_for_known_owner(Handle handle) {
   if (handle == Handle{}) {
@@ -654,6 +659,11 @@ extern "C" lupine_route lupine_route_for_function(CUfunction function) {
 
 extern "C" lupine_route lupine_route_for_stream(CUstream stream) {
   return lupine_route_for_owner_or_default(stream);
+}
+
+// Unlike lupine_route_for_stream, does not fall back to the default route.
+extern "C" lupine_route lupine_route_for_known_stream(CUstream stream) {
+  return lupine_route_for_known_owner(stream);
 }
 
 extern "C" lupine_route lupine_route_for_event(CUevent event) {

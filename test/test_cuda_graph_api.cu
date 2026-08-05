@@ -246,6 +246,29 @@ int main() {
   if (arr3)
     DRV(cuArrayDestroy(arr3));
 
+  // ---- cuStreamIsCapturing on handles the client can answer for ----
+  CUstreamCaptureStatus status = CU_STREAM_CAPTURE_STATUS_INVALIDATED;
+  CHECK(cuStreamIsCapturing(nullptr, &status) == CUDA_SUCCESS &&
+            status == CU_STREAM_CAPTURE_STATUS_NONE,
+        "cuStreamIsCapturing(NULL) reports NONE");
+  status = CU_STREAM_CAPTURE_STATUS_INVALIDATED;
+  CHECK(cuStreamIsCapturing(CU_STREAM_PER_THREAD, &status) == CUDA_SUCCESS &&
+            status == CU_STREAM_CAPTURE_STATUS_NONE,
+        "cuStreamIsCapturing(per-thread) reports NONE");
+  status = CU_STREAM_CAPTURE_STATUS_INVALIDATED;
+  CHECK(cuStreamIsCapturing(stream, &status) == CUDA_SUCCESS &&
+            status == CU_STREAM_CAPTURE_STATUS_NONE,
+        "cuStreamIsCapturing(idle stream) reports NONE");
+  DRV(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  status = CU_STREAM_CAPTURE_STATUS_NONE;
+  CHECK(cuStreamIsCapturing(stream, &status) == CUDA_SUCCESS &&
+            status == CU_STREAM_CAPTURE_STATUS_ACTIVE,
+        "cuStreamIsCapturing(capturing stream) reports ACTIVE");
+  CUgraph captured = nullptr;
+  DRV(cuStreamEndCapture(stream, &captured));
+  if (captured)
+    DRV(cuGraphDestroy(captured));
+
   DRV(cuStreamDestroy(stream));
   DRV(cuGraphExecDestroy(exec));
   DRV(cuGraphDestroy(graph));

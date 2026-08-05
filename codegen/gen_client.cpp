@@ -50,6 +50,8 @@ extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
 
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
 
+extern "C" void lupine_forget_stream_owner(CUstream stream);
+
 extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
                                                  CUlibrary library,
                                                  const char *name,
@@ -3243,6 +3245,8 @@ CUresult cuStreamDestroy_v2(CUstream hStream) {
   using real_fn_t = CUresult (*)(CUstream);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuStreamDestroy_v2",
                                                   &return_value, hStream)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_forget_stream_owner(hStream);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -3253,6 +3257,8 @@ CUresult cuStreamDestroy_v2(CUstream hStream) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_stream_owner(hStream);
   return return_value;
 }
 

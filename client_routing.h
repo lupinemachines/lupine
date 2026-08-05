@@ -44,6 +44,7 @@ extern "C" lupine_route lupine_route_for_module(CUmodule module);
 extern "C" lupine_route lupine_route_for_library(CUlibrary library);
 extern "C" lupine_route lupine_route_for_function(CUfunction function);
 extern "C" lupine_route lupine_route_for_stream(CUstream stream);
+extern "C" lupine_route lupine_route_for_known_stream(CUstream stream);
 extern "C" lupine_route lupine_route_for_event(CUevent event);
 extern "C" lupine_route lupine_route_for_memory_pool(CUmemoryPool pool);
 extern "C" lupine_route lupine_route_for_graph(CUgraph graph);
@@ -108,6 +109,7 @@ extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
                                                  conn_t *conn);
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
 extern "C" void lupine_forget_context_owner(CUcontext ctx);
+extern "C" void lupine_forget_stream_owner(CUstream stream);
 
 extern "C" void lupine_note_context_owner_route(CUcontext ctx,
                                                 lupine_route route);

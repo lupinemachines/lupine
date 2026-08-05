@@ -6208,15 +6208,24 @@ static CUresult lupine_complete_stream_end_capture(CUresult result) {
   return result;
 }
 
+static bool lupine_stream_handle_is_known(CUstream hStream) {
+  if (hStream == nullptr || hStream == CU_STREAM_LEGACY ||
+      hStream == CU_STREAM_PER_THREAD) {
+    return true;
+  }
+  return lupine_route_for_known_stream(hStream).kind != LUPINE_ROUTE_INVALID;
+}
+
 extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
                                         CUstreamCaptureStatus *captureStatus) {
   if (captureStatus == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   // Libraries poll capture state on the launch path. While this client has no
-  // capture outstanding no stream can be capturing, so answer without a round
-  // trip.
-  if (lupine_active_stream_captures.load() == 0) {
+  // capture outstanding, a stream it knows cannot be capturing, so answer
+  // without a round trip. Unknown handles go to the server's driver instead.
+  if (lupine_active_stream_captures.load() == 0 &&
+      lupine_stream_handle_is_known(hStream)) {
     *captureStatus = CU_STREAM_CAPTURE_STATUS_NONE;
     return CUDA_SUCCESS;
   }
