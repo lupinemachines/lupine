@@ -16,3 +16,4 @@ Makefile
 # Python bytecode cache (codegen.py imports codegen/ops.py)
 __pycache__/
 *.pyc
+build-sanitize-*/

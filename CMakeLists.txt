@@ -2,6 +2,32 @@ cmake_minimum_required(VERSION 3.18)
 
 project(LupineProject LANGUAGES C CXX)
 
+# Sanitizers are applied only to the CPU-only *_test executables (transport,
+# decoder, ipc, checkpoint), never the nvcc-compiled driver/server. Set to a
+# -fsanitize value such as "address,undefined" or "thread"; empty disables.
+set(LUPINE_SANITIZE "" CACHE STRING
+    "Sanitizer for CPU test targets (e.g. address,undefined or thread)")
+
+function(lupine_apply_sanitizer target)
+    if (LUPINE_SANITIZE)
+        target_compile_options(${target} PRIVATE
+            -fsanitize=${LUPINE_SANITIZE} -fno-omit-frame-pointer
+            -fno-sanitize-recover=all -g)
+        target_link_options(${target} PRIVATE -fsanitize=${LUPINE_SANITIZE})
+    endif()
+endfunction()
+
+# Instrumented builds run several times slower, so give ctest more headroom.
+if (LUPINE_SANITIZE)
+    set(LUPINE_TEST_TIMEOUT_SCALE 8)
+else()
+    set(LUPINE_TEST_TIMEOUT_SCALE 1)
+endif()
+function(lupine_scaled_timeout out base)
+    math(EXPR scaled "${base} * ${LUPINE_TEST_TIMEOUT_SCALE}")
+    set(${out} ${scaled} PARENT_SCOPE)
+endfunction()
+
 if (NOT WIN32)
     enable_language(CUDA)
 endif()
@@ -174,34 +200,42 @@ else()
         LUPINE_CUDA_VERSION="${CUDAToolkit_VERSION}"
     )
     target_link_libraries(h2_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
+    lupine_apply_sanitizer(h2_test)
 
     add_executable(h2_unknown_cuda_version_test ${H2_TEST_SOURCES})
     target_compile_definitions(h2_unknown_cuda_version_test PRIVATE
         LUPINE_H2_UNKNOWN_CUDA_VERSION_TEST
     )
     target_link_libraries(h2_unknown_cuda_version_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
+    lupine_apply_sanitizer(h2_unknown_cuda_version_test)
 
     enable_testing()
     add_test(NAME h2_test COMMAND h2_test)
-    set_tests_properties(h2_test PROPERTIES TIMEOUT 30)
+    lupine_scaled_timeout(h2_timeout 30)
+    set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
     add_test(NAME h2_unknown_cuda_version_test COMMAND h2_unknown_cuda_version_test)
-    set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT 10)
+    lupine_scaled_timeout(h2u_timeout 10)
+    set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT ${h2u_timeout})
 
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp
     )
     target_link_libraries(checkpoint_test PRIVATE pthread)
+    lupine_apply_sanitizer(checkpoint_test)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
-    set_tests_properties(checkpoint_test PROPERTIES TIMEOUT 10)
+    lupine_scaled_timeout(ckpt_timeout 10)
+    set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
 
     add_executable(ipc_test
         ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/ipc_test.cpp
     )
     target_link_libraries(ipc_test PRIVATE pthread)
+    lupine_apply_sanitizer(ipc_test)
     add_test(NAME ipc_test COMMAND ipc_test)
-    set_tests_properties(ipc_test PROPERTIES TIMEOUT 10)
+    lupine_scaled_timeout(ipc_timeout 10)
+    set_tests_properties(ipc_test PROPERTIES TIMEOUT ${ipc_timeout})
 
     add_library(test_lupinecr_provider SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_checkpoint_provider.c
@@ -217,18 +251,20 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_checkpoint.cpp
     )
     target_link_libraries(server_checkpoint_test PRIVATE dl pthread)
+    lupine_apply_sanitizer(server_checkpoint_test)
     add_test(
         NAME server_checkpoint_test
         COMMAND server_checkpoint_test $<TARGET_FILE:test_lupinecr_provider> present
     )
-    set_tests_properties(server_checkpoint_test PROPERTIES TIMEOUT 10)
+    lupine_scaled_timeout(sckpt_timeout 10)
+    set_tests_properties(server_checkpoint_test PROPERTIES TIMEOUT ${sckpt_timeout})
     add_test(
         NAME server_checkpoint_missing_provider_test
         COMMAND server_checkpoint_test
                 ${CMAKE_CURRENT_BINARY_DIR}/missing-liblupinecr.so missing
     )
     set_tests_properties(server_checkpoint_missing_provider_test
-                         PROPERTIES TIMEOUT 10)
+                         PROPERTIES TIMEOUT ${sckpt_timeout})
 
     add_executable(server_sigterm_test
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_sigterm.cpp

@@ -1,0 +1,47 @@
+name: Sanitizers
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan + UBSan
+            sanitizer: address,undefined
+          - name: TSan
+            sanitizer: thread
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build test environment
+        run: |
+          docker build \
+            -f Dockerfile \
+            --target builder \
+            --build-arg CUDA_VERSION="13.1.0" \
+            --build-arg UBUNTU_VERSION="24.04" \
+            -t lupine-sanitizers \
+            .
+
+      # seccomp=unconfined lets ThreadSanitizer run with ASLR disabled
+      # (setarch -R needs the personality syscall).
+      - name: Build and run sanitized CPU test targets
+        run: |
+          docker run --rm --security-opt seccomp=unconfined \
+            --entrypoint bash lupine-sanitizers -lc \
+            'cd /opt/lupine && test/run_sanitizer_tests.sh "${{ matrix.sanitizer }}"'
