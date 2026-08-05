@@ -693,12 +693,7 @@ extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
     return CUDA_ERROR_INVALID_DEVICE;
   }
 
-  // The attribute is not validated here: it travels the wire verbatim so the
-  // driver that owns the devices, not this client's CUDA headers, decides.
-
   if (!lupine_routes_share_server(src_route, dst_route)) {
-    // No driver owns both devices; 0 matches the driver's answer for non-peer
-    // pairs, PERFORMANCE_RANK included.
     *value = 0;
     return CUDA_SUCCESS;
   }
