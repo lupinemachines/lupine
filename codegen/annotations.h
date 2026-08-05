@@ -2022,13 +2022,15 @@ nvmlReturn_t
 nvmlDeviceSetNvLinkDeviceLowPowerThreshold(nvmlDevice_t device,
                                            nvmlNvLinkPowerThres_t *info);
 /**
- * @disabled
+ * @disabled - the driver returns a static string of unknown length, which the
+ * generated marshaller cannot receive; manual client caches, manual server
+ * forwards length-prefixed bytes
  * @param error SEND_ONLY
  * @param pStr SEND_RECV
  */
 CUresult cuGetErrorString(CUresult error, const char **pStr);
 /**
- * @disabled
+ * @disabled - see cuGetErrorString
  * @param error SEND_ONLY
  * @param pStr SEND_RECV
  */

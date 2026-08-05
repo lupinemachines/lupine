@@ -100,6 +100,9 @@ struct lupine_manual_handler {
 static const std::unordered_map<int, lupine_manual_handler> &
 lupine_manual_handlers() {
   static const std::unordered_map<int, lupine_manual_handler> handlers = {
+      {RPC_cuGetErrorName, {handle_manual_cuGetErrorName, "cuGetErrorName"}},
+      {RPC_cuGetErrorString,
+       {handle_manual_cuGetErrorString, "cuGetErrorString"}},
       {LUPINE_RPC_cuGetExportTableMetadata,
        {handle_manual_cuGetExportTableMetadata, "cuGetExportTable metadata"}},
       {LUPINE_RPC_cuPrivateGetModuleNode,

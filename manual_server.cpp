@@ -3868,3 +3868,41 @@ int handle_manual_cuOccupancyMaxPotentialBlockSize(conn_t *conn,
   }
   return 0;
 }
+
+// The generated marshaller cannot receive a string of unknown length, and the
+// driver hands back a static pointer rather than filling a caller buffer, so
+// these two forward the answer as an explicit length plus bytes.
+static int lupine_handle_error_string(conn_t *conn,
+                                      CUresult (*lookup)(CUresult,
+                                                         const char **)) {
+  CUresult error;
+  if (rpc_read(conn, &error, sizeof(error)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  const char *text = nullptr;
+  CUresult result = lookup(error, &text);
+  uint32_t length = (result == CUDA_SUCCESS && text != nullptr)
+                        ? static_cast<uint32_t>(strlen(text))
+                        : 0;
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &length, sizeof(length)) < 0 ||
+      (length != 0 && rpc_write(conn, text, length) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_cuGetErrorName(conn_t *conn) {
+  return lupine_handle_error_string(conn, cuGetErrorName);
+}
+
+int handle_manual_cuGetErrorString(conn_t *conn) {
+  return lupine_handle_error_string(conn, cuGetErrorString);
+}

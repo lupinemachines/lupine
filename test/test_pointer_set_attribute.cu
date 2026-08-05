@@ -10,6 +10,7 @@
 #include <cuda.h>
 
 #include <cstdio>
+#include <cstring>
 
 static int check(CUresult status, const char *call) {
   if (status != CUDA_SUCCESS) {
@@ -31,6 +32,28 @@ static int check(CUresult status, const char *call) {
 
 int main() {
   CHECK(cuInit(0));
+
+  // The check() helper above reports failures via cuGetErrorName, so confirm
+  // the strings really come from a driver: names are enum spellings, strings
+  // are descriptions rather than the same spelling, and codes no driver knows
+  // report CUDA_ERROR_INVALID_VALUE with a NULL out-parameter.
+  const char *name = nullptr;
+  const char *desc = nullptr;
+  CHECK(cuGetErrorName(CUDA_ERROR_DEVICE_UNAVAILABLE, &name));
+  CHECK(cuGetErrorString(CUDA_ERROR_INVALID_VALUE, &desc));
+  if (std::strcmp(name, "CUDA_ERROR_DEVICE_UNAVAILABLE") != 0 ||
+      std::strcmp(desc, "invalid argument") != 0) {
+    std::fprintf(stderr, "error lookups report name=%s string=%s\n", name,
+                 desc);
+    return 1;
+  }
+  const char *unknown = name;
+  if (cuGetErrorName(static_cast<CUresult>(12345), &unknown) !=
+          CUDA_ERROR_INVALID_VALUE ||
+      unknown != nullptr) {
+    std::fprintf(stderr, "unknown error code was not rejected\n");
+    return 1;
+  }
 
   int device_count = 0;
   CHECK(cuDeviceGetCount(&device_count));

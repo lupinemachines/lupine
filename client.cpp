@@ -2351,179 +2351,77 @@ static const void *lupine_private_export_table_from_env(const CUuuid *uuid) {
   return lupine_make_private_export_table(uuid_hex.c_str(), it->second);
 }
 
-static const char *lupine_error_name(CUresult error) {
-  switch (error) {
-  case CUDA_SUCCESS:
-    return "CUDA_SUCCESS";
-  case CUDA_ERROR_INVALID_VALUE:
-    return "CUDA_ERROR_INVALID_VALUE";
-  case CUDA_ERROR_OUT_OF_MEMORY:
-    return "CUDA_ERROR_OUT_OF_MEMORY";
-  case CUDA_ERROR_NOT_INITIALIZED:
-    return "CUDA_ERROR_NOT_INITIALIZED";
-  case CUDA_ERROR_DEINITIALIZED:
-    return "CUDA_ERROR_DEINITIALIZED";
-  case CUDA_ERROR_NO_DEVICE:
-    return "CUDA_ERROR_NO_DEVICE";
-  case CUDA_ERROR_INVALID_DEVICE:
-    return "CUDA_ERROR_INVALID_DEVICE";
-  case CUDA_ERROR_INVALID_IMAGE:
-    return "CUDA_ERROR_INVALID_IMAGE";
-  case CUDA_ERROR_INVALID_CONTEXT:
-    return "CUDA_ERROR_INVALID_CONTEXT";
-  case CUDA_ERROR_CONTEXT_ALREADY_CURRENT:
-    return "CUDA_ERROR_CONTEXT_ALREADY_CURRENT";
-  case CUDA_ERROR_MAP_FAILED:
-    return "CUDA_ERROR_MAP_FAILED";
-  case CUDA_ERROR_UNMAP_FAILED:
-    return "CUDA_ERROR_UNMAP_FAILED";
-  case CUDA_ERROR_ARRAY_IS_MAPPED:
-    return "CUDA_ERROR_ARRAY_IS_MAPPED";
-  case CUDA_ERROR_ALREADY_MAPPED:
-    return "CUDA_ERROR_ALREADY_MAPPED";
-  case CUDA_ERROR_NO_BINARY_FOR_GPU:
-    return "CUDA_ERROR_NO_BINARY_FOR_GPU";
-  case CUDA_ERROR_ALREADY_ACQUIRED:
-    return "CUDA_ERROR_ALREADY_ACQUIRED";
-  case CUDA_ERROR_NOT_MAPPED:
-    return "CUDA_ERROR_NOT_MAPPED";
-  case CUDA_ERROR_NOT_MAPPED_AS_ARRAY:
-    return "CUDA_ERROR_NOT_MAPPED_AS_ARRAY";
-  case CUDA_ERROR_NOT_MAPPED_AS_POINTER:
-    return "CUDA_ERROR_NOT_MAPPED_AS_POINTER";
-  case CUDA_ERROR_ECC_UNCORRECTABLE:
-    return "CUDA_ERROR_ECC_UNCORRECTABLE";
-  case CUDA_ERROR_UNSUPPORTED_LIMIT:
-    return "CUDA_ERROR_UNSUPPORTED_LIMIT";
-  case CUDA_ERROR_CONTEXT_ALREADY_IN_USE:
-    return "CUDA_ERROR_CONTEXT_ALREADY_IN_USE";
-  case CUDA_ERROR_PEER_ACCESS_UNSUPPORTED:
-    return "CUDA_ERROR_PEER_ACCESS_UNSUPPORTED";
-  case CUDA_ERROR_INVALID_PTX:
-    return "CUDA_ERROR_INVALID_PTX";
-  case CUDA_ERROR_INVALID_GRAPHICS_CONTEXT:
-    return "CUDA_ERROR_INVALID_GRAPHICS_CONTEXT";
-  case CUDA_ERROR_NVLINK_UNCORRECTABLE:
-    return "CUDA_ERROR_NVLINK_UNCORRECTABLE";
-  case CUDA_ERROR_JIT_COMPILER_NOT_FOUND:
-    return "CUDA_ERROR_JIT_COMPILER_NOT_FOUND";
-  case CUDA_ERROR_UNSUPPORTED_PTX_VERSION:
-    return "CUDA_ERROR_UNSUPPORTED_PTX_VERSION";
-  case CUDA_ERROR_JIT_COMPILATION_DISABLED:
-    return "CUDA_ERROR_JIT_COMPILATION_DISABLED";
-  case CUDA_ERROR_UNSUPPORTED_EXEC_AFFINITY:
-    return "CUDA_ERROR_UNSUPPORTED_EXEC_AFFINITY";
-  case CUDA_ERROR_INVALID_SOURCE:
-    return "CUDA_ERROR_INVALID_SOURCE";
-  case CUDA_ERROR_FILE_NOT_FOUND:
-    return "CUDA_ERROR_FILE_NOT_FOUND";
-  case CUDA_ERROR_SHARED_OBJECT_SYMBOL_NOT_FOUND:
-    return "CUDA_ERROR_SHARED_OBJECT_SYMBOL_NOT_FOUND";
-  case CUDA_ERROR_SHARED_OBJECT_INIT_FAILED:
-    return "CUDA_ERROR_SHARED_OBJECT_INIT_FAILED";
-  case CUDA_ERROR_OPERATING_SYSTEM:
-    return "CUDA_ERROR_OPERATING_SYSTEM";
-  case CUDA_ERROR_INVALID_HANDLE:
-    return "CUDA_ERROR_INVALID_HANDLE";
-  case CUDA_ERROR_ILLEGAL_STATE:
-    return "CUDA_ERROR_ILLEGAL_STATE";
-  case CUDA_ERROR_NOT_FOUND:
-    return "CUDA_ERROR_NOT_FOUND";
-  case CUDA_ERROR_NOT_READY:
-    return "CUDA_ERROR_NOT_READY";
-  case CUDA_ERROR_ILLEGAL_ADDRESS:
-    return "CUDA_ERROR_ILLEGAL_ADDRESS";
-  case CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES:
-    return "CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES";
-  case CUDA_ERROR_LAUNCH_TIMEOUT:
-    return "CUDA_ERROR_LAUNCH_TIMEOUT";
-  case CUDA_ERROR_LAUNCH_INCOMPATIBLE_TEXTURING:
-    return "CUDA_ERROR_LAUNCH_INCOMPATIBLE_TEXTURING";
-  case CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED:
-    return "CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED";
-  case CUDA_ERROR_PEER_ACCESS_NOT_ENABLED:
-    return "CUDA_ERROR_PEER_ACCESS_NOT_ENABLED";
-  case CUDA_ERROR_PRIMARY_CONTEXT_ACTIVE:
-    return "CUDA_ERROR_PRIMARY_CONTEXT_ACTIVE";
-  case CUDA_ERROR_CONTEXT_IS_DESTROYED:
-    return "CUDA_ERROR_CONTEXT_IS_DESTROYED";
-  case CUDA_ERROR_ASSERT:
-    return "CUDA_ERROR_ASSERT";
-  case CUDA_ERROR_TOO_MANY_PEERS:
-    return "CUDA_ERROR_TOO_MANY_PEERS";
-  case CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED:
-    return "CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED";
-  case CUDA_ERROR_HOST_MEMORY_NOT_REGISTERED:
-    return "CUDA_ERROR_HOST_MEMORY_NOT_REGISTERED";
-  case CUDA_ERROR_HARDWARE_STACK_ERROR:
-    return "CUDA_ERROR_HARDWARE_STACK_ERROR";
-  case CUDA_ERROR_ILLEGAL_INSTRUCTION:
-    return "CUDA_ERROR_ILLEGAL_INSTRUCTION";
-  case CUDA_ERROR_MISALIGNED_ADDRESS:
-    return "CUDA_ERROR_MISALIGNED_ADDRESS";
-  case CUDA_ERROR_INVALID_ADDRESS_SPACE:
-    return "CUDA_ERROR_INVALID_ADDRESS_SPACE";
-  case CUDA_ERROR_INVALID_PC:
-    return "CUDA_ERROR_INVALID_PC";
-  case CUDA_ERROR_LAUNCH_FAILED:
-    return "CUDA_ERROR_LAUNCH_FAILED";
-  case CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE:
-    return "CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE";
-  case CUDA_ERROR_NOT_PERMITTED:
-    return "CUDA_ERROR_NOT_PERMITTED";
-  case CUDA_ERROR_NOT_SUPPORTED:
-    return "CUDA_ERROR_NOT_SUPPORTED";
-  case CUDA_ERROR_SYSTEM_NOT_READY:
-    return "CUDA_ERROR_SYSTEM_NOT_READY";
-  case CUDA_ERROR_SYSTEM_DRIVER_MISMATCH:
-    return "CUDA_ERROR_SYSTEM_DRIVER_MISMATCH";
-  case CUDA_ERROR_COMPAT_NOT_SUPPORTED_ON_DEVICE:
-    return "CUDA_ERROR_COMPAT_NOT_SUPPORTED_ON_DEVICE";
-  case CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED:
-    return "CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED";
-  case CUDA_ERROR_STREAM_CAPTURE_INVALIDATED:
-    return "CUDA_ERROR_STREAM_CAPTURE_INVALIDATED";
-  case CUDA_ERROR_STREAM_CAPTURE_MERGE:
-    return "CUDA_ERROR_STREAM_CAPTURE_MERGE";
-  case CUDA_ERROR_STREAM_CAPTURE_UNMATCHED:
-    return "CUDA_ERROR_STREAM_CAPTURE_UNMATCHED";
-  case CUDA_ERROR_STREAM_CAPTURE_UNJOINED:
-    return "CUDA_ERROR_STREAM_CAPTURE_UNJOINED";
-  case CUDA_ERROR_STREAM_CAPTURE_ISOLATION:
-    return "CUDA_ERROR_STREAM_CAPTURE_ISOLATION";
-  case CUDA_ERROR_STREAM_CAPTURE_IMPLICIT:
-    return "CUDA_ERROR_STREAM_CAPTURE_IMPLICIT";
-  case CUDA_ERROR_CAPTURED_EVENT:
-    return "CUDA_ERROR_CAPTURED_EVENT";
-  case CUDA_ERROR_STREAM_CAPTURE_WRONG_THREAD:
-    return "CUDA_ERROR_STREAM_CAPTURE_WRONG_THREAD";
-  case CUDA_ERROR_TIMEOUT:
-    return "CUDA_ERROR_TIMEOUT";
-  case CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE:
-    return "CUDA_ERROR_GRAPH_EXEC_UPDATE_FAILURE";
-  case CUDA_ERROR_EXTERNAL_DEVICE:
-    return "CUDA_ERROR_EXTERNAL_DEVICE";
-  case CUDA_ERROR_UNKNOWN:
-    return "CUDA_ERROR_UNKNOWN";
-  default:
-    return nullptr;
-  }
-}
-
-extern "C" CUresult cuGetErrorName(CUresult error, const char **pStr) {
+// The driver owns the authoritative spelling of every result code, so instead
+// of mirroring its tables the shim asks whoever holds a real driver: the local
+// driver on a local route, otherwise the server. That is byte-exact even for
+// codes newer than this client's headers.
+//
+// CUDA promises the returned pointer has static lifetime, so answers are
+// interned in a never-erased map and each code costs at most one round trip per
+// process. unordered_map nodes are stable, so c_str() stays valid; a present
+// but empty entry records a code the driver rejected.
+static CUresult lupine_error_string_lookup(int rpc_op, const char *symbol,
+                                           bool want_name, CUresult error,
+                                           const char **pStr) {
   if (pStr == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  const char *name = lupine_error_name(error);
-  if (name == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
+  *pStr = nullptr;
+
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUresult, const char **);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, symbol, &return_value,
+                                                  error, pStr)) {
+    return return_value;
   }
-  *pStr = name;
+
+  // The only hardcoded string: this is the shim's own most common error, and
+  // its occurrence means the forward path below may already be gone.
+  if (error == CUDA_ERROR_DEVICE_UNAVAILABLE) {
+    *pStr = want_name ? "CUDA_ERROR_DEVICE_UNAVAILABLE"
+                      : "CUDA-capable device(s) is/are busy or unavailable";
+    return CUDA_SUCCESS;
+  }
+
+  // Forward every other code to the server's driver. The result is held in a
+  // per-thread buffer so the returned pointer stays valid until this thread's
+  // next lookup; a length past any real driver string means a desynced stream.
+  thread_local std::string name_result;
+  thread_local std::string description_result;
+  std::string &result = want_name ? name_result : description_result;
+
+  constexpr uint32_t kMaxLength = 4096;
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint32_t length = 0;
+  if (conn == nullptr || rpc_write_start_request(conn, rpc_op) < 0 ||
+      rpc_write(conn, &error, sizeof(error)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &length, sizeof(length)) < 0 || length > kMaxLength) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  std::string text(length, '\0');
+  if ((length != 0 && rpc_read(conn, &text[0], length) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value != CUDA_SUCCESS) {
+    return return_value;
+  }
+  result = std::move(text);
+  *pStr = result.c_str();
   return CUDA_SUCCESS;
 }
 
+extern "C" CUresult cuGetErrorName(CUresult error, const char **pStr) {
+  return lupine_error_string_lookup(RPC_cuGetErrorName, "cuGetErrorName", true,
+                                    error, pStr);
+}
+
 extern "C" CUresult cuGetErrorString(CUresult error, const char **pStr) {
-  return cuGetErrorName(error, pStr);
+  return lupine_error_string_lookup(RPC_cuGetErrorString, "cuGetErrorString",
+                                    false, error, pStr);
 }
 
 extern "C" CUresult cuProfilerInitialize(const char *, const char *,
