@@ -1409,12 +1409,11 @@ def main():
                 )
             else:
                 if function.name.format() == "cuCtxGetApiVersion":
-                    # The CUDA runtime probes this entry with sentinel handles
-                    # such as (CUcontext)-1 and expects
-                    # CUDA_ERROR_INVALID_CONTEXT. Forwarding an unknown handle
-                    # lets the server dereference it inside the real driver,
-                    # which kills the connection's server process.
                     f.write(
+                        "    // The CUDA runtime probes this entry with sentinel handles such as\n"
+                        "    // (CUcontext)-1 and expects CUDA_ERROR_INVALID_CONTEXT. Forwarding an\n"
+                        "    // unknown handle lets the server dereference it inside the real driver,\n"
+                        "    // which kills the connection's server process.\n"
                         "    if (ctx != nullptr && !lupine_context_is_known(ctx))\n"
                         "        return CUDA_ERROR_INVALID_CONTEXT;\n"
                     )
