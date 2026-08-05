@@ -1006,16 +1006,21 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   if (fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
   }
+  // FILE_NOT_FOUND is reserved for open() failing.
   struct stat st = {};
-  if (fstat(fd, &st) < 0 || st.st_size <= 0) {
+  if (fstat(fd, &st) < 0) {
     close(fd);
-    return CUDA_ERROR_FILE_NOT_FOUND;
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  if (st.st_size <= 0) {
+    close(fd);
+    return CUDA_ERROR_INVALID_IMAGE;
   }
   mapped_size = static_cast<size_t>(st.st_size);
   mapping = mmap(nullptr, mapped_size, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
   if (mapping == MAP_FAILED) {
-    return CUDA_ERROR_FILE_NOT_FOUND;
+    return CUDA_ERROR_OUT_OF_MEMORY;
   }
 
   bool failed =
@@ -3294,17 +3299,22 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   if (file_fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
   }
+  // FILE_NOT_FOUND is reserved for open() failing.
   struct stat st = {};
-  if (fstat(file_fd, &st) < 0 || st.st_size <= 0) {
+  if (fstat(file_fd, &st) < 0) {
     close(file_fd);
-    return CUDA_ERROR_FILE_NOT_FOUND;
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  if (st.st_size <= 0) {
+    close(file_fd);
+    return CUDA_ERROR_INVALID_IMAGE;
   }
   mapped_file_size = static_cast<size_t>(st.st_size);
   file_mapping =
       mmap(nullptr, mapped_file_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
   close(file_fd);
   if (file_mapping == MAP_FAILED) {
-    return CUDA_ERROR_FILE_NOT_FOUND;
+    return CUDA_ERROR_OUT_OF_MEMORY;
   }
   file_payload = file_mapping;
   file_size = mapped_file_size;
@@ -3638,6 +3648,25 @@ extern "C" CUresult cuOccupancyMaxPotentialBlockSizeWithFlags(
       blockSizeLimit, flags, true);
 }
 
+// Bounded prefix scan, so a binary image cannot walk off the caller's buffer.
+static bool lupine_image_looks_like_text(const char *image) {
+  constexpr size_t kProbeBytes = 64;
+  for (size_t i = 0; i < kProbeBytes; ++i) {
+    unsigned char byte = static_cast<unsigned char>(image[i]);
+    if (byte == '\0') {
+      return i != 0;
+    }
+    if (byte < 0x20 && byte != '\t' && byte != '\n' && byte != '\v' &&
+        byte != '\f' && byte != '\r') {
+      return false;
+    }
+    if (byte > 0x7e) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool lupine_pack_module_image(const void *image, uint32_t *kind,
                                      std::vector<unsigned char> *bytes) {
   if (image == nullptr || kind == nullptr || bytes == nullptr) {
@@ -3695,22 +3724,17 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
       return true;
     }
 
+    // Non-fatbin, non-ELF images are forwarded verbatim for the server's
+    // driver to judge. Non-text bytes carry no length, so they cannot ship.
     const char *ptx = static_cast<const char *>(image);
-    const char *ptx_start = ptx;
-    while (*ptx_start == ' ' || *ptx_start == '\t' || *ptx_start == '\r' ||
-           *ptx_start == '\n') {
-      ++ptx_start;
+    if (!lupine_image_looks_like_text(ptx)) {
+      return false;
     }
-    if (std::strncmp(ptx_start, ".version", 8) == 0 ||
-        std::strncmp(ptx_start, "//", 2) == 0) {
-      *kind = LUPINE_MODULE_IMAGE_FATBIN_RAW;
-      bytes->assign(reinterpret_cast<const unsigned char *>(ptx),
-                    reinterpret_cast<const unsigned char *>(ptx) +
-                        std::strlen(ptx) + 1);
-      return true;
-    }
-
-    return false;
+    *kind = LUPINE_MODULE_IMAGE_FATBIN_RAW;
+    bytes->assign(reinterpret_cast<const unsigned char *>(ptx),
+                  reinterpret_cast<const unsigned char *>(ptx) +
+                      std::strlen(ptx) + 1);
+    return true;
   }
   size_t image_size = static_cast<size_t>(header->header_size) +
                       static_cast<size_t>(header->files_size);
@@ -3727,7 +3751,7 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
   uint32_t kind = 0;
   std::vector<unsigned char> image_bytes;
   if (!lupine_pack_module_image(image, &kind, &image_bytes)) {
-    return CUDA_ERROR_NOT_SUPPORTED;
+    return CUDA_ERROR_INVALID_IMAGE;
   }
 
   lupine_route route = lupine_route_for_current_context();
@@ -3801,7 +3825,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
     LUPINE_TRACE_LOG("LUPINE cuLibraryLoadData could not pack image"
                      << " magic=0x" << std::hex << wrapper->magic
                      << " version=0x" << wrapper->version << std::dec);
-    return CUDA_ERROR_NOT_SUPPORTED;
+    return CUDA_ERROR_INVALID_IMAGE;
   }
 
   lupine_route route = lupine_route_for_current_context();
