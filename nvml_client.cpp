@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -58,7 +59,24 @@ std::vector<lupine_nvml_remote_device> devices;
 std::vector<std::string> conn_labels;
 bool devices_ready = false;
 
-nvmlReturn_t rpc_error() { return NVML_ERROR_UNKNOWN; }
+// Real NVML reference counts init/shutdown; this shim connects lazily, so
+// without a counter it could never report UNINITIALIZED.
+std::atomic<int> init_refcount{0};
+
+thread_local bool init_gate_bypass = false;
+
+bool nvml_initialized() {
+  return init_gate_bypass || init_refcount.load(std::memory_order_acquire) > 0;
+}
+
+struct uninitialized_entry_point {
+  uninitialized_entry_point() { init_gate_bypass = true; }
+  ~uninitialized_entry_point() { init_gate_bypass = false; }
+};
+
+nvmlReturn_t rpc_error() {
+  return nvml_initialized() ? NVML_ERROR_UNKNOWN : NVML_ERROR_UNINITIALIZED;
+}
 
 void *rpc_client_dispatch_thread(void *p) {
   conn_t *connection = static_cast<conn_t *>(p);
@@ -229,7 +247,7 @@ int open_connection() {
 }
 
 conn_t *connection(unsigned int index = 0) {
-  if (open_connection() < 0) {
+  if (!nvml_initialized() || open_connection() < 0) {
     return nullptr;
   }
   if (index >= static_cast<unsigned int>(nconns)) {
@@ -340,7 +358,7 @@ nvmlReturn_t call_device_from_index_on(conn_t *c, int op, unsigned int index,
 }
 
 nvmlReturn_t ensure_devices() {
-  if (open_connection() < 0) {
+  if (!nvml_initialized() || open_connection() < 0) {
     return rpc_error();
   }
   if (devices_ready) {
@@ -567,11 +585,25 @@ nvmlReturn_t call_device_register_events(nvmlDevice_t device,
 #undef nvmlEventSetWait
 #endif
 
+// Real NVML answers this one without nvmlInit, so rename the generated entry
+// point and re-export it below with the gate lifted.
+#define nvmlSystemGetNVMLVersion lupine_nvmlSystemGetNVMLVersion_gated
+
 #include "codegen/gen_nvml_client.inc"
 
+#undef nvmlSystemGetNVMLVersion
+
+extern "C" nvmlReturn_t nvmlSystemGetNVMLVersion(char *version,
+                                                 unsigned int length) {
+  uninitialized_entry_point guard;
+  return lupine_nvmlSystemGetNVMLVersion_gated(version, length);
+}
+
 extern "C" nvmlReturn_t nvmlInit_v2(void) {
+  init_refcount.fetch_add(1, std::memory_order_acq_rel);
   if (open_connection() < 0) {
-    return rpc_error();
+    init_refcount.fetch_sub(1, std::memory_order_acq_rel);
+    return NVML_ERROR_UNKNOWN;
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (int i = 0; i < nconns; ++i) {
@@ -588,8 +620,10 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
 extern "C" nvmlReturn_t nvmlInit(void) { return nvmlInit_v2(); }
 
 extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
+  init_refcount.fetch_add(1, std::memory_order_acq_rel);
   if (open_connection() < 0) {
-    return rpc_error();
+    init_refcount.fetch_sub(1, std::memory_order_acq_rel);
+    return NVML_ERROR_UNKNOWN;
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (int i = 0; i < nconns; ++i) {
@@ -611,8 +645,20 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
 }
 
 extern "C" nvmlReturn_t nvmlShutdown(void) {
+  // Claim a reference up front so an unmatched shutdown fails and concurrent
+  // callers cannot tear the connections down twice.
+  int previous = init_refcount.load(std::memory_order_acquire);
+  do {
+    if (previous <= 0) {
+      return NVML_ERROR_UNINITIALIZED;
+    }
+  } while (!init_refcount.compare_exchange_weak(previous, previous - 1,
+                                                std::memory_order_acq_rel,
+                                                std::memory_order_acquire));
+  bool last = previous == 1;
+
   if (pthread_mutex_lock(&conn_mutex) != 0) {
-    return rpc_error();
+    return NVML_ERROR_UNKNOWN;
   }
   if (!connected) {
     pthread_mutex_unlock(&conn_mutex);
@@ -621,6 +667,7 @@ extern "C" nvmlReturn_t nvmlShutdown(void) {
   int count = nconns;
   pthread_mutex_unlock(&conn_mutex);
 
+  // The server refcounts too, so forward every shutdown, not just the last.
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (int i = 0; i < count; ++i) {
     nvmlReturn_t result = call_no_args_on(&conns[i], RPC_nvmlShutdown);
@@ -628,7 +675,9 @@ extern "C" nvmlReturn_t nvmlShutdown(void) {
       first_error = result;
     }
   }
-  close_connections();
+  if (last) {
+    close_connections();
+  }
   return first_error;
 }
 
@@ -689,10 +738,20 @@ extern "C" const char *nvmlErrorString(nvmlReturn_t result) {
 
 extern "C" nvmlReturn_t nvmlInternalGetExportTable(const void **ppExportTable,
                                                    const void *exportTableId) {
-  static void *empty_table[512] = {};
-  if (ppExportTable == nullptr) {
+  if (ppExportTable == nullptr || exportTableId == nullptr) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
+  // The one table ID nvidia-smi asks for; this shim proxies none of the
+  // internal entry points it holds, so the table stays empty.
+  static const unsigned char known_export_table_id[16] = {
+      0xc4, 0xfe, 0x3e, 0x6c, 0xc9, 0x8f, 0x6c, 0x4e,
+      0xa3, 0x27, 0xee, 0x69, 0x6e, 0x12, 0xf7, 0xc4};
+  if (memcmp(exportTableId, known_export_table_id,
+             sizeof(known_export_table_id)) != 0) {
+    *ppExportTable = nullptr;
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  static void *empty_table[512] = {};
   *ppExportTable = empty_table;
   return NVML_SUCCESS;
 }
@@ -728,9 +787,10 @@ extern "C" nvmlReturn_t nvmlDeviceGetCount_v2(unsigned int *deviceCount) {
   if (result != NVML_SUCCESS) {
     return result;
   }
-  if (deviceCount != nullptr) {
-    *deviceCount = static_cast<unsigned int>(devices.size());
+  if (deviceCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
   }
+  *deviceCount = static_cast<unsigned int>(devices.size());
   return NVML_SUCCESS;
 }
 
@@ -798,6 +858,8 @@ extern "C" nvmlReturn_t nvmlDeviceGetIndex(nvmlDevice_t device,
   if (devices.empty() || index == nullptr) {
     return NVML_ERROR_INVALID_ARGUMENT;
   }
+  // Deliberate divergence: the fan-out index is fabricated client-side, so it
+  // can only be recovered from a handle this shim minted.
   auto *mapped = mapped_device(device);
   if (mapped == nullptr) {
     return NVML_ERROR_INVALID_ARGUMENT;
