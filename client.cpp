@@ -1534,18 +1534,6 @@ static bool lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
   }
 }
 
-static bool lupine_cuda_device_attr_is_virtualized(unsigned int attr) {
-  switch (attr) {
-  case 88:  // cudaDevAttrPageableMemoryAccess
-  case 89:  // cudaDevAttrConcurrentManagedAccess
-  case 100: // cudaDevAttrPageableMemoryAccessUsesHostPageTables
-  case 101: // cudaDevAttrDirectManagedMemAccessFromHost
-    return true;
-  default:
-    return false;
-  }
-}
-
 extern "C" CUresult
 lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
                                    CUdevice dev) {
@@ -1568,9 +1556,6 @@ lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
     }
     CUresult result = real(pi, attrib, remote_dev);
     if (result == CUDA_SUCCESS) {
-      if (lupine_device_attribute_is_virtualized(attrib)) {
-        *pi = 0;
-      }
       lupine_device_attribute_cache().insert_or_assign(key, *pi);
     }
     return result;
@@ -1589,6 +1574,7 @@ lupine_cuDeviceGetAttribute_cached(int *pi, CUdevice_attribute attrib,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
+    // Remote-only, and deliberate: unified memory cannot span the wire.
     if (lupine_device_attribute_is_virtualized(attrib)) {
       value = 0;
     }
@@ -6697,12 +6683,10 @@ extern "C" CUresult lupine_device_get_attribute_ext(CUdevice dev,
     return CUDA_ERROR_INVALID_VALUE;
   }
   int value = 0;
+  // cuDeviceGetAttribute already virtualizes remote managed-memory attributes.
   CUresult status = cuDeviceGetAttribute(
       &value, static_cast<CUdevice_attribute>(attribute), dev);
   if (status == CUDA_SUCCESS) {
-    if (lupine_cuda_device_attr_is_virtualized(attribute)) {
-      value = 0;
-    }
     (*result)[0] = static_cast<size_t>(value);
     (*result)[1] = 0;
   }

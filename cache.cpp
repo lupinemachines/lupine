@@ -59,7 +59,7 @@ bool lupine_current_context_device_cache_lookup(CUcontext context,
   uint64_t current_epoch =
       current_context_device_cache_epoch().load(std::memory_order_acquire);
   auto &entry = current_context_device_cache();
-  if (device == nullptr || entry.epoch != current_epoch ||
+  if (context == nullptr || device == nullptr || entry.epoch != current_epoch ||
       entry.context != context) {
     return false;
   }
@@ -69,6 +69,9 @@ bool lupine_current_context_device_cache_lookup(CUcontext context,
 
 void lupine_current_context_device_cache_insert(CUcontext context,
                                                 CUdevice device) {
+  if (context == nullptr) {
+    return;
+  }
   uint64_t epoch =
       current_context_device_cache_epoch().load(std::memory_order_acquire);
   auto &entry = current_context_device_cache();
