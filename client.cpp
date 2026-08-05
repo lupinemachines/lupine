@@ -2618,7 +2618,7 @@ extern "C" CUresult cuMemPoolSetAttribute(CUmemoryPool pool,
   }
   size_t value_size = 0;
   if (!lupine_mem_pool_attribute_size(attr, &value_size)) {
-    return CUDA_ERROR_NOT_SUPPORTED;
+    return CUDA_ERROR_INVALID_VALUE;
   }
 
   lupine_route route = lupine_route_for_memory_pool(pool);
@@ -3056,7 +3056,7 @@ extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
   }
   size_t value_size = 0;
   if (!lupine_mem_pool_attribute_size(attr, &value_size)) {
-    return CUDA_ERROR_NOT_SUPPORTED;
+    return CUDA_ERROR_INVALID_VALUE;
   }
 
   lupine_route route = lupine_route_for_memory_pool(pool);

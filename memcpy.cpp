@@ -1571,7 +1571,7 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
   size_t value_size = 0;
   if (!lupine_pointer_attribute_size(attribute, &value_size)) {
-    return CUDA_ERROR_NOT_SUPPORTED;
+    return CUDA_ERROR_INVALID_VALUE;
   }
 
   unsigned char value[64] = {};
@@ -1670,7 +1670,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   std::vector<size_t> value_sizes(numAttributes, 0);
   for (unsigned int i = 0; i < numAttributes; ++i) {
     if (!lupine_pointer_attribute_size(attributes[i], &value_sizes[i])) {
-      return CUDA_ERROR_NOT_SUPPORTED;
+      return CUDA_ERROR_INVALID_VALUE;
     }
   }
 
@@ -1718,8 +1718,9 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
       if (data[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
+      // Version skew: the server's width does not fit the caller's buffer.
       if (values[i].size() != value_sizes[i]) {
-        return CUDA_ERROR_NOT_SUPPORTED;
+        return CUDA_ERROR_INVALID_VALUE;
       }
       memcpy(data[i], values[i].data(), values[i].size());
       if (managed_alias && attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {

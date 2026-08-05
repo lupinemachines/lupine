@@ -1245,7 +1245,10 @@ int handle_manual_cuPointerGetAttribute(conn_t *conn) {
 
   size_t expected_size = 0;
   if (!lupine_pointer_attribute_size(attribute, &expected_size) ||
-      value_size != expected_size || value_size > sizeof(value)) {
+      value_size != expected_size) {
+    result = CUDA_ERROR_INVALID_VALUE;
+    value_size = 0;
+  } else if (value_size > sizeof(value)) {
     result = CUDA_ERROR_NOT_SUPPORTED;
     value_size = 0;
   } else {
@@ -1331,7 +1334,7 @@ int handle_manual_cuPointerGetAttributes(conn_t *conn) {
   for (unsigned int i = 0; i < num_attributes; ++i) {
     size_t value_size = 0;
     if (!lupine_pointer_attribute_size(attributes[i], &value_size)) {
-      result = CUDA_ERROR_NOT_SUPPORTED;
+      result = CUDA_ERROR_INVALID_VALUE;
       break;
     }
     value_sizes[i] = value_size;
