@@ -12,6 +12,8 @@
 
 #ifndef _WIN32
 #include <netdb.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 
 // lupine_tcp_connect resolves host:port and connects with a bounded retry
@@ -410,7 +412,20 @@ int rpc_wait_for_response(conn_t *conn) {
     if (write_id < 0 || rpc_read_start(conn, write_id) < 0) {
       return -1;
     }
-    lupine_rpc_stats_record(op, 0, lupine_rpc_stats_now_ns() - start);
+    uint64_t end = lupine_rpc_stats_now_ns();
+    static const char *timeline_path = getenv("LUPINE_RPC_TIMELINE");
+    if (timeline_path != nullptr) {
+      static FILE *timeline = fopen(timeline_path, "w");
+      static pthread_mutex_t timeline_mutex = PTHREAD_MUTEX_INITIALIZER;
+      if (timeline != nullptr) {
+        pthread_mutex_lock(&timeline_mutex);
+        fprintf(timeline, "%llu %llu %d %ld\n", (unsigned long long)start,
+                (unsigned long long)end, op, (long)syscall(SYS_gettid));
+        fflush(timeline);
+        pthread_mutex_unlock(&timeline_mutex);
+      }
+    }
+    lupine_rpc_stats_record(op, 0, end - start);
     return 0;
   }
   int write_id = rpc_write_end(conn);
