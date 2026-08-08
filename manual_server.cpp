@@ -1925,6 +1925,9 @@ int handle_manual_cuLibraryGetModule(conn_t *conn) {
   return 0;
 }
 
+// The library stays loaded: the client mirrors libraries onto other routes and
+// caches the CUkernel handles this one owns, but it only ever sends the unload
+// to the route that loaded it, so freeing here would dangle those handles.
 int handle_manual_cuLibraryUnload(conn_t *conn) {
   CUlibrary library = nullptr;
 

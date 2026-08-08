@@ -3,6 +3,7 @@ from cxxheaderparser.preprocessor import make_gcc_preprocessor
 from cxxheaderparser.types import Type, Pointer, Parameter, Function, Array
 from typing import Optional, Union
 from dataclasses import dataclass
+import io
 import os
 import glob
 import zlib
@@ -1140,6 +1141,26 @@ def find_header_file(filename):
     )
 
 
+def validate_async_annotation(
+    function: Function, metadata: FunctionAnnotationMetadata
+) -> None:
+    if not metadata.async_fire_forget:
+        return
+    name = function.name.format()
+    return_type = function.return_type.format()
+    if return_type != "CUresult":
+        raise RuntimeError(
+            f"{name}: @async requires a CUresult return type, got {return_type}"
+        )
+    for operation in metadata.operations:
+        # OptionalArrayOperation is an out-parameter with no send/recv flags.
+        if getattr(operation, "recv", True):
+            raise RuntimeError(
+                f"{name}: @async requires every parameter to be SEND_ONLY, "
+                f"but {operation.parameter.name} is received back"
+            )
+
+
 def main():
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
@@ -1189,6 +1210,7 @@ def main():
         except Exception as e:
             print(f"Error parsing annotation for {function.name}: {e}")
             continue
+        validate_async_annotation(function, metadata)
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
         )
@@ -1525,7 +1547,7 @@ def main():
                     )
 
             if metadata.async_fire_forget:
-                # Fire-and-forget: send without waiting for a response.
+                error_return = error_const(function.return_type.format())
                 f.write(
                     "    if (conn == nullptr ||\n"
                     "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
@@ -1535,13 +1557,16 @@ def main():
                 for operation in operations:
                     write_client_rpc_write(f, operation, metadata)
                 f.write("        rpc_write_end(conn) < 0) {\n")
-                f.write(
-                    "        return {error_return};\n".format(
-                        error_return=error_const(function.return_type.format())
-                    )
-                )
+                f.write("        return {r};\n".format(r=error_return))
                 f.write("    }\n")
-                f.write("    return CUDA_SUCCESS;\n")
+                post_call = io.StringIO()
+                write_client_post_call(post_call, function, metadata)
+                if post_call.getvalue():
+                    f.write("    return_value = CUDA_SUCCESS;\n")
+                    f.write(post_call.getvalue())
+                    f.write("    return return_value;\n")
+                else:
+                    f.write("    return CUDA_SUCCESS;\n")
                 f.write("}\n\n")
                 continue
 
@@ -1699,7 +1724,9 @@ def main():
             f.write("    int request_id;\n")
 
             # we only generate return from non-void types
-            if function.return_type.format() != "void":
+            if metadata.async_fire_forget:
+                pass
+            elif function.return_type.format() != "void":
                 f.write(
                     "    {return_type} lupine_intercept_result;\n".format(
                         return_type=function.return_type.format()
@@ -1728,43 +1755,45 @@ def main():
                     if op.parameter.name == param.name:
                         params.append(op.server_reference)
 
-            if function.return_type.format() != "void":
-                f.write(
-                    "    lupine_intercept_result = {name}({params});\n\n".format(
-                        name=server_call_name(function.name.format()),
-                        params=", ".join(params),
-                    )
-                )
-            else:
+            if metadata.async_fire_forget or function.return_type.format() == "void":
                 f.write(
                     "    {name}({params});\n\n".format(
                         name=server_call_name(function.name.format()),
                         params=", ".join(params),
                     )
                 )
-
-            if metadata.async_fire_forget:
-                # Fire-and-forget: no response is sent.
-                f.write("    (void) lupine_intercept_result;\n")
-                f.write("\n")
-                write_server_buffer_cleanup(f, owned_buffers, "    ")
-                f.write("    return 0;\n")
             else:
-                f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
-
-                for operation in operations:
-                    operation.server_rpc_write(f)
-
                 f.write(
-                    "        rpc_write(conn, &lupine_intercept_result, sizeof({return_type})) < 0 ||\n".format(
-                        return_type=function.return_type.format()
+                    "    lupine_intercept_result = {name}({params});\n\n".format(
+                        name=server_call_name(function.name.format()),
+                        params=", ".join(params),
                     )
                 )
-                f.write("        rpc_write_end(conn) < 0)\n")
-                f.write("        goto ERROR_0;\n")
-                f.write("\n")
+
+            if metadata.async_fire_forget:
                 write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return 0;\n")
+                f.write("ERROR_0:\n")
+                write_server_buffer_cleanup(f, owned_buffers, "    ")
+                f.write("    return -1;\n")
+                f.write("}\n\n")
+                continue
+
+            f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+
+            for operation in operations:
+                operation.server_rpc_write(f)
+
+            f.write(
+                "        rpc_write(conn, &lupine_intercept_result, sizeof({return_type})) < 0 ||\n".format(
+                    return_type=function.return_type.format()
+                )
+            )
+            f.write("        rpc_write_end(conn) < 0)\n")
+            f.write("        goto ERROR_0;\n")
+            f.write("\n")
+            write_server_buffer_cleanup(f, owned_buffers, "    ")
+            f.write("    return 0;\n")
 
             f.write("ERROR_0:\n")
             write_server_buffer_cleanup(f, owned_buffers, "    ")
