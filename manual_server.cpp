@@ -1927,15 +1927,22 @@ int handle_manual_cuLibraryGetModule(conn_t *conn) {
 
 int handle_manual_cuLibraryUnload(conn_t *conn) {
   CUlibrary library = nullptr;
+  unsigned char wants_response = 1;
   int request_id;
   CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &library, sizeof(library)) < 0) {
+  if (rpc_read(conn, &library, sizeof(library)) < 0 ||
+      rpc_read(conn, &wants_response, sizeof(wants_response)) < 0) {
     return -1;
   }
   request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
+  }
+  // Mirror the client: unloads are fire-and-forget unless the client asked to
+  // block on the result.
+  if (wants_response == 0) {
+    return 0;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {

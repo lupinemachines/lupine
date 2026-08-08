@@ -2458,6 +2458,8 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
                                void **libraryOptionValues,
                                unsigned int numLibraryOptions);
 /**
+ * @disabled client - manual client sends fire-and-forget unloads
+ * @disabled server - manual server supports fire-and-forget unloads
  * @routingkey LIBRARY library
  * @param library SEND_ONLY
  */

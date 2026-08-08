@@ -930,6 +930,55 @@ extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
                                                  const char *name,
                                                  lupine_route route);
 
+extern "C" void lupine_invalidate_function_caches();
+
+// Set LUPINE_STRICT_SYNC to make normally fire-and-forget teardown calls block
+// for their server response.
+static bool lupine_strict_sync_enabled() {
+  static const bool enabled = getenv("LUPINE_STRICT_SYNC") != nullptr;
+  return enabled;
+}
+
+extern "C" CUresult cuLibraryUnload(CUlibrary library) {
+  lupine_route route = lupine_route_for_library(library);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUlibrary);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuLibraryUnload",
+                                                  &return_value, library)) {
+    if (return_value == CUDA_SUCCESS) {
+      lupine_invalidate_function_caches();
+    }
+    return return_value;
+  }
+  // Unloads only release server-side resources the connection reclaims anyway,
+  // so they go out fire-and-forget: at teardown a program can issue dozens of
+  // them and each blocking round trip is pure latency.
+  const unsigned char wants_response = lupine_strict_sync_enabled() ? 1 : 0;
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuLibraryUnload) < 0 ||
+      rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
+      rpc_write(conn, &wants_response, sizeof(wants_response)) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (wants_response == 0) {
+    if (rpc_write_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    lupine_invalidate_function_caches();
+    return CUDA_SUCCESS;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_invalidate_function_caches();
+  }
+  return return_value;
+}
+
 extern "C" CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
                                        const char *name) {
   if (pKernel == nullptr || name == nullptr) {
@@ -8536,6 +8585,7 @@ lupine_manual_function_map() {
       {"cuModuleLoadData", (void *)cuModuleLoadData},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
+      {"cuLibraryUnload", (void *)cuLibraryUnload},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
       {"cuLinkAddData", (void *)cuLinkAddData_v2},
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},

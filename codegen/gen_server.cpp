@@ -1383,28 +1383,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuLibraryUnload(conn_t *conn) {
-  CUlibrary library;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLibraryUnload(library);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuLibraryGetKernel(conn_t *conn) {
   CUkernel pKernel;
   CUlibrary library;
@@ -8568,7 +8546,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuModuleGetTexRef, handle_cuModuleGetTexRef},
     {RPC_cuModuleGetSurfRef, handle_cuModuleGetSurfRef},
     {RPC_cuLibraryLoadFromFile, handle_cuLibraryLoadFromFile},
-    {RPC_cuLibraryUnload, handle_cuLibraryUnload},
     {RPC_cuLibraryGetKernel, handle_cuLibraryGetKernel},
     {RPC_cuLibraryGetModule, handle_cuLibraryGetModule},
     {RPC_cuKernelGetFunction, handle_cuKernelGetFunction},
