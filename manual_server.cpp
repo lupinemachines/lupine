@@ -3831,13 +3831,15 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
+  unsigned char wants_response = 1;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &wants_response, sizeof(wants_response)) < 0) {
     return -1;
   }
 
@@ -3889,22 +3891,20 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    if (alloc_result == CUDA_SUCCESS && host != nullptr) {
-      cuMemFreeHost(host);
-    } else if (host != nullptr) {
-      free(host);
-    }
-    return -1;
-  }
+  // A fire-and-forget copy drops an immediate validation error, matching launch
+  // semantics: an execution failure poisons the context and the driver reports
+  // it from the client's next synchronize.
+  bool responded = wants_response == 0 ||
+                   (rpc_write_start_response(conn, request_id) >= 0 &&
+                    rpc_write(conn, &result, sizeof(result)) >= 0 &&
+                    rpc_write_end(conn) >= 0);
 
   if (alloc_result == CUDA_SUCCESS && host != nullptr) {
     cuMemFreeHost(host);
   } else if (host != nullptr) {
     free(host);
   }
-  return 0;
+  return responded ? 0 : -1;
 }
 
 int handle_manual_cuMemHostGetFlags(conn_t *conn) {

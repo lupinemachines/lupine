@@ -4926,7 +4926,12 @@ extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
 
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
+  static const bool strict_sync = lupine_env_enabled("LUPINE_STRICT_SYNC");
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
+  // The copied bytes never ride on this response: the server stages them and
+  // hands them back with the next synchronize. Waiting here only buys the
+  // submission status, so drop the round trip unless the caller asked for it.
+  const unsigned char wants_response = strict_sync ? 1 : 0;
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemcpyDtoHAsync_v2) < 0 ||
@@ -4934,10 +4939,23 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_wait_for_response(conn) < 0) {
+      rpc_write(conn, &wants_response, sizeof(wants_response)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+  if (wants_response == 0) {
+    if (rpc_write_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    // The deferred copy is only delivered by a remote synchronize; the
+    // pending count is what keeps the next stream synchronize from being
+    // elided before the data arrives.
+    if (ByteCount != 0) {
+      lupine_note_pending_dtoh(conn);
+    }
+    return CUDA_SUCCESS;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
