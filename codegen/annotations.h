@@ -2056,17 +2056,20 @@ CUresult cuDeviceGet(CUdevice *device, int ordinal);
  */
 CUresult cuDeviceGetCount(int *count);
 /**
+ * @disabled client - manual client serves the device snapshot cache
  * @param len SEND_ONLY
  * @param name RECV_ONLY LENGTH:len
  * @param dev SEND_ONLY
  */
 CUresult cuDeviceGetName(char *name, int len, CUdevice dev);
 /**
+ * @disabled client - manual client serves the device snapshot cache
  * @param uuid RECV_ONLY SIZE:16
  * @param dev SEND_ONLY
  */
 CUresult cuDeviceGetUuid(CUuuid *uuid, CUdevice dev);
 /**
+ * @disabled client - manual client serves the device snapshot cache
  * @param uuid RECV_ONLY SIZE:16
  * @param dev SEND_ONLY
  */
@@ -2079,6 +2082,7 @@ CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev);
 CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
                          CUdevice dev);
 /**
+ * @disabled client - manual client serves the device snapshot cache
  * @param bytes RECV_ONLY
  * @param dev SEND_ONLY
  */

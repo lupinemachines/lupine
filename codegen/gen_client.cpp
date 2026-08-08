@@ -116,56 +116,6 @@ CUresult cuDriverGetVersion(int *driverVersion) {
   return return_value;
 }
 
-CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(char *, int, CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDeviceGetName", &return_value, name, len, dev)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetName) < 0 ||
-      rpc_write(conn, &len, sizeof(int)) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(name, len * sizeof(char)), false) ||
-      (len * sizeof(char) != 0 &&
-       rpc_read(conn, name, len * sizeof(char)) < 0) ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  lupine_mark_host_range_clean(name, len * sizeof(char));
-  return return_value;
-}
-
-CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUuuid *, CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuDeviceGetUuid_v2",
-                                                  &return_value, uuid, dev)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetUuid_v2) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(uuid, 16 * sizeof(CUuuid)), false) ||
-      (16 != 0 && rpc_read(conn, uuid, 16) < 0) ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  lupine_mark_host_range_clean(uuid, 16 * sizeof(CUuuid));
-  return return_value;
-}
-
 CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
                          CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
@@ -189,28 +139,6 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   lupine_mark_host_range_clean(luid, 8 * sizeof(char));
-  return return_value;
-}
-
-CUresult cuDeviceTotalMem_v2(size_t *bytes, CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(size_t *, CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuDeviceTotalMem_v2",
-                                                  &return_value, bytes, dev)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceTotalMem_v2) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, bytes, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
 }
 
@@ -7035,20 +6963,6 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
   return return_value;
 }
 
-#ifdef cuDeviceTotalMem
-#undef cuDeviceTotalMem
-#endif
-extern "C" CUresult cuDeviceTotalMem(size_t *bytes, CUdevice dev) {
-  return cuDeviceTotalMem_v2(bytes, dev);
-}
-
-#ifdef cuDeviceGetUuid
-#undef cuDeviceGetUuid
-#endif
-extern "C" CUresult cuDeviceGetUuid(CUuuid *uuid, CUdevice dev) {
-  return cuDeviceGetUuid_v2(uuid, dev);
-}
-
 #ifdef cuDevicePrimaryCtxRelease
 #undef cuDevicePrimaryCtxRelease
 #endif
@@ -7800,8 +7714,6 @@ std::unordered_map<std::string, void *> functionMap = {
      (void *)cuGraphicsResourceSetMapFlags_v2},
     {"cuGraphicsMapResources", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources", (void *)cuGraphicsUnmapResources},
-    {"cuDeviceTotalMem", (void *)cuDeviceTotalMem_v2},
-    {"cuDeviceGetUuid", (void *)cuDeviceGetUuid_v2},
     {"cuDevicePrimaryCtxRelease", (void *)cuDevicePrimaryCtxRelease_v2},
     {"cuDevicePrimaryCtxSetFlags", (void *)cuDevicePrimaryCtxSetFlags_v2},
     {"cuDevicePrimaryCtxReset", (void *)cuDevicePrimaryCtxReset_v2},

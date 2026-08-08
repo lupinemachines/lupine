@@ -453,4 +453,5 @@
 #define LUPINE_RPC_cuPrivateGetModuleNode 1986234018
 #define LUPINE_RPC_cuStreamBeginCaptureToGraph 1423223781
 #define LUPINE_RPC_cuStreamGetCaptureInfo_v3 1793131524
+#define LUPINE_RPC_lupineDeviceSnapshot 838398900
 #define LUPINE_RPC_lupineManagedHostFlush 1450411892

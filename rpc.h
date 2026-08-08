@@ -30,6 +30,14 @@ struct rpc_http2_read_stats {
 
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
+// Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response carries, per
+// device: validity flags, a fixed-size name buffer, uuid, total memory, and a
+// count-prefixed list of (attribute, value) pairs.
+#define LUPINE_DEVICE_SNAPSHOT_NAME_BYTES 256
+#define LUPINE_DEVICE_SNAPSHOT_HAS_NAME 0x1u
+#define LUPINE_DEVICE_SNAPSHOT_HAS_UUID 0x2u
+#define LUPINE_DEVICE_SNAPSHOT_HAS_TOTAL_MEM 0x4u
+
 typedef struct conn_t conn_t;
 
 struct conn_t {
