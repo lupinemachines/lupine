@@ -492,14 +492,8 @@ extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn) {
   lupine_note_owner(node, conn);
 }
 
-extern "C" void lupine_disable_sync_elision(conn_t *conn);
-
 extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn) {
   lupine_note_owner(exec, conn);
-  // Graph launches can carry device-to-host copies whose data is delivered at
-  // synchronization points the client cannot account for; once graph execs
-  // exist on a connection, stream synchronizes always go to the server.
-  lupine_disable_sync_elision(conn);
 }
 
 extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn) {
@@ -586,9 +580,6 @@ extern "C" void lupine_note_graph_node_owner_route(CUgraphNode node,
 extern "C" void lupine_note_graph_exec_owner_route(CUgraphExec exec,
                                                    lupine_route route) {
   lupine_note_owner_route(exec, route);
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_disable_sync_elision(route.conn);
-  }
 }
 
 extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,

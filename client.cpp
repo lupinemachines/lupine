@@ -49,7 +49,6 @@
 
 #include "cache.h"
 #include "checkpoint.h"
-#include "async.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
@@ -3867,7 +3866,6 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
   if (rpc_read(conn, &copy_count, sizeof(copy_count)) < 0) {
     return -1;
   }
-  lupine_note_dtoh_delivered(conn, static_cast<long>(copy_count));
   for (uint32_t i = 0; i < copy_count; ++i) {
     void *dst = nullptr;
     size_t bytes = 0;
@@ -3886,54 +3884,6 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
     lupine_mark_host_range_clean(dst, bytes);
   }
   return 0;
-}
-
-extern "C" CUresult cuStreamSynchronize(CUstream hStream) {
-  CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-  if (flush_result != CUDA_SUCCESS) {
-    return flush_result;
-  }
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUstream);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuStreamSynchronize",
-                                                  &return_value, hStream)) {
-    if (return_value == CUDA_SUCCESS) {
-      return_value = lupine_sync_mapped_device_to_host();
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  // A default-stream synchronize with nothing host-observable outstanding
-  // completes locally: fire-and-forget submissions were already captured on
-  // the wire, later requests are connection-ordered behind them, and any
-  // asynchronous error surfaces at the next synchronize that does go remote.
-  if (lupine_can_elide_stream_sync(conn, hStream)) {
-    return lupine_sync_mapped_device_to_host();
-  }
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuStreamSynchronize) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
-      lupine_forward_remote_stdout(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  lupine_ff_htod_acknowledged(conn);
-  if (return_value == CUDA_SUCCESS) {
-    return_value = lupine_sync_mapped_device_to_host();
-  }
-  return return_value;
-}
-
-#ifdef cuStreamSynchronize_ptsz
-#undef cuStreamSynchronize_ptsz
-#endif
-extern "C" CUresult cuStreamSynchronize_ptsz(CUstream hStream) {
-  return cuStreamSynchronize(hStream);
 }
 
 extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
@@ -4995,21 +4945,12 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     if (rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    // The deferred copy is only delivered by a remote synchronize; the
-    // pending count is what keeps the next stream synchronize from being
-    // elided before the data arrives.
-    if (ByteCount != 0) {
-      lupine_note_pending_dtoh(conn);
-    }
     return CUDA_SUCCESS;
   }
   if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS && ByteCount != 0) {
-    lupine_note_pending_dtoh(conn);
   }
   return return_value;
 }
@@ -6539,7 +6480,6 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
     return local_result;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  lupine_disable_sync_elision(conn);
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchHostFunc) < 0 ||
@@ -6571,7 +6511,6 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
     return local_result;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  lupine_disable_sync_elision(conn);
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuStreamAddCallback) < 0 ||

@@ -3482,7 +3482,6 @@ CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
  */
 CUresult cuStreamQuery(CUstream hStream);
 /**
- * @disabled client - manual client elides default-stream synchronizes
  * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey STREAM hStream
