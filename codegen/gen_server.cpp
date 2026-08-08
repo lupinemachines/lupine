@@ -1900,33 +1900,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuMemHostAlloc(conn_t *conn) {
-  void *pp;
-  size_t bytesize;
-  unsigned int Flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &pp, sizeof(void *)) < 0 ||
-      rpc_read(conn, &bytesize, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuMemHostAlloc(&pp, bytesize, Flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pp, sizeof(void *)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuMemHostGetDevicePointer_v2(conn_t *conn) {
   CUdeviceptr pdptr;
   void *p;
@@ -8564,7 +8537,6 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
     {RPC_cuMemGetAddressRange_v2, handle_cuMemGetAddressRange_v2},
     {RPC_cuMemAllocHost_v2, handle_cuMemAllocHost_v2},
     {RPC_cuMemFreeHost, handle_cuMemFreeHost},
-    {RPC_cuMemHostAlloc, handle_cuMemHostAlloc},
     {RPC_cuMemHostGetDevicePointer_v2, handle_cuMemHostGetDevicePointer_v2},
     {RPC_cuMemAllocManaged, handle_cuMemAllocManaged},
     {RPC_cuDeviceGetByPCIBusId, handle_cuDeviceGetByPCIBusId},

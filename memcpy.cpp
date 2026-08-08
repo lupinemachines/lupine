@@ -1288,13 +1288,19 @@ static bool lupine_host_pages_registered_locked(uintptr_t base, size_t size) {
          reinterpret_cast<uintptr_t>(upper->first) < end;
 }
 
+// The response carries the server-side device alias alongside the host
+// pointer, so a mapped allocation costs one round trip instead of two. The
+// alias is 0 when the allocation is not device-mapped or the server could not
+// resolve one; callers fall back to querying it on first use.
 static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
+                                             CUdeviceptr *device_ptr,
                                              size_t bytesize,
                                              unsigned int flags,
                                              lupine_route route) {
-  if (remote_host == nullptr) {
+  if (remote_host == nullptr || device_ptr == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
+  *device_ptr = 0;
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(void **, size_t, unsigned int);
     auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostAlloc");
@@ -1312,8 +1318,10 @@ static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, remote_host, sizeof(*remote_host)) < 0 ||
+      rpc_read(conn, device_ptr, sizeof(*device_ptr)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
+    *device_ptr = 0;
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
@@ -1462,15 +1470,10 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
   void *remote_host = nullptr;
   CUdeviceptr device_ptr = 0;
   if (bytesize != 0) {
-    CUresult result = lupine_remote_cuMemHostAlloc(
-        &remote_host, bytesize, Flags | CU_MEMHOSTALLOC_DEVICEMAP, route);
+    CUresult result =
+        lupine_remote_cuMemHostAlloc(&remote_host, &device_ptr, bytesize,
+                                     Flags | CU_MEMHOSTALLOC_DEVICEMAP, route);
     if (result != CUDA_SUCCESS) {
-      return result;
-    }
-    result = lupine_remote_cuMemHostGetDevicePointer(&device_ptr, remote_host,
-                                                     0, route);
-    if (result != CUDA_SUCCESS) {
-      lupine_remote_cuMemFreeHost(remote_host, route);
       return result;
     }
   }
@@ -1844,12 +1847,8 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
     if ((Flags & CU_MEMHOSTREGISTER_PORTABLE) != 0) {
       host_flags |= CU_MEMHOSTALLOC_PORTABLE;
     }
-    CUresult result = lupine_remote_cuMemHostAlloc(&server_host, covering_size,
-                                                   host_flags, route);
-    if (result == CUDA_SUCCESS) {
-      result = lupine_remote_cuMemHostGetDevicePointer(&device_ptr, server_host,
-                                                       0, route);
-    }
+    CUresult result = lupine_remote_cuMemHostAlloc(
+        &server_host, &device_ptr, covering_size, host_flags, route);
     if (result != CUDA_SUCCESS) {
       if (server_host != nullptr) {
         lupine_remote_cuMemFreeHost(server_host, route);

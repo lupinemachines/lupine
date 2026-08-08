@@ -3914,6 +3914,37 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   return responded ? 0 : -1;
 }
 
+// Resolve the device alias here so the client does not need a second round
+// trip for it. A mapped allocation whose alias cannot be resolved still
+// succeeds; the 0 tells the client to query it on first use instead.
+int handle_manual_cuMemHostAlloc(conn_t *conn) {
+  void *pp = nullptr;
+  size_t bytesize = 0;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &pp, sizeof(pp)) < 0 ||
+      rpc_read(conn, &bytesize, sizeof(bytesize)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUdeviceptr device_ptr = 0;
+  CUresult result = cuMemHostAlloc(&pp, bytesize, flags);
+  if (result == CUDA_SUCCESS && (flags & CU_MEMHOSTALLOC_DEVICEMAP) != 0 &&
+      cuMemHostGetDevicePointer(&device_ptr, pp, 0) != CUDA_SUCCESS) {
+    device_ptr = 0;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pp, sizeof(pp)) < 0 ||
+      rpc_write(conn, &device_ptr, sizeof(device_ptr)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuMemHostGetFlags(conn_t *conn) {
   unsigned int flags = 0;
   void *p = nullptr;

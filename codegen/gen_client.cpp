@@ -7212,7 +7212,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemGetAddressRange_v2", (void *)cuMemGetAddressRange_v2},
     {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
     {"cuMemFreeHost", (void *)cuMemFreeHost},
-    {"cuMemHostAlloc", (void *)cuMemHostAlloc},
     {"cuMemHostGetDevicePointer_v2", (void *)cuMemHostGetDevicePointer_v2},
     {"cuMemAllocManaged", (void *)cuMemAllocManaged},
     {"cuDeviceGetByPCIBusId", (void *)cuDeviceGetByPCIBusId},
