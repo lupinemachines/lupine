@@ -2357,7 +2357,6 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   size_t ByteCount;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 ||
@@ -2367,10 +2366,7 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
-
-  (void)lupine_intercept_result;
+  cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
 
   return 0;
 ERROR_0:
@@ -2554,7 +2550,6 @@ int handle_cuMemsetD8Async(conn_t *conn) {
   size_t N;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
@@ -2564,12 +2559,7 @@ int handle_cuMemsetD8Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemsetD8Async(dstDevice, uc, N, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuMemsetD8Async(dstDevice, uc, N, hStream);
 
   return 0;
 ERROR_0:
@@ -2582,7 +2572,6 @@ int handle_cuMemsetD16Async(conn_t *conn) {
   size_t N;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
@@ -2592,12 +2581,7 @@ int handle_cuMemsetD16Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemsetD16Async(dstDevice, us, N, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuMemsetD16Async(dstDevice, us, N, hStream);
 
   return 0;
 ERROR_0:
@@ -2610,7 +2594,6 @@ int handle_cuMemsetD32Async(conn_t *conn) {
   size_t N;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
@@ -2620,12 +2603,7 @@ int handle_cuMemsetD32Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuMemsetD32Async(dstDevice, ui, N, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuMemsetD32Async(dstDevice, ui, N, hStream);
 
   return 0;
 ERROR_0:
@@ -2640,7 +2618,6 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
   size_t Height;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &uc, sizeof(unsigned char)) < 0 ||
@@ -2652,13 +2629,7 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream);
 
   return 0;
 ERROR_0:
@@ -2673,7 +2644,6 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
   size_t Height;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &us, sizeof(unsigned short)) < 0 ||
@@ -2685,13 +2655,7 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height, hStream);
 
   return 0;
 ERROR_0:
@@ -2706,7 +2670,6 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
   size_t Height;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &ui, sizeof(unsigned int)) < 0 ||
@@ -2718,13 +2681,7 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result =
-      cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height, hStream);
 
   return 0;
 ERROR_0:
