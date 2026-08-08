@@ -2354,14 +2354,6 @@ lupine_prepare_server_kernel_params(const CUDA_KERNEL_NODE_PARAMS &nodeParams,
   return CUDA_SUCCESS;
 }
 
-static int
-lupine_write_kernel_param_values(conn_t *conn,
-                                 const CUDA_KERNEL_NODE_PARAMS &nodeParams,
-                                 const lupine_kernel_param_layout &layout) {
-  return rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
-                                       nodeParams.kernelParams);
-}
-
 static CUresult
 lupine_read_kernel_param_values(conn_t *conn,
                                 const CUDA_KERNEL_NODE_PARAMS &nodeParams,
@@ -2429,12 +2421,39 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
                                                  &layout, &payloadSize);
   }
 
+  // Copy the param values out of the driver's node storage before queueing:
+  // rpc_write iovecs are only flushed at rpc_write_end, and a concurrent
+  // cuGraphKernelNodeSetParams or node/graph destroy on another lane can
+  // rewrite or free that storage before the response goes out.
+  std::vector<unsigned char> value_storage;
+  std::vector<void *> value_ptrs;
+  if (result == CUDA_SUCCESS) {
+    try {
+      value_storage.resize(payloadSize);
+      value_ptrs.resize(layout.count);
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+      layout = {};
+      payloadSize = 0;
+    }
+  }
+  if (result == CUDA_SUCCESS) {
+    size_t offset = 0;
+    for (uint32_t i = 0; i < layout.count; ++i) {
+      memcpy(value_storage.data() + offset, nodeParams.kernelParams[i],
+             layout.sizes[i]);
+      value_ptrs[i] = value_storage.data() + offset;
+      offset += layout.sizes[i];
+    }
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write_kernel_node_params(conn, &serialParams) < 0 ||
       rpc_write_kernel_param_layout(conn, &layout) < 0 ||
       rpc_write(conn, &payloadSize, sizeof(payloadSize)) < 0 ||
       (result == CUDA_SUCCESS &&
-       lupine_write_kernel_param_values(conn, nodeParams, layout) < 0) ||
+       rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+                                     value_ptrs.data()) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
