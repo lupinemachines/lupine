@@ -81,6 +81,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn);
 int handle_manual_lupineDeviceSnapshot(conn_t *conn);
 int handle_manual_lupineManagedHostFlush(conn_t *conn);
 int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn);
+int handle_manual_cuMemHostAlloc(conn_t *conn);
 int handle_manual_cuMemHostGetFlags(conn_t *conn);
 int handle_manual_cuCtxSynchronize(conn_t *conn);
 int handle_manual_cuStreamSynchronize(conn_t *conn);

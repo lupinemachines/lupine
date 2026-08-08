@@ -20,6 +20,9 @@
 #include "lupine_attr_sizes.h"
 #include "lupine_log.h"
 #include "memcpy.h"
+#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
+
+static void lupine_pointer_attribute_cache_clear();
 #include "rpc.h"
 
 extern int rpc_size();
@@ -696,16 +699,13 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     if (count == 0) {
       return CUDA_SUCCESS;
     }
-    CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
     if (rpc_write_start_request(conn, LUPINE_RPC_lupineManagedHostFlush) < 0 ||
         rpc_write(conn, &count, sizeof(count)) < 0 ||
         rpc_write_iovecs(conn, iovecs.data(), count * 2) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 ||
-        rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    return result;
+    return CUDA_SUCCESS;
   };
 
   uint32_t count = 0;
@@ -803,6 +803,26 @@ extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
   if (translated != nullptr) {
     *translated = it->second.device_ptr + (addr - base);
   }
+  return true;
+}
+
+static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
+  void *host = reinterpret_cast<void *>(ptr);
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  return lupine_find_host_allocation_locked(host) !=
+         lupine_mutable_host_allocations_locked().end();
+}
+
+static bool lupine_managed_host_alias_base(CUdeviceptr ptr,
+                                           CUdeviceptr *alias_base) {
+  void *host = reinterpret_cast<void *>(ptr);
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(host);
+  if (it == lupine_mutable_host_allocations_locked().end() ||
+      !it->second.managed) {
+    return false;
+  }
+  *alias_base = it->second.device_ptr;
   return true;
 }
 
@@ -1265,13 +1285,19 @@ static bool lupine_host_pages_registered_locked(uintptr_t base, size_t size) {
          reinterpret_cast<uintptr_t>(upper->first) < end;
 }
 
+// The response carries the server-side device alias alongside the host
+// pointer, so a mapped allocation costs one round trip instead of two. The
+// alias is 0 when the allocation is not device-mapped or the server could not
+// resolve one; callers fall back to querying it on first use.
 static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
+                                             CUdeviceptr *device_ptr,
                                              size_t bytesize,
                                              unsigned int flags,
                                              lupine_route route) {
-  if (remote_host == nullptr) {
+  if (remote_host == nullptr || device_ptr == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
+  *device_ptr = 0;
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(void **, size_t, unsigned int);
     auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostAlloc");
@@ -1289,8 +1315,10 @@ static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, remote_host, sizeof(*remote_host)) < 0 ||
+      rpc_read(conn, device_ptr, sizeof(*device_ptr)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
+    *device_ptr = 0;
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
@@ -1439,15 +1467,10 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
   void *remote_host = nullptr;
   CUdeviceptr device_ptr = 0;
   if (bytesize != 0) {
-    CUresult result = lupine_remote_cuMemHostAlloc(
-        &remote_host, bytesize, Flags | CU_MEMHOSTALLOC_DEVICEMAP, route);
+    CUresult result =
+        lupine_remote_cuMemHostAlloc(&remote_host, &device_ptr, bytesize,
+                                     Flags | CU_MEMHOSTALLOC_DEVICEMAP, route);
     if (result != CUDA_SUCCESS) {
-      return result;
-    }
-    result = lupine_remote_cuMemHostGetDevicePointer(&device_ptr, remote_host,
-                                                     0, route);
-    if (result != CUDA_SUCCESS) {
-      lupine_remote_cuMemFreeHost(remote_host, route);
       return result;
     }
   }
@@ -1549,6 +1572,7 @@ extern "C" CUresult cuMemFreeHost(void *p) {
     server_host_ptr = it->second.server_host_ptr;
     device_ptr = it->second.device_ptr;
     __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
+    lupine_pointer_attribute_cache_clear();
     lupine_disable_dirty_tracking(p, it->second);
     retiring_allocation = &it->second;
   }
@@ -1820,12 +1844,8 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
     if ((Flags & CU_MEMHOSTREGISTER_PORTABLE) != 0) {
       host_flags |= CU_MEMHOSTALLOC_PORTABLE;
     }
-    CUresult result = lupine_remote_cuMemHostAlloc(&server_host, covering_size,
-                                                   host_flags, route);
-    if (result == CUDA_SUCCESS) {
-      result = lupine_remote_cuMemHostGetDevicePointer(&device_ptr, server_host,
-                                                       0, route);
-    }
+    CUresult result = lupine_remote_cuMemHostAlloc(
+        &server_host, &device_ptr, covering_size, host_flags, route);
     if (result != CUDA_SUCCESS) {
       if (server_host != nullptr) {
         lupine_remote_cuMemFreeHost(server_host, route);
@@ -1929,6 +1949,7 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
     server_host_ptr = it->second.server_host_ptr;
     device_ptr = it->second.device_ptr;
     __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
+    lupine_pointer_attribute_cache_clear();
     lupine_disable_dirty_tracking(tracked, it->second);
     retiring_allocation = &it->second;
   }
@@ -2075,6 +2096,7 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
     if (it != lupine_mutable_host_allocations_locked().end() &&
         reinterpret_cast<void *>(dptr) == it->first && it->second.managed) {
       __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
+    lupine_pointer_attribute_cache_clear();
       lupine_disable_dirty_tracking(it->first, it->second);
       retiring_allocation = &it->second;
       found = true;
@@ -2245,6 +2267,45 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
   return return_value;
 }
 
+// Attribute values of a live mapped-host allocation are immutable, and
+// PyTorch's pin-memory path queries the same pinned buffers on every batch,
+// so the server's answers are cached per (pointer, attribute list). The cache
+// is cleared whenever any mapped allocation retires, since a later allocation
+// may reuse the address.
+struct lupine_pointer_attribute_cache_key {
+  CUdeviceptr ptr = 0;
+  std::vector<CUpointer_attribute> attributes;
+
+  bool operator==(const lupine_pointer_attribute_cache_key &other) const {
+    return ptr == other.ptr && attributes == other.attributes;
+  }
+};
+
+struct lupine_pointer_attribute_cache_key_hash {
+  size_t operator()(const lupine_pointer_attribute_cache_key &key) const {
+    size_t hash = std::hash<CUdeviceptr>()(key.ptr);
+    for (CUpointer_attribute attribute : key.attributes) {
+      hash = hash * 31 + static_cast<size_t>(attribute);
+    }
+    return hash;
+  }
+};
+
+static libcuckoo::cuckoohash_map<lupine_pointer_attribute_cache_key,
+                                 std::vector<std::vector<unsigned char>>,
+                                 lupine_pointer_attribute_cache_key_hash> &
+lupine_pointer_attribute_cache() {
+  static auto *cache = new libcuckoo::cuckoohash_map<
+      lupine_pointer_attribute_cache_key,
+      std::vector<std::vector<unsigned char>>,
+      lupine_pointer_attribute_cache_key_hash>();
+  return *cache;
+}
+
+static void lupine_pointer_attribute_cache_clear() {
+  lupine_pointer_attribute_cache().clear();
+}
+
 extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
                                            CUpointer_attribute *attributes,
                                            void **data, CUdeviceptr ptr) {
@@ -2269,6 +2330,94 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
                            : real(numAttributes, attributes, data, query_ptr);
   }
+
+  // A pointer in neither the host-allocation registry nor the device-pointer
+  // tables is unregistered host memory, for which the driver's answer is
+  // deterministic (probed on a native driver: CUDA_SUCCESS; both pointer
+  // aliases echo the query; type/managed/mapped are zero; ordinal is -1;
+  // context and buffer id are zero; the range attributes are left untouched).
+  // PyTorch's pin_memory path asks this about every unpinned source tensor,
+  // so answering locally removes a per-batch round trip. Attributes outside
+  // the probed set fall through to the server.
+  if (!managed_alias && !lupine_host_ptr_is_tracked(ptr) &&
+      !lupine_deviceptr_is_tracked(ptr)) {
+    bool replicable = true;
+    for (unsigned int i = 0; replicable && i < numAttributes; ++i) {
+      switch (attributes[i]) {
+      case CU_POINTER_ATTRIBUTE_CONTEXT:
+      case CU_POINTER_ATTRIBUTE_MEMORY_TYPE:
+      case CU_POINTER_ATTRIBUTE_DEVICE_POINTER:
+      case CU_POINTER_ATTRIBUTE_HOST_POINTER:
+      case CU_POINTER_ATTRIBUTE_IS_MANAGED:
+      case CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL:
+      case CU_POINTER_ATTRIBUTE_MAPPED:
+      case CU_POINTER_ATTRIBUTE_BUFFER_ID:
+      case CU_POINTER_ATTRIBUTE_RANGE_START_ADDR:
+      case CU_POINTER_ATTRIBUTE_RANGE_SIZE:
+        break;
+      default:
+        replicable = false;
+        break;
+      }
+      if (replicable && data[i] == nullptr) {
+        return CUDA_ERROR_INVALID_VALUE;
+      }
+    }
+    if (replicable) {
+      for (unsigned int i = 0; i < numAttributes; ++i) {
+        switch (attributes[i]) {
+        case CU_POINTER_ATTRIBUTE_DEVICE_POINTER:
+        case CU_POINTER_ATTRIBUTE_HOST_POINTER: {
+          memcpy(data[i], &ptr, value_sizes[i]);
+          break;
+        }
+        case CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL: {
+          int ordinal = -1;
+          memcpy(data[i], &ordinal, value_sizes[i]);
+          break;
+        }
+        case CU_POINTER_ATTRIBUTE_RANGE_START_ADDR:
+        case CU_POINTER_ATTRIBUTE_RANGE_SIZE:
+          break;
+        default:
+          memset(data[i], 0, value_sizes[i]);
+          break;
+        }
+      }
+      return CUDA_SUCCESS;
+    }
+  }
+
+  // Keyed by the owning allocation, not the query pointer: PyTorch's pinned
+  // pool hands out tensors at varying offsets inside a few allocations, and
+  // every attribute except the pointer aliases is offset-independent. The
+  // aliases are recomputed for the queried pointer on a hit.
+  lupine_pointer_attribute_cache_key cache_key;
+  std::vector<std::vector<unsigned char>> cached_values;
+  bool cacheable =
+      managed_alias && lupine_managed_host_alias_base(ptr, &cache_key.ptr);
+  if (cacheable) {
+    cache_key.attributes.assign(attributes, attributes + numAttributes);
+    if (lupine_pointer_attribute_cache().find(cache_key, cached_values)) {
+      for (unsigned int i = 0; i < numAttributes; ++i) {
+        if (data[i] == nullptr || cached_values[i].size() != value_sizes[i]) {
+          return CUDA_ERROR_INVALID_VALUE;
+        }
+        memcpy(data[i], cached_values[i].data(), cached_values[i].size());
+        if (attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+          void *host = reinterpret_cast<void *>(ptr);
+          memcpy(data[i], &host, sizeof(host));
+        } else if (attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+          memcpy(data[i], &query_ptr, sizeof(query_ptr));
+        } else if (attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
+          int is_managed = 1;
+          memcpy(data[i], &is_managed, sizeof(is_managed));
+        }
+      }
+      return CUDA_SUCCESS;
+    }
+  }
+
   conn_t *conn = lupine_route_remote_conn(route);
   if (rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
@@ -2316,6 +2465,10 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
         int is_managed = 1;
         memcpy(data[i], &is_managed, sizeof(is_managed));
       }
+    }
+    if (cacheable) {
+      lupine_pointer_attribute_cache().insert_or_assign(cache_key,
+                                                        std::move(values));
     }
   }
   return return_value;

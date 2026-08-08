@@ -683,6 +683,23 @@ extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec) {
   return lupine_route_for_owner_or_default(exec);
 }
 
+extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  if (lupine_owners<CUdeviceptr>().count(ptr) != 0) {
+    return true;
+  }
+  for (const auto &entry : lupine_deviceptr_allocations()) {
+    const auto &allocation = entry.second;
+    if (allocation.base == 0 || allocation.size == 0 || ptr < allocation.base) {
+      continue;
+    }
+    if (static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
+      return true;
+    }
+  }
+  return false;
+}
+
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
   {
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());

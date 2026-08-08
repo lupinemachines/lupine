@@ -31,8 +31,8 @@ struct rpc_http2_read_stats {
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
 // The server's HTTP/2 receive window, and with it the ceiling on the pinned
-// staging a client can hold there: async HtoD payload bytes stay uncredited
-// until the staging buffer they landed in retires.
+// staging a client can hold there: fire-and-forget async HtoD payload bytes
+// stay uncredited until the staging buffer they landed in retires.
 #define LUPINE_FF_STAGING_WINDOW_BYTES (64ull * 1024 * 1024)
 
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or

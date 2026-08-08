@@ -929,6 +929,33 @@ extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
                                                  const char *name,
                                                  lupine_route route);
 
+extern "C" void lupine_invalidate_function_caches();
+
+extern "C" CUresult cuLibraryUnload(CUlibrary library) {
+  lupine_route route = lupine_route_for_library(library);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUlibrary);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuLibraryUnload",
+                                                  &return_value, library)) {
+    if (return_value == CUDA_SUCCESS) {
+      lupine_invalidate_function_caches();
+    }
+    return return_value;
+  }
+  // Unloads only release server-side resources the connection reclaims anyway,
+  // so they go out fire-and-forget: at teardown a program can issue dozens of
+  // them and each blocking round trip is pure latency.
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuLibraryUnload) < 0 ||
+      rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
+      rpc_write_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  lupine_invalidate_function_caches();
+  return CUDA_SUCCESS;
+}
+
 extern "C" CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
                                        const char *name) {
   if (pKernel == nullptr || name == nullptr) {
@@ -4877,21 +4904,16 @@ extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
-  CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuMemcpyDtoHAsync_v2) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_wait_for_response(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuMemcpyDtoHAsync
@@ -8463,6 +8485,7 @@ lupine_manual_function_map() {
       {"cuModuleLoadData", (void *)cuModuleLoadData},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
+      {"cuLibraryUnload", (void *)cuLibraryUnload},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
       {"cuLinkAddData", (void *)cuLinkAddData_v2},
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},

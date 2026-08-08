@@ -70,6 +70,7 @@ extern "C" bool lupine_routes_share_server(lupine_route first,
                                            lupine_route second);
 extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
                                               CUdeviceptr second);
+extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr);
 extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
                                                  CUdevice *device);
 extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,

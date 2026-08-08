@@ -2458,6 +2458,8 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
                                void **libraryOptionValues,
                                unsigned int numLibraryOptions);
 /**
+ * @disabled client - manual client sends fire-and-forget unloads
+ * @disabled server - manual server supports fire-and-forget unloads
  * @routingkey LIBRARY library
  * @param library SEND_ONLY
  */
@@ -2613,6 +2615,7 @@ CUresult cuMemAllocHost_v2(void **pp, size_t bytesize);
 CUresult cuMemFreeHost(void *p);
 /**
  * @disabled client - manual client substitutes a local faulting address
+ * @disabled server - manual server returns the mapped device alias
  * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  * @param Flags SEND_ONLY
