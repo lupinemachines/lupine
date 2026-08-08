@@ -3653,9 +3653,6 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, capture_host, byteCount, stream);
   }
 
-  // Fire-and-forget submissions carry no response. An immediate validation
-  // error is dropped, matching launch semantics; an execution failure poisons
-  // the context and surfaces from the driver at the next synchronize.
   if (wants_response == 0) {
     return 0;
   }

@@ -4927,9 +4927,6 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
   static const bool strict_sync = lupine_env_enabled("LUPINE_STRICT_SYNC");
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
-  // The copied bytes never ride on this response: the server stages them and
-  // hands them back with the next synchronize. Waiting here only buys the
-  // submission status, so drop the round trip unless the caller asked for it.
   const unsigned char wants_response = strict_sync ? 1 : 0;
   CUresult return_value;
   if (conn == nullptr ||

@@ -695,9 +695,6 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
   std::array<struct iovec, LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES * 2>
       iovecs;
 
-  // Fire-and-forget: the dirty ranges are captured on the wire by
-  // rpc_write_end and every later request is connection-ordered behind them,
-  // so there is nothing to wait for.
   auto send_batch = [&](uint32_t count) {
     if (count == 0) {
       return CUDA_SUCCESS;

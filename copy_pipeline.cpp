@@ -98,10 +98,6 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   if (conn == nullptr) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  // Small copies are fire-and-forget: the payload is fully captured on the
-  // wire by rpc_write_end, so the source buffer is reusable on return and any
-  // failure surfaces at the next synchronize. Large copies, and copies once
-  // the unacknowledged window fills, keep the blocking response.
   unsigned char wants_response =
       lupine_ff_htod_wants_response(conn, ByteCount) != 0 ? 1 : 0;
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
