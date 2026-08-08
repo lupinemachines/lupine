@@ -76,10 +76,14 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
 
 // The CUDA linker requires output option buffers to remain valid for the
-// lifetime of CUlinkState.
+// lifetime of CUlinkState. The mutex serializes cuLinkDestroy against a
+// concurrent cuLinkComplete on another RPC lane: the cubin buffer returned by
+// cuLinkComplete is driver-owned and freed by cuLinkDestroy, so it must stay
+// locked out until the response holding that buffer has been flushed.
 struct lupine_link_state {
   CUlinkState cuda_state = nullptr;
   rpc_jit_server_state jit;
+  std::mutex mutex;
 };
 
 static lupine_link_state *lupine_link_state_from_handle(CUlinkState state) {
@@ -1563,7 +1567,12 @@ int handle_manual_cuLinkComplete(conn_t *conn) {
   auto *link_state = lupine_link_state_from_handle(state);
   rpc_jit_server_state empty_jit_state;
   rpc_jit_server_state *jit_state = &empty_jit_state;
+  // Held until the response is flushed: the cubin buffer belongs to the
+  // driver's link state, and a concurrent cuLinkDestroy would free it while
+  // the queued iovec still points at it.
+  std::unique_lock<std::mutex> lock;
   if (link_state != nullptr) {
+    lock = std::unique_lock<std::mutex>(link_state->mutex);
     result = cuLinkComplete(link_state->cuda_state, &cubin, &size);
     jit_state = &link_state->jit;
   }
@@ -1590,10 +1599,13 @@ int handle_manual_cuLinkDestroy(conn_t *conn) {
   }
   auto *link_state = lupine_link_state_from_handle(state);
   if (link_state != nullptr) {
+    // Wait for any cuLinkComplete on another lane to finish flushing the
+    // driver-owned cubin buffer before cuLinkDestroy frees it.
+    std::lock_guard<std::mutex> lock(link_state->mutex);
     result = cuLinkDestroy(link_state->cuda_state);
   }
-  // A concurrent cuLinkComplete may still be serializing the output buffers.
-  // Retain the opaque handle wrapper until process exit.
+  // Retain the opaque handle wrapper until process exit so stale client
+  // handles never dereference freed memory.
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -2354,14 +2366,6 @@ lupine_prepare_server_kernel_params(const CUDA_KERNEL_NODE_PARAMS &nodeParams,
   return CUDA_SUCCESS;
 }
 
-static int
-lupine_write_kernel_param_values(conn_t *conn,
-                                 const CUDA_KERNEL_NODE_PARAMS &nodeParams,
-                                 const lupine_kernel_param_layout &layout) {
-  return rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
-                                       nodeParams.kernelParams);
-}
-
 static CUresult
 lupine_read_kernel_param_values(conn_t *conn,
                                 const CUDA_KERNEL_NODE_PARAMS &nodeParams,
@@ -2429,12 +2433,39 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
                                                  &layout, &payloadSize);
   }
 
+  // Copy the param values out of the driver's node storage before queueing:
+  // rpc_write iovecs are only flushed at rpc_write_end, and a concurrent
+  // cuGraphKernelNodeSetParams or node/graph destroy on another lane can
+  // rewrite or free that storage before the response goes out.
+  std::vector<unsigned char> value_storage;
+  std::vector<void *> value_ptrs;
+  if (result == CUDA_SUCCESS) {
+    try {
+      value_storage.resize(payloadSize);
+      value_ptrs.resize(layout.count);
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+      layout = {};
+      payloadSize = 0;
+    }
+  }
+  if (result == CUDA_SUCCESS) {
+    size_t offset = 0;
+    for (uint32_t i = 0; i < layout.count; ++i) {
+      memcpy(value_storage.data() + offset, nodeParams.kernelParams[i],
+             layout.sizes[i]);
+      value_ptrs[i] = value_storage.data() + offset;
+      offset += layout.sizes[i];
+    }
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write_kernel_node_params(conn, &serialParams) < 0 ||
       rpc_write_kernel_param_layout(conn, &layout) < 0 ||
       rpc_write(conn, &payloadSize, sizeof(payloadSize)) < 0 ||
       (result == CUDA_SUCCESS &&
-       lupine_write_kernel_param_values(conn, nodeParams, layout) < 0) ||
+       rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+                                     value_ptrs.data()) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
