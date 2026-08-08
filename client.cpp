@@ -389,7 +389,6 @@ lupine_device_attribute_cache() {
 }
 
 struct lupine_device_snapshot_info {
-  uint32_t flags = 0;
   char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
   CUuuid uuid = {};
   uint64_t total_mem = 0;
@@ -1597,8 +1596,7 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
   for (uint32_t ordinal = 0; ordinal < device_count; ++ordinal) {
     lupine_device_snapshot_info info;
     uint32_t pair_count = 0;
-    if (rpc_read(conn, &info.flags, sizeof(info.flags)) < 0 ||
-        rpc_read(conn, info.name, sizeof(info.name)) < 0 ||
+    if (rpc_read(conn, info.name, sizeof(info.name)) < 0 ||
         rpc_read(conn, &info.uuid, sizeof(info.uuid)) < 0 ||
         rpc_read(conn, &info.total_mem, sizeof(info.total_mem)) < 0 ||
         rpc_read(conn, &pair_count, sizeof(pair_count)) < 0) {
@@ -1706,8 +1704,7 @@ extern "C" CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
   if (len > 0) {
     lupine_prefill_device_snapshot(conn);
     lupine_device_snapshot_info info;
-    if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info) &&
-        (info.flags & LUPINE_DEVICE_SNAPSHOT_HAS_NAME) != 0) {
+    if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info)) {
       snprintf(name, static_cast<size_t>(len), "%s", info.name);
       return CUDA_SUCCESS;
     }
@@ -1747,8 +1744,7 @@ extern "C" CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
   conn_t *conn = lupine_route_remote_conn(route);
   lupine_prefill_device_snapshot(conn);
   lupine_device_snapshot_info info;
-  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info) &&
-      (info.flags & LUPINE_DEVICE_SNAPSHOT_HAS_UUID) != 0) {
+  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info)) {
     *uuid = info.uuid;
     return CUDA_SUCCESS;
   }
@@ -1785,8 +1781,7 @@ extern "C" CUresult cuDeviceTotalMem_v2(size_t *bytes, CUdevice dev) {
   conn_t *conn = lupine_route_remote_conn(route);
   lupine_prefill_device_snapshot(conn);
   lupine_device_snapshot_info info;
-  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info) &&
-      (info.flags & LUPINE_DEVICE_SNAPSHOT_HAS_TOTAL_MEM) != 0) {
+  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info)) {
     *bytes = static_cast<size_t>(info.total_mem);
     return CUDA_SUCCESS;
   }

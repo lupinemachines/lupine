@@ -3583,7 +3583,18 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
 }
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary
-// context state, context limits) is deliberately excluded.
+// context state, context limits) is deliberately excluded. The response is all
+// or nothing: any query failure fails the whole RPC and the client falls back
+// to the per-call paths. Individual attributes the driver rejects are simply
+// absent from the pair list; that is expected, not an error.
+struct lupine_device_snapshot_record {
+  char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
+  CUuuid uuid = {};
+  uint64_t total_mem = 0;
+  uint32_t pair_count = 0;
+  std::vector<int32_t> pairs;
+};
+
 int handle_manual_lupineDeviceSnapshot(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -3592,10 +3603,50 @@ int handle_manual_lupineDeviceSnapshot(conn_t *conn) {
 
   int device_count = 0;
   CUresult result = cuDeviceGetCount(&device_count);
-  if (result != CUDA_SUCCESS || device_count < 0) {
-    device_count = 0;
+  if (result == CUDA_SUCCESS && device_count < 0) {
+    result = CUDA_ERROR_UNKNOWN;
   }
 
+  // rpc_write queues iovecs that are only sent at rpc_write_end, so all
+  // records are built first in storage that stays stable until then.
+  std::vector<lupine_device_snapshot_record> records;
+  if (result == CUDA_SUCCESS) {
+    try {
+      records.resize(static_cast<size_t>(device_count));
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+  for (size_t ordinal = 0; result == CUDA_SUCCESS && ordinal < records.size();
+       ++ordinal) {
+    auto &record = records[ordinal];
+    CUdevice device = 0;
+    size_t bytes = 0;
+    result = cuDeviceGet(&device, static_cast<int>(ordinal));
+    if (result == CUDA_SUCCESS) {
+      result = cuDeviceGetName(record.name, sizeof(record.name), device);
+      record.name[sizeof(record.name) - 1] = '\0';
+    }
+    if (result == CUDA_SUCCESS) {
+      result = cuDeviceGetUuid_v2(&record.uuid, device);
+    }
+    if (result == CUDA_SUCCESS) {
+      result = cuDeviceTotalMem_v2(&bytes, device);
+      record.total_mem = bytes;
+    }
+    for (int attrib = 1; result == CUDA_SUCCESS && attrib < CU_DEVICE_ATTRIBUTE_MAX;
+         ++attrib) {
+      int value = 0;
+      if (cuDeviceGetAttribute(&value, static_cast<CUdevice_attribute>(attrib),
+                               device) == CUDA_SUCCESS) {
+        record.pairs.push_back(static_cast<int32_t>(attrib));
+        record.pairs.push_back(static_cast<int32_t>(value));
+      }
+    }
+    record.pair_count = static_cast<uint32_t>(record.pairs.size() / 2);
+  }
+
+  uint32_t devices = static_cast<uint32_t>(records.size());
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0) {
     return -1;
@@ -3603,59 +3654,19 @@ int handle_manual_lupineDeviceSnapshot(conn_t *conn) {
   if (result != CUDA_SUCCESS) {
     return rpc_write_end(conn) < 0 ? -1 : 0;
   }
-
-  // rpc_write queues iovecs that are only sent at rpc_write_end, so every
-  // record is serialized into one buffer that stays alive until then.
-  uint32_t devices = static_cast<uint32_t>(device_count);
-  std::vector<unsigned char> blob;
-  auto append = [&blob](const void *data, size_t size) {
-    const auto *bytes = static_cast<const unsigned char *>(data);
-    blob.insert(blob.end(), bytes, bytes + size);
-  };
-  append(&devices, sizeof(devices));
-  std::vector<int32_t> pairs;
-  for (uint32_t ordinal = 0; ordinal < devices; ++ordinal) {
-    CUdevice device = 0;
-    uint32_t flags = 0;
-    char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
-    CUuuid uuid = {};
-    uint64_t total_mem = 0;
-    pairs.clear();
-    if (cuDeviceGet(&device, static_cast<int>(ordinal)) == CUDA_SUCCESS) {
-      if (cuDeviceGetName(name, sizeof(name), device) == CUDA_SUCCESS) {
-        flags |= LUPINE_DEVICE_SNAPSHOT_HAS_NAME;
-        name[sizeof(name) - 1] = '\0';
-      }
-      if (cuDeviceGetUuid_v2(&uuid, device) == CUDA_SUCCESS) {
-        flags |= LUPINE_DEVICE_SNAPSHOT_HAS_UUID;
-      }
-      size_t bytes = 0;
-      if (cuDeviceTotalMem_v2(&bytes, device) == CUDA_SUCCESS) {
-        flags |= LUPINE_DEVICE_SNAPSHOT_HAS_TOTAL_MEM;
-        total_mem = bytes;
-      }
-      for (int attrib = 1; attrib < CU_DEVICE_ATTRIBUTE_MAX; ++attrib) {
-        int value = 0;
-        if (cuDeviceGetAttribute(
-                &value, static_cast<CUdevice_attribute>(attrib), device) ==
-            CUDA_SUCCESS) {
-          pairs.push_back(static_cast<int32_t>(attrib));
-          pairs.push_back(static_cast<int32_t>(value));
-        }
-      }
-    }
-    uint32_t pair_count = static_cast<uint32_t>(pairs.size() / 2);
-    append(&flags, sizeof(flags));
-    append(name, sizeof(name));
-    append(&uuid, sizeof(uuid));
-    append(&total_mem, sizeof(total_mem));
-    append(&pair_count, sizeof(pair_count));
-    if (pair_count != 0) {
-      append(pairs.data(), pairs.size() * sizeof(int32_t));
-    }
-  }
-  if (rpc_write(conn, blob.data(), blob.size()) < 0) {
+  if (rpc_write(conn, &devices, sizeof(devices)) < 0) {
     return -1;
+  }
+  for (const auto &record : records) {
+    if (rpc_write(conn, record.name, sizeof(record.name)) < 0 ||
+        rpc_write(conn, &record.uuid, sizeof(record.uuid)) < 0 ||
+        rpc_write(conn, &record.total_mem, sizeof(record.total_mem)) < 0 ||
+        rpc_write(conn, &record.pair_count, sizeof(record.pair_count)) < 0 ||
+        (record.pair_count != 0 &&
+         rpc_write(conn, record.pairs.data(),
+                   record.pairs.size() * sizeof(int32_t)) < 0)) {
+      return -1;
+    }
   }
   return rpc_write_end(conn) < 0 ? -1 : 0;
 }
