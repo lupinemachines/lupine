@@ -474,6 +474,66 @@ void test_payload_larger_than_flow_control_window() {
   require(received == payload_size, "flow-controlled payload was truncated");
 }
 
+// A server-side hold keeps received payload bytes uncredited until the staging
+// they landed in retires. Held bytes saturate at a cap so the reader filling
+// the hold always has credit left for the bytes it is blocked on, and the
+// release hands the rest back.
+void test_server_window_hold_caps_and_releases() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  constexpr size_t kBurst = LUPINE_FF_STAGING_WINDOW_BYTES;
+  std::vector<char> payload(kBurst, 'h');
+  std::vector<char> received(kBurst, '\0');
+  uint64_t held = 0;
+
+  // As on a production connection, the client's dispatch thread is what applies
+  // the server's WINDOW_UPDATE frames; it releases when the server replies.
+  std::thread client_control_reader([&] {
+    unsigned char unused = 0;
+    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
+  });
+
+  std::thread reader([&] {
+    rpc_http2_window_hold_begin(&pair.server);
+    require(rpc_http2_read(&pair.server, received.data(), received.size()) ==
+                static_cast<int>(received.size()),
+            "held payload read failed");
+    held = rpc_http2_window_hold_end(&pair.server);
+  });
+  rpc_write_entry entry = {{payload.data(), payload.size()}, 0};
+  require(rpc_http2_writev(&pair.client, &entry, 1) == 0, "held write failed");
+  reader.join();
+  require(received == payload, "held payload mismatch");
+  require(held == LUPINE_FF_STAGING_WINDOW_BYTES / 2,
+          "held bytes did not saturate at the cap");
+
+  // Still holding: the uncapped remainder must have been credited, so another
+  // window's worth of payload still flows.
+  std::fill(received.begin(), received.end(), '\0');
+  std::thread held_reader([&] {
+    require(rpc_http2_read(&pair.server, received.data(), received.size()) ==
+                static_cast<int>(received.size()),
+            "read under an outstanding hold failed");
+  });
+  require(rpc_http2_writev(&pair.client, &entry, 1) == 0,
+          "write under an outstanding hold failed");
+  held_reader.join();
+  require(received == payload, "payload under an outstanding hold mismatch");
+
+  rpc_http2_window_release(&pair.server, held);
+  std::string tail = "released";
+  std::string received_tail;
+  std::thread tail_reader(
+      [&] { received_tail = read_string(&pair.server, tail.size()); });
+  write_all(&pair.client, {tail});
+  tail_reader.join();
+  require(received_tail == tail, "payload after release mismatch");
+
+  write_all(&pair.server, {"z"});
+  client_control_reader.join();
+}
+
 void test_reset_wakes_flow_controlled_writer() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
@@ -728,6 +788,7 @@ int main() {
   test_large_payload();
   test_framed_payload_round_trip();
   test_payload_larger_than_flow_control_window();
+  test_server_window_hold_caps_and_releases();
   test_reset_wakes_flow_controlled_writer();
 #endif
   std::cout << "h2_test: PASS" << std::endl;

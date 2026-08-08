@@ -247,6 +247,7 @@ struct lupine_async_htod_slot {
   CUevent completion = nullptr;
   CUcontext event_context = nullptr;
   lupine_async_htod_state state = lupine_async_htod_state::available;
+  uint64_t held_window_bytes = 0;
 };
 
 struct lupine_async_htod_spill {
@@ -256,9 +257,11 @@ struct lupine_async_htod_spill {
   CUcontext event_context = nullptr;
   bool completion_recorded = false;
   bool work_queued = false;
+  uint64_t held_window_bytes = 0;
 };
 
 struct lupine_staging_state {
+  conn_t *conn = nullptr;
   std::mutex lifecycle_mutex;
   std::mutex mutex;
   std::condition_variable condition;
@@ -440,6 +443,27 @@ static bool lupine_sync_htod_prepare(lupine_sync_htod_pool &pool,
   return true;
 }
 
+// Credits a staging buffer's payload bytes back to the client's send window.
+// Every path that stops tracking a buffer -- retired, quarantined, forgotten --
+// runs through here, so an unprovable DMA costs pinned memory but never leaves
+// window charged to a buffer nothing will ever retire.
+static void lupine_release_staging_window(lupine_staging_state &state,
+                                          uint64_t &held) {
+  uint64_t bytes = held;
+  held = 0;
+  rpc_http2_window_release(state.conn, bytes);
+}
+
+// Reads a payload into staging with the connection's window held, charging the
+// received bytes to the staging buffer rather than crediting them immediately.
+static int lupine_read_staged_payload(conn_t *conn, int framed, void *host,
+                                      size_t bytes, uint64_t &held) {
+  rpc_http2_window_hold_begin(conn);
+  int result = rpc_read_payload_part(conn, framed, host, bytes);
+  held += rpc_http2_window_hold_end(conn);
+  return result;
+}
+
 static CUresult lupine_async_htod_destroy_event(CUevent *event,
                                                 CUcontext context) {
   if (event == nullptr || *event == nullptr) {
@@ -495,10 +519,12 @@ static void lupine_async_htod_reclaim(lupine_staging_state &state,
     CUresult result = cuEventQuery(slot.completion);
     if (result == CUDA_SUCCESS) {
       slot.state = lupine_async_htod_state::available;
+      lupine_release_staging_window(state, slot.held_window_bytes);
     } else if (result != CUDA_ERROR_NOT_READY) {
       // An error cannot prove the DMA is finished. Never make this allocation
       // reusable until its context is explicitly retired.
       slot.state = lupine_async_htod_state::quarantined;
+      lupine_release_staging_window(state, slot.held_window_bytes);
       LUPINE_LOG_ERROR("Async HtoD slot event query failed: " << result);
     }
   }
@@ -516,10 +542,12 @@ static void lupine_async_htod_reclaim(lupine_staging_state &state,
     if (result != CUDA_SUCCESS) {
       // As with a ring slot, retain the allocation when completion is unknown.
       spill->completion_recorded = false;
+      lupine_release_staging_window(state, spill->held_window_bytes);
       LUPINE_LOG_ERROR("Async HtoD spill event query failed: " << result);
       ++spill;
       continue;
     }
+    lupine_release_staging_window(state, spill->held_window_bytes);
     lupine_async_htod_destroy_event(&spill->completion, spill->event_context);
     lupine_async_htod_free_host(&spill->ptr, spill->allocation_context);
     spill = state.spills.erase(spill);
@@ -631,17 +659,26 @@ static CUresult lupine_async_htod_publish_slot(lupine_staging_state &state,
   CUresult result = cuEventRecord(slot->completion, stream);
   slot->state = result == CUDA_SUCCESS ? lupine_async_htod_state::in_flight
                                        : lupine_async_htod_state::quarantined;
+  if (result != CUDA_SUCCESS) {
+    lupine_release_staging_window(state, slot->held_window_bytes);
+  }
   return result;
 }
 
-static CUresult lupine_async_htod_publish_spill(lupine_async_htod_spill &spill,
+static CUresult lupine_async_htod_publish_spill(lupine_staging_state &state,
+                                                lupine_async_htod_spill &spill,
                                                 CUstream stream) {
   CUresult result = cuEventRecord(spill.completion, stream);
   spill.completion_recorded = result == CUDA_SUCCESS;
+  if (result != CUDA_SUCCESS) {
+    lupine_release_staging_window(state, spill.held_window_bytes);
+  }
   return result;
 }
 
-static void lupine_async_htod_discard_spill(lupine_async_htod_spill &spill) {
+static void lupine_async_htod_discard_spill(lupine_staging_state &state,
+                                            lupine_async_htod_spill &spill) {
+  lupine_release_staging_window(state, spill.held_window_bytes);
   lupine_async_htod_destroy_event(&spill.completion, spill.event_context);
   lupine_async_htod_free_host(&spill.ptr, spill.allocation_context);
 }
@@ -670,7 +707,7 @@ static CUresult lupine_async_htod_enqueue_spill(
     result = cuEventCreate(&spill.completion, CU_EVENT_DISABLE_TIMING);
   }
   if (result != CUDA_SUCCESS) {
-    lupine_async_htod_discard_spill(spill);
+    lupine_async_htod_discard_spill(state, spill);
     state.spills.pop_back();
     return result;
   }
@@ -678,11 +715,12 @@ static CUresult lupine_async_htod_enqueue_spill(
   while (offset < bytes) {
     size_t chunk = std::min(LUPINE_HTOD_CHUNK_BYTES, bytes - offset);
     auto *chunk_host = static_cast<unsigned char *>(spill.ptr) + offset;
-    if (rpc_read_payload_part(conn, framed, chunk_host, chunk) < 0) {
+    if (lupine_read_staged_payload(conn, framed, chunk_host, chunk,
+                                   spill.held_window_bytes) < 0) {
       if (spill.work_queued) {
-        (void)lupine_async_htod_publish_spill(spill, stream);
+        (void)lupine_async_htod_publish_spill(state, spill, stream);
       } else {
-        lupine_async_htod_discard_spill(spill);
+        lupine_async_htod_discard_spill(state, spill);
         state.spills.pop_back();
       }
       if (connection_failed != nullptr) {
@@ -699,7 +737,7 @@ static CUresult lupine_async_htod_enqueue_spill(
     spill.work_queued = true;
     offset += chunk;
     if (result != CUDA_SUCCESS) {
-      (void)lupine_async_htod_publish_spill(spill, stream);
+      (void)lupine_async_htod_publish_spill(state, spill, stream);
       if (rpc_drain_payload(conn, framed, bytes - offset) < 0) {
         if (connection_failed != nullptr) {
           *connection_failed = true;
@@ -714,7 +752,7 @@ static CUresult lupine_async_htod_enqueue_spill(
   if (payload_consumed != nullptr) {
     *payload_consumed = true;
   }
-  return lupine_async_htod_publish_spill(spill, stream);
+  return lupine_async_htod_publish_spill(state, spill, stream);
 }
 
 static void lupine_async_htod_retire_context(lupine_staging_state &state,
@@ -737,6 +775,7 @@ static void lupine_async_htod_retire_context(lupine_staging_state &state,
       }
       if (result != CUDA_SUCCESS) {
         slot.state = lupine_async_htod_state::quarantined;
+        lupine_release_staging_window(state, slot.held_window_bytes);
         LUPINE_LOG_ERROR(
             "Could not prove async HtoD slot completion; quarantining it: "
             << result);
@@ -746,6 +785,7 @@ static void lupine_async_htod_retire_context(lupine_staging_state &state,
     } else if (slot.state == lupine_async_htod_state::quarantined) {
       continue;
     }
+    lupine_release_staging_window(state, slot.held_window_bytes);
     lupine_async_htod_destroy_event(&slot.completion, slot.event_context);
     if (allocation_owned) {
       lupine_async_htod_free_host(&slot.ptr, slot.allocation_context);
@@ -778,12 +818,14 @@ static void lupine_async_htod_retire_context(lupine_staging_state &state,
     }
     if (result != CUDA_SUCCESS) {
       spill->completion_recorded = false;
+      lupine_release_staging_window(state, spill->held_window_bytes);
       LUPINE_LOG_ERROR(
           "Could not prove async HtoD spill completion; quarantining it: "
           << result);
       ++spill;
       continue;
     }
+    lupine_release_staging_window(state, spill->held_window_bytes);
     lupine_async_htod_destroy_event(&spill->completion, spill->event_context);
     lupine_async_htod_free_host(&spill->ptr, spill->allocation_context);
     spill = state.spills.erase(spill);
@@ -808,15 +850,20 @@ static void lupine_async_htod_forget_context(lupine_staging_state &state,
                                              CUcontext context) {
   for (auto &slot : state.slots) {
     if (slot.allocation_context == context || slot.event_context == context) {
+      lupine_release_staging_window(state, slot.held_window_bytes);
       slot = {};
     }
   }
 
   state.spills.erase(std::remove_if(state.spills.begin(), state.spills.end(),
-                                    [context](const auto &spill) {
-                                      return spill.allocation_context ==
-                                                 context ||
-                                             spill.event_context == context;
+                                    [&state, context](auto &spill) {
+                                      if (spill.allocation_context != context &&
+                                          spill.event_context != context) {
+                                        return false;
+                                      }
+                                      lupine_release_staging_window(
+                                          state, spill.held_window_bytes);
+                                      return true;
                                     }),
                      state.spills.end());
 
@@ -852,6 +899,7 @@ bool lupine_server_initialize_connection(conn_t *conn) {
   if (state == nullptr) {
     return false;
   }
+  state->conn = conn;
   return lupine_staging_states().insert(conn, std::move(state));
 }
 
@@ -1719,7 +1767,8 @@ int lupine_server_copy_htod_async(conn_t *conn, int framed,
       break;
     }
     size_t chunk = std::min(slot->size, byteCount - offset);
-    if (rpc_read_payload_part(conn, framed, slot->ptr, chunk) < 0) {
+    if (lupine_read_staged_payload(conn, framed, slot->ptr, chunk,
+                                   slot->held_window_bytes) < 0) {
       return -1;
     }
 

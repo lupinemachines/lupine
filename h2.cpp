@@ -19,7 +19,15 @@
 
 namespace {
 
-constexpr uint32_t kH2InitialWindow = 0x7fffffffU;
+// Responses land straight in caller buffers, so the client keeps an
+// effectively unlimited receive window; the server's window is the staging
+// budget it is willing to have pinned on a client's behalf.
+constexpr uint32_t kH2ClientWindow = 0x7fffffffU;
+constexpr uint32_t kH2ServerWindow =
+    static_cast<uint32_t>(LUPINE_FF_STAGING_WINDOW_BYTES);
+// Ceiling on uncredited bytes, leaving the reader window for the bytes it is
+// blocked on.
+constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
 
@@ -45,6 +53,9 @@ struct h2_transport {
   size_t read_remaining = 0;
   rpc_http2_read_stats read_stats = {};
   uint64_t staged_bytes = 0;
+  bool window_hold = false;
+  uint64_t window_hold_bytes = 0;
+  uint64_t window_held = 0;
   // Reusable scratch holding the one LZ4-framed payload block currently in
   // flight (see h2_materialize_block). Writes are serialized per connection,
   // so a single buffer suffices and memory stays bounded by one block.
@@ -374,12 +385,25 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
   return 0;
 }
 
-int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
+int h2_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t,
                                    int32_t stream_id, const uint8_t *data,
                                    size_t len, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
   if (stream_id != transport->stream_id) {
     return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  if (transport->server) {
+    size_t held = 0;
+    if (transport->window_hold && transport->window_held < kH2MaxHeldBytes) {
+      held = std::min<size_t>(
+          len, static_cast<size_t>(kH2MaxHeldBytes - transport->window_held));
+      transport->window_held += held;
+      transport->window_hold_bytes += held;
+    }
+    if (len > held &&
+        nghttp2_session_consume(session, stream_id, len - held) != 0) {
+      return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
   }
   receive_bytes(transport, data, len);
   return 0;
@@ -643,25 +667,41 @@ int h2_init_direct(conn_t *conn, bool server, bool probe) {
   nghttp2_session_callbacks_set_on_header_callback(callbacks,
                                                    h2_on_header_callback);
 
-  int session_result = server ? nghttp2_session_server_new(&transport->session,
-                                                           callbacks, transport)
-                              : nghttp2_session_client_new(
-                                    &transport->session, callbacks, transport);
+  // The server credits received DATA back by hand so a fire-and-forget payload
+  // keeps its window charged for as long as its staging buffer lives.
+  nghttp2_option *option = nullptr;
+  if (server) {
+    if (nghttp2_option_new(&option) != 0) {
+      nghttp2_session_callbacks_del(callbacks);
+      delete transport;
+      return -1;
+    }
+    nghttp2_option_set_no_auto_window_update(option, 1);
+  }
+  int session_result =
+      server ? nghttp2_session_server_new2(&transport->session, callbacks,
+                                           transport, option)
+             : nghttp2_session_client_new(&transport->session, callbacks,
+                                          transport);
   nghttp2_session_callbacks_del(callbacks);
+  if (option != nullptr) {
+    nghttp2_option_del(option);
+  }
   if (session_result != 0) {
     delete transport;
     return -1;
   }
 
+  const uint32_t window = server ? kH2ServerWindow : kH2ClientWindow;
   nghttp2_settings_entry settings[] = {
-      {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, kH2InitialWindow},
+      {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, window},
       {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, kH2MaxFrame},
   };
   if (nghttp2_submit_settings(transport->session, NGHTTP2_FLAG_NONE, settings,
                               2) != 0 ||
-      nghttp2_session_set_local_window_size(
-          transport->session, NGHTTP2_FLAG_NONE, 0,
-          static_cast<int32_t>(kH2InitialWindow)) != 0) {
+      nghttp2_session_set_local_window_size(transport->session,
+                                            NGHTTP2_FLAG_NONE, 0,
+                                            static_cast<int32_t>(window)) != 0) {
     nghttp2_session_del(transport->session);
     delete transport;
     return -1;
@@ -823,6 +863,50 @@ int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   *stats = transport->read_stats;
   return 0;
+}
+
+void rpc_http2_window_hold_begin(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  transport->window_hold = true;
+  transport->window_hold_bytes = 0;
+  pthread_mutex_unlock(&transport->session_mutex);
+}
+
+uint64_t rpc_http2_window_hold_end(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return 0;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  uint64_t held = transport->window_hold_bytes;
+  transport->window_hold = false;
+  transport->window_hold_bytes = 0;
+  pthread_mutex_unlock(&transport->session_mutex);
+  return held;
+}
+
+// Whichever thread retires the staging emits the credit itself, under
+// session_mutex alone: the transport never takes a staging lock, and nothing
+// holding session_mutex waits on staging, so a reader starved of window is
+// never queued behind the release that would feed it. kH2MaxHeldBytes closes
+// the other half of the cycle -- staging that never retires cannot shut the
+// window on the reads that would retire it.
+void rpc_http2_window_release(conn_t *conn, uint64_t bytes) {
+  if (conn == nullptr || conn->http2 == nullptr || bytes == 0) {
+    return;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  transport->window_held -= std::min(bytes, transport->window_held);
+  if (nghttp2_session_consume(transport->session, transport->stream_id,
+                              bytes) == 0) {
+    (void)h2_flush_session_locked(transport);
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
 }
 
 int rpc_http2_client_init(conn_t *conn) {

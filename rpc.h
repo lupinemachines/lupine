@@ -30,6 +30,11 @@ struct rpc_http2_read_stats {
 
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
+// The server's HTTP/2 receive window, and with it the ceiling on the pinned
+// staging a client can hold there: async HtoD payload bytes stay uncredited
+// until the staging buffer they landed in retires.
+#define LUPINE_FF_STAGING_WINDOW_BYTES (64ull * 1024 * 1024)
+
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
 // nothing: a non-success result carries no payload, otherwise every device
 // record holds a fixed-size name buffer, uuid, total memory, and a
@@ -176,6 +181,16 @@ extern int rpc_http2_compress_lz4(conn_t *conn);
 // the HTTP/2 request headers, or nullptr when no session was supplied.
 extern const char *rpc_http2_session_id(conn_t *conn);
 extern int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats);
+
+// Server-side flow control for payloads that outlive the read that received
+// them. Between hold_begin and hold_end the transport stops crediting received
+// DATA bytes back to the peer; hold_end returns the byte count the caller now
+// owns and must hand to rpc_http2_window_release once the buffer those bytes
+// landed in is idle. Held bytes are capped, so a caller that never releases
+// costs window but cannot close it.
+extern void rpc_http2_window_hold_begin(conn_t *conn);
+extern uint64_t rpc_http2_window_hold_end(conn_t *conn);
+extern void rpc_http2_window_release(conn_t *conn, uint64_t bytes);
 
 // Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
 extern int lupine_payload_framed(conn_t *conn, size_t total_size);
