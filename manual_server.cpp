@@ -1927,18 +1927,11 @@ int handle_manual_cuLibraryGetModule(conn_t *conn) {
 
 int handle_manual_cuLibraryUnload(conn_t *conn) {
   CUlibrary library = nullptr;
-  int request_id;
-  CUresult result = CUDA_SUCCESS;
 
   if (rpc_read(conn, &library, sizeof(library)) < 0) {
     return -1;
   }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+  if (rpc_read_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -3546,7 +3539,6 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
-  int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   void *capture_host = nullptr;
 
@@ -3633,8 +3625,7 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
 #endif
   }
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (rpc_read_end(conn) < 0) {
     return -1;
   }
 
@@ -3644,16 +3635,13 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, capture_host, byteCount, stream);
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
   return 0;
 }
 
+// Fire-and-forget: connection ordering already guarantees the flush is
+// applied before any later request, so no response is sent.
 int handle_manual_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
-  CUresult result = CUDA_SUCCESS;
 
   if (rpc_read(conn, &count, sizeof(count)) < 0) {
     return -1;
@@ -3669,15 +3657,7 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
     }
   }
 
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_read_end(conn) < 0 ? -1 : 0;
 }
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary
@@ -3830,7 +3810,6 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
-  int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
@@ -3840,8 +3819,7 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     return -1;
   }
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (rpc_read_end(conn) < 0) {
     return -1;
   }
 
@@ -3888,20 +3866,44 @@ int handle_manual_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    if (alloc_result == CUDA_SUCCESS && host != nullptr) {
-      cuMemFreeHost(host);
-    } else if (host != nullptr) {
-      free(host);
-    }
-    return -1;
-  }
-
+  // A fire-and-forget copy drops an immediate validation error, matching launch
+  // semantics: an execution failure poisons the context and the driver reports
+  // it from the client's next synchronize.
   if (alloc_result == CUDA_SUCCESS && host != nullptr) {
     cuMemFreeHost(host);
   } else if (host != nullptr) {
     free(host);
+  }
+  return 0;
+}
+
+// Resolve the device alias here so the client does not need a second round
+// trip for it. A mapped allocation whose alias cannot be resolved still
+// succeeds; the 0 tells the client to query it on first use instead.
+int handle_manual_cuMemHostAlloc(conn_t *conn) {
+  void *pp = nullptr;
+  size_t bytesize = 0;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &pp, sizeof(pp)) < 0 ||
+      rpc_read(conn, &bytesize, sizeof(bytesize)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUdeviceptr device_ptr = 0;
+  CUresult result = cuMemHostAlloc(&pp, bytesize, flags);
+  if (result == CUDA_SUCCESS && (flags & CU_MEMHOSTALLOC_DEVICEMAP) != 0 &&
+      cuMemHostGetDevicePointer(&device_ptr, pp, 0) != CUDA_SUCCESS) {
+    device_ptr = 0;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pp, sizeof(pp)) < 0 ||
+      rpc_write(conn, &device_ptr, sizeof(device_ptr)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
   }
   return 0;
 }

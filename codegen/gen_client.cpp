@@ -874,29 +874,6 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
   return return_value;
 }
 
-CUresult cuLibraryUnload(CUlibrary library) {
-  lupine_route route = lupine_route_for_library(library);
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUlibrary);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuLibraryUnload",
-                                                  &return_value, library)) {
-    if (return_value == CUDA_SUCCESS)
-      lupine_invalidate_function_caches();
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLibraryUnload) < 0 ||
-      rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_invalidate_function_caches();
-  return return_value;
-}
-
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   lupine_route route = lupine_route_for_library(library);
   CUresult return_value;
@@ -7254,7 +7231,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuModuleGetTexRef", (void *)cuModuleGetTexRef},
     {"cuModuleGetSurfRef", (void *)cuModuleGetSurfRef},
     {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
-    {"cuLibraryUnload", (void *)cuLibraryUnload},
     {"cuLibraryGetKernel", (void *)cuLibraryGetKernel},
     {"cuLibraryGetModule", (void *)cuLibraryGetModule},
     {"cuKernelGetFunction", (void *)cuKernelGetFunction},
@@ -7273,7 +7249,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemGetAddressRange_v2", (void *)cuMemGetAddressRange_v2},
     {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
     {"cuMemFreeHost", (void *)cuMemFreeHost},
-    {"cuMemHostAlloc", (void *)cuMemHostAlloc},
     {"cuMemHostGetDevicePointer_v2", (void *)cuMemHostGetDevicePointer_v2},
     {"cuMemAllocManaged", (void *)cuMemAllocManaged},
     {"cuDeviceGetByPCIBusId", (void *)cuDeviceGetByPCIBusId},
