@@ -1022,34 +1022,6 @@ CUresult cuLibraryUnload(CUlibrary library) {
   return return_value;
 }
 
-CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
-                            const char *name) {
-  lupine_route route = lupine_route_for_library(library);
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUkernel *, CUlibrary, const char *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuLibraryGetKernel", &return_value, pKernel, library, name)) {
-    if (return_value == CUDA_SUCCESS && pKernel != nullptr)
-      return_value =
-          lupine_record_library_kernel(*pKernel, library, name, route);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  std::size_t name_len = std::strlen(name) + 1;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLibraryGetKernel) < 0 ||
-      rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
-      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pKernel, sizeof(CUkernel)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && pKernel != nullptr)
-    return_value = lupine_record_library_kernel(*pKernel, library, name, route);
-  return return_value;
-}
-
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   lupine_route route = lupine_route_for_library(library);
   CUresult return_value;

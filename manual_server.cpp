@@ -999,10 +999,77 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
+  // The response carries every kernel in the library with its name and full
+  // parameter layout, so the client can serve cuLibraryGetKernel and the
+  // per-kernel param-info walk from cache instead of one round trip per
+  // query. Enumeration failures degrade to an empty table; the client then
+  // falls back to the per-call RPCs. Records are built before any rpc_write
+  // because queued iovecs are only transmitted at rpc_write_end.
+  struct kernel_record {
+    std::string name;
+    CUkernel kernel = nullptr;
+    uint32_t name_len = 0;
+    uint32_t param_count = 0;
+    std::vector<uint64_t> params;
+  };
+  std::vector<kernel_record> records;
+#if CUDA_VERSION >= 12040
+  if (result == CUDA_SUCCESS) {
+    unsigned int kernel_count = 0;
+    std::vector<CUkernel> kernels;
+    if (cuLibraryGetKernelCount(&kernel_count, library) == CUDA_SUCCESS &&
+        kernel_count != 0) {
+      kernels.resize(kernel_count);
+      if (cuLibraryEnumerateKernels(kernels.data(), kernel_count, library) !=
+          CUDA_SUCCESS) {
+        kernels.clear();
+      }
+    }
+    for (CUkernel kernel : kernels) {
+      const char *name = nullptr;
+      if (kernel == nullptr || cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
+          name == nullptr) {
+        continue;
+      }
+      kernel_record record;
+      record.name = name;
+      record.name_len = static_cast<uint32_t>(record.name.size() + 1);
+      record.kernel = kernel;
+      for (size_t index = 0;; ++index) {
+        size_t offset = 0;
+        size_t size = 0;
+        if (cuKernelGetParamInfo(kernel, index, &offset, &size) !=
+            CUDA_SUCCESS) {
+          break;
+        }
+        record.params.push_back(static_cast<uint64_t>(offset));
+        record.params.push_back(static_cast<uint64_t>(size));
+      }
+      record.param_count = static_cast<uint32_t>(record.params.size() / 2);
+      records.push_back(std::move(record));
+    }
+  }
+#endif
+
+  uint32_t table_count = static_cast<uint32_t>(records.size());
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
       rpc_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &table_count, sizeof(table_count)) < 0) {
+    return -1;
+  }
+  for (const auto &record : records) {
+    if (rpc_write(conn, &record.name_len, sizeof(record.name_len)) < 0 ||
+        rpc_write(conn, record.name.c_str(), record.name_len) < 0 ||
+        rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
+        rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0 ||
+        (record.param_count != 0 &&
+         rpc_write(conn, record.params.data(),
+                   record.params.size() * sizeof(uint64_t)) < 0)) {
+      return -1;
+    }
+  }
+  if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
