@@ -49,6 +49,7 @@
 
 #include "cache.h"
 #include "checkpoint.h"
+#include "async.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
@@ -428,110 +429,6 @@ lupine_primary_ctx_state_cache() {
 
 static void lupine_invalidate_primary_ctx_state(CUdevice dev) {
   lupine_primary_ctx_state_cache().erase(static_cast<int>(dev));
-}
-
-// Client-side latency-hiding state, one record per connection.
-//
-// pending_dtoh counts async DtoH copies whose data the server delivers with a
-// later synchronize response; while any are outstanding a stream synchronize
-// must go to the server. elision_disabled is set permanently once the
-// application uses graph execs or host callbacks, whose host-visible effects
-// are also delivered at synchronization points the client cannot account for.
-// ff_outstanding_bytes bounds how far fire-and-forget host-to-device copies
-// may run ahead of the server before one copy requests a response again.
-struct lupine_conn_async_state {
-  std::atomic<long> pending_dtoh{0};
-  std::atomic<bool> elision_disabled{false};
-  std::atomic<unsigned long long> ff_outstanding_bytes{0};
-};
-
-static libcuckoo::cuckoohash_map<conn_t *,
-                                 std::shared_ptr<lupine_conn_async_state>> &
-lupine_conn_async_states() {
-  static auto *states =
-      new libcuckoo::cuckoohash_map<conn_t *,
-                                    std::shared_ptr<lupine_conn_async_state>>();
-  return *states;
-}
-
-static lupine_conn_async_state *lupine_conn_async_state_for(conn_t *conn) {
-  if (conn == nullptr) {
-    return nullptr;
-  }
-  std::shared_ptr<lupine_conn_async_state> state;
-  if (!lupine_conn_async_states().find(conn, state)) {
-    state = std::make_shared<lupine_conn_async_state>();
-    lupine_conn_async_states().insert(conn, state);
-    lupine_conn_async_states().find(conn, state);
-  }
-  return state.get();
-}
-
-extern "C" void lupine_note_pending_dtoh(conn_t *conn) {
-  auto *state = lupine_conn_async_state_for(conn);
-  if (state != nullptr) {
-    state->pending_dtoh.fetch_add(1, std::memory_order_acq_rel);
-  }
-}
-
-extern "C" void lupine_note_dtoh_delivered(conn_t *conn, long count) {
-  auto *state = lupine_conn_async_state_for(conn);
-  if (state == nullptr || count <= 0) {
-    return;
-  }
-  long previous = state->pending_dtoh.fetch_sub(count, std::memory_order_acq_rel);
-  if (previous < count) {
-    state->pending_dtoh.store(0, std::memory_order_release);
-  }
-}
-
-extern "C" void lupine_disable_sync_elision(conn_t *conn) {
-  auto *state = lupine_conn_async_state_for(conn);
-  if (state != nullptr) {
-    state->elision_disabled.store(true, std::memory_order_release);
-  }
-}
-
-// Returns nonzero when a fire-and-forget copy of `bytes` should instead
-// request a response (large copies, or the unacknowledged window is full).
-extern "C" int lupine_ff_htod_wants_response(conn_t *conn, size_t bytes) {
-  static const bool strict = getenv("LUPINE_STRICT_SYNC") != nullptr;
-  auto *state = lupine_conn_async_state_for(conn);
-  if (strict || state == nullptr || bytes > LUPINE_FF_HTOD_MAX_BYTES) {
-    return 1;
-  }
-  unsigned long long outstanding =
-      state->ff_outstanding_bytes.fetch_add(bytes, std::memory_order_acq_rel);
-  if (outstanding + bytes > LUPINE_FF_HTOD_WINDOW_BYTES) {
-    return 1;
-  }
-  return 0;
-}
-
-extern "C" void lupine_ff_htod_acknowledged(conn_t *conn) {
-  auto *state = lupine_conn_async_state_for(conn);
-  if (state != nullptr) {
-    state->ff_outstanding_bytes.store(0, std::memory_order_release);
-  }
-}
-
-static bool lupine_can_elide_stream_sync(conn_t *conn, CUstream hStream) {
-  static const bool strict = getenv("LUPINE_STRICT_SYNC") != nullptr;
-  if (strict) {
-    return false;
-  }
-  // Only the default-stream sentinels: a synchronous fetch of mapped memory
-  // is ordered after legacy-stream work, so elision stays coherent there;
-  // named streams keep the full round trip.
-  if (hStream != nullptr &&
-      hStream != reinterpret_cast<CUstream>(uintptr_t{1}) &&
-      hStream != reinterpret_cast<CUstream>(uintptr_t{2})) {
-    return false;
-  }
-  auto *state = lupine_conn_async_state_for(conn);
-  return state != nullptr &&
-         !state->elision_disabled.load(std::memory_order_acquire) &&
-         state->pending_dtoh.load(std::memory_order_acquire) == 0;
 }
 
 static libcuckoo::cuckoohash_map<lupine_kernel_function_key, CUfunction,

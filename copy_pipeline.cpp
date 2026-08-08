@@ -281,7 +281,6 @@ struct lupine_staging_state {
   std::mutex mutex;
   std::condition_variable condition;
   bool staging_operation_active = false;
-  CUresult sticky_async_error = CUDA_SUCCESS;
   lupine_retained_staging sync_staging;
   lupine_sync_htod_pool sync_htod;
   std::array<lupine_async_htod_slot, LUPINE_ASYNC_HTOD_SLOT_COUNT> slots;
@@ -860,31 +859,6 @@ static void lupine_server_forget_context_metadata(lupine_staging_state &state,
       ++it;
     }
   }
-}
-
-extern "C" void lupine_server_note_async_error(conn_t *conn, CUresult result) {
-  if (result == CUDA_SUCCESS) {
-    return;
-  }
-  auto *state = lupine_staging_state_for(conn);
-  if (state == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(state->mutex);
-  if (state->sticky_async_error == CUDA_SUCCESS) {
-    state->sticky_async_error = result;
-  }
-}
-
-extern "C" CUresult lupine_server_take_async_error(conn_t *conn) {
-  auto *state = lupine_staging_state_for(conn);
-  if (state == nullptr) {
-    return CUDA_SUCCESS;
-  }
-  std::lock_guard<std::mutex> lock(state->mutex);
-  CUresult result = state->sticky_async_error;
-  state->sticky_async_error = CUDA_SUCCESS;
-  return result;
 }
 
 bool lupine_server_initialize_connection(conn_t *conn) {

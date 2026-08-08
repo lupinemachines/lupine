@@ -3646,10 +3646,10 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, capture_host, byteCount, stream);
   }
 
-  // Fire-and-forget submissions carry no response; a failure is remembered
-  // and surfaces as the result of the next synchronize.
+  // Fire-and-forget submissions carry no response. An immediate validation
+  // error is dropped, matching launch semantics; an execution failure poisons
+  // the context and surfaces from the driver at the next synchronize.
   if (wants_response == 0) {
-    lupine_server_note_async_error(conn, result);
     return 0;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3935,9 +3935,6 @@ int handle_manual_cuCtxSynchronize(conn_t *conn) {
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuCtxSynchronize();
-  if (result == CUDA_SUCCESS) {
-    result = lupine_server_take_async_error(conn);
-  }
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   uint64_t stdout_size = 0;
@@ -3965,9 +3962,6 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuStreamSynchronize(stream);
-  if (result == CUDA_SUCCESS) {
-    result = lupine_server_take_async_error(conn);
-  }
   lupine_finish_stdout_capture(&capture);
   lupine_graph_resources *resources = nullptr;
   uint32_t copy_count = 0;
@@ -4039,9 +4033,6 @@ int handle_manual_cuEventSynchronize(conn_t *conn) {
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuEventSynchronize(event);
-  if (result == CUDA_SUCCESS) {
-    result = lupine_server_take_async_error(conn);
-  }
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   uint64_t stdout_size = 0;

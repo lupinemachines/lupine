@@ -10,13 +10,6 @@
 bool lupine_server_initialize_connection(conn_t *conn);
 void lupine_server_cleanup_connection(conn_t *conn);
 
-// Sticky asynchronous-error slot for fire-and-forget requests (async HtoD
-// copies, managed host flushes). A failure is remembered per connection and
-// surfaces as the result of the next synchronize, mirroring how CUDA reports
-// asynchronous errors.
-extern "C" void lupine_server_note_async_error(conn_t *conn, CUresult result);
-extern "C" CUresult lupine_server_take_async_error(conn_t *conn);
-
 int lupine_server_copy_htod_async(conn_t *conn, int framed,
                                   CUdeviceptr destination, size_t bytes,
                                   CUstream stream, CUresult &result);

@@ -83,6 +83,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/async.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
@@ -226,6 +227,14 @@ else()
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
+
+    add_executable(async_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/async.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/async_test.cpp
+    )
+    target_link_libraries(async_test PRIVATE pthread)
+    lupine_apply_sanitizer(async_test)
+    add_test(NAME async_test COMMAND async_test)
 
     add_executable(ipc_test
         ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
