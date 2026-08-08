@@ -14,6 +14,8 @@ extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
 extern "C" void lupine_ensure_mapped_host_readable(const void *host,
                                                    size_t size);
+extern "C" int lupine_ff_htod_wants_response(conn_t *conn, size_t bytes);
+extern "C" void lupine_ff_htod_acknowledged(conn_t *conn);
 
 extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                                     size_t ByteCount) {
@@ -93,18 +95,34 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   }
   lupine_ensure_mapped_host_readable(srcHost, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  // Small copies are fire-and-forget: the payload is fully captured on the
+  // wire by rpc_write_end, so the source buffer is reusable on return and any
+  // failure surfaces at the next synchronize. Large copies, and copies once
+  // the unacknowledged window fills, keep the blocking response.
+  unsigned char wants_response =
+      lupine_ff_htod_wants_response(conn, ByteCount) != 0 ? 1 : 0;
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, &wants_response, sizeof(wants_response)) < 0 ||
+      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0)) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (wants_response == 0) {
+    return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                                   : CUDA_SUCCESS;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  lupine_ff_htod_acknowledged(conn);
   return return_value;
 }
 
@@ -263,6 +281,7 @@ struct lupine_staging_state {
   std::mutex mutex;
   std::condition_variable condition;
   bool staging_operation_active = false;
+  CUresult sticky_async_error = CUDA_SUCCESS;
   lupine_retained_staging sync_staging;
   lupine_sync_htod_pool sync_htod;
   std::array<lupine_async_htod_slot, LUPINE_ASYNC_HTOD_SLOT_COUNT> slots;
@@ -841,6 +860,31 @@ static void lupine_server_forget_context_metadata(lupine_staging_state &state,
       ++it;
     }
   }
+}
+
+extern "C" void lupine_server_note_async_error(conn_t *conn, CUresult result) {
+  if (result == CUDA_SUCCESS) {
+    return;
+  }
+  auto *state = lupine_staging_state_for(conn);
+  if (state == nullptr) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (state->sticky_async_error == CUDA_SUCCESS) {
+    state->sticky_async_error = result;
+  }
+}
+
+extern "C" CUresult lupine_server_take_async_error(conn_t *conn) {
+  auto *state = lupine_staging_state_for(conn);
+  if (state == nullptr) {
+    return CUDA_SUCCESS;
+  }
+  std::lock_guard<std::mutex> lock(state->mutex);
+  CUresult result = state->sticky_async_error;
+  state->sticky_async_error = CUDA_SUCCESS;
+  return result;
 }
 
 bool lupine_server_initialize_connection(conn_t *conn) {

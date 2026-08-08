@@ -492,8 +492,14 @@ extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn) {
   lupine_note_owner(node, conn);
 }
 
+extern "C" void lupine_disable_sync_elision(conn_t *conn);
+
 extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn) {
   lupine_note_owner(exec, conn);
+  // Graph launches can carry device-to-host copies whose data is delivered at
+  // synchronization points the client cannot account for; once graph execs
+  // exist on a connection, stream synchronizes always go to the server.
+  lupine_disable_sync_elision(conn);
 }
 
 extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn) {
@@ -580,6 +586,9 @@ extern "C" void lupine_note_graph_node_owner_route(CUgraphNode node,
 extern "C" void lupine_note_graph_exec_owner_route(CUgraphExec exec,
                                                    lupine_route route) {
   lupine_note_owner_route(exec, route);
+  if (route.kind == LUPINE_ROUTE_REMOTE) {
+    lupine_disable_sync_elision(route.conn);
+  }
 }
 
 extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,
@@ -681,6 +690,23 @@ extern "C" lupine_route lupine_route_for_graph_node(CUgraphNode node) {
 
 extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec) {
   return lupine_route_for_owner_or_default(exec);
+}
+
+extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  if (lupine_owners<CUdeviceptr>().count(ptr) != 0) {
+    return true;
+  }
+  for (const auto &entry : lupine_deviceptr_allocations()) {
+    const auto &allocation = entry.second;
+    if (allocation.base == 0 || allocation.size == 0 || ptr < allocation.base) {
+      continue;
+    }
+    if (static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
+      return true;
+    }
+  }
+  return false;
 }
 
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {

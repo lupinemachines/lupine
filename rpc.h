@@ -30,6 +30,12 @@ struct rpc_http2_read_stats {
 
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
+// Fire-and-forget async HtoD copies: the request carries a wants_response
+// byte. Copies above the size cap, and copies once the unacknowledged window
+// fills, request a response so the server's staging cannot grow unboundedly.
+#define LUPINE_FF_HTOD_MAX_BYTES (8ull * 1024 * 1024)
+#define LUPINE_FF_HTOD_WINDOW_BYTES (64ull * 1024 * 1024)
+
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
 // nothing: a non-success result carries no payload, otherwise every device
 // record holds a fixed-size name buffer, uuid, total memory, and a

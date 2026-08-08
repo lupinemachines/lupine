@@ -3546,13 +3546,15 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
+  unsigned char wants_response = 1;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   void *capture_host = nullptr;
 
   if (rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &wants_response, sizeof(wants_response)) < 0) {
     return -1;
   }
 
@@ -3644,6 +3646,12 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, capture_host, byteCount, stream);
   }
 
+  // Fire-and-forget submissions carry no response; a failure is remembered
+  // and surfaces as the result of the next synchronize.
+  if (wants_response == 0) {
+    lupine_server_note_async_error(conn, result);
+    return 0;
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3651,9 +3659,10 @@ int handle_manual_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
+// Fire-and-forget: connection ordering already guarantees the flush is
+// applied before any later request, so no response is sent.
 int handle_manual_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
-  CUresult result = CUDA_SUCCESS;
 
   if (rpc_read(conn, &count, sizeof(count)) < 0) {
     return -1;
@@ -3669,15 +3678,7 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
     }
   }
 
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_read_end(conn) < 0 ? -1 : 0;
 }
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary
@@ -3934,6 +3935,9 @@ int handle_manual_cuCtxSynchronize(conn_t *conn) {
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuCtxSynchronize();
+  if (result == CUDA_SUCCESS) {
+    result = lupine_server_take_async_error(conn);
+  }
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   uint64_t stdout_size = 0;
@@ -3961,6 +3965,9 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuStreamSynchronize(stream);
+  if (result == CUDA_SUCCESS) {
+    result = lupine_server_take_async_error(conn);
+  }
   lupine_finish_stdout_capture(&capture);
   lupine_graph_resources *resources = nullptr;
   uint32_t copy_count = 0;
@@ -4032,6 +4039,9 @@ int handle_manual_cuEventSynchronize(conn_t *conn) {
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
   CUresult result = cuEventSynchronize(event);
+  if (result == CUDA_SUCCESS) {
+    result = lupine_server_take_async_error(conn);
+  }
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   uint64_t stdout_size = 0;

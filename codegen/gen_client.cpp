@@ -3014,36 +3014,6 @@ CUresult cuStreamQuery(CUstream hStream) {
   return return_value;
 }
 
-CUresult cuStreamSynchronize(CUstream hStream) {
-  CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
-  if (lupine_sync_result != CUDA_SUCCESS) {
-    return lupine_sync_result;
-  }
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUstream);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuStreamSynchronize",
-                                                  &return_value, hStream)) {
-    if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuStreamSynchronize) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
-      lupine_forward_remote_stdout(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
-  return return_value;
-}
-
 CUresult cuStreamDestroy_v2(CUstream hStream) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
@@ -7053,13 +7023,6 @@ extern "C" CUresult cuStreamQuery_ptsz(CUstream hStream) {
   return cuStreamQuery(hStream);
 }
 
-#ifdef cuStreamSynchronize_ptsz
-#undef cuStreamSynchronize_ptsz
-#endif
-extern "C" CUresult cuStreamSynchronize_ptsz(CUstream hStream) {
-  return cuStreamSynchronize(hStream);
-}
-
 #ifdef cuEventRecord_ptsz
 #undef cuEventRecord_ptsz
 #endif
@@ -7356,7 +7319,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamIsCapturing", (void *)cuStreamIsCapturing},
     {"cuStreamAttachMemAsync", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery", (void *)cuStreamQuery},
-    {"cuStreamSynchronize", (void *)cuStreamSynchronize},
     {"cuStreamDestroy_v2", (void *)cuStreamDestroy_v2},
     {"cuStreamCopyAttributes", (void *)cuStreamCopyAttributes},
     {"cuStreamGetAttribute", (void *)cuStreamGetAttribute},
@@ -7564,7 +7526,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetCtx_ptsz", (void *)cuStreamGetCtx},
     {"cuStreamAttachMemAsync_ptsz", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery_ptsz", (void *)cuStreamQuery},
-    {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize},
     {"cuEventRecord_ptsz", (void *)cuEventRecord},
     {"cuEventRecordWithFlags_ptsz", (void *)cuEventRecordWithFlags},
     {"cuGraphicsMapResources_ptsz", (void *)cuGraphicsMapResources},
