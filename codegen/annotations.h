@@ -2153,6 +2153,7 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev);
  */
 CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
 /**
+ * @disabled client - manual client caches primary context state
  * @disabled server - manual server coordinates retained staging lifecycle
  * @recordowner CONTEXT pctx
  * @param pctx RECV_ONLY
@@ -2160,16 +2161,19 @@ CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
  */
 CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
 /**
+ * @disabled client - manual client caches primary context state
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
 /**
+ * @disabled client - manual client caches primary context state
  * @param dev SEND_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 /**
+ * @disabled client - manual client caches primary context state
  * @param dev SEND_ONLY
  * @param flags RECV_ONLY
  * @param active RECV_ONLY
@@ -2177,6 +2181,7 @@ CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
                                     int *active);
 /**
+ * @disabled client - manual client caches primary context state
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param dev SEND_ONLY
  */

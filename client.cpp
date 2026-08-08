@@ -407,6 +407,29 @@ lupine_device_snapshot_attempts() {
   return *attempts;
 }
 
+// PyTorch's pin-memory path polls cuDevicePrimaryCtxGetState continuously
+// (~42k calls in a 100-step makemore run); over a remote connection every
+// poll is a blocked round trip that also occupies the connection's write
+// path, so training RPCs queue behind it. Primary-context state on the
+// per-connection server process can only change through this client's own
+// RPCs, so the state is cached per device and invalidated by the manual
+// wrappers of the four mutators (retain/release/reset/set-flags).
+struct lupine_primary_ctx_state {
+  unsigned int flags = 0;
+  int active = 0;
+};
+
+static libcuckoo::cuckoohash_map<int, lupine_primary_ctx_state> &
+lupine_primary_ctx_state_cache() {
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<int, lupine_primary_ctx_state>();
+  return *cache;
+}
+
+static void lupine_invalidate_primary_ctx_state(CUdevice dev) {
+  lupine_primary_ctx_state_cache().erase(static_cast<int>(dev));
+}
+
 static libcuckoo::cuckoohash_map<lupine_kernel_function_key, CUfunction,
                                  lupine_kernel_function_key_hash> &
 lupine_kernel_function_cache() {
@@ -1810,6 +1833,192 @@ extern "C" CUresult cuDeviceGetUuid(CUuuid *uuid, CUdevice dev) {
 #endif
 extern "C" CUresult cuDeviceTotalMem(size_t *bytes, CUdevice dev) {
   return cuDeviceTotalMem_v2(bytes, dev);
+}
+
+extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
+  CUdevice remote_dev = dev;
+  lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  lupine_invalidate_primary_ctx_state(dev);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUcontext *, CUdevice);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevicePrimaryCtxRetain", &return_value, pctx,
+          remote_dev)) {
+    if (return_value == CUDA_SUCCESS && pctx != nullptr) {
+      lupine_note_context_owner_route(*pctx, route);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRetain) < 0 ||
+      rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pctx, sizeof(CUcontext)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && pctx != nullptr) {
+    lupine_note_context_owner_route(*pctx, route);
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
+  CUdevice remote_dev = dev;
+  lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  lupine_invalidate_primary_ctx_state(dev);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUdevice);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevicePrimaryCtxRelease_v2", &return_value, remote_dev)) {
+    if (return_value == CUDA_SUCCESS) {
+      lupine_invalidate_current_context_cache();
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRelease_v2) < 0 ||
+      rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_invalidate_current_context_cache();
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev,
+                                                  unsigned int flags) {
+  CUdevice remote_dev = dev;
+  lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  lupine_invalidate_primary_ctx_state(dev);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUdevice, unsigned int);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevicePrimaryCtxSetFlags_v2", &return_value, remote_dev,
+          flags)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxSetFlags_v2) < 0 ||
+      rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuDevicePrimaryCtxGetState(CUdevice dev,
+                                               unsigned int *flags,
+                                               int *active) {
+  CUdevice remote_dev = dev;
+  lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUdevice, unsigned int *, int *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevicePrimaryCtxGetState", &return_value, remote_dev,
+          flags, active)) {
+    return return_value;
+  }
+  if (flags != nullptr && active != nullptr) {
+    lupine_primary_ctx_state cached;
+    if (lupine_primary_ctx_state_cache().find(static_cast<int>(dev), cached)) {
+      *flags = cached.flags;
+      *active = cached.active;
+      return CUDA_SUCCESS;
+    }
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxGetState) < 0 ||
+      rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, flags, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, active, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && flags != nullptr && active != nullptr) {
+    lupine_primary_ctx_state_cache().insert_or_assign(
+        static_cast<int>(dev), lupine_primary_ctx_state{*flags, *active});
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
+  CUdevice remote_dev = dev;
+  lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  lupine_invalidate_primary_ctx_state(dev);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUdevice);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevicePrimaryCtxReset_v2", &return_value, remote_dev)) {
+    if (return_value == CUDA_SUCCESS) {
+      lupine_invalidate_current_context_cache();
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxReset_v2) < 0 ||
+      rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_invalidate_current_context_cache();
+  }
+  return return_value;
+}
+
+#ifdef cuDevicePrimaryCtxRelease
+#undef cuDevicePrimaryCtxRelease
+#endif
+extern "C" CUresult cuDevicePrimaryCtxRelease(CUdevice dev) {
+  return cuDevicePrimaryCtxRelease_v2(dev);
+}
+
+#ifdef cuDevicePrimaryCtxSetFlags
+#undef cuDevicePrimaryCtxSetFlags
+#endif
+extern "C" CUresult cuDevicePrimaryCtxSetFlags(CUdevice dev,
+                                               unsigned int flags) {
+  return cuDevicePrimaryCtxSetFlags_v2(dev, flags);
+}
+
+#ifdef cuDevicePrimaryCtxReset
+#undef cuDevicePrimaryCtxReset
+#endif
+extern "C" CUresult cuDevicePrimaryCtxReset(CUdevice dev) {
+  return cuDevicePrimaryCtxReset_v2(dev);
 }
 
 static CUresult lupine_cuGetParamInfo_cached(uintptr_t handle,
@@ -8076,6 +8285,12 @@ lupine_manual_function_map() {
       {"cuArray3DGetDescriptor_v2", (void *)cuArray3DGetDescriptor_v2},
       {"cuDeviceGetUuid", (void *)cuDeviceGetUuid_v2},
       {"cuDeviceTotalMem", (void *)cuDeviceTotalMem_v2},
+      {"cuDevicePrimaryCtxRetain", (void *)cuDevicePrimaryCtxRetain},
+      {"cuDevicePrimaryCtxRelease", (void *)cuDevicePrimaryCtxRelease_v2},
+      {"cuDevicePrimaryCtxRelease_v2", (void *)cuDevicePrimaryCtxRelease_v2},
+      {"cuDevicePrimaryCtxSetFlags", (void *)cuDevicePrimaryCtxSetFlags_v2},
+      {"cuDevicePrimaryCtxReset", (void *)cuDevicePrimaryCtxReset_v2},
+      {"cuDevicePrimaryCtxReset_v2", (void *)cuDevicePrimaryCtxReset_v2},
       {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
       {"cuMemcpyHtoD_v2", (void *)cuMemcpyHtoD_v2},
       {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},

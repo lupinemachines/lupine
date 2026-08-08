@@ -341,131 +341,6 @@ CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev) {
   return return_value;
 }
 
-CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUcontext *, CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDevicePrimaryCtxRetain", &return_value, pctx, dev)) {
-    if (return_value == CUDA_SUCCESS && pctx != nullptr) {
-      lupine_note_context_owner_route(*pctx, route);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRetain) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pctx, sizeof(CUcontext)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && pctx != nullptr) {
-    lupine_note_context_owner_route(*pctx, route);
-  }
-  return return_value;
-}
-
-CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDevicePrimaryCtxRelease_v2", &return_value, dev)) {
-    if (return_value == CUDA_SUCCESS)
-      lupine_invalidate_current_context_cache();
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRelease_v2) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_invalidate_current_context_cache();
-  return return_value;
-}
-
-CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUdevice, unsigned int);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDevicePrimaryCtxSetFlags_v2", &return_value, dev, flags)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxSetFlags_v2) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
-                                    int *active) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUdevice, unsigned int *, int *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDevicePrimaryCtxGetState", &return_value, dev, flags,
-          active)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxGetState) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, flags, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, active, sizeof(int)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
-    return CUDA_ERROR_INVALID_DEVICE;
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUdevice);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDevicePrimaryCtxReset_v2", &return_value, dev)) {
-    if (return_value == CUDA_SUCCESS)
-      lupine_invalidate_current_context_cache();
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxReset_v2) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_invalidate_current_context_cache();
-  return return_value;
-}
-
 CUresult cuCtxDestroy_v2(CUcontext ctx) {
   lupine_route route = lupine_route_for_context(ctx);
   CUresult return_value;
@@ -6963,28 +6838,6 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
   return return_value;
 }
 
-#ifdef cuDevicePrimaryCtxRelease
-#undef cuDevicePrimaryCtxRelease
-#endif
-extern "C" CUresult cuDevicePrimaryCtxRelease(CUdevice dev) {
-  return cuDevicePrimaryCtxRelease_v2(dev);
-}
-
-#ifdef cuDevicePrimaryCtxSetFlags
-#undef cuDevicePrimaryCtxSetFlags
-#endif
-extern "C" CUresult cuDevicePrimaryCtxSetFlags(CUdevice dev,
-                                               unsigned int flags) {
-  return cuDevicePrimaryCtxSetFlags_v2(dev, flags);
-}
-
-#ifdef cuDevicePrimaryCtxReset
-#undef cuDevicePrimaryCtxReset
-#endif
-extern "C" CUresult cuDevicePrimaryCtxReset(CUdevice dev) {
-  return cuDevicePrimaryCtxReset_v2(dev);
-}
-
 #ifdef cuCtxDestroy
 #undef cuCtxDestroy
 #endif
@@ -7394,11 +7247,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuFlushGPUDirectRDMAWrites", (void *)cuFlushGPUDirectRDMAWrites},
     {"cuDeviceGetProperties", (void *)cuDeviceGetProperties},
     {"cuDeviceComputeCapability", (void *)cuDeviceComputeCapability},
-    {"cuDevicePrimaryCtxRetain", (void *)cuDevicePrimaryCtxRetain},
-    {"cuDevicePrimaryCtxRelease_v2", (void *)cuDevicePrimaryCtxRelease_v2},
     {"cuDevicePrimaryCtxSetFlags_v2", (void *)cuDevicePrimaryCtxSetFlags_v2},
     {"cuDevicePrimaryCtxGetState", (void *)cuDevicePrimaryCtxGetState},
-    {"cuDevicePrimaryCtxReset_v2", (void *)cuDevicePrimaryCtxReset_v2},
     {"cuCtxDestroy_v2", (void *)cuCtxDestroy_v2},
     {"cuCtxPushCurrent_v2", (void *)cuCtxPushCurrent_v2},
     {"cuCtxPopCurrent_v2", (void *)cuCtxPopCurrent_v2},
@@ -7714,9 +7564,6 @@ std::unordered_map<std::string, void *> functionMap = {
      (void *)cuGraphicsResourceSetMapFlags_v2},
     {"cuGraphicsMapResources", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources", (void *)cuGraphicsUnmapResources},
-    {"cuDevicePrimaryCtxRelease", (void *)cuDevicePrimaryCtxRelease_v2},
-    {"cuDevicePrimaryCtxSetFlags", (void *)cuDevicePrimaryCtxSetFlags_v2},
-    {"cuDevicePrimaryCtxReset", (void *)cuDevicePrimaryCtxReset_v2},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
