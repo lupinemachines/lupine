@@ -4115,7 +4115,6 @@ int handle_cuEventRecord(conn_t *conn) {
   CUevent hEvent;
   CUstream hStream;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
     goto ERROR_0;
@@ -4123,12 +4122,7 @@ int handle_cuEventRecord(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuEventRecord(hEvent, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuEventRecord(hEvent, hStream);
 
   return 0;
 ERROR_0:
@@ -4140,7 +4134,6 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
   CUstream hStream;
   unsigned int flags;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
@@ -4149,12 +4142,7 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuEventRecordWithFlags(hEvent, hStream, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuEventRecordWithFlags(hEvent, hStream, flags);
 
   return 0;
 ERROR_0:

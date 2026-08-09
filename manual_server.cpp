@@ -3154,10 +3154,8 @@ int handle_manual_cuEventRecord(conn_t *conn, bool with_flags) {
 
   result = with_flags ? cuEventRecordWithFlags(event, stream, flags)
                       : cuEventRecord(event, stream);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  (void)result;
+  (void)request_id;
   return 0;
 }
 

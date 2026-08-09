@@ -3171,11 +3171,10 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventRecord) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
@@ -3195,11 +3194,10 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuEventQuery(CUevent hEvent) {

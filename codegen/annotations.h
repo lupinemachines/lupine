@@ -3529,12 +3529,14 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
  */
 CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 /**
+ * @async
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
  */
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 /**
+ * @async
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
