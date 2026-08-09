@@ -86,6 +86,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
@@ -226,6 +227,16 @@ else()
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
+
+    add_executable(events_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/events_test.cpp
+    )
+    target_link_libraries(events_test PRIVATE pthread)
+    lupine_apply_sanitizer(events_test)
+    add_test(NAME events_test COMMAND events_test)
+    lupine_scaled_timeout(events_timeout 10)
+    set_tests_properties(events_test PROPERTIES TIMEOUT ${events_timeout})
 
     add_executable(ipc_test
         ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp

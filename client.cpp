@@ -52,6 +52,7 @@
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
+#include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
@@ -3873,115 +3874,6 @@ extern "C" CUresult cuStreamWaitEvent_ptsz(CUstream hStream, CUevent hEvent,
   return cuStreamWaitEvent(hStream, hEvent, Flags);
 }
 
-// Completion is monotonic between records: once the server reports an event
-// complete for a given record, that stays true until the event is recorded
-// again. A query therefore also asks about every other event the client has
-// outstanding, so a poller walking several events pays one round trip instead
-// of one per event. Deferred device-to-host copies only reach the client on a
-// query that actually reaches the server, so a locally answered query is legal
-// only while no async copy is waiting to be drained.
-namespace {
-
-constexpr uint32_t kLupineEventQueryBatch = LUPINE_EVENT_QUERY_BATCH_MAX;
-
-struct lupine_event_slot {
-  CUevent event;
-  uint64_t recorded;
-  uint64_t completed;
-};
-
-std::mutex &lupine_event_slot_mutex() {
-  static std::mutex mutex;
-  return mutex;
-}
-
-lupine_event_slot *lupine_event_slots() {
-  static lupine_event_slot slots[kLupineEventQueryBatch] = {};
-  return slots;
-}
-
-std::atomic<uint64_t> lupine_event_record_seq{0};
-std::atomic<uint64_t> lupine_async_dtoh_issued{0};
-std::atomic<uint64_t> lupine_async_dtoh_drained{0};
-
-void lupine_note_event_recorded(CUevent event) {
-  uint64_t seq = lupine_event_record_seq.fetch_add(1) + 1;
-  lupine_event_slot *slots = lupine_event_slots();
-  std::lock_guard<std::mutex> lock(lupine_event_slot_mutex());
-  lupine_event_slot *victim = &slots[0];
-  for (uint32_t i = 0; i < kLupineEventQueryBatch; ++i) {
-    if (slots[i].event == event) {
-      slots[i].recorded = seq;
-      return;
-    }
-    if (slots[i].recorded < victim->recorded) {
-      victim = &slots[i];
-    }
-  }
-  *victim = {event, seq, 0};
-}
-
-// Fills events/recorded with the batch to ask about, the caller's event first,
-// and returns its length; zero means the answer is already known locally.
-uint32_t lupine_collect_event_query_batch(CUevent primary, conn_t *conn,
-                                          CUevent *events, uint64_t *recorded) {
-  bool copies_pending =
-      lupine_async_dtoh_issued.load(std::memory_order_relaxed) !=
-      lupine_async_dtoh_drained.load(std::memory_order_relaxed);
-  lupine_event_slot *slots = lupine_event_slots();
-  std::lock_guard<std::mutex> lock(lupine_event_slot_mutex());
-  uint32_t count = 1;
-  events[0] = primary;
-  recorded[0] = 0;
-  for (uint32_t i = 0; i < kLupineEventQueryBatch; ++i) {
-    if (slots[i].event != primary) {
-      continue;
-    }
-    if (!copies_pending && slots[i].recorded == slots[i].completed) {
-      return 0;
-    }
-    recorded[0] = slots[i].recorded;
-    break;
-  }
-  for (uint32_t i = 0; i < kLupineEventQueryBatch; ++i) {
-    if (slots[i].event == nullptr || slots[i].event == primary ||
-        slots[i].recorded == slots[i].completed ||
-        lupine_rpc_conn_for_event(slots[i].event) != conn) {
-      continue;
-    }
-    events[count] = slots[i].event;
-    recorded[count] = slots[i].recorded;
-    if (++count == kLupineEventQueryBatch) {
-      break;
-    }
-  }
-  return count;
-}
-
-void lupine_note_event_query_results(const CUevent *events,
-                                     const uint64_t *recorded,
-                                     const CUresult *results, uint32_t count) {
-  lupine_event_slot *slots = lupine_event_slots();
-  std::lock_guard<std::mutex> lock(lupine_event_slot_mutex());
-  for (uint32_t i = 0; i < count; ++i) {
-    if (results[i] != CUDA_SUCCESS || recorded[i] == 0) {
-      continue;
-    }
-    for (uint32_t j = 0; j < kLupineEventQueryBatch; ++j) {
-      if (slots[j].event == events[i] && slots[j].recorded == recorded[i]) {
-        slots[j].completed = recorded[i];
-        break;
-      }
-    }
-  }
-}
-
-void lupine_note_async_dtoh_copy() {
-  lupine_async_dtoh_issued.fetch_add(1, std::memory_order_relaxed);
-}
-
-} // namespace
-
 extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
                                           : lupine_route_for_default();
@@ -4067,7 +3959,7 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   }
   // Sampled before the request so a copy issued while it is in flight is not
   // mistaken for one the server already drained.
-  uint64_t drained = lupine_async_dtoh_issued.load(std::memory_order_relaxed);
+  uint64_t drained = lupine_async_dtoh_issued_count();
   CUresult results[kLupineEventQueryBatch];
   if (rpc_write_start_request(conn, RPC_cuEventQuery) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
@@ -4082,7 +3974,7 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   if (results[0] != CUDA_SUCCESS) {
     return results[0];
   }
-  lupine_async_dtoh_drained.store(drained, std::memory_order_relaxed);
+  lupine_note_async_dtoh_drained(drained);
   return lupine_sync_mapped_device_to_host();
 }
 
