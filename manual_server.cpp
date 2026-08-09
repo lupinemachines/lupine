@@ -1997,11 +1997,31 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
   return 0;
 }
 
-CUresult lupine_get_kernel_param_layout(CUfunction f,
-                                        lupine_kernel_param_layout *layout) {
-  if (layout == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
+// The driver rebuilds a kernel's parameter layout from its metadata on every
+// cuFuncGetParamInfo/cuKernelGetParamInfo call, which every launch would
+// otherwise repeat once per parameter. A handle's layout is fixed for the life
+// of the handle, so memoize it and drop the table when a module or library
+// unloads, before any handle can be reused.
+static std::mutex &lupine_kernel_param_layout_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+static std::unordered_map<CUfunction, lupine_kernel_param_layout> &
+lupine_kernel_param_layout_cache() {
+  static auto *cache =
+      new std::unordered_map<CUfunction, lupine_kernel_param_layout>();
+  return *cache;
+}
+
+void lupine_forget_kernel_param_layouts() {
+  std::lock_guard<std::mutex> lock(lupine_kernel_param_layout_mutex());
+  lupine_kernel_param_layout_cache().clear();
+}
+
+static CUresult
+lupine_read_kernel_param_layout(CUfunction f,
+                                lupine_kernel_param_layout *layout) {
   *layout = {};
   bool use_kernel_info = false;
   for (uint32_t i = 0;; ++i) {
@@ -2030,6 +2050,28 @@ CUresult lupine_get_kernel_param_layout(CUfunction f,
     layout->count = i + 1;
   }
   return CUDA_SUCCESS;
+}
+
+CUresult lupine_get_kernel_param_layout(CUfunction f,
+                                        lupine_kernel_param_layout *layout) {
+  if (layout == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_kernel_param_layout_mutex());
+    auto &cache = lupine_kernel_param_layout_cache();
+    auto cached = cache.find(f);
+    if (cached != cache.end()) {
+      *layout = cached->second;
+      return CUDA_SUCCESS;
+    }
+  }
+  CUresult result = lupine_read_kernel_param_layout(f, layout);
+  if (result == CUDA_SUCCESS) {
+    std::lock_guard<std::mutex> lock(lupine_kernel_param_layout_mutex());
+    lupine_kernel_param_layout_cache()[f] = *layout;
+  }
+  return result;
 }
 
 int handle_manual_cuLaunchKernel(conn_t *conn) {

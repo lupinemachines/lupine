@@ -9,6 +9,7 @@ struct lupine_kernel_param_layout;
 
 CUresult lupine_get_kernel_param_layout(CUfunction f,
                                         lupine_kernel_param_layout *layout);
+void lupine_forget_kernel_param_layouts();
 
 int handle_manual_cuGetErrorName(conn_t *conn);
 int handle_manual_cuGetErrorString(conn_t *conn);

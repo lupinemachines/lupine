@@ -13,6 +13,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <netdb.h>
 #include <netinet/tcp.h>
@@ -33,6 +34,7 @@
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -228,6 +230,16 @@ static std::vector<CUmodule> &lupine_loaded_modules() {
   return modules;
 }
 
+// Handles that are not host kernel stubs. Resolving one costs a dladdr() plus a
+// scan of every loaded module, and every launch of a server-side handle would
+// otherwise repeat it. Loading a module can turn a miss into a hit, so
+// lupine_remember_loaded_module() drops these. Guarded by
+// lupine_host_function_mutex().
+static std::unordered_set<CUfunction> &lupine_host_function_misses() {
+  static auto *misses = new std::unordered_set<CUfunction>();
+  return *misses;
+}
+
 struct lupine_device_attribute_key {
   int device = 0;
   int attribute = 0;
@@ -306,6 +318,15 @@ struct lupine_param_info_value {
   size_t size = 0;
 };
 
+struct lupine_param_layout_key {
+  uintptr_t handle = 0;
+  bool kernel = false;
+
+  bool operator==(const lupine_param_layout_key &other) const {
+    return handle == other.handle && kernel == other.kernel;
+  }
+};
+
 struct lupine_device_attribute_key_hash {
   size_t operator()(const lupine_device_attribute_key &key) const {
     return (static_cast<size_t>(static_cast<unsigned int>(key.device)) << 32) ^
@@ -337,6 +358,15 @@ struct lupine_occupancy_key_hash {
             (hash >> 2);
     hash ^= std::hash<bool>{}(key.with_flags) + 0x9e3779b9 + (hash << 6) +
             (hash >> 2);
+    return hash;
+  }
+};
+
+struct lupine_param_layout_key_hash {
+  size_t operator()(const lupine_param_layout_key &key) const {
+    size_t hash = std::hash<uintptr_t>{}(key.handle);
+    hash ^=
+        std::hash<bool>{}(key.kernel) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
     return hash;
   }
 };
@@ -468,6 +498,21 @@ lupine_param_info_cache() {
   return *cache;
 }
 
+// Whole-layout cache for the launch path. The per-index lupine_param_info_cache
+// still backs cold reads, but a launch must not walk it once per parameter.
+// Entries are shared_ptr so a concurrent lupine_invalidate_function_caches()
+// cannot free a layout a launch is still reading.
+static libcuckoo::cuckoohash_map<
+    lupine_param_layout_key, std::shared_ptr<const lupine_kernel_param_layout>,
+    lupine_param_layout_key_hash> &
+lupine_param_layout_cache() {
+  static auto *cache = new libcuckoo::cuckoohash_map<
+      lupine_param_layout_key,
+      std::shared_ptr<const lupine_kernel_param_layout>,
+      lupine_param_layout_key_hash>();
+  return *cache;
+}
+
 // Filled from the kernel table piggybacked on the cuLibraryLoadData response;
 // serves cuLibraryGetKernel without a round trip.
 struct lupine_library_kernel_name_key {
@@ -542,6 +587,7 @@ static void lupine_remember_loaded_module(CUmodule module) {
   auto &modules = lupine_loaded_modules();
   if (std::find(modules.begin(), modules.end(), module) == modules.end()) {
     modules.push_back(module);
+    lupine_host_function_misses().clear();
   }
 }
 
@@ -1527,11 +1573,20 @@ static CUfunction lupine_resolve_host_function(CUfunction function) {
     if (mapped != lupine_host_function_map().end()) {
       return mapped->second;
     }
+    if (lupine_host_function_misses().count(function) != 0) {
+      return function;
+    }
   }
+
+  auto remember_miss = [&]() {
+    std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
+    lupine_host_function_misses().insert(function);
+    return function;
+  };
 
   Dl_info info = {};
   if (dladdr(reinterpret_cast<void *>(function), &info) == 0) {
-    return function;
+    return remember_miss();
   }
   std::string symbol_name;
   const char *kernel_name = info.dli_sname;
@@ -1547,7 +1602,7 @@ static CUfunction lupine_resolve_host_function(CUfunction function) {
   if (kernel_name == nullptr) {
     LUPINE_TRACE_LOG("LUPINE could not resolve host kernel symbol for "
                      << reinterpret_cast<void *>(function));
-    return function;
+    return remember_miss();
   }
 
   std::vector<CUmodule> modules;
@@ -1572,7 +1627,7 @@ static CUfunction lupine_resolve_host_function(CUfunction function) {
                                          << modules.size()
                                          << " loaded modules");
 
-  return function;
+  return remember_miss();
 }
 
 static CUfunction lupine_translate_private_function(CUfunction function) {
@@ -4475,7 +4530,30 @@ static CUresult lupine_warm_kernel_param_info(CUkernel kernel) {
   }
 }
 
+// A handle's parameter layout is fixed for the life of the handle, so resolve
+// it once instead of once per launch.
+static CUresult lupine_kernel_param_layout_for(
+    CUfunction function, bool kernel,
+    std::shared_ptr<const lupine_kernel_param_layout> *layout) {
+  lupine_param_layout_key key{reinterpret_cast<uintptr_t>(function), kernel};
+  if (lupine_param_layout_cache().find(key, *layout)) {
+    return CUDA_SUCCESS;
+  }
+  auto resolved = std::make_shared<lupine_kernel_param_layout>();
+  CUresult status =
+      kernel ? lupine_read_kernel_param_layout(
+                   reinterpret_cast<CUkernel>(function), resolved.get())
+             : lupine_read_func_param_layout(function, resolved.get());
+  if (status != CUDA_SUCCESS) {
+    return status;
+  }
+  *layout = resolved;
+  lupine_param_layout_cache().insert_or_assign(key, resolved);
+  return CUDA_SUCCESS;
+}
+
 extern "C" void lupine_invalidate_function_caches() {
+  lupine_param_layout_cache().clear();
   lupine_param_info_cache().clear();
   lupine_kernel_function_cache().clear();
   lupine_occupancy_cache().clear();
@@ -4543,27 +4621,25 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                       blockDimZ, sharedMemBytes, hStream, kernelParams, extra);
   }
 
-  lupine_kernel_param_layout layout;
-  status = kernel_handle ? lupine_read_kernel_param_layout(
-                               reinterpret_cast<CUkernel>(f), &layout)
-                         : lupine_read_func_param_layout(f, &layout);
+  std::shared_ptr<const lupine_kernel_param_layout> layout_ref;
+  status = lupine_kernel_param_layout_for(f, kernel_handle, &layout_ref);
   if (status != CUDA_SUCCESS) {
     return status;
   }
 
   size_t payload_size = 0;
-  for (uint32_t i = 0; i < layout.count; ++i) {
+  for (uint32_t i = 0; i < layout_ref->count; ++i) {
     if (kernelParams == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
     if (kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    payload_size += layout.sizes[i];
+    payload_size += layout_ref->sizes[i];
   }
 
   lupine_route arg_route = lupine_route_from_known_kernel_deviceptr_args(
-      kernelParams, layout, launch_route);
+      kernelParams, *layout_ref, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
     status = lupine_resolve_launch_function_for_route(
@@ -4573,23 +4649,22 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     }
     route = lupine_route_for_function(f);
 
-    status = kernel_handle ? lupine_read_kernel_param_layout(
-                                 reinterpret_cast<CUkernel>(f), &layout)
-                           : lupine_read_func_param_layout(f, &layout);
+    status = lupine_kernel_param_layout_for(f, kernel_handle, &layout_ref);
     if (status != CUDA_SUCCESS) {
       return status;
     }
     payload_size = 0;
-    for (uint32_t i = 0; i < layout.count; ++i) {
+    for (uint32_t i = 0; i < layout_ref->count; ++i) {
       if (kernelParams == nullptr || kernelParams[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
-      payload_size += layout.sizes[i];
+      payload_size += layout_ref->sizes[i];
     }
     LUPINE_TRACE_LOG("LUPINE cuLaunchKernel rerouted by args f="
                      << f << " route=" << lupine_route_identity(route));
   }
 
+  const lupine_kernel_param_layout &layout = *layout_ref;
   bool used_managed_mapping = false;
   std::vector<CUdeviceptr> translated_params(layout.count);
   std::vector<void *> rpc_params(layout.count);
@@ -4669,27 +4744,25 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
                            : real(config, f, kernelParams, extra);
   }
 
-  lupine_kernel_param_layout layout;
-  status = kernel_handle ? lupine_read_kernel_param_layout(
-                               reinterpret_cast<CUkernel>(f), &layout)
-                         : lupine_read_func_param_layout(f, &layout);
+  std::shared_ptr<const lupine_kernel_param_layout> layout_ref;
+  status = lupine_kernel_param_layout_for(f, kernel_handle, &layout_ref);
   if (status != CUDA_SUCCESS) {
     return status;
   }
 
   size_t payload_size = 0;
-  for (uint32_t i = 0; i < layout.count; ++i) {
+  for (uint32_t i = 0; i < layout_ref->count; ++i) {
     if (kernelParams == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
     if (kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    payload_size += layout.sizes[i];
+    payload_size += layout_ref->sizes[i];
   }
 
   lupine_route arg_route = lupine_route_from_known_kernel_deviceptr_args(
-      kernelParams, layout, launch_route);
+      kernelParams, *layout_ref, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
     status = lupine_resolve_launch_function_for_route(
@@ -4699,21 +4772,20 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     }
     route = lupine_route_for_function(f);
 
-    status = kernel_handle ? lupine_read_kernel_param_layout(
-                                 reinterpret_cast<CUkernel>(f), &layout)
-                           : lupine_read_func_param_layout(f, &layout);
+    status = lupine_kernel_param_layout_for(f, kernel_handle, &layout_ref);
     if (status != CUDA_SUCCESS) {
       return status;
     }
     payload_size = 0;
-    for (uint32_t i = 0; i < layout.count; ++i) {
+    for (uint32_t i = 0; i < layout_ref->count; ++i) {
       if (kernelParams == nullptr || kernelParams[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
-      payload_size += layout.sizes[i];
+      payload_size += layout_ref->sizes[i];
     }
   }
 
+  const lupine_kernel_param_layout &layout = *layout_ref;
   bool used_managed_mapping = false;
   std::vector<CUdeviceptr> translated_params(layout.count);
   std::vector<void *> rpc_params(layout.count);

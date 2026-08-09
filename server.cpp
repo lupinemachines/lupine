@@ -287,6 +287,12 @@ lupine_manual_handlers() {
 static int lupine_handle_rpc_request(conn_t *conn, int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
 
+  // Unloading frees the function handles the layout cache is keyed by, and the
+  // driver may hand the same address back to a later load.
+  if (op == RPC_cuModuleUnload || op == RPC_cuLibraryUnload) {
+    lupine_forget_kernel_param_layouts();
+  }
+
   const auto &manual_handlers = lupine_manual_handlers();
   auto manual = manual_handlers.find(op);
   if (manual != manual_handlers.end()) {

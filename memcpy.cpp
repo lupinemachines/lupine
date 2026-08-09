@@ -476,17 +476,19 @@ static void lupine_disable_dirty_tracking(void *host,
   allocation.fresh_chunk_count = 0;
 }
 
-static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
-  std::vector<lupine_mapped_host_snapshot> snapshots;
+// Callers copy the table out because acting on an entry needs
+// lupine_host_allocation_mutex() again; they pass in storage so the launch path
+// does not allocate one per launch.
+static void
+lupine_mapped_host_snapshots(std::vector<lupine_mapped_host_snapshot> *out) {
+  out->clear();
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   for (const auto &entry : lupine_mutable_host_allocations_locked()) {
     if (entry.second.device_ptr != 0 && !entry.second.local_cuda) {
-      snapshots.push_back({entry.first, entry.second.size,
-                           entry.second.device_ptr, entry.second.device_dirty,
-                           entry.second.managed});
+      out->push_back({entry.first, entry.second.size, entry.second.device_ptr,
+                      entry.second.device_dirty, entry.second.managed});
     }
   }
-  return snapshots;
 }
 
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size) {
@@ -849,8 +851,10 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
   if (used_managed_mapping != nullptr) {
     *used_managed_mapping = false;
   }
-  std::vector<lupine_mapped_host_snapshot> snapshots =
-      lupine_mapped_host_snapshots();
+  // Reused across launches on this thread; the loop below only reads it and
+  // never re-enters the launch path.
+  static thread_local std::vector<lupine_mapped_host_snapshot> snapshots;
+  lupine_mapped_host_snapshots(&snapshots);
   bool used_managed = false;
   for (const auto &mapping : snapshots) {
     for (uint32_t i = 0; i < count; ++i) {
@@ -1157,7 +1161,9 @@ extern "C" void lupine_ensure_mapped_host_readable(const void *host,
 }
 
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
-  for (const auto &mapping : lupine_mapped_host_snapshots()) {
+  std::vector<lupine_mapped_host_snapshot> mappings;
+  lupine_mapped_host_snapshots(&mappings);
+  for (const auto &mapping : mappings) {
     if (!mapping.device_dirty || mapping.size == 0) {
       continue;
     }
