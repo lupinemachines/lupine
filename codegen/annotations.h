@@ -3530,6 +3530,7 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
 CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 /**
  * @async
+ * @disabled client - manual client tracks which events have work outstanding
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
@@ -3537,6 +3538,7 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 /**
  * @async
+ * @disabled client - manual client tracks which events have work outstanding
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
@@ -3545,7 +3547,7 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags);
 /**
- * @disabled server
+ * @disabled - manual client batches outstanding events into one query
  * @synchronize DEFERRED_DTOH
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY

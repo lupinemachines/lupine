@@ -3158,75 +3158,6 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
   return return_value;
 }
 
-CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUevent, CUstream);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuEventRecord", &return_value, hEvent, hStream)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventRecord) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return CUDA_SUCCESS;
-}
-
-CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
-                                unsigned int flags) {
-  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
-                                           : lupine_route_for_default());
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUevent, CUstream, unsigned int);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuEventRecordWithFlags", &return_value, hEvent, hStream,
-          flags)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuEventRecordWithFlags) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return CUDA_SUCCESS;
-}
-
-CUresult cuEventQuery(CUevent hEvent) {
-  CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
-  if (lupine_sync_result != CUDA_SUCCESS) {
-    return lupine_sync_result;
-  }
-  lupine_route route = lupine_route_for_event(hEvent);
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUevent);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventQuery",
-                                                  &return_value, hEvent)) {
-    if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventQuery) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
-  return return_value;
-}
-
 CUresult cuEventSynchronize(CUevent hEvent) {
   CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
   if (lupine_sync_result != CUDA_SUCCESS) {
@@ -7052,22 +6983,6 @@ extern "C" CUresult cuStreamSynchronize_ptsz(CUstream hStream) {
   return cuStreamSynchronize(hStream);
 }
 
-#ifdef cuEventRecord_ptsz
-#undef cuEventRecord_ptsz
-#endif
-extern "C" CUresult cuEventRecord_ptsz(CUevent hEvent, CUstream hStream) {
-  return cuEventRecord(hEvent, hStream);
-}
-
-#ifdef cuEventRecordWithFlags_ptsz
-#undef cuEventRecordWithFlags_ptsz
-#endif
-extern "C" CUresult cuEventRecordWithFlags_ptsz(CUevent hEvent,
-                                                CUstream hStream,
-                                                unsigned int flags) {
-  return cuEventRecordWithFlags(hEvent, hStream, flags);
-}
-
 #ifdef cuGraphicsMapResources_ptsz
 #undef cuGraphicsMapResources_ptsz
 #endif
@@ -7355,7 +7270,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuEventCreate", (void *)cuEventCreate},
     {"cuEventRecord", (void *)cuEventRecord},
     {"cuEventRecordWithFlags", (void *)cuEventRecordWithFlags},
-    {"cuEventQuery", (void *)cuEventQuery},
     {"cuEventSynchronize", (void *)cuEventSynchronize},
     {"cuEventDestroy_v2", (void *)cuEventDestroy_v2},
     {"cuEventElapsedTime_v2", (void *)cuEventElapsedTime_v2},
@@ -7556,8 +7470,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamAttachMemAsync_ptsz", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery_ptsz", (void *)cuStreamQuery},
     {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize},
-    {"cuEventRecord_ptsz", (void *)cuEventRecord},
-    {"cuEventRecordWithFlags_ptsz", (void *)cuEventRecordWithFlags},
     {"cuGraphicsMapResources_ptsz", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources_ptsz", (void *)cuGraphicsUnmapResources},
     {"cuSignalExternalSemaphoresAsync_ptsz",

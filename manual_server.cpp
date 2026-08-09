@@ -3159,9 +3159,17 @@ int handle_manual_cuEventRecord(conn_t *conn, bool with_flags) {
   return 0;
 }
 
+// The client batches every event it still has outstanding into one query so a
+// poller walking several events pays one round trip; events[0] is the one the
+// caller asked about and the only one that governs the deferred copy drain.
 int handle_manual_cuEventQuery(conn_t *conn) {
-  CUevent event = nullptr;
-  if (rpc_read(conn, &event, sizeof(event)) < 0) {
+  uint32_t count = 0;
+  if (rpc_read(conn, &count, sizeof(count)) < 0 || count == 0 ||
+      count > LUPINE_EVENT_QUERY_BATCH_MAX) {
+    return -1;
+  }
+  CUevent events[LUPINE_EVENT_QUERY_BATCH_MAX];
+  if (rpc_read(conn, events, count * sizeof(events[0])) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -3169,7 +3177,11 @@ int handle_manual_cuEventQuery(conn_t *conn) {
     return -1;
   }
 
-  CUresult result = cuEventQuery(event);
+  CUresult results[LUPINE_EVENT_QUERY_BATCH_MAX];
+  for (uint32_t i = 0; i < count; ++i) {
+    results[i] = cuEventQuery(events[i]);
+  }
+  CUresult result = results[0];
 
   if (rpc_write_start_response(conn, request_id) < 0) {
     return -1;
@@ -3187,7 +3199,8 @@ int handle_manual_cuEventQuery(conn_t *conn) {
       return -1;
     }
   }
-  if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+  if (rpc_write(conn, results, count * sizeof(results[0])) < 0 ||
+      rpc_write_end(conn) < 0) {
     lupine_cleanup_pending_dtoh_copies(&pending);
     return -1;
   }
