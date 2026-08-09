@@ -185,6 +185,79 @@ extern "C" void lupine_invalidate_current_context_cache();
 static void rpc_destroy_thread_lane(uint64_t lane_id) { (void)lane_id; }
 #endif
 
+namespace {
+
+struct rpc_deferred_response {
+  conn_t *conn;
+  int request_id;
+  rpc_deferred_response_fn handler;
+  void *context;
+};
+
+std::vector<rpc_deferred_response> rpc_deferred_responses;
+pthread_mutex_t rpc_deferred_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+bool rpc_take_deferred_response(conn_t *conn, int request_id,
+                                rpc_deferred_response *out) {
+  bool found = false;
+  pthread_mutex_lock(&rpc_deferred_mutex);
+  for (size_t i = 0; i < rpc_deferred_responses.size(); ++i) {
+    if (rpc_deferred_responses[i].conn != conn ||
+        rpc_deferred_responses[i].request_id != request_id) {
+      continue;
+    }
+    *out = rpc_deferred_responses[i];
+    rpc_deferred_responses.erase(rpc_deferred_responses.begin() + i);
+    found = true;
+    break;
+  }
+  pthread_mutex_unlock(&rpc_deferred_mutex);
+  return found;
+}
+
+void rpc_abandon_deferred_responses(conn_t *conn) {
+  for (;;) {
+    rpc_deferred_response entry;
+    bool found = false;
+    pthread_mutex_lock(&rpc_deferred_mutex);
+    for (size_t i = 0; i < rpc_deferred_responses.size(); ++i) {
+      if (rpc_deferred_responses[i].conn != conn) {
+        continue;
+      }
+      entry = rpc_deferred_responses[i];
+      rpc_deferred_responses.erase(rpc_deferred_responses.begin() + i);
+      found = true;
+      break;
+    }
+    pthread_mutex_unlock(&rpc_deferred_mutex);
+    if (!found) {
+      return;
+    }
+    entry.handler(nullptr, entry.context);
+  }
+}
+
+} // namespace
+
+int rpc_write_end_deferred(conn_t *conn, rpc_deferred_response_fn handler,
+                           void *context) {
+  if (conn == nullptr || handler == nullptr) {
+    return -1;
+  }
+  int request_id = conn->write_id;
+  pthread_mutex_lock(&rpc_deferred_mutex);
+  rpc_deferred_responses.push_back({conn, request_id, handler, context});
+  pthread_mutex_unlock(&rpc_deferred_mutex);
+  if (rpc_write_end(conn) < 0) {
+    rpc_deferred_response entry;
+    if (rpc_take_deferred_response(conn, request_id, &entry)) {
+      entry.handler(nullptr, entry.context);
+    }
+    return -1;
+  }
+  return 0;
+}
+
 static void rpc_mark_connection_closed(conn_t *conn) {
   conn->closed = 1;
 #ifdef LUPINE_RPC_CLIENT
@@ -236,12 +309,30 @@ void *_rpc_read_id_dispatch(void *p) {
     }
 
     conn->read_id = request_id;
+
+    rpc_deferred_response deferred;
+    if (rpc_take_deferred_response(conn, request_id, &deferred)) {
+      bool ok = rpc_http2_read(conn, &conn->read_lane_id,
+                               sizeof(conn->read_lane_id)) ==
+                    (int)sizeof(conn->read_lane_id) &&
+                rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) ==
+                    (int)sizeof(conn->read_op) &&
+                conn->read_op == -1;
+      pthread_mutex_unlock(&conn->read_mutex);
+      ok = deferred.handler(ok ? conn : nullptr, deferred.context) == 0 && ok;
+      if (rpc_read_end(conn) < 0 || !ok) {
+        break;
+      }
+      continue;
+    }
+
     if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
         pthread_mutex_unlock(&conn->read_mutex) < 0) {
       break;
     }
   }
   rpc_mark_connection_closed(conn);
+  rpc_abandon_deferred_responses(conn);
   pthread_cond_broadcast(&conn->read_cond);
   conn->rpc_thread = 0;
   return NULL;

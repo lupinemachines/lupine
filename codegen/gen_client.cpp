@@ -15,6 +15,7 @@
 #include "gen_api.h"
 
 #include "client_routing.h"
+#include "handles.h"
 #include "rpc.h"
 
 extern int rpc_size();
@@ -1275,18 +1276,21 @@ CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
 }
 
 CUresult cuIpcGetEventHandle(CUipcEventHandle *pHandle, CUevent event) {
-  lupine_route route = lupine_route_for_event(event);
+  CUevent event_rpc = lupine_handle_resolve_event(event);
+  if (event != nullptr && event_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
+  lupine_route route = lupine_route_for_event(event_rpc);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUipcEventHandle *, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuIpcGetEventHandle", &return_value, pHandle, event)) {
+          route, "cuIpcGetEventHandle", &return_value, pHandle, event_rpc)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuIpcGetEventHandle) < 0 ||
       rpc_write(conn, pHandle, sizeof(CUipcEventHandle)) < 0 ||
-      rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &event_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pHandle, sizeof(CUipcEventHandle)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3144,14 +3148,19 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  if (phEvent == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUevent phEvent_rpc = nullptr;
+  uintptr_t phEvent_synthetic = lupine_handle_mint(LUPINE_HANDLE_EVENT);
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventCreate) < 0 ||
-      rpc_write(conn, phEvent, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &phEvent_rpc, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, phEvent, sizeof(CUevent)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      lupine_handle_defer_event_create(conn, phEvent_synthetic) < 0) {
+    lupine_handle_forget(LUPINE_HANDLE_EVENT, phEvent_synthetic);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  *phEvent = (CUevent)phEvent_synthetic;
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS && phEvent != nullptr) {
     lupine_note_event_owner_route(*phEvent, route);
   }
@@ -3159,17 +3168,20 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
 }
 
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
+  CUevent hEvent_rpc = lupine_handle_resolve_event(hEvent);
+  if (hEvent != nullptr && hEvent_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUevent, CUstream);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuEventRecord", &return_value, hEvent, hStream)) {
+          route, "cuEventRecord", &return_value, hEvent_rpc, hStream)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventRecord) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &hEvent_rpc, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3180,19 +3192,22 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
 
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags) {
+  CUevent hEvent_rpc = lupine_handle_resolve_event(hEvent);
+  if (hEvent != nullptr && hEvent_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUevent, CUstream, unsigned int);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuEventRecordWithFlags", &return_value, hEvent, hStream,
+          route, "cuEventRecordWithFlags", &return_value, hEvent_rpc, hStream,
           flags)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuEventRecordWithFlags) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &hEvent_rpc, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3207,18 +3222,21 @@ CUresult cuEventQuery(CUevent hEvent) {
   if (lupine_sync_result != CUDA_SUCCESS) {
     return lupine_sync_result;
   }
-  lupine_route route = lupine_route_for_event(hEvent);
+  CUevent hEvent_rpc = lupine_handle_resolve_event(hEvent);
+  if (hEvent != nullptr && hEvent_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
+  lupine_route route = lupine_route_for_event(hEvent_rpc);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventQuery",
-                                                  &return_value, hEvent)) {
+                                                  &return_value, hEvent_rpc)) {
     if (return_value == CUDA_SUCCESS)
       return_value = lupine_sync_mapped_device_to_host();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cuEventQuery) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &hEvent_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3234,11 +3252,14 @@ CUresult cuEventSynchronize(CUevent hEvent) {
   if (lupine_sync_result != CUDA_SUCCESS) {
     return lupine_sync_result;
   }
-  lupine_route route = lupine_route_for_event(hEvent);
+  CUevent hEvent_rpc = lupine_handle_resolve_event(hEvent);
+  if (hEvent != nullptr && hEvent_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
+  lupine_route route = lupine_route_for_event(hEvent_rpc);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventSynchronize",
-                                                  &return_value, hEvent)) {
+                                                  &return_value, hEvent_rpc)) {
     if (return_value == CUDA_SUCCESS)
       return_value = lupine_sync_mapped_device_to_host();
     return return_value;
@@ -3246,7 +3267,7 @@ CUresult cuEventSynchronize(CUevent hEvent) {
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuEventSynchronize) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &hEvent_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
       lupine_forward_remote_stdout(conn) < 0 ||
@@ -3259,40 +3280,53 @@ CUresult cuEventSynchronize(CUevent hEvent) {
 }
 
 CUresult cuEventDestroy_v2(CUevent hEvent) {
-  lupine_route route = lupine_route_for_event(hEvent);
+  CUevent hEvent_rpc = lupine_handle_resolve_event(hEvent);
+  if (hEvent != nullptr && hEvent_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
+  lupine_route route = lupine_route_for_event(hEvent_rpc);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventDestroy_v2",
-                                                  &return_value, hEvent)) {
+                                                  &return_value, hEvent_rpc)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_handle_forget(LUPINE_HANDLE_EVENT, (uintptr_t)hEvent);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuEventDestroy_v2) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &hEvent_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_handle_forget(LUPINE_HANDLE_EVENT, (uintptr_t)hEvent);
   return return_value;
 }
 
 CUresult cuEventElapsedTime_v2(float *pMilliseconds, CUevent hStart,
                                CUevent hEnd) {
-  lupine_route route = lupine_route_for_event(hStart);
+  CUevent hStart_rpc = lupine_handle_resolve_event(hStart);
+  if (hStart != nullptr && hStart_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
+  CUevent hEnd_rpc = lupine_handle_resolve_event(hEnd);
+  if (hEnd != nullptr && hEnd_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
+  lupine_route route = lupine_route_for_event(hStart_rpc);
   CUresult return_value;
   using real_fn_t = CUresult (*)(float *, CUevent, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuEventElapsedTime_v2", &return_value, pMilliseconds, hStart,
-          hEnd)) {
+          route, "cuEventElapsedTime_v2", &return_value, pMilliseconds,
+          hStart_rpc, hEnd_rpc)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuEventElapsedTime_v2) < 0 ||
       rpc_write(conn, pMilliseconds, sizeof(float)) < 0 ||
-      rpc_write(conn, &hStart, sizeof(CUevent)) < 0 ||
-      rpc_write(conn, &hEnd, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &hStart_rpc, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &hEnd_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pMilliseconds, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4225,13 +4259,16 @@ CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                    const CUgraphNode *dependencies,
                                    size_t numDependencies, CUevent event) {
+  CUevent event_rpc = lupine_handle_resolve_event(event);
+  if (event != nullptr && event_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = lupine_route_for_graph(hGraph);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUgraphNode *, CUgraph, const CUgraphNode *,
                                  size_t, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuGraphAddEventRecordNode", &return_value, phGraphNode,
-          hGraph, dependencies, numDependencies, event)) {
+          hGraph, dependencies, numDependencies, event_rpc)) {
     if (return_value == CUDA_SUCCESS && phGraphNode != nullptr) {
       lupine_note_graph_node_owner_route(*phGraphNode, route);
     }
@@ -4249,7 +4286,7 @@ CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       (numDependencies * sizeof(const CUgraphNode) != 0 &&
        rpc_write(conn, dependencies,
                  numDependencies * sizeof(const CUgraphNode)) < 0) ||
-      rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &event_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4284,19 +4321,22 @@ CUresult cuGraphEventRecordNodeGetEvent(CUgraphNode hNode, CUevent *event_out) {
 }
 
 CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event) {
+  CUevent event_rpc = lupine_handle_resolve_event(event);
+  if (event != nullptr && event_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = lupine_route_for_graph_node(hNode);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUgraphNode, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuGraphEventRecordNodeSetEvent", &return_value, hNode,
-          event)) {
+          event_rpc)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphEventRecordNodeSetEvent) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &event_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -4307,13 +4347,16 @@ CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event) {
 CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                  const CUgraphNode *dependencies,
                                  size_t numDependencies, CUevent event) {
+  CUevent event_rpc = lupine_handle_resolve_event(event);
+  if (event != nullptr && event_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = lupine_route_for_graph(hGraph);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUgraphNode *, CUgraph, const CUgraphNode *,
                                  size_t, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuGraphAddEventWaitNode", &return_value, phGraphNode, hGraph,
-          dependencies, numDependencies, event)) {
+          dependencies, numDependencies, event_rpc)) {
     if (return_value == CUDA_SUCCESS && phGraphNode != nullptr) {
       lupine_note_graph_node_owner_route(*phGraphNode, route);
     }
@@ -4331,7 +4374,7 @@ CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       (numDependencies * sizeof(const CUgraphNode) != 0 &&
        rpc_write(conn, dependencies,
                  numDependencies * sizeof(const CUgraphNode)) < 0) ||
-      rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &event_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4366,18 +4409,22 @@ CUresult cuGraphEventWaitNodeGetEvent(CUgraphNode hNode, CUevent *event_out) {
 }
 
 CUresult cuGraphEventWaitNodeSetEvent(CUgraphNode hNode, CUevent event) {
+  CUevent event_rpc = lupine_handle_resolve_event(event);
+  if (event != nullptr && event_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = lupine_route_for_graph_node(hNode);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUgraphNode, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuGraphEventWaitNodeSetEvent", &return_value, hNode, event)) {
+          route, "cuGraphEventWaitNodeSetEvent", &return_value, hNode,
+          event_rpc)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphEventWaitNodeSetEvent) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &event_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -5265,12 +5312,15 @@ CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
 
 CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
                                             CUgraphNode hNode, CUevent event) {
+  CUevent event_rpc = lupine_handle_resolve_event(event);
+  if (event != nullptr && event_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = lupine_route_for_graph_exec(hGraphExec);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUgraphExec, CUgraphNode, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuGraphExecEventRecordNodeSetEvent", &return_value,
-          hGraphExec, hNode, event)) {
+          hGraphExec, hNode, event_rpc)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -5279,7 +5329,7 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
           0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &event_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -5289,12 +5339,15 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
 
 CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
                                           CUgraphNode hNode, CUevent event) {
+  CUevent event_rpc = lupine_handle_resolve_event(event);
+  if (event != nullptr && event_rpc == nullptr)
+    return CUDA_ERROR_INVALID_HANDLE;
   lupine_route route = lupine_route_for_graph_exec(hGraphExec);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUgraphExec, CUgraphNode, CUevent);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuGraphExecEventWaitNodeSetEvent", &return_value, hGraphExec,
-          hNode, event)) {
+          hNode, event_rpc)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -5302,7 +5355,7 @@ CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
       rpc_write_start_request(conn, RPC_cuGraphExecEventWaitNodeSetEvent) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
+      rpc_write(conn, &event_rpc, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)

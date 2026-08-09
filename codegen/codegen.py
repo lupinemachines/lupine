@@ -21,9 +21,24 @@ from ops import (
     CrossServerCopyAnnotation,
     DevicePtrTranslationAnnotation,
     FunctionAnnotationMetadata,
+    HandleCreateAnnotation,
+    HandleResolveAnnotation,
     RoutingFallbackAnnotation,
     SynchronizeAnnotation,
 )
+
+# Synthetic handle families and the client glue that mints, resolves and
+# forgets them. The handle table itself is type blind; only these entry points
+# know what a family's handles are.
+HANDLE_FAMILIES = {
+    "EVENT": "LUPINE_HANDLE_EVENT",
+}
+HANDLE_RESOLVERS = {
+    "EVENT": "lupine_handle_resolve_event",
+}
+HANDLE_CREATORS = {
+    "EVENT": "lupine_handle_defer_event_create",
+}
 
 # this table is manually generated from the cuda.h headers
 MANUAL_REMAPPINGS = [
@@ -329,6 +344,15 @@ def parse_annotation(
                 parameter=annotation_param(params, parts[2]),
             )
             continue
+        if line.startswith("@handlecreate"):
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            metadata.handle_create = HandleCreateAnnotation(
+                parameter=annotation_param(params, parts[2]),
+                family=parts[1].upper(),
+            )
+            continue
         if line.startswith("@recordowner"):
             parts = line.split()
             if len(parts) < 3:
@@ -375,6 +399,13 @@ def parse_annotation(
             if "TRANSLATE_DEVICEPTR" in args:
                 metadata.translate_deviceptrs.append(
                     DevicePtrTranslationAnnotation(parameter=param)
+                )
+            handle_arg = next((arg for arg in args if arg.startswith("HANDLE:")), None)
+            if handle_arg is not None:
+                metadata.resolve_handles.append(
+                    HandleResolveAnnotation(
+                        parameter=param, family=handle_arg.split(":", 1)[1].upper()
+                    )
                 )
             # if there's a length or size arg, use the type, otherwise use the ptr_to type
             length_arg = next((arg for arg in args if arg.startswith("LENGTH:")), None)
@@ -681,8 +712,14 @@ def client_translated_deviceptr_names(
     return {translation.parameter.name for translation in metadata.translate_deviceptrs}
 
 
+def client_resolved_handle_names(metadata: FunctionAnnotationMetadata) -> set[str]:
+    return {handle.parameter.name for handle in metadata.resolve_handles}
+
+
 def client_param_expr(metadata: FunctionAnnotationMetadata, param: Parameter) -> str:
     if param.name in client_translated_deviceptr_names(metadata):
+        return f"{param.name}_rpc"
+    if param.name in client_resolved_handle_names(metadata):
         return f"{param.name}_rpc"
     return param.name
 
@@ -746,6 +783,29 @@ def client_call_args(function: Function, metadata: FunctionAnnotationMetadata) -
 
 
 def write_client_rpc_write(f, operation: Operation, metadata: FunctionAnnotationMetadata):
+    if (
+        metadata.handle_create is not None
+        and operation.parameter.name == metadata.handle_create.parameter.name
+    ):
+        f.write(
+            "        rpc_write(conn, &{param_name}_rpc, sizeof({param_type})) < 0 ||\n".format(
+                param_name=operation.parameter.name,
+                param_type=metadata.handle_create.parameter.type.ptr_to.format(),
+            )
+        )
+        return
+    if (
+        isinstance(operation, OpaqueTypeOperation)
+        and operation.send
+        and operation.parameter.name in client_resolved_handle_names(metadata)
+    ):
+        f.write(
+            "        rpc_write(conn, &{param_name}_rpc, sizeof({param_type})) < 0 ||\n".format(
+                param_name=operation.parameter.name,
+                param_type=operation.type_.format(),
+            )
+        )
+        return
     if (
         isinstance(operation, OpaqueTypeOperation)
         and operation.send
@@ -822,6 +882,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_deviceptr_owner(dptr);\n")
     if function.name.format() == "cuStreamDestroy_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_stream_owner(hStream);\n")
+    if function.name.format() == "cuEventDestroy_v2":
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_handle_forget(LUPINE_HANDLE_EVENT, (uintptr_t)hEvent);\n")
     # Record the global's size so offset pointers into it route by range.
     if function.name.format() in {"cuModuleGetGlobal_v2", "cuLibraryGetGlobal", "cuLibraryGetManaged"}:
         f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr) lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);\n")
@@ -1161,6 +1223,102 @@ def validate_async_annotation(
             )
 
 
+def validate_handle_annotations(
+    function: Function, metadata: FunctionAnnotationMetadata
+) -> None:
+    name = function.name.format()
+    return_type = function.return_type.format()
+    for handle in metadata.resolve_handles:
+        if handle.family not in HANDLE_FAMILIES:
+            raise RuntimeError(f"{name}: unknown handle family {handle.family}")
+        if return_type != "CUresult":
+            raise RuntimeError(
+                f"{name}: HANDLE params require a CUresult return type, "
+                f"got {return_type}"
+            )
+        if isinstance(handle.parameter.type, (Pointer, Array)):
+            raise RuntimeError(
+                f"{name}: HANDLE param {handle.parameter.name} must be passed by value"
+            )
+        operation = next(
+            (
+                op
+                for op in metadata.operations
+                if op.parameter.name == handle.parameter.name
+            ),
+            None,
+        )
+        if not isinstance(operation, OpaqueTypeOperation) or not operation.send:
+            raise RuntimeError(
+                f"{name}: HANDLE param {handle.parameter.name} must be SEND_ONLY"
+            )
+    create = metadata.handle_create
+    if create is None:
+        return
+    if create.family not in HANDLE_FAMILIES:
+        raise RuntimeError(f"{name}: unknown handle family {create.family}")
+    if return_type != "CUresult":
+        raise RuntimeError(
+            f"{name}: @handlecreate requires a CUresult return type, got {return_type}"
+        )
+    if metadata.async_fire_forget:
+        raise RuntimeError(
+            f"{name}: @handlecreate needs the response that @async suppresses"
+        )
+    if not isinstance(create.parameter.type, Pointer):
+        raise RuntimeError(
+            f"{name}: @handlecreate parameter {create.parameter.name} must be a pointer"
+        )
+    operation = next(
+        (
+            op
+            for op in metadata.operations
+            if op.parameter.name == create.parameter.name
+        ),
+        None,
+    )
+    if not isinstance(operation, DereferenceOperation) or not operation.recv:
+        raise RuntimeError(
+            f"{name}: @handlecreate parameter {create.parameter.name} must be received"
+        )
+
+
+def write_client_handle_create(f, function, operations, metadata):
+    create = metadata.handle_create
+    name = function.name.format()
+    param_name = create.parameter.name
+    handle_type = create.parameter.type.ptr_to.format()
+    family = HANDLE_FAMILIES[create.family]
+    f.write(f"    if ({param_name} == nullptr)\n")
+    f.write("        return CUDA_ERROR_INVALID_VALUE;\n")
+    f.write(f"    {handle_type} {param_name}_rpc = nullptr;\n")
+    f.write(
+        f"    uintptr_t {param_name}_synthetic = lupine_handle_mint({family});\n"
+    )
+    f.write(
+        "    if (conn == nullptr ||\n"
+        f"        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n"
+    )
+    for operation in operations:
+        write_client_rpc_write(f, operation, metadata)
+    f.write(
+        f"        {HANDLE_CREATORS[create.family]}(conn, {param_name}_synthetic) < 0) {{\n"
+    )
+    f.write(f"        lupine_handle_forget({family}, {param_name}_synthetic);\n")
+    f.write(
+        "        return {error_return};\n".format(
+            error_return=error_const(function.return_type.format())
+        )
+    )
+    f.write("    }\n")
+    f.write(
+        f"    *{param_name} = ({handle_type}){param_name}_synthetic;\n"
+    )
+    f.write("    return_value = CUDA_SUCCESS;\n")
+    write_client_post_call(f, function, metadata)
+    f.write("    return return_value;\n")
+
+
 def main():
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
@@ -1211,6 +1369,7 @@ def main():
             print(f"Error parsing annotation for {function.name}: {e}")
             continue
         validate_async_annotation(function, metadata)
+        validate_handle_annotations(function, metadata)
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
         )
@@ -1289,6 +1448,7 @@ def main():
             "#include <vector>\n\n"
             '#include "gen_api.h"\n\n'
             '#include "client_routing.h"\n'
+            '#include "handles.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -1366,6 +1526,22 @@ def main():
                     "        return lupine_sync_result;\n"
                     "    }\n"
                 )
+
+            for handle in metadata.resolve_handles:
+                handle_name = handle.parameter.name
+                f.write(
+                    "    {type} {name}_rpc = {resolver}({name});\n".format(
+                        type=handle.parameter.type.format(),
+                        name=handle_name,
+                        resolver=HANDLE_RESOLVERS[handle.family],
+                    )
+                )
+                f.write(
+                    "    if ({name} != nullptr && {name}_rpc == nullptr)\n".format(
+                        name=handle_name
+                    )
+                )
+                f.write("        return CUDA_ERROR_INVALID_HANDLE;\n")
 
             for translation in metadata.translate_deviceptrs:
                 name = translation.parameter.name
@@ -1545,6 +1721,11 @@ def main():
                     operation.client_preflight(
                         f, invalid_argument_const(function.return_type.format())
                     )
+
+            if metadata.handle_create is not None:
+                write_client_handle_create(f, function, operations, metadata)
+                f.write("}\n\n")
+                continue
 
             if metadata.async_fire_forget:
                 error_return = error_const(function.return_type.format())

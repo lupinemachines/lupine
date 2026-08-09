@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
 #include "cuda_compat.h"
@@ -97,6 +98,13 @@ extern "C" void *lupine_real_cuda_symbol(const char *name);
 extern "C" bool lupine_local_cuda_symbol_if_routed(lupine_route route,
                                                    const char *symbol,
                                                    void **symbol_out);
+
+// Sends a cuEventCreate request whose response fulfills the synthetic handle
+// from the reader thread; the caller does not wait. Takes over the request
+// builder exactly like rpc_wait_for_response does.
+extern "C" int lupine_handle_defer_event_create(conn_t *conn,
+                                                uintptr_t synthetic);
+extern "C" CUevent lupine_handle_resolve_event(CUevent event);
 
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);

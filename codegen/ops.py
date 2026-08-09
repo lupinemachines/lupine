@@ -1073,6 +1073,18 @@ class DevicePtrTranslationAnnotation:
 
 
 @dataclass
+class HandleResolveAnnotation:
+    parameter: Parameter
+    family: str
+
+
+@dataclass
+class HandleCreateAnnotation:
+    parameter: Parameter
+    family: str
+
+
+@dataclass
 class RoutingFallbackAnnotation:
     kind: str
     parameter: Parameter
@@ -1100,9 +1112,17 @@ class FunctionAnnotationMetadata:
     record_owners: list[OwnerAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
+    # HANDLE:<FAMILY> params carry client-minted synthetic handles that the
+    # wrapper maps back to the server's handle before marshalling.
+    resolve_handles: list[HandleResolveAnnotation] = None
+    # @handlecreate <FAMILY> <param>: the wrapper mints the handle, returns it
+    # immediately, and the response fulfills it from the reader thread.
+    handle_create: Optional[HandleCreateAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
         if self.translate_deviceptrs is None:
             self.translate_deviceptrs = []
+        if self.resolve_handles is None:
+            self.resolve_handles = []

@@ -85,6 +85,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/handles.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
@@ -117,6 +118,7 @@ set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/handles.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
@@ -236,6 +238,16 @@ else()
     add_test(NAME ipc_test COMMAND ipc_test)
     lupine_scaled_timeout(ipc_timeout 10)
     set_tests_properties(ipc_test PROPERTIES TIMEOUT ${ipc_timeout})
+
+    add_executable(handles_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/handles.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/handles_test.cpp
+    )
+    target_link_libraries(handles_test PRIVATE pthread)
+    lupine_apply_sanitizer(handles_test)
+    add_test(NAME handles_test COMMAND handles_test)
+    lupine_scaled_timeout(handles_timeout 10)
+    set_tests_properties(handles_test PROPERTIES TIMEOUT ${handles_timeout})
 
     add_library(test_lupinecr_provider SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_checkpoint_provider.c

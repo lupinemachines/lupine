@@ -52,6 +52,7 @@
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_client.h"
+#include "handles.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
@@ -3837,8 +3838,65 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
   return 0;
 }
 
+namespace {
+
+struct lupine_pending_event_create {
+  uintptr_t synthetic;
+};
+
+// Runs on the reader thread, so it touches nothing but the handle table: any
+// lock a wrapper can hold across a round trip would deadlock here, because
+// this thread is the one that delivers that round trip's response.
+int lupine_fulfill_event_create(conn_t *conn, void *context) {
+  auto *pending = static_cast<lupine_pending_event_create *>(context);
+  CUevent event = nullptr;
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  int status = 0;
+  if (conn == nullptr || rpc_read(conn, &event, sizeof(event)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0) {
+    status = -1;
+  }
+  if (status < 0 || result != CUDA_SUCCESS) {
+    event = nullptr;
+  }
+  lupine_handle_fulfill(LUPINE_HANDLE_EVENT, pending->synthetic,
+                        reinterpret_cast<uintptr_t>(event));
+  delete pending;
+  return status;
+}
+
+} // namespace
+
+extern "C" int lupine_handle_defer_event_create(conn_t *conn,
+                                                uintptr_t synthetic) {
+  auto *pending = new lupine_pending_event_create{synthetic};
+  if (rpc_write_end_deferred(conn, lupine_fulfill_event_create, pending) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+extern "C" CUevent lupine_handle_resolve_event(CUevent event) {
+  uintptr_t synthetic = reinterpret_cast<uintptr_t>(event);
+  if (!lupine_handle_is_synthetic(synthetic)) {
+    return event;
+  }
+  lupine_route route = lupine_route_for_event(event);
+  auto real = reinterpret_cast<CUevent>(
+      lupine_handle_resolve(LUPINE_HANDLE_EVENT, synthetic));
+  if (real != nullptr) {
+    lupine_note_event_owner_route(real, route);
+  }
+  return real;
+}
+
 extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
                                       unsigned int Flags) {
+  CUevent hEvent_rpc = lupine_handle_resolve_event(hEvent);
+  if (hEvent != nullptr && hEvent_rpc == nullptr) {
+    return CUDA_ERROR_INVALID_HANDLE;
+  }
+  hEvent = hEvent_rpc;
   lupine_route route = hStream == nullptr ? lupine_route_for_default()
                                           : lupine_route_for_stream(hStream);
   lupine_route event_route = lupine_route_for_event(hEvent);

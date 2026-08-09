@@ -73,6 +73,24 @@ struct conn_t {
 
 extern int rpc_dispatch(conn_t *conn, int parity);
 extern int rpc_read_start(conn_t *conn, int write_id);
+
+// Consumes a response no caller is waiting for. The handler reads the response
+// body exactly as a caller would after rpc_read_start; a null conn means the
+// response will never arrive and the handler must only release its context.
+//
+// Locking argument: the reader thread publishes conn->read_id and reads the
+// lane/op header under read_mutex, then drops read_mutex and runs the handler
+// with the frame still reserved (read_id != 0), finishing with rpc_read_end.
+// That is the same claim protocol a waiting caller follows, so no other thread
+// can read from the wire concurrently, and it is the reader thread itself that
+// claims the frame, so an unwaited response can never wedge the connection. A
+// handler therefore must not block on any lock that another thread can hold
+// across an RPC round trip, because it runs on the only thread that can
+// deliver that round trip's response.
+typedef int (*rpc_deferred_response_fn)(conn_t *conn, void *context);
+extern int rpc_write_end_deferred(conn_t *conn,
+                                  rpc_deferred_response_fn handler,
+                                  void *context);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);

@@ -2657,7 +2657,7 @@ CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId);
 CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev);
 /**
  * @param pHandle SEND_RECV
- * @param event SEND_ONLY
+ * @param event SEND_ONLY HANDLE:EVENT
  */
 CUresult cuIpcGetEventHandle(CUipcEventHandle *pHandle, CUevent event);
 /**
@@ -3405,7 +3405,7 @@ CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
  * @disabled - manual client handles cross-server event waits
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
- * @param hEvent SEND_ONLY
+ * @param hEvent SEND_ONLY HANDLE:EVENT
  * @param Flags SEND_ONLY
  */
 CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
@@ -3523,6 +3523,7 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
                               const CUstreamAttrValue *value);
 /**
  * @routingkey CURRENT_CONTEXT
+ * @handlecreate EVENT phEvent
  * @recordowner EVENT phEvent
  * @param phEvent SEND_RECV
  * @param Flags SEND_ONLY
@@ -3530,13 +3531,13 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
 CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 /**
  * @routingkey STREAM hStream
- * @param hEvent SEND_ONLY
+ * @param hEvent SEND_ONLY HANDLE:EVENT
  * @param hStream SEND_ONLY
  */
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 /**
  * @routingkey STREAM hStream
- * @param hEvent SEND_ONLY
+ * @param hEvent SEND_ONLY HANDLE:EVENT
  * @param hStream SEND_ONLY
  * @param flags SEND_ONLY
  */
@@ -3546,25 +3547,25 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
  * @disabled server
  * @synchronize DEFERRED_DTOH
  * @routingkey EVENT hEvent
- * @param hEvent SEND_ONLY
+ * @param hEvent SEND_ONLY HANDLE:EVENT
  */
 CUresult cuEventQuery(CUevent hEvent);
 /**
  * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey EVENT hEvent
- * @param hEvent SEND_ONLY
+ * @param hEvent SEND_ONLY HANDLE:EVENT
  */
 CUresult cuEventSynchronize(CUevent hEvent);
 /**
  * @routingkey EVENT hEvent
- * @param hEvent SEND_ONLY
+ * @param hEvent SEND_ONLY HANDLE:EVENT
  */
 CUresult cuEventDestroy_v2(CUevent hEvent);
 /**
  * @param pMilliseconds SEND_RECV
- * @param hStart SEND_ONLY
- * @param hEnd SEND_ONLY
+ * @param hStart SEND_ONLY HANDLE:EVENT
+ * @param hEnd SEND_ONLY HANDLE:EVENT
  */
 CUresult cuEventElapsedTime(float *pMilliseconds, CUevent hStart, CUevent hEnd);
 /**
@@ -3970,7 +3971,7 @@ CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
- * @param event SEND_ONLY
+ * @param event SEND_ONLY HANDLE:EVENT
  */
 CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                    const CUgraphNode *dependencies,
@@ -3982,7 +3983,7 @@ CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 CUresult cuGraphEventRecordNodeGetEvent(CUgraphNode hNode, CUevent *event_out);
 /**
  * @param hNode SEND_ONLY
- * @param event SEND_ONLY
+ * @param event SEND_ONLY HANDLE:EVENT
  */
 CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event);
 /**
@@ -3991,7 +3992,7 @@ CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event);
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
- * @param event SEND_ONLY
+ * @param event SEND_ONLY HANDLE:EVENT
  */
 CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                  const CUgraphNode *dependencies,
@@ -4003,7 +4004,7 @@ CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 CUresult cuGraphEventWaitNodeGetEvent(CUgraphNode hNode, CUevent *event_out);
 /**
  * @param hNode SEND_ONLY
- * @param event SEND_ONLY
+ * @param event SEND_ONLY HANDLE:EVENT
  */
 CUresult cuGraphEventWaitNodeSetEvent(CUgraphNode hNode, CUevent event);
 /**
@@ -4303,14 +4304,14 @@ CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
 /**
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
- * @param event SEND_ONLY
+ * @param event SEND_ONLY HANDLE:EVENT
  */
 CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
                                             CUgraphNode hNode, CUevent event);
 /**
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
- * @param event SEND_ONLY
+ * @param event SEND_ONLY HANDLE:EVENT
  */
 CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
                                           CUgraphNode hNode, CUevent event);
