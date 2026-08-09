@@ -105,6 +105,9 @@ extern "C" bool lupine_local_cuda_symbol_if_routed(lupine_route route,
 extern "C" int lupine_handle_defer_event_create(conn_t *conn,
                                                 uintptr_t synthetic);
 extern "C" CUevent lupine_handle_resolve_event(CUevent event);
+extern "C" CUlibrary lupine_handle_resolve_library(CUlibrary library);
+extern "C" CUkernel lupine_handle_resolve_kernel(CUkernel kernel);
+extern "C" void lupine_forget_library_synthetic(CUlibrary library);
 
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);

@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string.h>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #ifndef _WIN32
@@ -71,10 +72,10 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
     if (delay_ms > kMaxBackoffMs) {
       delay_ms = kMaxBackoffMs;
     }
-    LUPINE_LOG_ERROR("Connecting to "
-                     << host << " port " << port << " failed, retrying in "
-                     << delay_ms << "ms (" << (kMaxRetries - attempt)
-                     << " retries left)");
+    LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
+                                      << " failed, retrying in " << delay_ms
+                                      << "ms (" << (kMaxRetries - attempt)
+                                      << " retries left)");
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
   }
 }
@@ -188,28 +189,32 @@ static void rpc_destroy_thread_lane(uint64_t lane_id) { (void)lane_id; }
 namespace {
 
 struct rpc_deferred_response {
-  conn_t *conn;
-  int request_id;
   rpc_deferred_response_fn handler;
   void *context;
 };
 
-std::vector<rpc_deferred_response> rpc_deferred_responses;
+// A library load registers dozens of deferred responses at a time, so the
+// reader thread looks them up by connection and request id rather than
+// scanning.
+std::unordered_map<conn_t *, std::unordered_map<int, rpc_deferred_response>>
+    rpc_deferred_responses;
 pthread_mutex_t rpc_deferred_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 bool rpc_take_deferred_response(conn_t *conn, int request_id,
                                 rpc_deferred_response *out) {
   bool found = false;
   pthread_mutex_lock(&rpc_deferred_mutex);
-  for (size_t i = 0; i < rpc_deferred_responses.size(); ++i) {
-    if (rpc_deferred_responses[i].conn != conn ||
-        rpc_deferred_responses[i].request_id != request_id) {
-      continue;
+  auto pending = rpc_deferred_responses.find(conn);
+  if (pending != rpc_deferred_responses.end()) {
+    auto entry = pending->second.find(request_id);
+    if (entry != pending->second.end()) {
+      *out = entry->second;
+      pending->second.erase(entry);
+      found = true;
     }
-    *out = rpc_deferred_responses[i];
-    rpc_deferred_responses.erase(rpc_deferred_responses.begin() + i);
-    found = true;
-    break;
+    if (pending->second.empty()) {
+      rpc_deferred_responses.erase(pending);
+    }
   }
   pthread_mutex_unlock(&rpc_deferred_mutex);
   return found;
@@ -220,14 +225,17 @@ void rpc_abandon_deferred_responses(conn_t *conn) {
     rpc_deferred_response entry;
     bool found = false;
     pthread_mutex_lock(&rpc_deferred_mutex);
-    for (size_t i = 0; i < rpc_deferred_responses.size(); ++i) {
-      if (rpc_deferred_responses[i].conn != conn) {
-        continue;
+    auto pending = rpc_deferred_responses.find(conn);
+    if (pending != rpc_deferred_responses.end()) {
+      auto first = pending->second.begin();
+      if (first != pending->second.end()) {
+        entry = first->second;
+        pending->second.erase(first);
+        found = true;
       }
-      entry = rpc_deferred_responses[i];
-      rpc_deferred_responses.erase(rpc_deferred_responses.begin() + i);
-      found = true;
-      break;
+      if (pending->second.empty()) {
+        rpc_deferred_responses.erase(pending);
+      }
     }
     pthread_mutex_unlock(&rpc_deferred_mutex);
     if (!found) {
@@ -246,7 +254,7 @@ int rpc_write_end_deferred(conn_t *conn, rpc_deferred_response_fn handler,
   }
   int request_id = conn->write_id;
   pthread_mutex_lock(&rpc_deferred_mutex);
-  rpc_deferred_responses.push_back({conn, request_id, handler, context});
+  rpc_deferred_responses[conn][request_id] = {handler, context};
   pthread_mutex_unlock(&rpc_deferred_mutex);
   if (rpc_write_end(conn) < 0) {
     rpc_deferred_response entry;

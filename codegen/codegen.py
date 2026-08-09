@@ -32,9 +32,13 @@ from ops import (
 # know what a family's handles are.
 HANDLE_FAMILIES = {
     "EVENT": "LUPINE_HANDLE_EVENT",
+    "LIBRARY": "LUPINE_HANDLE_LIBRARY",
+    "KERNEL": "LUPINE_HANDLE_KERNEL",
 }
 HANDLE_RESOLVERS = {
     "EVENT": "lupine_handle_resolve_event",
+    "LIBRARY": "lupine_handle_resolve_library",
+    "KERNEL": "lupine_handle_resolve_kernel",
 }
 HANDLE_CREATORS = {
     "EVENT": "lupine_handle_defer_event_create",
@@ -884,6 +888,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_stream_owner(hStream);\n")
     if function.name.format() == "cuEventDestroy_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_handle_forget(LUPINE_HANDLE_EVENT, (uintptr_t)hEvent);\n")
+    if function.name.format() == "cuLibraryUnload":
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_library_synthetic(library);\n")
     # Record the global's size so offset pointers into it route by range.
     if function.name.format() in {"cuModuleGetGlobal_v2", "cuLibraryGetGlobal", "cuLibraryGetManaged"}:
         f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr) lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);\n")
@@ -902,7 +908,7 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
     if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_function_caches();\n")
     if function.name.format() == "cuKernelSetAttribute":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel, (int)attrib, (int)dev);\n")
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel_rpc, (int)attrib, (int)dev);\n")
     if function.name.format() == "cuFuncSetAttribute":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_kernel_attribute_cache();\n")
     if function.name.format() == "cuModuleGetFunction":

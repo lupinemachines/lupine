@@ -153,6 +153,104 @@ bool test_forget_releases_waiters() {
   return true;
 }
 
+bool test_named_mint_is_stable_per_owner_and_name() {
+  uintptr_t library = lupine_handle_mint(LUPINE_HANDLE_LIBRARY);
+  uintptr_t other = lupine_handle_mint(LUPINE_HANDLE_LIBRARY);
+  uintptr_t first =
+      lupine_handle_mint_named(LUPINE_HANDLE_KERNEL, library, "kernel_a");
+  uintptr_t again =
+      lupine_handle_mint_named(LUPINE_HANDLE_KERNEL, library, "kernel_a");
+  uintptr_t sibling =
+      lupine_handle_mint_named(LUPINE_HANDLE_KERNEL, library, "kernel_b");
+  uintptr_t elsewhere =
+      lupine_handle_mint_named(LUPINE_HANDLE_KERNEL, other, "kernel_a");
+  if (first == 0 || first != again) {
+    std::cerr << "FAIL: repeated named mint did not return the same handle\n";
+    return false;
+  }
+  if (first == sibling || first == elsewhere || sibling == elsewhere) {
+    std::cerr << "FAIL: distinct names or owners shared a handle\n";
+    return false;
+  }
+  if (lupine_handle_family_of(first) != LUPINE_HANDLE_KERNEL ||
+      lupine_handle_family_of(library) != LUPINE_HANDLE_LIBRARY ||
+      lupine_handle_family_of(0x1234) != LUPINE_HANDLE_FAMILY_COUNT) {
+    std::cerr << "FAIL: family_of misread a handle\n";
+    return false;
+  }
+
+  lupine_handle_fulfill(LUPINE_HANDLE_KERNEL, first, 0x5150);
+  if (lupine_handle_resolve(LUPINE_HANDLE_KERNEL, again) != 0x5150) {
+    std::cerr << "FAIL: named handle did not resolve to its real value\n";
+    return false;
+  }
+
+  lupine_handle_forget_owned(LUPINE_HANDLE_KERNEL, library);
+  uintptr_t reminted =
+      lupine_handle_mint_named(LUPINE_HANDLE_KERNEL, library, "kernel_a");
+  if (reminted == first || reminted == 0) {
+    std::cerr << "FAIL: forget_owned did not drop the name index\n";
+    return false;
+  }
+  uintptr_t survivor = 0;
+  if (lupine_handle_try_resolve(LUPINE_HANDLE_KERNEL, elsewhere, &survivor)) {
+    std::cerr << "FAIL: forget_owned reached another owner's handles\n";
+    return false;
+  }
+  lupine_handle_forget_owned(LUPINE_HANDLE_KERNEL, library);
+  lupine_handle_forget_owned(LUPINE_HANDLE_KERNEL, other);
+  lupine_handle_forget(LUPINE_HANDLE_LIBRARY, library);
+  lupine_handle_forget(LUPINE_HANDLE_LIBRARY, other);
+  return true;
+}
+
+int applied_payloads = 0;
+
+void count_applied_payload(uintptr_t, uintptr_t, void *payload, void *context) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  ++applied_payloads;
+  *static_cast<int *>(context) = *static_cast<int *>(payload);
+  delete static_cast<int *>(payload);
+}
+
+bool test_payload_applies_once_before_any_resolver_returns() {
+  constexpr int kReaders = 8;
+  uintptr_t synthetic = lupine_handle_mint(LUPINE_HANDLE_LIBRARY);
+  applied_payloads = 0;
+  int applied_value = 0;
+
+  std::vector<uintptr_t> resolved(kReaders, 0);
+  std::vector<int> seen(kReaders, -1);
+  std::vector<std::thread> readers;
+  for (int i = 0; i < kReaders; ++i) {
+    readers.emplace_back([&, i] {
+      resolved[i] =
+          lupine_handle_resolve_applied(LUPINE_HANDLE_LIBRARY, synthetic,
+                                        count_applied_payload, &applied_value);
+      seen[i] = applied_payloads;
+    });
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  lupine_handle_fulfill_payload(LUPINE_HANDLE_LIBRARY, synthetic, 0xFACE,
+                                new int(77));
+  for (auto &reader : readers) {
+    reader.join();
+  }
+  lupine_handle_forget(LUPINE_HANDLE_LIBRARY, synthetic);
+
+  if (applied_payloads != 1 || applied_value != 77) {
+    std::cerr << "FAIL: payload was not applied exactly once\n";
+    return false;
+  }
+  for (int i = 0; i < kReaders; ++i) {
+    if (resolved[i] != 0xFACE || seen[i] != 1) {
+      std::cerr << "FAIL: resolver returned before the payload was applied\n";
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -162,7 +260,9 @@ int main() {
       !test_resolve_passes_through_real_values() ||
       !test_resolve_blocks_until_fulfilled() ||
       !test_creation_failure_resolves_to_zero() ||
-      !test_forget_releases_waiters()) {
+      !test_forget_releases_waiters() ||
+      !test_named_mint_is_stable_per_owner_and_name() ||
+      !test_payload_applies_once_before_any_resolver_returns()) {
     return 1;
   }
   std::cout << "handle table tests passed\n";

@@ -2461,14 +2461,14 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
  * @disabled server - manual server keeps the library loaded, see the handler
  * @async
  * @routingkey LIBRARY library
- * @param library SEND_ONLY
+ * @param library SEND_ONLY HANDLE:LIBRARY
  */
 CUresult cuLibraryUnload(CUlibrary library);
 /**
  * @disabled client - manual client serves the library kernel table
  * @routingkey LIBRARY library
  * @param pKernel RECV_ONLY
- * @param library SEND_ONLY
+ * @param library SEND_ONLY HANDLE:LIBRARY
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
@@ -2477,25 +2477,25 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
  * @routingkey LIBRARY library
  * @recordowner MODULE pMod
  * @param pMod RECV_ONLY
- * @param library SEND_ONLY
+ * @param library SEND_ONLY HANDLE:LIBRARY
  */
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
 /**
  * @disabled client - manual client caches functions per kernel and context
  * @param pFunc RECV_ONLY
- * @param kernel SEND_ONLY
+ * @param kernel SEND_ONLY HANDLE:KERNEL
  */
 CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
 /**
  * @disabled client
  * @param pLib RECV_ONLY
- * @param kernel SEND_ONLY
+ * @param kernel SEND_ONLY HANDLE:KERNEL
  */
 CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel);
 /**
  * @disabled client - manual client caches the parameter layout per kernel
  * @routingkey FUNCTION kernel
- * @param kernel SEND_ONLY
+ * @param kernel SEND_ONLY HANDLE:KERNEL
  * @param paramIndex SEND_ONLY
  * @param paramOffset RECV_ONLY
  * @param paramSize RECV_ONLY
@@ -2517,7 +2517,7 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
  * @recordowner DEVICEPTR dptr
  * @param dptr RECV_ONLY NULLABLE
  * @param bytes RECV_ONLY NULLABLE
- * @param library SEND_ONLY
+ * @param library SEND_ONLY HANDLE:LIBRARY
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
@@ -2527,7 +2527,7 @@ CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
  * @recordowner DEVICEPTR dptr
  * @param dptr RECV_ONLY NULLABLE
  * @param bytes RECV_ONLY NULLABLE
- * @param library SEND_ONLY
+ * @param library SEND_ONLY HANDLE:LIBRARY
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
@@ -2535,7 +2535,7 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
 /**
  * @routingkey LIBRARY library
  * @param fptr RECV_ONLY
- * @param library SEND_ONLY
+ * @param library SEND_ONLY HANDLE:LIBRARY
  * @param symbol SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
@@ -2544,7 +2544,7 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
  * @disabled client - manual client caches attributes per kernel and device
  * @param pi SEND_RECV
  * @param attrib SEND_ONLY
- * @param kernel SEND_ONLY
+ * @param kernel SEND_ONLY HANDLE:KERNEL
  * @param dev SEND_ONLY
  */
 CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
@@ -2552,13 +2552,13 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
 /**
  * @param attrib SEND_ONLY
  * @param val SEND_ONLY
- * @param kernel SEND_ONLY
+ * @param kernel SEND_ONLY HANDLE:KERNEL
  * @param dev SEND_ONLY
  */
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev);
 /**
- * @param kernel SEND_ONLY
+ * @param kernel SEND_ONLY HANDLE:KERNEL
  * @param config SEND_ONLY
  * @param dev SEND_ONLY
  */
