@@ -3687,6 +3687,44 @@ struct lupine_device_snapshot_record {
   std::vector<int32_t> pairs;
 };
 
+static CUresult
+lupine_build_device_snapshot_record(size_t ordinal,
+                                    lupine_device_snapshot_record *record) {
+  CUdevice device = 0;
+  size_t bytes = 0;
+  CUresult result = cuDeviceGet(&device, static_cast<int>(ordinal));
+  if (result == CUDA_SUCCESS) {
+    result = cuDeviceGetName(record->name, sizeof(record->name), device);
+    record->name[sizeof(record->name) - 1] = '\0';
+  }
+  if (result == CUDA_SUCCESS) {
+    result = cuDeviceGetUuid_v2(&record->uuid, device);
+  }
+  if (result == CUDA_SUCCESS) {
+    result = cuDeviceTotalMem_v2(&bytes, device);
+    record->total_mem = bytes;
+  }
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+
+  try {
+    record->pairs.reserve(static_cast<size_t>(CU_DEVICE_ATTRIBUTE_MAX - 1) * 2);
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  for (int attrib = 1; attrib < CU_DEVICE_ATTRIBUTE_MAX; ++attrib) {
+    int value = 0;
+    if (cuDeviceGetAttribute(&value, static_cast<CUdevice_attribute>(attrib),
+                             device) == CUDA_SUCCESS) {
+      record->pairs.push_back(static_cast<int32_t>(attrib));
+      record->pairs.push_back(static_cast<int32_t>(value));
+    }
+  }
+  record->pair_count = static_cast<uint32_t>(record->pairs.size() / 2);
+  return CUDA_SUCCESS;
+}
+
 int handle_manual_lupineDeviceSnapshot(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -3702,40 +3740,44 @@ int handle_manual_lupineDeviceSnapshot(conn_t *conn) {
   // rpc_write queues iovecs that are only sent at rpc_write_end, so all
   // records are built first in storage that stays stable until then.
   std::vector<lupine_device_snapshot_record> records;
+  std::vector<CUresult> record_results;
   if (result == CUDA_SUCCESS) {
     try {
       records.resize(static_cast<size_t>(device_count));
+      record_results.resize(records.size(), CUDA_ERROR_UNKNOWN);
     } catch (...) {
       result = CUDA_ERROR_OUT_OF_MEMORY;
     }
   }
-  for (size_t ordinal = 0; result == CUDA_SUCCESS && ordinal < records.size();
-       ++ordinal) {
-    auto &record = records[ordinal];
-    CUdevice device = 0;
-    size_t bytes = 0;
-    result = cuDeviceGet(&device, static_cast<int>(ordinal));
-    if (result == CUDA_SUCCESS) {
-      result = cuDeviceGetName(record.name, sizeof(record.name), device);
-      record.name[sizeof(record.name) - 1] = '\0';
+  if (result == CUDA_SUCCESS && !records.empty()) {
+    std::vector<std::thread> workers;
+    auto build_record = [&records, &record_results](size_t ordinal) {
+      record_results[ordinal] =
+          lupine_build_device_snapshot_record(ordinal, &records[ordinal]);
+    };
+    size_t next_ordinal = 1;
+    try {
+      workers.reserve(records.size() - 1);
+      for (; next_ordinal < records.size(); ++next_ordinal) {
+        workers.emplace_back(build_record, next_ordinal);
+      }
+    } catch (...) {
+      // Any unlaunched devices fall back to this RPC thread below.
     }
-    if (result == CUDA_SUCCESS) {
-      result = cuDeviceGetUuid_v2(&record.uuid, device);
+
+    build_record(0);
+    for (size_t ordinal = next_ordinal; ordinal < records.size(); ++ordinal) {
+      build_record(ordinal);
     }
-    if (result == CUDA_SUCCESS) {
-      result = cuDeviceTotalMem_v2(&bytes, device);
-      record.total_mem = bytes;
+    for (auto &worker : workers) {
+      worker.join();
     }
-    for (int attrib = 1; result == CUDA_SUCCESS && attrib < CU_DEVICE_ATTRIBUTE_MAX;
-         ++attrib) {
-      int value = 0;
-      if (cuDeviceGetAttribute(&value, static_cast<CUdevice_attribute>(attrib),
-                               device) == CUDA_SUCCESS) {
-        record.pairs.push_back(static_cast<int32_t>(attrib));
-        record.pairs.push_back(static_cast<int32_t>(value));
+    for (CUresult record_result : record_results) {
+      if (record_result != CUDA_SUCCESS) {
+        result = record_result;
+        break;
       }
     }
-    record.pair_count = static_cast<uint32_t>(record.pairs.size() / 2);
   }
 
   uint32_t devices = static_cast<uint32_t>(records.size());
