@@ -455,3 +455,4 @@
 #define LUPINE_RPC_cuStreamGetCaptureInfo_v3 1793131524
 #define LUPINE_RPC_lupineDeviceSnapshot 838398900
 #define LUPINE_RPC_lupineManagedHostFlush 1450411892
+#define LUPINE_RPC_lupineModuleGetFunctionWithLayout 368273666
