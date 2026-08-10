@@ -272,6 +272,8 @@ lupine_manual_handlers() {
        {handle_manual_lupineManagedHostFlush, "lupineManagedHostFlush"}},
       {LUPINE_RPC_lupineDeviceSnapshot,
        {handle_manual_lupineDeviceSnapshot, "lupineDeviceSnapshot"}},
+      {LUPINE_RPC_lupineNvmlDeviceEnumerate,
+       {handle_lupineNvmlDeviceEnumerate, "lupineNvmlDeviceEnumerate"}},
       {RPC_cuMemcpyDtoHAsync_v2,
        {handle_manual_cuMemcpyDtoHAsync_v2, "cuMemcpyDtoHAsync_v2"}},
       {RPC_cuCtxSynchronize,
