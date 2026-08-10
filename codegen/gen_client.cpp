@@ -695,39 +695,6 @@ CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode) {
   return return_value;
 }
 
-CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
-                             const char *name) {
-  lupine_route route = lupine_route_for_module(hmod);
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUfunction *, CUmodule, const char *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuModuleGetFunction", &return_value, hfunc, hmod, name)) {
-    if (return_value == CUDA_SUCCESS && hfunc != nullptr) {
-      lupine_note_function_owner_route(*hfunc, route);
-    }
-    if (return_value == CUDA_SUCCESS && hfunc != nullptr)
-      return_value = lupine_record_module_function(*hfunc, hmod, name, route);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  std::size_t name_len = std::strlen(name) + 1;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuModuleGetFunction) < 0 ||
-      rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
-      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, hfunc, sizeof(CUfunction)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && hfunc != nullptr) {
-    lupine_note_function_owner_route(*hfunc, route);
-  }
-  if (return_value == CUDA_SUCCESS && hfunc != nullptr)
-    return_value = lupine_record_module_function(*hfunc, hmod, name, route);
-  return return_value;
-}
-
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name) {
   lupine_route route = lupine_route_for_module(hmod);
