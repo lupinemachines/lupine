@@ -456,3 +456,4 @@
 #define LUPINE_RPC_lupineDeviceEnumerate 176070540
 #define LUPINE_RPC_lupineDeviceSnapshot 838398900
 #define LUPINE_RPC_lupineManagedHostFlush 1450411892
+#define LUPINE_RPC_lupineModuleGetFunctionWithLayout 368273666

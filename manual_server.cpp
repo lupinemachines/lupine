@@ -919,6 +919,37 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
   return 0;
 }
 
+int handle_manual_lupineModuleGetFunctionWithLayout(conn_t *conn) {
+  CUmodule module = nullptr;
+  size_t name_len = 0;
+  if (rpc_read(conn, &module, sizeof(module)) < 0 ||
+      rpc_read(conn, &name_len, sizeof(name_len)) < 0 || name_len == 0) {
+    return -1;
+  }
+  std::vector<char> name(name_len);
+  if (rpc_read(conn, name.data(), name.size()) < 0 || name.back() != '\0') {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUfunction function = nullptr;
+  lupine_kernel_param_layout layout;
+  CUresult result = cuModuleGetFunction(&function, module, name.data());
+  if (result == CUDA_SUCCESS) {
+    result = lupine_get_kernel_param_layout(function, &layout);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &function, sizeof(function)) < 0 ||
+      rpc_write_kernel_param_layout(conn, &layout) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuLibraryLoadData(conn_t *conn) {
   uint32_t kind = 0;
   size_t image_size = 0;

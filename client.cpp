@@ -1022,6 +1022,52 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
   return CUDA_SUCCESS;
 }
 
+extern "C" CUresult cuModuleGetFunction(CUfunction *function, CUmodule module,
+                                         const char *name) {
+  if (function == nullptr || name == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_route route = lupine_route_for_module(module);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  using real_fn_t = CUresult (*)(CUfunction *, CUmodule, const char *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuModuleGetFunction", &result, function, module, name)) {
+    return result == CUDA_SUCCESS
+               ? lupine_record_module_function(*function, module, name, route)
+               : result;
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  size_t name_len = std::strlen(name) + 1;
+  lupine_kernel_param_layout layout;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn,
+                              LUPINE_RPC_lupineModuleGetFunctionWithLayout) <
+          0 ||
+      rpc_write(conn, &module, sizeof(module)) < 0 ||
+      rpc_write(conn, &name_len, sizeof(name_len)) < 0 ||
+      rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, function, sizeof(*function)) < 0 ||
+      rpc_read_kernel_param_layout(conn, &layout) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  uintptr_t handle = reinterpret_cast<uintptr_t>(*function);
+  for (uint32_t i = 0; i < layout.count; ++i) {
+    lupine_param_info_cache().insert_or_assign(
+        lupine_param_info_key{handle, i, false},
+        lupine_param_info_value{CUDA_SUCCESS, layout.offsets[i],
+                                layout.sizes[i]});
+  }
+  lupine_param_info_cache().insert_or_assign(
+      lupine_param_info_key{handle, layout.count, false},
+      lupine_param_info_value{CUDA_ERROR_INVALID_VALUE, 0, 0});
+  return lupine_record_module_function(*function, module, name, route);
+}
+
 static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
                                                      lupine_route route,
                                                      CUmodule *module) {
