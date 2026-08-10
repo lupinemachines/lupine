@@ -1012,7 +1012,7 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     uint32_t param_count = 0;
     std::vector<uint64_t> params;
   };
-  std::vector<kernel_record> records;
+  std::vector<std::vector<kernel_record>> worker_records;
 #if CUDA_VERSION >= 12040
   if (result == CUDA_SUCCESS) {
     unsigned int kernel_count = 0;
@@ -1025,48 +1025,88 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
         kernels.clear();
       }
     }
-    for (CUkernel kernel : kernels) {
-      const char *name = nullptr;
-      if (kernel == nullptr || cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
-          name == nullptr) {
-        continue;
-      }
-      kernel_record record;
-      record.name = name;
-      record.name_len = static_cast<uint32_t>(record.name.size() + 1);
-      record.kernel = kernel;
-      for (size_t index = 0;; ++index) {
-        size_t offset = 0;
-        size_t size = 0;
-        if (cuKernelGetParamInfo(kernel, index, &offset, &size) !=
-            CUDA_SUCCESS) {
-          break;
+    if (!kernels.empty()) {
+      constexpr size_t max_workers = 8;
+      size_t worker_count = std::min(kernels.size(), max_workers);
+      worker_records.resize(worker_count);
+      std::atomic<size_t> next_kernel{0};
+      auto build_records = [&kernels, &next_kernel](
+                               std::vector<kernel_record> *records) {
+        try {
+          while (true) {
+            size_t kernel_index =
+                next_kernel.fetch_add(1, std::memory_order_relaxed);
+            if (kernel_index >= kernels.size()) {
+              return;
+            }
+            CUkernel kernel = kernels[kernel_index];
+            const char *name = nullptr;
+            if (kernel == nullptr ||
+                cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
+                name == nullptr) {
+              continue;
+            }
+            kernel_record record;
+            record.name = name;
+            record.name_len = static_cast<uint32_t>(record.name.size() + 1);
+            record.kernel = kernel;
+            for (size_t index = 0;; ++index) {
+              size_t offset = 0;
+              size_t size = 0;
+              if (cuKernelGetParamInfo(kernel, index, &offset, &size) !=
+                  CUDA_SUCCESS) {
+                break;
+              }
+              record.params.push_back(static_cast<uint64_t>(offset));
+              record.params.push_back(static_cast<uint64_t>(size));
+            }
+            record.param_count =
+                static_cast<uint32_t>(record.params.size() / 2);
+            records->push_back(std::move(record));
+          }
+        } catch (...) {
+          // Kernel-table prefill is best effort; callers retain RPC fallback.
         }
-        record.params.push_back(static_cast<uint64_t>(offset));
-        record.params.push_back(static_cast<uint64_t>(size));
+      };
+
+      std::vector<std::thread> workers;
+      try {
+        workers.reserve(worker_count - 1);
+        for (size_t worker = 1; worker < worker_count; ++worker) {
+          workers.emplace_back(build_records, &worker_records[worker]);
+        }
+      } catch (...) {
+        // Active workers and this RPC thread still drain the shared queue.
       }
-      record.param_count = static_cast<uint32_t>(record.params.size() / 2);
-      records.push_back(std::move(record));
+      build_records(&worker_records[0]);
+      for (auto &worker : workers) {
+        worker.join();
+      }
     }
   }
 #endif
 
-  uint32_t table_count = static_cast<uint32_t>(records.size());
+  uint32_t table_count = 0;
+  for (const auto &records : worker_records) {
+    table_count += static_cast<uint32_t>(records.size());
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
       rpc_write_jit_outputs(conn, &jit_state) < 0 ||
       rpc_write(conn, &table_count, sizeof(table_count)) < 0) {
     return -1;
   }
-  for (const auto &record : records) {
-    if (rpc_write(conn, &record.name_len, sizeof(record.name_len)) < 0 ||
-        rpc_write(conn, record.name.c_str(), record.name_len) < 0 ||
-        rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
-        rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0 ||
-        (record.param_count != 0 &&
-         rpc_write(conn, record.params.data(),
-                   record.params.size() * sizeof(uint64_t)) < 0)) {
-      return -1;
+  for (const auto &records : worker_records) {
+    for (const auto &record : records) {
+      if (rpc_write(conn, &record.name_len, sizeof(record.name_len)) < 0 ||
+          rpc_write(conn, record.name.c_str(), record.name_len) < 0 ||
+          rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
+          rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0 ||
+          (record.param_count != 0 &&
+           rpc_write(conn, record.params.data(),
+                     record.params.size() * sizeof(uint64_t)) < 0)) {
+        return -1;
+      }
     }
   }
   if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
