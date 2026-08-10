@@ -40,6 +40,9 @@ struct rpc_http2_read_stats {
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 
+// Wire layout for LUPINE_RPC_lupineDeviceEnumerate: CUresult, followed on
+// success by a uint32_t count and that many CUdevice handles.
+
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
 // nothing: a non-success result carries no payload, otherwise every device
 // record holds a fixed-size name buffer, uuid, total memory, and a

@@ -188,6 +188,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",
     "cuStreamGetCaptureInfo_v3",
+    "lupineDeviceEnumerate",
     "lupineDeviceSnapshot",
     "lupineManagedHostFlush",
 ]

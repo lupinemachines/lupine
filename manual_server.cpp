@@ -3673,6 +3673,43 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
 
   return rpc_read_end(conn) < 0 ? -1 : 0;
 }
+int handle_manual_lupineDeviceEnumerate(conn_t *conn) {
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  int count = 0;
+  CUresult result = cuDeviceGetCount(&count);
+  std::vector<CUdevice> devices;
+  if (result == CUDA_SUCCESS && count >= 0) {
+    try {
+      devices.resize(static_cast<size_t>(count));
+    } catch (...) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  } else if (result == CUDA_SUCCESS) {
+    result = CUDA_ERROR_UNKNOWN;
+  }
+  for (int ordinal = 0; result == CUDA_SUCCESS && ordinal < count; ++ordinal) {
+    result = cuDeviceGet(&devices[static_cast<size_t>(ordinal)], ordinal);
+  }
+
+  uint32_t device_count = static_cast<uint32_t>(devices.size());
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0) {
+    return -1;
+  }
+  if (result == CUDA_SUCCESS &&
+      (rpc_write(conn, &device_count, sizeof(device_count)) < 0 ||
+       (device_count != 0 &&
+        rpc_write(conn, devices.data(), devices.size() * sizeof(CUdevice)) <
+            0))) {
+    return -1;
+  }
+  return rpc_write_end(conn) < 0 ? -1 : 0;
+}
+
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary
 // context state, context limits) is deliberately excluded. The response is all
