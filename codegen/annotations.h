@@ -13,6 +13,10 @@
 #include <nvml.h>
 #endif
 
+#if __has_include(<hip/hip_runtime.h>)
+#include <hip/hip_runtime.h>
+#endif
+
 typedef struct {
   unsigned int version;
   nvmlTemperatureSensors_t sensorType;
@@ -16975,3 +16979,66 @@ cublasStatus_t cublasGemmStridedBatchedEx(
     long long int strideB, const void *beta, void *C, cudaDataType Ctype,
     int ldc, long long int strideC, int batchCount, cudaDataType computeType,
     cublasGemmAlgo_t algo);
+
+// ---------------------------------------------------------------------------
+// HIP (AMD) runtime API. Marshalled as a second backend alongside CUDA/NVML.
+// v1 covers device enumeration and properties only; compute-path functions
+// (hipMalloc/hipMemcpy/hipModuleLaunchKernel/...) arrive in follow-up PRs and
+// will use @disabled client with hand-written client/server framing.
+//
+// HIP device handles are plain int ordinals (hipDevice_t == int), so unlike
+// NVML_DEVICE the HIP_DEVICE routing key is never inferred from the type and
+// must be stated explicitly with @routingkey on every device-scoped call.
+// ---------------------------------------------------------------------------
+
+/**
+ * @disabled client - manual client initializes every configured route
+ * @param flags SEND_ONLY
+ */
+hipError_t hipInit(unsigned int flags);
+/**
+ * @disabled client - manual client reports the virtual device table size
+ * @param count RECV_ONLY
+ */
+hipError_t hipGetDeviceCount(int *count);
+/**
+ * @disabled client - manual client maps the virtual device ordinal
+ * @param device RECV_ONLY
+ * @param ordinal SEND_ONLY
+ */
+hipError_t hipDeviceGet(int *device, int ordinal);
+/**
+ * @param prop RECV_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipGetDevicePropertiesR0600(hipDeviceProp_t *prop, int deviceId);
+/**
+ * @param name RECV_ONLY LENGTH:len
+ * @param len SEND_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceGetName(char *name, int len, int deviceId);
+/**
+ * @param bytes RECV_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceTotalMem(size_t *bytes, int deviceId);
+/**
+ * @param pi RECV_ONLY
+ * @param attr SEND_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceGetAttribute(int *pi, hipDeviceAttribute_t attr,
+                                 int deviceId);
+/**
+ * @param driverVersion RECV_ONLY
+ */
+hipError_t hipDriverGetVersion(int *driverVersion);
+/**
+ * @param runtimeVersion RECV_ONLY
+ */
+hipError_t hipRuntimeGetVersion(int *runtimeVersion);

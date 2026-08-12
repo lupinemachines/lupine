@@ -40,6 +40,29 @@ find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
 # The server stays plaintext (front it with a TLS proxy); only the client links OpenSSL.
 find_package(OpenSSL QUIET)
 
+# ROCm/HIP SDK: the HIP backend is opt-in. The server loads amdhip64 at runtime
+# via LoadLibrary/dlopen, so only the headers are needed at build time (no link
+# dependency). When the headers are absent the HIP server handlers and the
+# libamdhip64.so client shim are skipped entirely, leaving the existing
+# CUDA/NVML client and server builds untouched (no new required dependency).
+#
+# NO_CMAKE_SYSTEM_PATH keeps the search off the default system include dirs
+# (e.g. /usr/include). On distros that ship an apt hip-dev package, /usr/include
+# can hold a stale HIP header set without the R0600 versioning this code targets
+# (ROCm installs the real 6.4 headers under /opt/rocm/include). Searching only
+# the explicit ROCm locations avoids silently binding the build to those stubs;
+# a user with headers elsewhere passes -DROCM_INCLUDE_DIR=<path>.
+find_path(ROCM_INCLUDE_DIR hip/hip_runtime.h
+    PATHS /opt/rocm/include "C:/Program Files/AMD/ROCm/6.4/include"
+    NO_CMAKE_SYSTEM_PATH)
+if (ROCM_INCLUDE_DIR)
+    set(LUPINE_HIP_ENABLED ON)
+    message(STATUS "Found ROCm/HIP SDK headers: ${ROCM_INCLUDE_DIR} (HIP backend enabled)")
+else()
+    set(LUPINE_HIP_ENABLED OFF)
+    message(STATUS "ROCm/HIP SDK headers not found; HIP backend disabled (CUDA/NVML only)")
+endif()
+
 if (NOT CUDAToolkit_VERSION)
     message(FATAL_ERROR "CUDA Toolkit is required but not found.")
 endif()
@@ -66,6 +89,9 @@ include_directories(
     ${NGHTTP2_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib
 )
+if (LUPINE_HIP_ENABLED)
+    include_directories(${ROCM_INCLUDE_DIR})
+endif()
 
 # LZ4 is vendored as a git subtree (third_party/lz4, BSD-2-Clause) so builds do
 # not depend on a system liblz4. It is built as a plain C static library to keep
@@ -106,12 +132,26 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.cpp
 )
+# hip_server.cpp pulls in the HIP runtime headers and defines the handle_hip*
+# dispatch targets that gen_server.cpp references under LUPINE_HIP_ENABLED. Only
+# compile it (and enable the HIP dispatch) when the ROCm/HIP SDK headers were
+# found, so a CUDA-only build never needs a HIP install.
+if (LUPINE_HIP_ENABLED)
+    list(APPEND SERVER_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/hip_server.cpp)
+endif()
 
 set(NVML_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp
+)
+
+set(HIP_CLIENT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/hip_client.cpp
 )
 
 set(CLIENT_HEADERS
@@ -135,9 +175,13 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.h
 )
+if (LUPINE_HIP_ENABLED)
+    list(APPEND SERVER_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/hip_server.h)
+endif()
 
 set(CLIENT_OUTPUT lupine_driver)
 set(NVML_CLIENT_OUTPUT lupine_nvml)
+set(HIP_CLIENT_OUTPUT lupine_hip)
 set(SERVER_OUTPUT lupine_driver_server)
 
 if (NOT WIN32)
@@ -175,6 +219,28 @@ if (NOT WIN32)
         VERSION 1
         SOVERSION 1
     )
+
+    # The libamdhip64.so client shim is only built on Linux when the ROCm/HIP
+    # SDK headers are available; otherwise the HIP backend is disabled and this
+    # target is skipped (CUDA/NVML clients above are unaffected).
+    if (LUPINE_HIP_ENABLED)
+    add_library(${HIP_CLIENT_OUTPUT} SHARED ${HIP_CLIENT_SOURCES})
+    target_include_directories(${HIP_CLIENT_OUTPUT} PRIVATE ${ROCM_INCLUDE_DIR})
+    if(OpenSSL_FOUND)
+      target_compile_definitions(${HIP_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
+      target_link_libraries(${HIP_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
+    target_link_libraries(${HIP_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
+    target_link_options(${HIP_CLIENT_OUTPUT} PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/hip.exports"
+    )
+    set_target_properties(${HIP_CLIENT_OUTPUT} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME amdhip64
+        VERSION 1
+        SOVERSION 1
+    )
+    endif()
 endif()
 
 add_executable(${SERVER_OUTPUT} ${SERVER_SOURCES} ${SERVER_HEADERS})
@@ -183,6 +249,9 @@ target_compile_definitions(${SERVER_OUTPUT} PRIVATE
     LUPINE_RPC_SERVER
     LUPINE_CUDA_VERSION="${CUDAToolkit_VERSION}"
 )
+if (LUPINE_HIP_ENABLED)
+    target_compile_definitions(${SERVER_OUTPUT} PRIVATE LUPINE_HIP_ENABLED)
+endif()
 target_link_libraries(${SERVER_OUTPUT} PRIVATE CUDA::cuda_driver ${NGHTTP2_LIBRARY} lupine_lz4)
 
 if (WIN32)
@@ -307,6 +376,16 @@ else()
         ${SERVER_SOURCES}
         PROPERTIES LANGUAGE CUDA
     )
+    # hip_server.cpp is plain C++ that loads amdhip64 at runtime and includes
+    # HIP headers; compiling it under nvcc conflicts with those headers, so keep
+    # it on the C++ compiler. Only relevant when HIP is enabled (otherwise
+    # hip_server.cpp is not part of SERVER_SOURCES).
+    if (LUPINE_HIP_ENABLED)
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/hip_server.cpp
+            PROPERTIES LANGUAGE CXX
+        )
+    endif()
 endif()
 
 if (NOT WIN32)
@@ -322,8 +401,17 @@ if (NOT WIN32)
         $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
     )
 
+    if (LUPINE_HIP_ENABLED)
+        target_compile_options(${HIP_CLIENT_OUTPUT} PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
+        )
+    endif()
+
     message(STATUS "Building client output: ${CLIENT_OUTPUT}")
     message(STATUS "Client TLS (OpenSSL): ${OpenSSL_FOUND}")
     message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
+    if (LUPINE_HIP_ENABLED)
+        message(STATUS "Building HIP client output: ${HIP_CLIENT_OUTPUT}")
+    endif()
 endif()
 message(STATUS "Building server output: ${SERVER_OUTPUT}")

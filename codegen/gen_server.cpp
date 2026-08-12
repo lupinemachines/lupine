@@ -20,6 +20,10 @@
 
 #include "nvml_server.h"
 
+#ifdef LUPINE_HIP_ENABLED
+#include "hip_server.h"
+#endif
+
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;
   int request_id;
@@ -8818,6 +8822,17 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
      handle_nvmlDeviceGetNvLinkRemoteDeviceType},
     {RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2,
      handle_nvmlDeviceGetNvLinkRemotePciInfo_v2},
+#ifdef LUPINE_HIP_ENABLED
+    {RPC_hipInit, handle_hipInit},
+    {RPC_hipGetDeviceCount, handle_hipGetDeviceCount},
+    {RPC_hipDeviceGet, handle_hipDeviceGet},
+    {RPC_hipGetDevicePropertiesR0600, handle_hipGetDevicePropertiesR0600},
+    {RPC_hipDeviceGetName, handle_hipDeviceGetName},
+    {RPC_hipDeviceTotalMem, handle_hipDeviceTotalMem},
+    {RPC_hipDeviceGetAttribute, handle_hipDeviceGetAttribute},
+    {RPC_hipDriverGetVersion, handle_hipDriverGetVersion},
+    {RPC_hipRuntimeGetVersion, handle_hipRuntimeGetVersion},
+#endif
 };
 
 RequestHandler get_handler(const int op) {
