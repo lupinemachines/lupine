@@ -100,6 +100,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/lupine_client_transport.cpp
 )
 
 set(SERVER_SOURCES
@@ -125,6 +126,7 @@ set(NVML_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/lupine_client_transport.cpp
 )
 
 set(HIP_CLIENT_SOURCES
@@ -132,6 +134,7 @@ set(HIP_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/hip_client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/lupine_client_transport.cpp
 )
 
 set(CLIENT_HEADERS
