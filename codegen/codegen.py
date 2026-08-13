@@ -1967,14 +1967,11 @@ def main():
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
-            # HIP is an opt-in backend: the server only compiles the HIP
-            # handlers (and pulls in hip_server.h / the HIP runtime headers)
-            # when the build found ROCm/HIP SDK headers and defined
-            # LUPINE_HIP_ENABLED. CUDA-only builds skip this so a missing
-            # ROCm install never breaks the existing server target.
-            '#ifdef LUPINE_HIP_ENABLED\n'
-            '#include "hip_server.h"\n'
-            '#endif\n\n'
+            # HIP handlers are compiled unconditionally (hip_server.cpp loads
+            # amdhip64 at runtime; the HIP types are vendored in hip_compat.h),
+            # so gen_server.cpp always pulls in hip_server.h for the handle_hip*
+            # prototypes it references in the dispatch table below.
+            '#include "hip_server.h"\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             if metadata.disabled_server:
@@ -2084,14 +2081,11 @@ def main():
                 )
         for name in NVML_RPC_FUNCTIONS:
             f.write("    {{RPC_{name}, handle_{name}}},\n".format(name=name))
-        # The HIP dispatch entries reference handle_hip* which are only defined
-        # when hip_server.cpp is compiled (LUPINE_HIP_ENABLED). Guard them so a
-        # CUDA-only build (no ROCm) does not fail to link against missing HIP
-        # handler symbols.
-        f.write("#ifdef LUPINE_HIP_ENABLED\n")
+        # The HIP dispatch entries reference handle_hip*, which hip_server.cpp
+        # (always compiled into the server) defines. Emitted unconditionally
+        # since the HIP backend is no longer a compile-time opt-in.
         for name in HIP_RPC_FUNCTIONS:
             f.write("    {{RPC_{name}, handle_{name}}},\n".format(name=name))
-        f.write("#endif\n")
         f.write("};\n\n")
 
         f.write("RequestHandler get_handler(const int op)\n")
