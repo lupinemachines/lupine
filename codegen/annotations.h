@@ -2551,6 +2551,7 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
 CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
                               CUkernel kernel, CUdevice dev);
 /**
+ * @disabled client - manual client deduplicates successful attribute sets
  * @param attrib SEND_ONLY
  * @param val SEND_ONLY
  * @param kernel SEND_ONLY
@@ -3672,6 +3673,7 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
                                CUstreamBatchMemOpParams *paramArray,
                                unsigned int flags);
 /**
+ * @disabled client - manual client caches successful attribute queries
  * @routingkey FUNCTION hfunc
  * @param pi SEND_RECV
  * @param attrib SEND_ONLY
