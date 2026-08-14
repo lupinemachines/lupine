@@ -927,52 +927,51 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
   return 0;
 }
 
-static void lupine_collect_function_attributes(CUfunction function,
-                                               std::vector<int32_t> *pairs) {
-  if (function == nullptr || pairs == nullptr) {
-    return;
+template <typename Query>
+static int lupine_write_attributes(conn_t *conn, Query query) {
+  if (conn == nullptr) {
+    return -1;
   }
+  static_assert(sizeof(int32_t) == sizeof(uint32_t));
+  std::vector<int32_t> wire = {0};
   for (int attribute = 0; attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
     int value = 0;
-    if (cuFuncGetAttribute(&value, static_cast<CUfunction_attribute>(attribute),
-                           function) == CUDA_SUCCESS) {
-      pairs->push_back(static_cast<int32_t>(attribute));
-      pairs->push_back(static_cast<int32_t>(value));
+    if (query(static_cast<CUfunction_attribute>(attribute), &value) ==
+        CUDA_SUCCESS) {
+      wire.push_back(static_cast<int32_t>(attribute));
+      wire.push_back(static_cast<int32_t>(value));
     }
   }
+  uint32_t count = static_cast<uint32_t>((wire.size() - 1) / 2);
+  memcpy(wire.data(), &count, sizeof(count));
+  return rpc_write_copy(conn, wire.data(), wire.size() * sizeof(wire[0]));
 }
 
-static void lupine_collect_kernel_attributes(CUkernel kernel, CUdevice device,
-                                             std::vector<int32_t> *pairs) {
+static int lupine_write_function_attributes(conn_t *conn, CUfunction function) {
+  return lupine_write_attributes(
+      conn, [function](CUfunction_attribute attribute, int *value) {
+        return function == nullptr
+                   ? CUDA_ERROR_INVALID_HANDLE
+                   : cuFuncGetAttribute(value, attribute, function);
+      });
+}
+
+static int lupine_write_kernel_attributes(conn_t *conn, CUkernel kernel,
+                                          CUdevice device) {
 #if CUDA_VERSION >= 12000
-  if (kernel == nullptr || pairs == nullptr) {
-    return;
-  }
-  for (int attribute = 0; attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
-    int value = 0;
-    if (cuKernelGetAttribute(&value,
-                             static_cast<CUfunction_attribute>(attribute),
-                             kernel, device) == CUDA_SUCCESS) {
-      pairs->push_back(static_cast<int32_t>(attribute));
-      pairs->push_back(static_cast<int32_t>(value));
-    }
-  }
+  return lupine_write_attributes(
+      conn, [kernel, device](CUfunction_attribute attribute, int *value) {
+        return kernel == nullptr
+                   ? CUDA_ERROR_INVALID_HANDLE
+                   : cuKernelGetAttribute(value, attribute, kernel, device);
+      });
 #else
   (void)kernel;
   (void)device;
-  (void)pairs;
+  return lupine_write_attributes(conn, [](CUfunction_attribute, int *) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  });
 #endif
-}
-
-static int lupine_write_attribute_pairs(conn_t *conn,
-                                        const std::vector<int32_t> &pairs) {
-  uint32_t count = static_cast<uint32_t>(pairs.size() / 2);
-  if (rpc_write(conn, &count, sizeof(count)) < 0 ||
-      (count != 0 &&
-       rpc_write(conn, pairs.data(), pairs.size() * sizeof(int32_t)) < 0)) {
-    return -1;
-  }
-  return 0;
 }
 
 int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
@@ -1003,15 +1002,11 @@ int handle_manual_lupineFunctionAttributeSnapshot(conn_t *conn) {
     return -1;
   }
 
-  std::vector<int32_t> attributes;
   CUresult result =
       function == nullptr ? CUDA_ERROR_INVALID_VALUE : CUDA_SUCCESS;
-  if (result == CUDA_SUCCESS) {
-    lupine_collect_function_attributes(function, &attributes);
-  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
-      lupine_write_attribute_pairs(conn, attributes) < 0 ||
+      lupine_write_function_attributes(conn, function) < 0 ||
       rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1202,8 +1197,6 @@ int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
   struct attribute_record {
     CUkernel kernel = nullptr;
     CUfunction function = nullptr;
-    std::vector<int32_t> function_attributes;
-    std::vector<int32_t> kernel_attributes;
   };
   CUresult result = CUDA_ERROR_NOT_SUPPORTED;
   CUdevice device = -1;
@@ -1230,10 +1223,6 @@ int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
       if (cuKernelGetFunction(&record.function, kernel) != CUDA_SUCCESS) {
         record.function = nullptr;
       }
-      lupine_collect_function_attributes(record.function,
-                                         &record.function_attributes);
-      lupine_collect_kernel_attributes(kernel, device,
-                                       &record.kernel_attributes);
       records.push_back(std::move(record));
     }
   }
@@ -1249,8 +1238,8 @@ int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
   for (const auto &record : records) {
     if (rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
         rpc_write(conn, &record.function, sizeof(record.function)) < 0 ||
-        lupine_write_attribute_pairs(conn, record.function_attributes) < 0 ||
-        lupine_write_attribute_pairs(conn, record.kernel_attributes) < 0) {
+        lupine_write_function_attributes(conn, record.function) < 0 ||
+        lupine_write_kernel_attributes(conn, record.kernel, device) < 0) {
       return -1;
     }
   }
