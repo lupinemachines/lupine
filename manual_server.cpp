@@ -1052,6 +1052,7 @@ int handle_manual_lupineLibrarySnapshot(conn_t *conn) {
   struct kernel_record {
     std::string name;
     CUkernel kernel = nullptr;
+    CUfunction function = nullptr;
     uint32_t name_len = 0;
     uint32_t param_count = 0;
     std::vector<uint64_t> params;
@@ -1080,6 +1081,9 @@ int handle_manual_lupineLibrarySnapshot(conn_t *conn) {
       record.name = name;
       record.name_len = static_cast<uint32_t>(record.name.size() + 1);
       record.kernel = kernel;
+      if (cuKernelGetFunction(&record.function, kernel) != CUDA_SUCCESS) {
+        record.function = nullptr;
+      }
       for (size_t index = 0;; ++index) {
         size_t offset = 0;
         size_t size = 0;
@@ -1106,6 +1110,7 @@ int handle_manual_lupineLibrarySnapshot(conn_t *conn) {
     if (rpc_write(conn, &record.name_len, sizeof(record.name_len)) < 0 ||
         rpc_write(conn, record.name.c_str(), record.name_len) < 0 ||
         rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
+        rpc_write(conn, &record.function, sizeof(record.function)) < 0 ||
         rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0 ||
         (record.param_count != 0 &&
          rpc_write(conn, record.params.data(),

@@ -499,6 +499,21 @@ lupine_param_info_cache() {
   return *cache;
 }
 
+static void lupine_cache_param_layout(uintptr_t handle, bool kernel,
+                                      uint32_t count,
+                                      const std::vector<uint64_t> &params) {
+  for (uint32_t index = 0; index < count; ++index) {
+    lupine_param_info_cache().insert_or_assign(
+        lupine_param_info_key{handle, index, kernel},
+        lupine_param_info_value{CUDA_SUCCESS,
+                                static_cast<size_t>(params[index * 2]),
+                                static_cast<size_t>(params[index * 2 + 1])});
+  }
+  lupine_param_info_cache().insert_or_assign(
+      lupine_param_info_key{handle, count, kernel},
+      lupine_param_info_value{CUDA_ERROR_INVALID_VALUE, 0, 0});
+}
+
 // Filled from the library snapshot side-channel RPC; serves
 // cuLibraryGetKernel without a round trip.
 struct lupine_library_kernel_name_key {
@@ -4392,6 +4407,7 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
 struct lupine_wire_library_kernel_record {
   std::string name;
   CUkernel kernel = nullptr;
+  CUfunction function = nullptr;
   uint32_t param_count = 0;
   std::vector<uint64_t> params;
 };
@@ -4427,6 +4443,7 @@ static void lupine_prefill_library_snapshot(CUlibrary library, conn_t *conn) {
     record.name.resize(name_len);
     if (rpc_read(conn, record.name.data(), name_len) < 0 ||
         rpc_read(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
+        rpc_read(conn, &record.function, sizeof(record.function)) < 0 ||
         rpc_read(conn, &record.param_count, sizeof(record.param_count)) < 0) {
       return;
     }
@@ -4443,26 +4460,27 @@ static void lupine_prefill_library_snapshot(CUlibrary library, conn_t *conn) {
     return;
   }
 
-  lupine_route route = lupine_remote_route_for_conn(conn);
+  lupine_route remote_route = lupine_remote_route_for_conn(conn);
+  CUcontext current_context = nullptr;
+  (void)cuCtxGetCurrent(&current_context);
   for (const auto &record : table) {
     if (record.kernel == nullptr) {
       continue;
     }
-    for (uint32_t index = 0; index < record.param_count; ++index) {
-      lupine_param_info_cache().insert_or_assign(
-          lupine_param_info_key{reinterpret_cast<uintptr_t>(record.kernel),
-                                index, true},
-          lupine_param_info_value{
-              CUDA_SUCCESS, static_cast<size_t>(record.params[index * 2]),
-              static_cast<size_t>(record.params[index * 2 + 1])});
+    lupine_cache_param_layout(reinterpret_cast<uintptr_t>(record.kernel), true,
+                              record.param_count, record.params);
+    if (record.function != nullptr) {
+      lupine_note_function_owner_route(record.function, remote_route);
+      lupine_cache_param_layout(reinterpret_cast<uintptr_t>(record.function),
+                                false, record.param_count, record.params);
+      lupine_kernel_function_cache().insert_or_assign(
+          lupine_kernel_function_key{lupine_route_identity(remote_route),
+                                     current_context, record.kernel},
+          record.function);
     }
-    lupine_param_info_cache().insert_or_assign(
-        lupine_param_info_key{reinterpret_cast<uintptr_t>(record.kernel),
-                              record.param_count, true},
-        lupine_param_info_value{CUDA_ERROR_INVALID_VALUE, 0, 0});
     if (lupine_record_library_kernel(record.kernel, library,
                                      record.name.c_str(),
-                                     route) == CUDA_SUCCESS) {
+                                     remote_route) == CUDA_SUCCESS) {
       lupine_library_kernel_names().insert_or_assign(
           lupine_library_kernel_name_key{library, record.name}, record.kernel);
     }
