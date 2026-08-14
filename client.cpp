@@ -1826,12 +1826,6 @@ extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
   if (pi == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  lupine_device_attribute_key key{static_cast<int>(dev),
-                                  static_cast<int>(attrib)};
-  if (lupine_device_attribute_cache().find(key, *pi)) {
-    return CUDA_SUCCESS;
-  }
-
   CUdevice remote_dev = dev;
   lupine_route route = lupine_route_for_device(&remote_dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
@@ -1843,11 +1837,12 @@ extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
     if (real == nullptr) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    CUresult result = real(pi, attrib, remote_dev);
-    if (result == CUDA_SUCCESS) {
-      lupine_device_attribute_cache().insert_or_assign(key, *pi);
-    }
-    return result;
+    return real(pi, attrib, remote_dev);
+  }
+  lupine_device_attribute_key key{static_cast<int>(dev),
+                                  static_cast<int>(attrib)};
+  if (lupine_device_attribute_cache().find(key, *pi)) {
+    return CUDA_SUCCESS;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   lupine_prefill_device_snapshot(conn);
@@ -2338,23 +2333,19 @@ extern "C" CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
+  using real_fn_t =
+      CUresult (*)(int *, CUfunction_attribute, CUkernel, CUdevice);
+  CUresult return_value;
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuKernelGetAttribute",
+                                                  &return_value, pi, attrib,
+                                                  kernel, dev)) {
+    return return_value;
+  }
   lupine_kernel_attribute_key key{lupine_route_identity(route), kernel,
                                   static_cast<int>(attrib),
                                   static_cast<int>(dev)};
   if (lupine_kernel_attribute_cache().find(key, *pi)) {
     return CUDA_SUCCESS;
-  }
-
-  using real_fn_t = CUresult (*)(int *, CUfunction_attribute, CUkernel,
-                                 CUdevice);
-  CUresult return_value;
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuKernelGetAttribute", &return_value, pi, attrib, kernel,
-          dev)) {
-    if (return_value == CUDA_SUCCESS) {
-      lupine_kernel_attribute_cache().insert_or_assign(key, *pi);
-    }
-    return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   int value = 0;
@@ -2385,20 +2376,16 @@ extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
 
   CUfunction translated = lupine_translate_private_function(hfunc);
   lupine_route route = lupine_route_for_function(translated);
-  lupine_function_attribute_key key{lupine_route_identity(route), translated,
-                                    static_cast<int>(attrib)};
-  if (lupine_function_attribute_cache().find(key, *pi)) {
-    return CUDA_SUCCESS;
-  }
-
   using real_fn_t = CUresult (*)(int *, CUfunction_attribute, CUfunction);
   CUresult return_value;
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
           route, "cuFuncGetAttribute", &return_value, pi, attrib, translated)) {
-    if (return_value == CUDA_SUCCESS) {
-      lupine_function_attribute_cache().insert_or_assign(key, *pi);
-    }
     return return_value;
+  }
+  lupine_function_attribute_key key{lupine_route_identity(route), translated,
+                                    static_cast<int>(attrib)};
+  if (lupine_function_attribute_cache().find(key, *pi)) {
+    return CUDA_SUCCESS;
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -2444,6 +2431,25 @@ static CUresult lupine_cuOccupancy_cached(int *numBlocks, CUfunction func,
   }
   CUfunction translated = lupine_translate_private_function(func);
   lupine_route route = lupine_route_for_function(translated);
+  if (lupine_route_is_local(route)) {
+    const char *symbol =
+        with_flags ? "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags"
+                   : "cuOccupancyMaxActiveBlocksPerMultiprocessor";
+    using real_fn_t =
+        CUresult (*)(int *, CUfunction, int, size_t, unsigned int);
+    using real_no_flags_fn_t = CUresult (*)(int *, CUfunction, int, size_t);
+    if (with_flags) {
+      auto real = lupine_real_cuda_fn<real_fn_t>(symbol);
+      if (real == nullptr) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+      return real(numBlocks, translated, blockSize, dynamicSMemSize, flags);
+    }
+    auto real = lupine_real_cuda_fn<real_no_flags_fn_t>(symbol);
+    return real == nullptr
+               ? CUDA_ERROR_DEVICE_UNAVAILABLE
+               : real(numBlocks, translated, blockSize, dynamicSMemSize);
+  }
   lupine_occupancy_key key{lupine_route_identity(route),
                            translated,
                            blockSize,
@@ -2452,33 +2458,6 @@ static CUresult lupine_cuOccupancy_cached(int *numBlocks, CUfunction func,
                            with_flags};
   if (lupine_occupancy_cache().find(key, *numBlocks)) {
     return CUDA_SUCCESS;
-  }
-
-  if (lupine_route_is_local(route)) {
-    const char *symbol =
-        with_flags ? "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags"
-                   : "cuOccupancyMaxActiveBlocksPerMultiprocessor";
-    using real_fn_t =
-        CUresult (*)(int *, CUfunction, int, size_t, unsigned int);
-    using real_no_flags_fn_t = CUresult (*)(int *, CUfunction, int, size_t);
-    CUresult result;
-    if (with_flags) {
-      auto real = lupine_real_cuda_fn<real_fn_t>(symbol);
-      if (real == nullptr) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-      }
-      result = real(numBlocks, translated, blockSize, dynamicSMemSize, flags);
-    } else {
-      auto real = lupine_real_cuda_fn<real_no_flags_fn_t>(symbol);
-      if (real == nullptr) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-      }
-      result = real(numBlocks, translated, blockSize, dynamicSMemSize);
-    }
-    if (result == CUDA_SUCCESS) {
-      lupine_occupancy_cache().insert_or_assign(key, *numBlocks);
-    }
-    return result;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
@@ -3508,11 +3487,6 @@ extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
   if (!lupine_cuda_is_initialized()) {
     return CUDA_ERROR_NOT_INITIALIZED;
   }
-  if (lupine_current_context_device_cache_lookup(lupine_current_context,
-                                                 device)) {
-    return CUDA_SUCCESS;
-  }
-
   lupine_route route = lupine_route_for_current_context();
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(CUdevice *);
@@ -3520,12 +3494,11 @@ extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
     if (real == nullptr) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    CUresult result = real(device);
-    if (result == CUDA_SUCCESS) {
-      lupine_current_context_device_cache_insert(lupine_current_context,
-                                                 *device);
-    }
-    return result;
+    return real(device);
+  }
+  if (lupine_current_context_device_cache_lookup(lupine_current_context,
+                                                 device)) {
+    return CUDA_SUCCESS;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUdevice remote_device = 0;
