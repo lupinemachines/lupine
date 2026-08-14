@@ -1026,27 +1026,23 @@ int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
 
 int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,
                           const CUjit_option *options,
-                          void *const *option_values,
-                          std::vector<uintptr_t> *raw_values) {
-  if (conn == nullptr || num_options == nullptr || raw_values == nullptr ||
+                          void *const *option_values) {
+  if (conn == nullptr || num_options == nullptr ||
       (*num_options != 0 && (options == nullptr || option_values == nullptr))) {
     return -1;
   }
 
-  raw_values->resize(*num_options);
+  std::vector<uintptr_t> raw_values(*num_options);
   for (unsigned int i = 0; i < *num_options; ++i) {
-    (*raw_values)[i] = reinterpret_cast<uintptr_t>(option_values[i]);
+    raw_values[i] = reinterpret_cast<uintptr_t>(option_values[i]);
   }
 
   if (rpc_write(conn, num_options, sizeof(*num_options)) < 0 ||
       (*num_options != 0 &&
-       rpc_write(conn, options, *num_options * sizeof(CUjit_option)) < 0)) {
+       (rpc_write(conn, options, *num_options * sizeof(CUjit_option)) < 0 ||
+        rpc_write_copy(conn, raw_values.data(),
+                       raw_values.size() * sizeof(raw_values[0])) < 0))) {
     return -1;
-  }
-  for (unsigned int i = 0; i < *num_options; ++i) {
-    if (rpc_write(conn, &(*raw_values)[i], sizeof((*raw_values)[i])) < 0) {
-      return -1;
-    }
   }
   return 0;
 }
@@ -1137,29 +1133,25 @@ static constexpr uintptr_t LUPINE_RPC_NULL_OPTION_VALUES = UINTPTR_MAX;
 
 int rpc_write_library_options(conn_t *conn, const unsigned int *num_options,
                               const CUlibraryOption *options,
-                              void *const *option_values,
-                              std::vector<uintptr_t> *raw_values) {
-  if (conn == nullptr || num_options == nullptr || raw_values == nullptr ||
+                              void *const *option_values) {
+  if (conn == nullptr || num_options == nullptr ||
       (*num_options != 0 && options == nullptr)) {
     return -1;
   }
 
-  raw_values->resize(*num_options);
+  std::vector<uintptr_t> raw_values(*num_options);
   for (unsigned int i = 0; i < *num_options; ++i) {
-    (*raw_values)[i] = option_values == nullptr
-                           ? LUPINE_RPC_NULL_OPTION_VALUES
-                           : reinterpret_cast<uintptr_t>(option_values[i]);
+    raw_values[i] = option_values == nullptr
+                        ? LUPINE_RPC_NULL_OPTION_VALUES
+                        : reinterpret_cast<uintptr_t>(option_values[i]);
   }
 
   if (rpc_write(conn, num_options, sizeof(*num_options)) < 0 ||
       (*num_options != 0 &&
-       rpc_write(conn, options, *num_options * sizeof(CUlibraryOption)) < 0)) {
+       (rpc_write(conn, options, *num_options * sizeof(CUlibraryOption)) < 0 ||
+        rpc_write_copy(conn, raw_values.data(),
+                       raw_values.size() * sizeof(raw_values[0])) < 0))) {
     return -1;
-  }
-  for (unsigned int i = 0; i < *num_options; ++i) {
-    if (rpc_write(conn, &(*raw_values)[i], sizeof((*raw_values)[i])) < 0) {
-      return -1;
-    }
   }
   return 0;
 }
@@ -1199,55 +1191,50 @@ int rpc_read_library_options(conn_t *conn,
   return 0;
 }
 
-int rpc_write_jit_outputs(conn_t *conn, const uint32_t *output_count,
-                          const CUjit_option *options, const size_t *sizes,
-                          const void *const *data) {
-  if (conn == nullptr || output_count == nullptr ||
-      (*output_count != 0 &&
-       (options == nullptr || sizes == nullptr || data == nullptr))) {
+static int rpc_write_jit_output(conn_t *conn, CUjit_option option, size_t size,
+                                const void *data) {
+  if (conn == nullptr || (size != 0 && data == nullptr)) {
     return -1;
   }
-  if (rpc_write(conn, output_count, sizeof(*output_count)) < 0) {
+  return rpc_write_copy(conn, &option, sizeof(option)) < 0 ||
+                 rpc_write_copy(conn, &size, sizeof(size)) < 0 ||
+                 (size != 0 && rpc_write(conn, data, size) < 0)
+             ? -1
+             : 0;
+}
+
+int rpc_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state) {
+  if (conn == nullptr || state == nullptr) {
     return -1;
   }
-  for (uint32_t i = 0; i < *output_count; ++i) {
-    if (rpc_write(conn, &options[i], sizeof(options[i])) < 0 ||
-        rpc_write(conn, &sizes[i], sizeof(sizes[i])) < 0 ||
-        (sizes[i] != 0 &&
-         (data[i] == nullptr || rpc_write(conn, data[i], sizes[i]) < 0))) {
+
+  uint32_t output_count = static_cast<uint32_t>(state->capture_wall_time) +
+                          static_cast<uint32_t>(state->capture_info_log) +
+                          static_cast<uint32_t>(state->capture_error_log);
+  if (rpc_write_copy(conn, &output_count, sizeof(output_count)) < 0) {
+    return -1;
+  }
+  if (state->capture_wall_time) {
+    if (rpc_write_jit_output(conn, CU_JIT_WALL_TIME, sizeof(state->wall_time),
+                             &state->wall_time) < 0) {
+      return -1;
+    }
+  }
+  if (state->capture_info_log) {
+    if (rpc_write_jit_output(conn, CU_JIT_INFO_LOG_BUFFER,
+                             state->info_log.size(),
+                             state->info_log.data()) < 0) {
+      return -1;
+    }
+  }
+  if (state->capture_error_log) {
+    if (rpc_write_jit_output(conn, CU_JIT_ERROR_LOG_BUFFER,
+                             state->error_log.size(),
+                             state->error_log.data()) < 0) {
       return -1;
     }
   }
   return 0;
-}
-
-int rpc_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state) {
-  if (state == nullptr) {
-    return -1;
-  }
-
-  state->output_count = 0;
-  if (state->capture_wall_time) {
-    state->output_options[state->output_count] = CU_JIT_WALL_TIME;
-    state->output_sizes[state->output_count] = sizeof(state->wall_time);
-    state->output_data[state->output_count] = &state->wall_time;
-    ++state->output_count;
-  }
-  if (state->capture_info_log) {
-    state->output_options[state->output_count] = CU_JIT_INFO_LOG_BUFFER;
-    state->output_sizes[state->output_count] = state->info_log.size();
-    state->output_data[state->output_count] = state->info_log.data();
-    ++state->output_count;
-  }
-  if (state->capture_error_log) {
-    state->output_options[state->output_count] = CU_JIT_ERROR_LOG_BUFFER;
-    state->output_sizes[state->output_count] = state->error_log.size();
-    state->output_data[state->output_count] = state->error_log.data();
-    ++state->output_count;
-  }
-  return rpc_write_jit_outputs(conn, &state->output_count,
-                               state->output_options, state->output_sizes,
-                               state->output_data);
 }
 
 static const rpc_jit_output_binding *

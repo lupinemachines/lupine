@@ -154,18 +154,13 @@ struct rpc_jit_server_state {
   float wall_time = 0.0f;
   std::vector<char> info_log;
   std::vector<char> error_log;
-  uint32_t output_count = 0;
-  CUjit_option output_options[3];
-  size_t output_sizes[3];
-  const void *output_data[3];
   bool capture_wall_time = false;
   bool capture_info_log = false;
   bool capture_error_log = false;
 };
 extern int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,
                                  const CUjit_option *options,
-                                 void *const *option_values,
-                                 std::vector<uintptr_t> *raw_values);
+                                 void *const *option_values);
 extern int rpc_read_jit_options(conn_t *conn,
                                 std::vector<CUjit_option> *options,
                                 std::vector<uintptr_t> *raw_values);
@@ -173,15 +168,11 @@ extern int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state);
 extern int rpc_write_library_options(conn_t *conn,
                                      const unsigned int *num_options,
                                      const CUlibraryOption *options,
-                                     void *const *option_values,
-                                     std::vector<uintptr_t> *raw_values);
+                                     void *const *option_values);
 extern int rpc_read_library_options(conn_t *conn,
                                     std::vector<CUlibraryOption> *options,
                                     std::vector<uintptr_t> *raw_values,
                                     bool *has_option_values);
-extern int rpc_write_jit_outputs(conn_t *conn, const uint32_t *output_count,
-                                 const CUjit_option *options,
-                                 const size_t *sizes, const void *const *data);
 extern int rpc_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state);
 extern int
 rpc_read_jit_outputs(conn_t *conn,

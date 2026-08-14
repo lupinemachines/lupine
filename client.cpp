@@ -1438,17 +1438,13 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     conn_t *conn = lupine_route_remote_conn(route);
     size_t image_size = record.image.size();
     unsigned int zero_options = 0;
-    std::vector<uintptr_t> jit_raw_values;
-    std::vector<uintptr_t> library_raw_values;
     if (conn == nullptr ||
         rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
         rpc_write_payload(conn, record.image.data(), image_size) < 0 ||
-        rpc_write_jit_options(conn, &zero_options, nullptr, nullptr,
-                              &jit_raw_values) < 0 ||
-        rpc_write_library_options(conn, &zero_options, nullptr, nullptr,
-                                  &library_raw_values) < 0 ||
+        rpc_write_jit_options(conn, &zero_options, nullptr, nullptr) < 0 ||
+        rpc_write_library_options(conn, &zero_options, nullptr, nullptr) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
         rpc_read_jit_outputs(conn, {}) < 0 ||
@@ -3800,11 +3796,9 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  std::vector<uintptr_t> raw_values;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0 ||
-      rpc_write_jit_options(conn, &numOptions, options, optionValues,
-                            &raw_values) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, stateOut, sizeof(*stateOut)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3837,7 +3831,6 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
-  std::vector<uintptr_t> raw_values;
   auto bindings =
       lupine_capture_jit_client_bindings(numOptions, options, optionValues);
   if (conn == nullptr ||
@@ -3848,8 +3841,7 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       (size != 0 && rpc_write(conn, data, size) < 0) ||
       rpc_write(conn, &name_len, sizeof(name_len)) < 0 ||
       (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
-      rpc_write_jit_options(conn, &numOptions, options, optionValues,
-                            &raw_values) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3880,7 +3872,6 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   size_t mapped_file_size = 0;
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
-  std::vector<uintptr_t> raw_values;
   auto bindings =
       lupine_capture_jit_client_bindings(numOptions, options, optionValues);
   int file_fd = open(path, O_RDONLY);
@@ -3917,8 +3908,7 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
       rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
       (file_size != 0 && rpc_write(conn, file_payload, mapped_file_size) < 0) ||
-      rpc_write_jit_options(conn, &numOptions, options, optionValues,
-                            &raw_values) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -4688,8 +4678,6 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
 
   auto bindings = lupine_capture_jit_client_bindings(numJitOptions, jitOptions,
                                                      jitOptionsValues);
-  std::vector<uintptr_t> jit_raw_values;
-  std::vector<uintptr_t> library_raw_values;
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t image_size = image_bytes.size();
@@ -4698,10 +4686,10 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
-      rpc_write_jit_options(conn, &numJitOptions, jitOptions, jitOptionsValues,
-                            &jit_raw_values) < 0 ||
+      rpc_write_jit_options(conn, &numJitOptions, jitOptions,
+                            jitOptionsValues) < 0 ||
       rpc_write_library_options(conn, &numLibraryOptions, libraryOptions,
-                                libraryOptionValues, &library_raw_values) < 0 ||
+                                libraryOptionValues) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
