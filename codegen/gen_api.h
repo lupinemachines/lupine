@@ -455,6 +455,8 @@
 #define LUPINE_RPC_cuStreamGetCaptureInfo_v3 1793131524
 #define LUPINE_RPC_lupineDeviceSnapshot 838398900
 #define LUPINE_RPC_lupineEventQueryBatch 1291828496
+#define LUPINE_RPC_lupineFunctionAttributeSnapshot 115640665
 #define LUPINE_RPC_lupineFunctionParamLayoutSnapshot 1930405904
+#define LUPINE_RPC_lupineLibraryAttributeSnapshot 1063587880
 #define LUPINE_RPC_lupineLibrarySnapshot 1662367389
 #define LUPINE_RPC_lupineManagedHostFlush 1450411892

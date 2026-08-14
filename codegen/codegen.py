@@ -190,7 +190,9 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuStreamGetCaptureInfo_v3",
     "lupineDeviceSnapshot",
     "lupineEventQueryBatch",
+    "lupineFunctionAttributeSnapshot",
     "lupineFunctionParamLayoutSnapshot",
+    "lupineLibraryAttributeSnapshot",
     "lupineLibrarySnapshot",
     "lupineManagedHostFlush",
 ]

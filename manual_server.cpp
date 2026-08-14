@@ -927,6 +927,54 @@ int handle_manual_cuModuleLoadData(conn_t *conn) {
   return 0;
 }
 
+static void lupine_collect_function_attributes(CUfunction function,
+                                               std::vector<int32_t> *pairs) {
+  if (function == nullptr || pairs == nullptr) {
+    return;
+  }
+  for (int attribute = 0; attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
+    int value = 0;
+    if (cuFuncGetAttribute(&value, static_cast<CUfunction_attribute>(attribute),
+                           function) == CUDA_SUCCESS) {
+      pairs->push_back(static_cast<int32_t>(attribute));
+      pairs->push_back(static_cast<int32_t>(value));
+    }
+  }
+}
+
+static void lupine_collect_kernel_attributes(CUkernel kernel, CUdevice device,
+                                             std::vector<int32_t> *pairs) {
+#if CUDA_VERSION >= 12000
+  if (kernel == nullptr || pairs == nullptr) {
+    return;
+  }
+  for (int attribute = 0; attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
+    int value = 0;
+    if (cuKernelGetAttribute(&value,
+                             static_cast<CUfunction_attribute>(attribute),
+                             kernel, device) == CUDA_SUCCESS) {
+      pairs->push_back(static_cast<int32_t>(attribute));
+      pairs->push_back(static_cast<int32_t>(value));
+    }
+  }
+#else
+  (void)kernel;
+  (void)device;
+  (void)pairs;
+#endif
+}
+
+static int lupine_write_attribute_pairs(conn_t *conn,
+                                        const std::vector<int32_t> &pairs) {
+  uint32_t count = static_cast<uint32_t>(pairs.size() / 2);
+  if (rpc_write(conn, &count, sizeof(count)) < 0 ||
+      (count != 0 &&
+       rpc_write(conn, pairs.data(), pairs.size() * sizeof(int32_t)) < 0)) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
   CUfunction function = nullptr;
   if (rpc_read(conn, &function, sizeof(function)) < 0) {
@@ -939,6 +987,31 @@ int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write_func_param_info(conn, function) < 0 ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_lupineFunctionAttributeSnapshot(conn_t *conn) {
+  CUfunction function = nullptr;
+  if (rpc_read(conn, &function, sizeof(function)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  std::vector<int32_t> attributes;
+  CUresult result =
+      function == nullptr ? CUDA_ERROR_INVALID_VALUE : CUDA_SUCCESS;
+  if (result == CUDA_SUCCESS) {
+    lupine_collect_function_attributes(function, &attributes);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      lupine_write_attribute_pairs(conn, attributes) < 0 ||
       rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1110,6 +1183,74 @@ int handle_manual_lupineLibrarySnapshot(conn_t *conn) {
         (record.param_count != 0 &&
          rpc_write(conn, record.params.data(),
                    record.params.size() * sizeof(uint64_t)) < 0)) {
+      return -1;
+    }
+  }
+  return rpc_write_end(conn) < 0 ? -1 : 0;
+}
+
+int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
+  CUlibrary library = nullptr;
+  if (rpc_read(conn, &library, sizeof(library)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  struct attribute_record {
+    CUkernel kernel = nullptr;
+    CUfunction function = nullptr;
+    std::vector<int32_t> function_attributes;
+    std::vector<int32_t> kernel_attributes;
+  };
+  CUresult result = CUDA_ERROR_NOT_SUPPORTED;
+  CUdevice device = -1;
+  std::vector<attribute_record> records;
+#if CUDA_VERSION >= 12040
+  result = cuCtxGetDevice(&device);
+  unsigned int kernel_count = 0;
+  if (result == CUDA_SUCCESS) {
+    result = cuLibraryGetKernelCount(&kernel_count, library);
+  }
+  std::vector<CUkernel> kernels;
+  if (result == CUDA_SUCCESS && kernel_count != 0) {
+    kernels.resize(kernel_count);
+    result = cuLibraryEnumerateKernels(kernels.data(), kernel_count, library);
+  }
+  if (result == CUDA_SUCCESS) {
+    records.reserve(kernels.size());
+    for (CUkernel kernel : kernels) {
+      if (kernel == nullptr) {
+        continue;
+      }
+      attribute_record record;
+      record.kernel = kernel;
+      if (cuKernelGetFunction(&record.function, kernel) != CUDA_SUCCESS) {
+        record.function = nullptr;
+      }
+      lupine_collect_function_attributes(record.function,
+                                         &record.function_attributes);
+      lupine_collect_kernel_attributes(kernel, device,
+                                       &record.kernel_attributes);
+      records.push_back(std::move(record));
+    }
+  }
+#endif
+
+  uint32_t record_count = static_cast<uint32_t>(records.size());
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      rpc_write(conn, &device, sizeof(device)) < 0 ||
+      rpc_write(conn, &record_count, sizeof(record_count)) < 0) {
+    return -1;
+  }
+  for (const auto &record : records) {
+    if (rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
+        rpc_write(conn, &record.function, sizeof(record.function)) < 0 ||
+        lupine_write_attribute_pairs(conn, record.function_attributes) < 0 ||
+        lupine_write_attribute_pairs(conn, record.kernel_attributes) < 0) {
       return -1;
     }
   }

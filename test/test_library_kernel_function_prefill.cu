@@ -40,9 +40,11 @@ static bool check(CUresult result, const char *operation) {
 int main() {
   CUdevice device = 0;
   CUcontext context = nullptr;
+  CUmodule module = nullptr;
   CUlibrary library = nullptr;
   CUkernel kernel = nullptr;
   CUfunction function = nullptr;
+  CUfunction module_function = nullptr;
   if (!check(cuInit(0), "cuInit") ||
       !check(cuDeviceGet(&device, 0), "cuDeviceGet") ||
       !check(cuDevicePrimaryCtxRetain(&context, device),
@@ -54,6 +56,40 @@ int main() {
       !check(cuLibraryGetKernel(&kernel, library, "parameterized"),
              "cuLibraryGetKernel") ||
       !check(cuKernelGetFunction(&function, kernel), "cuKernelGetFunction")) {
+    return 1;
+  }
+
+  int function_max_threads = 0;
+  int kernel_max_threads = 0;
+  if (!check(cuFuncGetAttribute(&function_max_threads,
+                                CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+                                function),
+             "cuFuncGetAttribute") ||
+      !check(cuKernelGetAttribute(&kernel_max_threads,
+                                  CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+                                  kernel, device),
+             "cuKernelGetAttribute") ||
+      function_max_threads <= 0 || function_max_threads != kernel_max_threads) {
+    std::fprintf(stderr,
+                 "maximum thread attributes differ: function=%d, kernel=%d\n",
+                 function_max_threads, kernel_max_threads);
+    return 1;
+  }
+
+  int module_max_threads = 0;
+  if (!check(cuModuleLoadData(&module, kParameterizedPtx),
+             "cuModuleLoadData") ||
+      !check(cuModuleGetFunction(&module_function, module, "parameterized"),
+             "cuModuleGetFunction") ||
+      !check(cuFuncGetAttribute(&module_max_threads,
+                                CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+                                module_function),
+             "cuFuncGetAttribute(module)") ||
+      module_max_threads != function_max_threads) {
+    std::fprintf(stderr,
+                 "module and library function attributes differ: module=%d, "
+                 "library=%d\n",
+                 module_max_threads, function_max_threads);
     return 1;
   }
 
@@ -86,11 +122,13 @@ int main() {
     return 1;
   }
 
-  if (!check(cuLibraryUnload(library), "cuLibraryUnload") ||
+  if (!check(cuModuleUnload(module), "cuModuleUnload") ||
+      !check(cuLibraryUnload(library), "cuLibraryUnload") ||
       !check(cuDevicePrimaryCtxRelease(device), "cuDevicePrimaryCtxRelease")) {
     return 1;
   }
-  std::printf("library kernel function and parameter layout prefilled\n");
+  std::printf("library kernel function, parameter layout, and attributes "
+              "prefilled\n");
   return 0;
 }
 #endif

@@ -51,6 +51,10 @@ struct rpc_http2_read_stats {
 // The request contains one CUlibrary. The response contains a CUresult and a
 // count-prefixed list of kernel names, handles, and parameter layouts.
 
+// The function and library attribute snapshot RPCs are separate best-effort
+// side channels. Successful attribute queries are returned as count-prefixed
+// (attribute, value) pairs; unsupported attributes are absent.
+
 typedef struct conn_t conn_t;
 
 struct conn_t {
