@@ -1062,21 +1062,6 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
   return CUDA_SUCCESS;
 }
 
-static void
-lupine_cache_function_param_layout(CUfunction function,
-                                   const std::vector<size_t> &offsets,
-                                   const std::vector<size_t> &sizes) {
-  uintptr_t handle = reinterpret_cast<uintptr_t>(function);
-  for (size_t i = 0; i < sizes.size(); ++i) {
-    lupine_param_info_cache().insert_or_assign(
-        lupine_param_info_key{handle, i, false},
-        lupine_param_info_value{CUDA_SUCCESS, offsets[i], sizes[i]});
-  }
-  lupine_param_info_cache().insert_or_assign(
-      lupine_param_info_key{handle, sizes.size(), false},
-      lupine_param_info_value{CUDA_ERROR_INVALID_VALUE, 0, 0});
-}
-
 static void lupine_prefetch_function_param_layout(CUfunction function,
                                                   lupine_route route) {
   std::vector<size_t> offsets;
@@ -1097,7 +1082,15 @@ static void lupine_prefetch_function_param_layout(CUfunction function,
     }
   }
   if (result == CUDA_SUCCESS) {
-    lupine_cache_function_param_layout(function, offsets, sizes);
+    uintptr_t handle = reinterpret_cast<uintptr_t>(function);
+    for (size_t i = 0; i < sizes.size(); ++i) {
+      lupine_param_info_cache().insert_or_assign(
+          lupine_param_info_key{handle, i, false},
+          lupine_param_info_value{CUDA_SUCCESS, offsets[i], sizes[i]});
+    }
+    lupine_param_info_cache().insert_or_assign(
+        lupine_param_info_key{handle, sizes.size(), false},
+        lupine_param_info_value{CUDA_ERROR_INVALID_VALUE, 0, 0});
   }
 }
 
@@ -5589,20 +5582,6 @@ static size_t lupine_memcpy3d_host_span_bytes(const CUDA_MEMCPY3D &params,
   }
   size_t rows = height * depth;
   return pitch * rows;
-}
-
-static CUfunction
-lupine_kernel_node_function(const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
-  if (nodeParams == nullptr) {
-    return nullptr;
-  }
-  CUfunction func = nodeParams->func;
-#if CUDA_VERSION >= 12000
-  if (func == nullptr) {
-    func = reinterpret_cast<CUfunction>(nodeParams->kern);
-  }
-#endif
-  return func;
 }
 
 static void

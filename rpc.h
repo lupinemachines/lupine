@@ -129,8 +129,11 @@ extern int rpc_read_kernel_node_params_with_layout(
     conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params,
     std::vector<unsigned char> *storage, std::vector<void *> *values);
 #ifdef LUPINE_RPC_SERVER
-extern int rpc_write_function_param_layout(conn_t *conn, CUfunction function,
-                                           CUresult *result);
+extern int rpc_write_kernel_param_layout(conn_t *conn, CUfunction function,
+                                         CUresult *result);
+extern int rpc_write_kernel_param_layout(
+    conn_t *conn, const CUDA_KERNEL_NODE_PARAMS *node_params,
+    size_t *payload_size, CUresult *result);
 extern int rpc_read_kernel_param_values(conn_t *conn, CUfunction function,
                                         uint32_t expected_count,
                                         size_t payload_size,
@@ -141,9 +144,6 @@ extern int rpc_read_kernel_node_param_values(
     conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params,
     std::vector<unsigned char> *storage, std::vector<void *> *values,
     CUresult *result);
-extern int rpc_write_kernel_param_layout_and_values(
-    conn_t *conn, CUfunction function, void *const *values,
-    size_t *payload_size, CUresult *result);
 #endif
 extern int rpc_read_kernel_param_layout(conn_t *conn,
                                         std::vector<size_t> *offsets,

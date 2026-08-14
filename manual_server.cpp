@@ -931,7 +931,7 @@ int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
 
   CUresult result = CUDA_SUCCESS;
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_function_param_layout(conn, function, &result) < 0 ||
+      rpc_write_kernel_param_layout(conn, function, &result) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -2326,17 +2326,6 @@ int handle_manual_cuGraphAddKernelNode(conn_t *conn) {
   return 0;
 }
 
-static CUfunction
-lupine_kernel_node_function(const CUDA_KERNEL_NODE_PARAMS &params) {
-  CUfunction func = params.func;
-#if CUDA_VERSION >= 12000
-  if (func == nullptr) {
-    func = reinterpret_cast<CUfunction>(params.kern);
-  }
-#endif
-  return func;
-}
-
 int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
   CUgraphNode hNode = nullptr;
   int request_id;
@@ -2368,9 +2357,8 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
   // destroy on another lane must not rewrite or free the driver's storage.
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write_kernel_node_params(conn, &serialParams) < 0 ||
-      rpc_write_kernel_param_layout_and_values(
-          conn, lupine_kernel_node_function(nodeParams),
-          nodeParams.kernelParams, &payloadSize, &result) < 0 ||
+      rpc_write_kernel_param_layout(conn, &nodeParams, &payloadSize, &result) <
+          0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
