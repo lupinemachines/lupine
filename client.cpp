@@ -480,20 +480,6 @@ lupine_kernel_attribute_cache() {
   return *cache;
 }
 
-static libcuckoo::cuckoohash_map<lupine_kernel_attribute_key, int,
-                                 lupine_kernel_attribute_key_hash> &
-lupine_kernel_attribute_set_cache() {
-  static auto *cache =
-      new libcuckoo::cuckoohash_map<lupine_kernel_attribute_key, int,
-                                    lupine_kernel_attribute_key_hash>();
-  return *cache;
-}
-
-static std::mutex &lupine_kernel_attribute_set_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
 static libcuckoo::cuckoohash_map<lupine_function_attribute_key, int,
                                  lupine_function_attribute_key_hash> &
 lupine_function_attribute_cache() {
@@ -2377,54 +2363,6 @@ extern "C" CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
   return return_value;
 }
 
-extern "C" CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
-                                         CUkernel kernel, CUdevice dev) {
-  lupine_route route = lupine_route_for_device(&dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
-    return CUDA_ERROR_INVALID_DEVICE;
-  }
-
-  lupine_kernel_attribute_key key{lupine_route_identity(route), kernel,
-                                  static_cast<int>(attrib),
-                                  static_cast<int>(dev)};
-  std::lock_guard<std::mutex> lock(lupine_kernel_attribute_set_mutex());
-  int cached_value = 0;
-  if (lupine_kernel_attribute_set_cache().find(key, cached_value) &&
-      cached_value == val) {
-    return CUDA_SUCCESS;
-  }
-
-  using real_fn_t = CUresult (*)(CUfunction_attribute, int, CUkernel, CUdevice);
-  CUresult return_value;
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuKernelSetAttribute",
-                                                  &return_value, attrib, val,
-                                                  kernel, dev)) {
-    if (return_value == CUDA_SUCCESS) {
-      lupine_kernel_attribute_set_cache().insert_or_assign(key, val);
-      lupine_kernel_attribute_cache().erase(key);
-    }
-    return return_value;
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuKernelSetAttribute) < 0 ||
-      rpc_write(conn, &attrib, sizeof(attrib)) < 0 ||
-      rpc_write(conn, &val, sizeof(val)) < 0 ||
-      rpc_write(conn, &kernel, sizeof(kernel)) < 0 ||
-      rpc_write(conn, &dev, sizeof(dev)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
-    lupine_kernel_attribute_set_cache().insert_or_assign(key, val);
-    lupine_kernel_attribute_cache().erase(key);
-  }
-  return return_value;
-}
-
 extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
                                        CUfunction hfunc) {
   if (pi == nullptr) {
@@ -2471,6 +2409,13 @@ extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
 
 extern "C" void lupine_invalidate_kernel_attribute_cache() {
   lupine_kernel_attribute_cache().clear();
+}
+
+extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
+                                                    CUkernel kernel, int attrib,
+                                                    int dev) {
+  lupine_kernel_attribute_cache().erase(
+      lupine_kernel_attribute_key{route_id, kernel, attrib, dev});
 }
 
 extern "C" void lupine_invalidate_function_attribute_cache() {
@@ -4660,7 +4605,6 @@ extern "C" void lupine_invalidate_function_caches() {
   lupine_kernel_function_cache().clear();
   lupine_occupancy_cache().clear();
   lupine_kernel_attribute_cache().clear();
-  lupine_kernel_attribute_set_cache().clear();
   lupine_function_attribute_cache().clear();
 }
 

@@ -1642,7 +1642,6 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
   CUkernel kernel;
   CUdevice dev;
   int request_id;
-  CUresult lupine_intercept_result;
   if (rpc_read(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_read(conn, &val, sizeof(int)) < 0 ||
       rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 ||
@@ -1652,12 +1651,7 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
-  lupine_intercept_result = cuKernelSetAttribute(attrib, val, kernel, dev);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
+  cuKernelSetAttribute(attrib, val, kernel, dev);
 
   return 0;
 ERROR_0:

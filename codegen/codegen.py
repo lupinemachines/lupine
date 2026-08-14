@@ -840,6 +840,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
     if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
         f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_function_caches();\n")
+    if function.name.format() == "cuKernelSetAttribute":
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel, (int)attrib, (int)dev);\n")
     if function.name.format() == "cuFuncSetAttribute":
         f.write("    if (return_value == CUDA_SUCCESS) {\n")
         f.write("        lupine_invalidate_kernel_attribute_cache();\n")
@@ -1336,6 +1338,7 @@ def main():
             'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
             'extern "C" void lupine_invalidate_function_caches();\n'
             'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
+            'extern "C" void lupine_kernel_attribute_cache_erase(int route_id, CUkernel kernel, int attrib, int dev);\n'
             'extern "C" void lupine_invalidate_function_attribute_cache();\n'
             'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'

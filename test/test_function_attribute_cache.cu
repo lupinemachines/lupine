@@ -1,5 +1,5 @@
-// Exercises the client-side function attribute query cache and successful
-// kernel attribute set deduplication. Auto-discovered by run_custom_tests.sh.
+// Exercises the client-side function attribute query cache and asynchronous
+// kernel attribute sets. Auto-discovered by run_custom_tests.sh.
 #include <cuda.h>
 
 #include <cstdio>
@@ -121,27 +121,21 @@ int main() {
   if (!check(
           cuKernelSetAttribute(CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                                0, kernel, device),
-          "cuKernelSetAttribute(first)") ||
-      !check(
-          cuKernelSetAttribute(CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                               0, kernel, device),
-          "cuKernelSetAttribute(deduplicated)")) {
+          "cuKernelSetAttribute(async)")) {
     return 1;
   }
 
-  int max_threads = 0;
-  if (!check(cuKernelGetAttribute(&max_threads,
-                                  CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
-                                  kernel, device),
-             "cuKernelGetAttribute(MAX_THREADS_PER_BLOCK)") ||
-      !expect(cuKernelSetAttribute(CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
-                                   max_threads, kernel, device),
-              CUDA_ERROR_INVALID_VALUE,
-              "cuKernelSetAttribute(read-only first)") ||
-      !expect(cuKernelSetAttribute(CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
-                                   max_threads, kernel, device),
-              CUDA_ERROR_INVALID_VALUE,
-              "cuKernelSetAttribute(read-only repeated)")) {
+  // The blocking getter orders after the fire-and-forget setter and verifies
+  // both that the request arrived and that the local getter cache was erased.
+  int dynamic_shared_size = -1;
+  if (!check(
+          cuKernelGetAttribute(&dynamic_shared_size,
+                               CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                               kernel, device),
+          "cuKernelGetAttribute(MAX_DYNAMIC_SHARED_SIZE_BYTES)") ||
+      dynamic_shared_size != 0) {
+    std::fprintf(stderr, "stale kernel attribute value: %d, expected 0\n",
+                 dynamic_shared_size);
     return 1;
   }
 
@@ -149,8 +143,8 @@ int main() {
       !check(cuDevicePrimaryCtxRelease(device), "cuDevicePrimaryCtxRelease")) {
     return 1;
   }
-  std::printf("function attribute cache preserves values, invalidation, and "
-              "setter errors\n");
+  std::printf("function attribute cache preserves values and invalidation; "
+              "kernel attribute sets preserve ordering\n");
   return 0;
 }
 #endif

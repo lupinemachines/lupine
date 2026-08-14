@@ -76,6 +76,9 @@ extern "C" void lupine_invalidate_current_context_cache();
 extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
 extern "C" void lupine_invalidate_function_caches();
 extern "C" void lupine_invalidate_kernel_attribute_cache();
+extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
+                                                    CUkernel kernel, int attrib,
+                                                    int dev);
 extern "C" void lupine_invalidate_function_attribute_cache();
 extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 
@@ -994,6 +997,37 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
+                              CUkernel kernel, CUdevice dev) {
+  lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUfunction_attribute, int, CUkernel, CUdevice);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuKernelSetAttribute",
+                                                  &return_value, attrib, val,
+                                                  kernel, dev)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
+                                          (int)attrib, (int)dev);
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuKernelSetAttribute) < 0 ||
+      rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
+      rpc_write(conn, &val, sizeof(int)) < 0 ||
+      rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
+      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 || rpc_write_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
+  if (return_value == CUDA_SUCCESS)
+    lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
+                                        (int)attrib, (int)dev);
   return return_value;
 }
 
