@@ -109,7 +109,24 @@ static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
   return 0;
 }
 
+static void rpc_write_queue_release_owned(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+  for (int i = 0; i < conn->write_queue_count; ++i) {
+    rpc_write_entry *entry = &conn->write_queue[i];
+    if (entry->owned) {
+      free(entry->iov.iov_base);
+      *entry = {};
+    }
+  }
+}
+
 static int rpc_write_queue_reset(conn_t *conn, int count) {
+  rpc_write_queue_release_owned(conn);
+  if (conn != nullptr) {
+    conn->write_queue_count = 0;
+  }
   if (rpc_write_queue_reserve(conn, count) < 0) {
     return -1;
   }
@@ -121,12 +138,13 @@ static int rpc_write_queue_reset(conn_t *conn, int count) {
 }
 
 static int rpc_write_queue_push(conn_t *conn, const void *data, size_t size,
-                                unsigned char framed) {
+                                unsigned char framed, unsigned char owned) {
   if (conn == nullptr || conn->write_queue_count == INT_MAX ||
       rpc_write_queue_reserve(conn, conn->write_queue_count + 1) < 0) {
     return -1;
   }
-  conn->write_queue[conn->write_queue_count++] = {{(void *)data, size}, framed};
+  conn->write_queue[conn->write_queue_count++] = {
+      {(void *)data, size}, framed, owned};
   return 0;
 }
 
@@ -134,6 +152,7 @@ void rpc_write_queue_free(conn_t *conn) {
   if (conn == nullptr) {
     return;
   }
+  rpc_write_queue_release_owned(conn);
   free(conn->write_queue);
   conn->write_queue = nullptr;
   conn->write_queue_count = 0;
@@ -489,7 +508,26 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
-  return rpc_write_queue_push(conn, data, size, 0);
+  return rpc_write_queue_push(conn, data, size, 0, 0);
+}
+
+int rpc_write_copy(conn_t *conn, const void *data, const size_t size) {
+  if (size == 0) {
+    return rpc_write_queue_push(conn, data, size, 0, 0);
+  }
+  if (data == nullptr) {
+    return -1;
+  }
+  void *copy = malloc(size);
+  if (copy == nullptr) {
+    return -1;
+  }
+  memcpy(copy, data, size);
+  if (rpc_write_queue_push(conn, copy, size, 0, 1) < 0) {
+    free(copy);
+    return -1;
+  }
+  return 0;
 }
 
 int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
@@ -997,7 +1035,7 @@ int rpc_read_jit_outputs(conn_t *conn,
 // buffer must stay valid until rpc_write_end() returns, exactly like
 // rpc_write(). See compress.cpp for the framing format.
 int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  return rpc_write_queue_push(conn, data, size, 1);
+  return rpc_write_queue_push(conn, data, size, 1, 0);
 }
 
 // rpc_write_end finalizes the current request builder on the given connection
@@ -1008,6 +1046,7 @@ int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
 int rpc_write_end(conn_t *conn) {
   bool request = conn->write_op != -1;
   if (conn->closed) {
+    rpc_write_queue_release_owned(conn);
     pthread_mutex_unlock(&conn->write_mutex);
     if (request) {
       pthread_mutex_unlock(&conn->call_mutex);
@@ -1023,6 +1062,7 @@ int rpc_write_end(conn_t *conn) {
     conn->write_queue[2] = {{&conn->write_op, sizeof(conn->write_op)}, 0};
     result = rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
   }
+  rpc_write_queue_release_owned(conn);
   pthread_mutex_unlock(&conn->write_mutex);
   if (request) {
     pthread_mutex_unlock(&conn->call_mutex);

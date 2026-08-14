@@ -714,6 +714,48 @@ void test_rpc_write_queue_grows() {
   require(received == values, "large queue payload mismatch");
 }
 
+void test_rpc_write_copy_owns_buffer() {
+  h2_pair pair = make_pair();
+
+  constexpr int kResponseId = 19;
+  const std::vector<int> expected = {2, 3, 5, 7, 11};
+  std::vector<int> received(expected.size(), 0);
+  std::thread reader([&] {
+    read_rpc_prefix(&pair.server);
+    require(pair.server.read_id == kResponseId,
+            "copied write response id mismatch");
+    require(rpc_read_start(&pair.server, kResponseId) == 0,
+            "copied write read start failed");
+    require(rpc_read(&pair.server, received.data(),
+                     received.size() * sizeof(received[0])) ==
+                static_cast<int>(received.size() * sizeof(received[0])),
+            "copied write payload read failed");
+    require(rpc_read_end(&pair.server) == kResponseId,
+            "copied write read_end failed");
+  });
+
+  require(rpc_write_start_response(&pair.client, kResponseId) == 0,
+          "copied write response start failed");
+  std::vector<int> source = expected;
+  require(rpc_write_copy(&pair.client, source.data(),
+                         source.size() * sizeof(source[0])) == 0,
+          "rpc_write_copy failed");
+  require(pair.client.write_queue_count == 4,
+          "copied write queue count mismatch");
+  require(pair.client.write_queue[3].owned != 0,
+          "copied write queue did not own its buffer");
+  require(pair.client.write_queue[3].iov.iov_base != source.data(),
+          "copied write retained the source buffer");
+  std::fill(source.begin(), source.end(), -1);
+
+  require(rpc_write_end(&pair.client) == kResponseId,
+          "copied write write_end failed");
+  require(pair.client.write_queue[3].owned == 0,
+          "copied write ownership survived write_end");
+  reader.join();
+  require(received == expected, "copied write payload mismatch");
+}
+
 void test_rpc_lz4_payload_round_trip() {
   h2_pair pair = make_pair();
   init_rpc_write(&pair.client);
@@ -775,6 +817,7 @@ int main() {
   test_head_probe_cuda_version_metadata();
 #else
   test_rpc_write_queue_grows();
+  test_rpc_write_copy_owns_buffer();
   test_rpc_lz4_payload_round_trip();
   test_client_to_server();
   test_server_receives_session_id();

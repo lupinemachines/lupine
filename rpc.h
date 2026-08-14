@@ -18,6 +18,8 @@ struct rpc_write_entry {
   // every block is stored raw (the source is already compressed, so the LZ4
   // attempt would only waste CPU; the wire format is unchanged).
   unsigned char framed;
+  // The queue owns iov_base and releases it after rpc_write_end or reset.
+  unsigned char owned;
 };
 
 struct rpc_http2_read_stats {
@@ -91,6 +93,9 @@ extern int rpc_wait_for_response(conn_t *conn);
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
+// Copies data into request-owned storage. Unlike rpc_write, the caller may
+// modify or release its source buffer before rpc_write_end returns.
+extern int rpc_write_copy(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
                             size_t count);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
