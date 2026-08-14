@@ -246,6 +246,8 @@ lupine_manual_handlers() {
        {[](conn_t *conn) { return handle_manual_cuEventRecord(conn, true); },
         "cuEventRecordWithFlags"}},
       {RPC_cuEventQuery, {handle_manual_cuEventQuery, "cuEventQuery"}},
+      {LUPINE_RPC_lupineEventQueryBatch,
+       {handle_manual_lupineEventQueryBatch, "lupineEventQueryBatch"}},
       {RPC_cuStreamWaitEvent,
        {handle_manual_cuStreamWaitEvent, "cuStreamWaitEvent"}},
       {LUPINE_RPC_cuStreamBeginCaptureToGraph,

@@ -35,8 +35,8 @@ struct rpc_http2_read_stats {
 // stay uncredited until the staging buffer they landed in retires.
 #define LUPINE_FF_STAGING_WINDOW_BYTES (64ull * 1024 * 1024)
 
-// Events a single RPC_cuEventQuery may carry. The request is a count followed
-// by that many handles, the caller's own first, and the response is one
+// Events the explicit lupineEventQueryBatch cache-warming RPC may carry. Its
+// request is a count followed by that many handles, and its response is one
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 

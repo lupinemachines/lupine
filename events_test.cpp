@@ -42,46 +42,42 @@ void complete(lupine_event_table *table, const CUevent *events,
 
 bool test_completed_event_answers_locally() {
   lupine_event_table table;
-  CUevent events[kLupineEventQueryBatch];
-  uint64_t recorded[kLupineEventQueryBatch];
+  CUevent event = fake_event(0);
+  uint64_t recorded = 0;
   lupine_event_note_recorded(&table, fake_event(0));
-  uint32_t count = lupine_event_collect_query_batch(
-      &table, fake_event(0), kConnA, resolve_all_to_a, events, recorded);
-  if (count != 1 || events[0] != fake_event(0) || recorded[0] != 1) {
-    std::cerr << "FAIL: first query did not batch the recorded event\n";
+  if (!lupine_event_query_needed(&table, event, &recorded) || recorded != 1) {
+    std::cerr << "FAIL: first query did not require the recorded event\n";
     return false;
   }
-  complete(&table, events, recorded, count);
-  if (lupine_event_collect_query_batch(&table, fake_event(0), kConnA,
-                                       resolve_all_to_a, events,
-                                       recorded) != 0) {
+  CUresult result = CUDA_SUCCESS;
+  lupine_event_note_query_results(&table, &event, &recorded, &result, 1);
+  if (lupine_event_query_needed(&table, event, &recorded)) {
     std::cerr << "FAIL: completed event did not answer locally\n";
     return false;
   }
   return true;
 }
 
-bool test_rerecord_forces_fresh_batch() {
+bool test_rerecord_forces_fresh_query() {
   lupine_event_table table;
-  CUevent events[kLupineEventQueryBatch];
-  uint64_t recorded[kLupineEventQueryBatch];
-  lupine_event_note_recorded(&table, fake_event(0));
-  uint32_t count = lupine_event_collect_query_batch(
-      &table, fake_event(0), kConnA, resolve_all_to_a, events, recorded);
-  complete(&table, events, recorded, count);
-  lupine_event_note_recorded(&table, fake_event(0));
-  count = lupine_event_collect_query_batch(&table, fake_event(0), kConnA,
-                                           resolve_all_to_a, events, recorded);
-  if (count != 1 || recorded[0] != 2) {
+  CUevent event = fake_event(0);
+  uint64_t recorded = 0;
+  lupine_event_note_recorded(&table, event);
+  if (!lupine_event_query_needed(&table, event, &recorded)) {
+    std::cerr << "FAIL: first record did not require a query\n";
+    return false;
+  }
+  CUresult result = CUDA_SUCCESS;
+  lupine_event_note_query_results(&table, &event, &recorded, &result, 1);
+  lupine_event_note_recorded(&table, event);
+  if (!lupine_event_query_needed(&table, event, &recorded) || recorded != 2) {
     std::cerr << "FAIL: re-recorded event did not raise the record sequence\n";
     return false;
   }
   // A result carrying the stale sequence must not mark the new record done.
-  uint64_t stale[kLupineEventQueryBatch] = {1};
-  complete(&table, events, stale, 1);
-  if (lupine_event_collect_query_batch(&table, fake_event(0), kConnA,
-                                       resolve_all_to_a, events,
-                                       recorded) == 0) {
+  uint64_t stale = 1;
+  lupine_event_note_query_results(&table, &event, &stale, &result, 1);
+  if (!lupine_event_query_needed(&table, event, &recorded)) {
     std::cerr << "FAIL: stale completion answered a newer record locally\n";
     return false;
   }
@@ -95,27 +91,30 @@ bool test_eviction_is_oldest_recorded() {
   for (uintptr_t i = 0; i < kLupineEventQueryBatch + 1; ++i) {
     lupine_event_note_recorded(&table, fake_event(i));
   }
-  uint32_t count = lupine_event_collect_query_batch(
-      &table, fake_event(kLupineEventQueryBatch), kConnA, resolve_all_to_a,
-      events, recorded);
-  if (recorded[0] != kLupineEventQueryBatch + 1) {
+  uint64_t newest_recorded = 0;
+  if (!lupine_event_query_needed(&table, fake_event(kLupineEventQueryBatch),
+                                 &newest_recorded) ||
+      newest_recorded != kLupineEventQueryBatch + 1) {
     std::cerr << "FAIL: newest event lost its slot\n";
     return false;
   }
+  uint32_t count = lupine_event_collect_query_prefetch(
+      &table, fake_event(kLupineEventQueryBatch), kConnA, resolve_all_to_a,
+      events, recorded);
   if (batch_contains(events, count, fake_event(0))) {
     std::cerr << "FAIL: oldest recorded event was not evicted\n";
     return false;
   }
-  count = lupine_event_collect_query_batch(&table, fake_event(0), kConnA,
-                                           resolve_all_to_a, events, recorded);
-  if (count == 0 || events[0] != fake_event(0) || recorded[0] != 0) {
-    std::cerr << "FAIL: untracked event did not force a remote batch\n";
+  uint64_t untracked_recorded = 1;
+  if (!lupine_event_query_needed(&table, fake_event(0), &untracked_recorded) ||
+      untracked_recorded != 0) {
+    std::cerr << "FAIL: untracked event did not force a remote query\n";
     return false;
   }
   return true;
 }
 
-bool test_batch_caps_and_filters() {
+bool test_prefetch_batch_excludes_and_filters() {
   lupine_event_table table;
   CUevent events[kLupineEventQueryBatch];
   uint64_t recorded[kLupineEventQueryBatch];
@@ -123,22 +122,21 @@ bool test_batch_caps_and_filters() {
     lupine_event_note_recorded(&table, fake_event(i));
   }
   CUevent untracked = fake_event(99);
-  uint32_t count = lupine_event_collect_query_batch(
-      &table, untracked, kConnA, resolve_all_to_a, events, recorded);
-  if (count != kLupineEventQueryBatch || events[0] != untracked ||
-      recorded[0] != 0) {
-    std::cerr << "FAIL: batch was not capped with the primary first\n";
+  uint32_t count = lupine_event_collect_query_prefetch(
+      &table, fake_event(0), kConnA, resolve_all_to_a, events, recorded);
+  if (count != kLupineEventQueryBatch - 1 ||
+      batch_contains(events, count, fake_event(0))) {
+    std::cerr << "FAIL: requested event appeared in the prefetch batch\n";
     return false;
   }
-  // One event on another connection and one already completed both drop out,
-  // so a full table now leaves room under the cap.
+  // One event on another connection and one already completed both drop out.
   CUevent done[1] = {fake_event(3)};
   uint64_t done_recorded[1] = {4};
   complete(&table, done, done_recorded, 1);
-  count = lupine_event_collect_query_batch(&table, untracked, kConnA,
-                                           resolve_last_to_b, events, recorded);
-  if (count != kLupineEventQueryBatch - 1) {
-    std::cerr << "FAIL: completed and foreign-connection events were batched\n";
+  count = lupine_event_collect_query_prefetch(
+      &table, untracked, kConnA, resolve_last_to_b, events, recorded);
+  if (count != kLupineEventQueryBatch - 2) {
+    std::cerr << "FAIL: prefetch did not filter completed and foreign events\n";
     return false;
   }
   if (batch_contains(events, count, fake_event(3)) ||
@@ -149,25 +147,45 @@ bool test_batch_caps_and_filters() {
   return true;
 }
 
+bool test_query_results_cache_only_successes() {
+  lupine_event_table table;
+  CUevent events[2] = {fake_event(0), fake_event(1)};
+  uint64_t recorded[2] = {1, 2};
+  CUresult results[2] = {CUDA_SUCCESS, CUDA_ERROR_NOT_READY};
+  lupine_event_note_recorded(&table, events[0]);
+  lupine_event_note_recorded(&table, events[1]);
+  lupine_event_note_query_results(&table, events, recorded, results, 2);
+
+  uint64_t query_recorded = 0;
+  if (lupine_event_query_needed(&table, events[0], &query_recorded)) {
+    std::cerr << "FAIL: successful prefetch result was not cached\n";
+    return false;
+  }
+  if (!lupine_event_query_needed(&table, events[1], &query_recorded)) {
+    std::cerr << "FAIL: incomplete prefetch result was cached\n";
+    return false;
+  }
+  return true;
+}
+
 bool test_pending_dtoh_suppresses_local_answer() {
   lupine_event_table table;
-  CUevent events[kLupineEventQueryBatch];
-  uint64_t recorded[kLupineEventQueryBatch];
-  lupine_event_note_recorded(&table, fake_event(0));
-  uint32_t count = lupine_event_collect_query_batch(
-      &table, fake_event(0), kConnA, resolve_all_to_a, events, recorded);
-  complete(&table, events, recorded, count);
+  CUevent event = fake_event(0);
+  uint64_t recorded = 0;
+  lupine_event_note_recorded(&table, event);
+  if (!lupine_event_query_needed(&table, event, &recorded)) {
+    std::cerr << "FAIL: first record did not require a query\n";
+    return false;
+  }
+  CUresult result = CUDA_SUCCESS;
+  lupine_event_note_query_results(&table, &event, &recorded, &result, 1);
   lupine_event_note_async_dtoh(&table);
-  if (lupine_event_collect_query_batch(&table, fake_event(0), kConnA,
-                                       resolve_all_to_a, events,
-                                       recorded) == 0) {
+  if (!lupine_event_query_needed(&table, event, &recorded)) {
     std::cerr << "FAIL: pending async copy was answered locally\n";
     return false;
   }
   lupine_event_note_dtoh_drained(&table, lupine_event_dtoh_issued(&table));
-  if (lupine_event_collect_query_batch(&table, fake_event(0), kConnA,
-                                       resolve_all_to_a, events,
-                                       recorded) != 0) {
+  if (lupine_event_query_needed(&table, event, &recorded)) {
     std::cerr << "FAIL: drained copy still forced a round trip\n";
     return false;
   }
@@ -178,8 +196,10 @@ bool test_pending_dtoh_suppresses_local_answer() {
 
 int main() {
   if (!test_completed_event_answers_locally() ||
-      !test_rerecord_forces_fresh_batch() ||
-      !test_eviction_is_oldest_recorded() || !test_batch_caps_and_filters() ||
+      !test_rerecord_forces_fresh_query() ||
+      !test_eviction_is_oldest_recorded() ||
+      !test_prefetch_batch_excludes_and_filters() ||
+      !test_query_results_cache_only_successes() ||
       !test_pending_dtoh_suppresses_local_answer()) {
     return 1;
   }

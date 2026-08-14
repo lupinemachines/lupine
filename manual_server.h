@@ -68,6 +68,7 @@ int handle_manual_cuLaunchHostFunc(conn_t *conn);
 int handle_manual_cuStreamAddCallback(conn_t *conn);
 int handle_manual_cuEventRecord(conn_t *conn, bool with_flags);
 int handle_manual_cuEventQuery(conn_t *conn);
+int handle_manual_lupineEventQueryBatch(conn_t *conn);
 int handle_manual_cuStreamWaitEvent(conn_t *conn);
 int handle_manual_cuStreamBeginCaptureToGraph(conn_t *conn);
 int handle_manual_cuStreamUpdateCaptureDependencies(conn_t *conn);

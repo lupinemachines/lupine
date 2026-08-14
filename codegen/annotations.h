@@ -3549,7 +3549,7 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags);
 /**
- * @disabled - manual client batches outstanding events into one query
+ * @disabled - manual client caches completions and separately prefetches events
  * @synchronize DEFERRED_DTOH
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY

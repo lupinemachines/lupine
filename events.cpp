@@ -19,31 +19,31 @@ void lupine_event_note_recorded(lupine_event_table *table, CUevent event) {
   *victim = {event, seq, 0};
 }
 
-// Fills events/recorded with the batch to ask about, the caller's event first,
-// and returns its length; zero means the answer is already known locally.
-uint32_t lupine_event_collect_query_batch(lupine_event_table *table,
-                                          CUevent primary, conn_t *conn,
-                                          lupine_event_conn_resolver resolver,
-                                          CUevent *events, uint64_t *recorded) {
+bool lupine_event_query_needed(lupine_event_table *table, CUevent event,
+                               uint64_t *recorded) {
   bool copies_pending = table->dtoh_issued.load(std::memory_order_relaxed) !=
                         table->dtoh_drained.load(std::memory_order_relaxed);
   lupine_event_slot *slots = table->slots;
   std::lock_guard<std::mutex> lock(table->mutex);
-  uint32_t count = 1;
-  events[0] = primary;
-  recorded[0] = 0;
+  *recorded = 0;
   for (uint32_t i = 0; i < kLupineEventQueryBatch; ++i) {
-    if (slots[i].event != primary) {
+    if (slots[i].event != event) {
       continue;
     }
-    if (!copies_pending && slots[i].recorded == slots[i].completed) {
-      return 0;
-    }
-    recorded[0] = slots[i].recorded;
-    break;
+    *recorded = slots[i].recorded;
+    return copies_pending || slots[i].recorded != slots[i].completed;
   }
+  return true;
+}
+
+uint32_t lupine_event_collect_query_prefetch(
+    lupine_event_table *table, CUevent exclude, conn_t *conn,
+    lupine_event_conn_resolver resolver, CUevent *events, uint64_t *recorded) {
+  lupine_event_slot *slots = table->slots;
+  std::lock_guard<std::mutex> lock(table->mutex);
+  uint32_t count = 0;
   for (uint32_t i = 0; i < kLupineEventQueryBatch; ++i) {
-    if (slots[i].event == nullptr || slots[i].event == primary ||
+    if (slots[i].event == nullptr || slots[i].event == exclude ||
         slots[i].recorded == slots[i].completed ||
         resolver(slots[i].event) != conn) {
       continue;
@@ -98,10 +98,16 @@ void lupine_note_event_recorded(CUevent event) {
   lupine_event_note_recorded(&lupine_event_table_instance(), event);
 }
 
-uint32_t lupine_collect_event_query_batch(CUevent primary, conn_t *conn,
-                                          CUevent *events, uint64_t *recorded) {
-  return lupine_event_collect_query_batch(
-      &lupine_event_table_instance(), primary, conn, lupine_rpc_conn_for_event,
+bool lupine_event_query_needed(CUevent event, uint64_t *recorded) {
+  return lupine_event_query_needed(&lupine_event_table_instance(), event,
+                                   recorded);
+}
+
+uint32_t lupine_collect_event_query_prefetch(CUevent exclude, conn_t *conn,
+                                             CUevent *events,
+                                             uint64_t *recorded) {
+  return lupine_event_collect_query_prefetch(
+      &lupine_event_table_instance(), exclude, conn, lupine_rpc_conn_for_event,
       events, recorded);
 }
 
