@@ -71,10 +71,10 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
     if (delay_ms > kMaxBackoffMs) {
       delay_ms = kMaxBackoffMs;
     }
-    LUPINE_LOG_ERROR("Connecting to "
-                     << host << " port " << port << " failed, retrying in "
-                     << delay_ms << "ms (" << (kMaxRetries - attempt)
-                     << " retries left)");
+    LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
+                                      << " failed, retrying in " << delay_ms
+                                      << "ms (" << (kMaxRetries - attempt)
+                                      << " retries left)");
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
   }
 }
@@ -569,11 +569,12 @@ static_assert(sizeof(CUcontext) == sizeof(uint64_t),
 #endif
 
 int rpc_write_kernel_node_params(conn_t *conn,
-                                 const CUDA_KERNEL_NODE_PARAMS *node_params) {
+                                 const CUDA_KERNEL_NODE_PARAMS *node_params,
+                                 CUfunction function) {
   if (conn == nullptr || node_params == nullptr) {
     return -1;
   }
-  if (rpc_write_copy(conn, &node_params->func, sizeof(node_params->func)) < 0 ||
+  if (rpc_write_copy(conn, &function, sizeof(function)) < 0 ||
       rpc_write_copy(conn, &node_params->gridDimX,
                      sizeof(node_params->gridDimX)) < 0 ||
       rpc_write_copy(conn, &node_params->gridDimY,
@@ -646,381 +647,344 @@ int rpc_read_kernel_node_params(conn_t *conn,
   return 0;
 }
 
-int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
-                                  const size_t *sizes, void *const *values) {
-  if (conn == nullptr ||
-      (count != 0 && (sizes == nullptr || values == nullptr))) {
-    return -1;
-  }
-  size_t payload_size = 0;
-  for (uint32_t i = 0; i < count; ++i) {
-    if (values[i] == nullptr || SIZE_MAX - payload_size < sizes[i]) {
-      return -1;
-    }
-    payload_size += sizes[i];
-  }
-  std::vector<unsigned char> storage;
-  try {
-    storage.resize(payload_size);
-  } catch (...) {
-    return -1;
-  }
-  unsigned char *dst = storage.data();
-  for (uint32_t i = 0; i < count; ++i) {
-    if (sizes[i] != 0) {
-      memcpy(dst, values[i], sizes[i]);
-      dst += sizes[i];
-    }
-  }
-  return rpc_write_copy(conn, storage.data(), storage.size());
+struct rpc_kernel_param_values_header {
+  size_t count;
+};
+
+static_assert(sizeof(rpc_kernel_param_values_header) % alignof(void *) == 0);
+
+static rpc_kernel_param_values_header *
+rpc_kernel_param_values_header_for(void **values) {
+  return reinterpret_cast<rpc_kernel_param_values_header *>(values) - 1;
 }
 
-int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
-                                 const size_t *offsets, const size_t *sizes,
-                                 size_t payload_size, void *storage,
-                                 size_t storage_size, void **values) {
-  if (conn == nullptr ||
-      (count != 0 && (offsets == nullptr || sizes == nullptr ||
-                      storage == nullptr || values == nullptr))) {
-    return -1;
+static void **rpc_alloc_kernel_param_values(size_t count) {
+  if (count == 0) {
+    return nullptr;
   }
+  if (count >
+      (SIZE_MAX - sizeof(rpc_kernel_param_values_header)) / sizeof(void *)) {
+    std::abort();
+  }
+  size_t bytes =
+      sizeof(rpc_kernel_param_values_header) + count * sizeof(void *);
+  auto *header =
+      static_cast<rpc_kernel_param_values_header *>(std::calloc(1, bytes));
+  if (header == nullptr) {
+    std::abort();
+  }
+  header->count = count;
+  return reinterpret_cast<void **>(header + 1);
+}
 
-  size_t expected_payload_size = 0;
-  for (uint32_t i = 0; i < count; ++i) {
-    if (SIZE_MAX - expected_payload_size < sizes[i]) {
-      return -1;
-    }
-    expected_payload_size += sizes[i];
+static void **rpc_resize_kernel_param_values(void **values, size_t count) {
+  if (values == nullptr) {
+    return rpc_alloc_kernel_param_values(count);
   }
-  if (payload_size != expected_payload_size) {
-    return -1;
+  if (count >
+      (SIZE_MAX - sizeof(rpc_kernel_param_values_header)) / sizeof(void *)) {
+    std::abort();
   }
+  size_t bytes =
+      sizeof(rpc_kernel_param_values_header) + count * sizeof(void *);
+  auto *header = rpc_kernel_param_values_header_for(values);
+  header = static_cast<rpc_kernel_param_values_header *>(
+      std::realloc(header, bytes));
+  if (header == nullptr) {
+    std::abort();
+  }
+  header->count = count;
+  values = reinterpret_cast<void **>(header + 1);
+  values[count - 1] = nullptr;
+  return values;
+}
 
-  std::vector<unsigned char> packed;
-  try {
-    packed.resize(payload_size);
-  } catch (...) {
-    return -1;
+static void *rpc_alloc_kernel_param_value(size_t size) {
+  void *value = std::malloc(std::max(size, size_t{1}));
+  if (value == nullptr) {
+    std::abort();
   }
-  if (!packed.empty() && rpc_read(conn, packed.data(), packed.size()) < 0) {
-    return -1;
-  }
+  return value;
+}
 
-  auto *bytes = static_cast<unsigned char *>(storage);
-  size_t packed_offset = 0;
-  for (uint32_t i = 0; i < count; ++i) {
-    if (offsets[i] > storage_size || sizes[i] > storage_size - offsets[i]) {
-      return -1;
-    }
-    unsigned char *dst = bytes + offsets[i];
-    if (sizes[i] != 0) {
-      memcpy(dst, packed.data() + packed_offset, sizes[i]);
-    }
-    packed_offset += sizes[i];
-    values[i] = dst;
+void rpc_free_kernel_param_values(void **values) {
+  if (values == nullptr) {
+    return;
   }
-  return 0;
+  auto *header = rpc_kernel_param_values_header_for(values);
+  for (size_t i = 0; i < header->count; ++i) {
+    std::free(values[i]);
+  }
+  std::free(header);
 }
 
 #ifdef LUPINE_RPC_SERVER
-static int rpc_write_kernel_param_layout_bulk(conn_t *conn, CUfunction function,
-                                              bool allow_kernel_handle,
-                                              void *const *values,
-                                              size_t *payload_size,
-                                              CUresult *result) {
-  if (conn == nullptr || result == nullptr) {
+int rpc_write_func_param_info(conn_t *conn, CUfunction function) {
+  if (conn == nullptr) {
     return -1;
   }
-
-  const bool include_values = payload_size != nullptr;
-  std::vector<size_t> offsets;
-  std::vector<size_t> sizes;
-  if (include_values) {
-    *payload_size = 0;
-  }
-  if (*result == CUDA_SUCCESS) {
-    bool use_kernel_info = false;
-    for (uint32_t i = 0;; ++i) {
-      size_t offset = 0;
-      size_t size = 0;
-      CUresult query_result =
-          use_kernel_info
-              ? cuKernelGetParamInfo(reinterpret_cast<CUkernel>(function), i,
-                                     &offset, &size)
-              : cuFuncGetParamInfo(function, i, &offset, &size);
-      if (query_result == CUDA_ERROR_INVALID_VALUE) {
-        break;
-      }
-      if (allow_kernel_handle && i == 0 &&
-          query_result == CUDA_ERROR_INVALID_HANDLE) {
-        use_kernel_info = true;
-        query_result = cuKernelGetParamInfo(
-            reinterpret_cast<CUkernel>(function), i, &offset, &size);
-        if (query_result == CUDA_ERROR_INVALID_VALUE) {
-          break;
-        }
-      }
-      if (query_result != CUDA_SUCCESS) {
-        if (allow_kernel_handle && i != 0) {
-          break;
-        }
-        *result = query_result;
-        offsets.clear();
-        sizes.clear();
-        break;
-      }
-      offsets.push_back(offset);
-      sizes.push_back(size);
-    }
-  }
-
-  if (*result == CUDA_SUCCESS && include_values && !sizes.empty() &&
-      values == nullptr) {
-    *result = CUDA_ERROR_INVALID_VALUE;
-  }
-  if (*result == CUDA_SUCCESS && include_values) {
-    for (size_t i = 0; i < sizes.size(); ++i) {
-      if (values[i] == nullptr || SIZE_MAX - *payload_size < sizes[i]) {
-        *result = CUDA_ERROR_INVALID_VALUE;
-        break;
-      }
-      *payload_size += sizes[i];
-    }
-  }
-  if (*result != CUDA_SUCCESS) {
-    offsets.clear();
-    sizes.clear();
-    if (include_values) {
-      *payload_size = 0;
-    }
-  }
-  if (offsets.size() > UINT32_MAX ||
-      offsets.size() > (SIZE_MAX - sizeof(uint32_t)) / (2 * sizeof(size_t))) {
-    return -1;
-  }
-
-  uint32_t count = static_cast<uint32_t>(offsets.size());
-  size_t array_bytes = offsets.size() * sizeof(offsets[0]);
-  size_t storage_size = sizeof(count) + 2 * array_bytes;
-  if (include_values) {
-    if (*payload_size > SIZE_MAX - storage_size - sizeof(*payload_size)) {
-      return -1;
-    }
-    storage_size += sizeof(*payload_size) + *payload_size;
-  }
-  std::vector<unsigned char> storage;
-  try {
-    storage.resize(storage_size);
-  } catch (...) {
-    return -1;
-  }
-  unsigned char *dst = storage.data();
-  memcpy(dst, &count, sizeof(count));
-  if (array_bytes != 0) {
-    memcpy(dst + sizeof(count), offsets.data(), array_bytes);
-    memcpy(dst + sizeof(count) + array_bytes, sizes.data(), array_bytes);
-  }
-  if (include_values) {
-    dst += sizeof(count) + 2 * array_bytes;
-    memcpy(dst, payload_size, sizeof(*payload_size));
-    dst += sizeof(*payload_size);
-    for (size_t i = 0; i < sizes.size(); ++i) {
-      if (sizes[i] != 0) {
-        memcpy(dst, values[i], sizes[i]);
-        dst += sizes[i];
-      }
-    }
-  }
-  return rpc_write_copy(conn, storage.data(), storage.size());
-}
-
-int rpc_write_kernel_param_layout(conn_t *conn, CUfunction function,
-                                  CUresult *result) {
-  if (conn == nullptr || result == nullptr) {
-    return -1;
-  }
-  return rpc_write_kernel_param_layout_bulk(conn, function, false, nullptr,
-                                            nullptr, result);
-}
-
-int rpc_read_kernel_param_values(conn_t *conn, CUfunction function,
-                                 uint32_t expected_count, size_t payload_size,
-                                 std::vector<unsigned char> *storage,
-                                 std::vector<void *> *values,
-                                 CUresult *result) {
-  if (conn == nullptr || storage == nullptr || values == nullptr ||
-      result == nullptr) {
-    return -1;
-  }
-  std::vector<size_t> offsets;
-  std::vector<size_t> sizes;
-  bool use_kernel_info = false;
-  *result = CUDA_SUCCESS;
   for (uint32_t i = 0;; ++i) {
     size_t offset = 0;
     size_t size = 0;
-    CUresult query_result =
-        use_kernel_info
-            ? cuKernelGetParamInfo(reinterpret_cast<CUkernel>(function), i,
-                                   &offset, &size)
-            : cuFuncGetParamInfo(function, i, &offset, &size);
-    if (query_result == CUDA_ERROR_INVALID_VALUE) {
+    CUresult result = cuFuncGetParamInfo(function, i, &offset, &size);
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0) {
+      return -1;
+    }
+    if (result != CUDA_SUCCESS) {
+      return 0;
+    }
+    if (rpc_write_copy(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_write_copy(conn, &size, sizeof(size)) < 0) {
+      return -1;
+    }
+  }
+}
+
+template <typename Query>
+static int rpc_read_param_values(conn_t *conn, void ***values, CUresult *result,
+                                 Query query) {
+  if (conn == nullptr || values == nullptr || result == nullptr) {
+    return -1;
+  }
+  *values = nullptr;
+  *result = CUDA_SUCCESS;
+  size_t count = 0;
+  for (;;) {
+    CUresult wire_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_read(conn, &wire_result, sizeof(wire_result)) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
+    }
+
+    size_t expected_offset = 0;
+    size_t expected_size = 0;
+    CUresult query_result = *result == CUDA_SUCCESS
+                                ? query(count, &expected_offset, &expected_size)
+                                : CUDA_ERROR_INVALID_VALUE;
+    if (wire_result != CUDA_SUCCESS) {
+      if (*result == CUDA_SUCCESS) {
+        if (wire_result == CUDA_ERROR_INVALID_VALUE) {
+          *result =
+              query_result == CUDA_ERROR_INVALID_VALUE
+                  ? CUDA_SUCCESS
+                  : (query_result == CUDA_SUCCESS ? CUDA_ERROR_INVALID_VALUE
+                                                  : query_result);
+        } else {
+          *result = wire_result;
+        }
+      }
       break;
     }
-    if (i == 0 && query_result == CUDA_ERROR_INVALID_HANDLE) {
-      use_kernel_info = true;
-      query_result = cuKernelGetParamInfo(reinterpret_cast<CUkernel>(function),
-                                          i, &offset, &size);
-      if (query_result == CUDA_ERROR_INVALID_VALUE) {
-        break;
-      }
+
+    size_t wire_offset = 0;
+    size_t wire_size = 0;
+    if (rpc_read(conn, &wire_offset, sizeof(wire_offset)) < 0 ||
+        rpc_read(conn, &wire_size, sizeof(wire_size)) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
     }
-    if (query_result != CUDA_SUCCESS) {
-      if (i != 0) {
-        break;
-      }
-      *result = query_result;
-      offsets.clear();
-      sizes.clear();
-      break;
+
+    bool valid = query_result == CUDA_SUCCESS &&
+                 wire_offset == expected_offset && wire_size == expected_size;
+    if (*result == CUDA_SUCCESS && !valid) {
+      *result = query_result == CUDA_SUCCESS ? CUDA_ERROR_INVALID_VALUE
+                                             : query_result;
     }
-    offsets.push_back(offset);
-    sizes.push_back(size);
-  }
-  if (*result != CUDA_SUCCESS) {
-    return 0;
-  }
-  if (sizes.size() != expected_count) {
-    *result = CUDA_ERROR_INVALID_VALUE;
-    return 0;
+    if (*result == CUDA_SUCCESS) {
+      *values = rpc_resize_kernel_param_values(*values, count + 1);
+      (*values)[count] = rpc_alloc_kernel_param_value(wire_size);
+      if (wire_size != 0 && rpc_read(conn, (*values)[count], wire_size) < 0) {
+        rpc_free_kernel_param_values(*values);
+        *values = nullptr;
+        return -1;
+      }
+    } else if (rpc_drain(conn, wire_size) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
+    }
+    ++count;
   }
 
-  size_t storage_size = 0;
-  for (size_t i = 0; i < sizes.size(); ++i) {
-    storage_size = std::max(storage_size, offsets[i] + sizes[i]);
-  }
-  storage->assign(storage_size, 0);
-  values->resize(expected_count);
-  if (rpc_read_kernel_param_values(conn, expected_count, offsets.data(),
-                                   sizes.data(), payload_size, storage->data(),
-                                   storage->size(), values->data()) < 0) {
-    return -1;
+  if (*result != CUDA_SUCCESS) {
+    rpc_free_kernel_param_values(*values);
+    *values = nullptr;
   }
   return 0;
 }
 
+int rpc_read_func_param_values(conn_t *conn, void ***values,
+                               CUfunction function, CUresult *result) {
+  return rpc_read_param_values(
+      conn, values, result,
+      [function](size_t index, size_t *offset, size_t *size) {
+        return cuFuncGetParamInfo(function, index, offset, size);
+      });
+}
+
+#if CUDA_VERSION >= 12000
+int rpc_read_kernel_param_values(conn_t *conn, void ***values, CUkernel kernel,
+                                 CUresult *result) {
+  return rpc_read_param_values(
+      conn, values, result,
+      [kernel](size_t index, size_t *offset, size_t *size) {
+        return cuKernelGetParamInfo(kernel, index, offset, size);
+      });
+}
+#endif
+
 int rpc_read_kernel_node_param_values(conn_t *conn,
                                       CUDA_KERNEL_NODE_PARAMS *node_params,
-                                      std::vector<unsigned char> *storage,
-                                      std::vector<void *> *values,
                                       CUresult *result) {
-  uint32_t param_count = 0;
-  size_t payload_size = 0;
-  if (conn == nullptr || node_params == nullptr || storage == nullptr ||
-      values == nullptr || result == nullptr ||
-      rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+  if (conn == nullptr || node_params == nullptr || result == nullptr) {
     return -1;
   }
 
-  CUfunction function = node_params->func;
+  *result = CUDA_SUCCESS;
+  int read_result = -1;
+  if (node_params->func != nullptr) {
+    read_result = rpc_read_func_param_values(conn, &node_params->kernelParams,
+                                             node_params->func, result);
+  }
 #if CUDA_VERSION >= 12000
-  if (function == nullptr) {
-    function = reinterpret_cast<CUfunction>(node_params->kern);
+  else if (node_params->kern != nullptr) {
+    read_result = rpc_read_kernel_param_values(conn, &node_params->kernelParams,
+                                               node_params->kern, result);
   }
 #endif
-  *result = CUDA_SUCCESS;
-  if (rpc_read_kernel_param_values(conn, function, param_count, payload_size,
-                                   storage, values, result) < 0 ||
-      (*result != CUDA_SUCCESS && rpc_drain(conn, payload_size) < 0)) {
+  else {
+    read_result = rpc_read_func_param_values(conn, &node_params->kernelParams,
+                                             nullptr, result);
+  }
+  if (read_result < 0) {
     return -1;
   }
   if (*result == CUDA_SUCCESS) {
-    node_params->kernelParams = values->empty() ? nullptr : values->data();
     node_params->extra = nullptr;
   }
   return 0;
 }
 
-int rpc_write_kernel_param_layout(conn_t *conn,
-                                  const CUDA_KERNEL_NODE_PARAMS *node_params,
-                                  size_t *payload_size, CUresult *result) {
-  if (node_params == nullptr) {
-    return -1;
-  }
-  CUfunction function = node_params->func;
-#if CUDA_VERSION >= 12000
-  if (function == nullptr) {
-    function = reinterpret_cast<CUfunction>(node_params->kern);
-  }
-#endif
-  return rpc_write_kernel_param_layout_bulk(
-      conn, function, true, node_params->kernelParams, payload_size, result);
-}
 #endif
 
-int rpc_read_kernel_param_layout(conn_t *conn, std::vector<size_t> *offsets,
-                                 std::vector<size_t> *sizes) {
-  uint32_t count = 0;
-  if (conn == nullptr || offsets == nullptr || sizes == nullptr ||
-      rpc_read(conn, &count, sizeof(count)) < 0) {
-    return -1;
-  }
-  if (static_cast<size_t>(count) > SIZE_MAX / (2 * sizeof(size_t))) {
-    return -1;
-  }
-  size_t array_bytes = static_cast<size_t>(count) * sizeof(size_t);
-  std::vector<unsigned char> storage;
-  try {
-    storage.resize(2 * array_bytes);
-    offsets->resize(count);
-    sizes->resize(count);
-  } catch (...) {
-    return -1;
-  }
-  if (!storage.empty() && rpc_read(conn, storage.data(), storage.size()) < 0) {
-    return -1;
-  }
-  if (array_bytes != 0) {
-    memcpy(offsets->data(), storage.data(), array_bytes);
-    memcpy(sizes->data(), storage.data() + array_bytes, array_bytes);
-  }
-  return 0;
-}
+#if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
+#ifdef LUPINE_RPC_CLIENT
+extern "C" bool lupine_param_layout_count_for_rpc(uintptr_t handle, bool kernel,
+                                                  size_t *count);
+#endif
 
-int rpc_read_kernel_node_params_with_layout(
-    conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params,
-    std::vector<unsigned char> *storage, std::vector<void *> *values) {
-  std::vector<size_t> offsets;
-  std::vector<size_t> sizes;
-  size_t payload_size = 0;
-  if (conn == nullptr || node_params == nullptr || storage == nullptr ||
-      values == nullptr || rpc_read_kernel_node_params(conn, node_params) < 0 ||
-      rpc_read_kernel_param_layout(conn, &offsets, &sizes) < 0 ||
-      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
-    return -1;
+template <typename Query>
+static int rpc_write_param_values(conn_t *conn, uintptr_t handle, bool kernel,
+                                  void *const *values, Query query) {
+#ifdef LUPINE_RPC_CLIENT
+  size_t count = 0;
+  if (!lupine_param_layout_count_for_rpc(handle, kernel, &count)) {
+    CUresult result = CUDA_ERROR_INVALID_HANDLE;
+    return rpc_write_copy(conn, &result, sizeof(result));
   }
-
-  size_t storage_size = 0;
-  for (size_t i = 0; i < sizes.size(); ++i) {
-    if (offsets[i] > SIZE_MAX - sizes[i]) {
+#endif
+  for (size_t i = 0;; ++i) {
+    size_t offset = 0;
+    size_t size = 0;
+    CUresult result;
+#ifdef LUPINE_RPC_CLIENT
+    if (i == count) {
+      result = CUDA_ERROR_INVALID_VALUE;
+    } else {
+#endif
+      result = query(i, &offset, &size);
+#ifdef LUPINE_RPC_CLIENT
+    }
+#endif
+    if (result == CUDA_SUCCESS && (values == nullptr || values[i] == nullptr)) {
+      result = CUDA_ERROR_INVALID_VALUE;
+    }
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0) {
       return -1;
     }
-    storage_size = std::max(storage_size, offsets[i] + sizes[i]);
+    if (result != CUDA_SUCCESS) {
+      return 0;
+    }
+    if (rpc_write_copy(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_write_copy(conn, &size, sizeof(size)) < 0 ||
+        rpc_write_copy(conn, values[i], size) < 0) {
+      return -1;
+    }
   }
-  try {
-    storage->assign(storage_size, 0);
-    values->resize(sizes.size());
-  } catch (...) {
+}
+
+int rpc_write_func_param_values(conn_t *conn, CUfunction function,
+                                void *const *values) {
+  return rpc_write_param_values(
+      conn, reinterpret_cast<uintptr_t>(function), false, values,
+      [function](size_t index, size_t *offset, size_t *size) {
+        return cuFuncGetParamInfo(function, index, offset, size);
+      });
+}
+
+#if CUDA_VERSION >= 12000
+int rpc_write_kernel_param_values(conn_t *conn, CUkernel kernel,
+                                  void *const *values) {
+  return rpc_write_param_values(
+      conn, reinterpret_cast<uintptr_t>(kernel), true, values,
+      [kernel](size_t index, size_t *offset, size_t *size) {
+        return cuKernelGetParamInfo(kernel, index, offset, size);
+      });
+}
+#endif
+
+#endif
+
+int rpc_read_kernel_node_params_and_values(conn_t *conn,
+                                           CUDA_KERNEL_NODE_PARAMS *node_params,
+                                           CUresult *result) {
+  if (conn == nullptr || node_params == nullptr || result == nullptr ||
+      rpc_read_kernel_node_params(conn, node_params) < 0) {
     return -1;
   }
-  if (rpc_read_kernel_param_values(conn, static_cast<uint32_t>(sizes.size()),
-                                   offsets.data(), sizes.data(), payload_size,
-                                   storage->data(), storage->size(),
-                                   values->data()) < 0) {
-    return -1;
+
+  node_params->kernelParams = nullptr;
+  *result = CUDA_SUCCESS;
+  size_t count = 0;
+  for (;;) {
+    CUresult query_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_read(conn, &query_result, sizeof(query_result)) < 0) {
+      rpc_free_kernel_param_values(node_params->kernelParams);
+      node_params->kernelParams = nullptr;
+      return -1;
+    }
+    if (query_result != CUDA_SUCCESS) {
+      *result = query_result == CUDA_ERROR_INVALID_VALUE ? CUDA_SUCCESS
+                                                         : query_result;
+      break;
+    }
+
+    size_t offset = 0;
+    size_t size = 0;
+    if (rpc_read(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_read(conn, &size, sizeof(size)) < 0) {
+      rpc_free_kernel_param_values(node_params->kernelParams);
+      node_params->kernelParams = nullptr;
+      return -1;
+    }
+    node_params->kernelParams =
+        rpc_resize_kernel_param_values(node_params->kernelParams, count + 1);
+    node_params->kernelParams[count] = rpc_alloc_kernel_param_value(size);
+    if (size != 0 &&
+        rpc_read(conn, node_params->kernelParams[count], size) < 0) {
+      rpc_free_kernel_param_values(node_params->kernelParams);
+      node_params->kernelParams = nullptr;
+      return -1;
+    }
+    ++count;
   }
-  node_params->kernelParams = values->empty() ? nullptr : values->data();
+
+  if (*result != CUDA_SUCCESS) {
+    rpc_free_kernel_param_values(node_params->kernelParams);
+    node_params->kernelParams = nullptr;
+  }
   node_params->extra = nullptr;
   return 0;
 }

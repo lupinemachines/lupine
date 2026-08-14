@@ -150,6 +150,36 @@ int main() {
   CHECK(read_device_u32(out) == exec_update,
         "cuGraphExecKernelNodeSetParams updated the executable graph argument");
 
+#if CUDA_VERSION >= 12060
+  reset_device_u32(out);
+  int generic_value = 13;
+  void *generic_kernel_params[] = {&out, &generic_value};
+  CUgraphNodeParams generic_params = {};
+  generic_params.type = CU_GRAPH_NODE_TYPE_KERNEL;
+  generic_params.kernel.func = func;
+  generic_params.kernel.gridDimX = 1;
+  generic_params.kernel.gridDimY = 1;
+  generic_params.kernel.gridDimZ = 1;
+  generic_params.kernel.blockDimX = 1;
+  generic_params.kernel.blockDimY = 1;
+  generic_params.kernel.blockDimZ = 1;
+  generic_params.kernel.kernelParams = generic_kernel_params;
+
+  CUgraph generic_graph;
+  DRV(cuGraphCreate(&generic_graph, 0));
+  CUgraphNode generic_node;
+  DRV(cuGraphAddNode_v2(&generic_node, generic_graph, nullptr, nullptr, 0,
+                        &generic_params));
+  CUgraphExec generic_exec;
+  DRV(cuGraphInstantiateWithFlags(&generic_exec, generic_graph, 0));
+  DRV(cuGraphLaunch(generic_exec, stream));
+  DRV(cuStreamSynchronize(stream));
+  CHECK(read_device_u32(out) == generic_value,
+        "cuGraphAddNode_v2 streamed kernel arguments");
+  DRV(cuGraphExecDestroy(generic_exec));
+  DRV(cuGraphDestroy(generic_graph));
+#endif
+
   DRV(cuStreamDestroy(stream));
   DRV(cuGraphExecDestroy(exec));
   DRV(cuGraphDestroy(graph));

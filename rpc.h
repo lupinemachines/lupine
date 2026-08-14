@@ -112,42 +112,34 @@ extern void rpc_conn_destroy(conn_t *conn);
 // permanent failure.
 extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port);
 
-extern int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
-                                         const size_t *sizes,
-                                         void *const *values);
-extern int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
-                                        const size_t *offsets,
-                                        const size_t *sizes,
-                                        size_t payload_size, void *storage,
-                                        size_t storage_size, void **values);
 extern int
 rpc_write_kernel_node_params(conn_t *conn,
-                             const CUDA_KERNEL_NODE_PARAMS *node_params);
+                             const CUDA_KERNEL_NODE_PARAMS *node_params,
+                             CUfunction function);
 extern int rpc_read_kernel_node_params(conn_t *conn,
                                        CUDA_KERNEL_NODE_PARAMS *node_params);
-extern int rpc_read_kernel_node_params_with_layout(
-    conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params,
-    std::vector<unsigned char> *storage, std::vector<void *> *values);
+extern int rpc_read_kernel_node_params_and_values(
+    conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params, CUresult *result);
+extern void rpc_free_kernel_param_values(void **values);
 #ifdef LUPINE_RPC_SERVER
-extern int rpc_write_kernel_param_layout(conn_t *conn, CUfunction function,
-                                         CUresult *result);
-extern int rpc_write_kernel_param_layout(
-    conn_t *conn, const CUDA_KERNEL_NODE_PARAMS *node_params,
-    size_t *payload_size, CUresult *result);
-extern int rpc_read_kernel_param_values(conn_t *conn, CUfunction function,
-                                        uint32_t expected_count,
-                                        size_t payload_size,
-                                        std::vector<unsigned char> *storage,
-                                        std::vector<void *> *values,
-                                        CUresult *result);
-extern int rpc_read_kernel_node_param_values(
-    conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params,
-    std::vector<unsigned char> *storage, std::vector<void *> *values,
-    CUresult *result);
+extern int rpc_write_func_param_info(conn_t *conn, CUfunction function);
+extern int rpc_read_func_param_values(conn_t *conn, void ***values,
+                                      CUfunction function, CUresult *result);
+#if CUDA_VERSION >= 12000
+extern int rpc_read_kernel_param_values(conn_t *conn, void ***values,
+                                        CUkernel kernel, CUresult *result);
 #endif
-extern int rpc_read_kernel_param_layout(conn_t *conn,
-                                        std::vector<size_t> *offsets,
-                                        std::vector<size_t> *sizes);
+extern int rpc_read_kernel_node_param_values(
+    conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params, CUresult *result);
+#endif
+#if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
+extern int rpc_write_func_param_values(conn_t *conn, CUfunction function,
+                                       void *const *values);
+#if CUDA_VERSION >= 12000
+extern int rpc_write_kernel_param_values(conn_t *conn, CUkernel kernel,
+                                         void *const *values);
+#endif
+#endif
 extern int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config);
 extern int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
                                   std::vector<CUlaunchAttribute> *attributes);

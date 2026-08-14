@@ -68,10 +68,12 @@ static int exercise_snapshot() {
                  size);
     return 1;
   }
-  if (cuFuncGetParamInfo(function, 2, &offset, &size) !=
-      CUDA_ERROR_INVALID_VALUE) {
-    std::fprintf(stderr, "parameter layout lacked a cached terminator\n");
-    return 1;
+  for (int retry = 0; retry < 2; ++retry) {
+    if (cuFuncGetParamInfo(function, 2, &offset, &size) !=
+        CUDA_ERROR_INVALID_VALUE) {
+      std::fprintf(stderr, "parameter layout terminator retry failed\n");
+      return 1;
+    }
   }
 
   CUfunction missing = nullptr;
@@ -154,7 +156,7 @@ int main() {
       read_rpc_count(stats_path, RPC_cuFuncGetParamInfo, &fallback_count);
   unlink(stats_path);
   if (!read_ok || lookup_count != 2 || snapshot_count != 1 ||
-      fallback_count != 0) {
+      fallback_count != 2) {
     std::fprintf(stderr,
                  "unexpected RPC counts: lookup=%llu snapshot=%llu "
                  "fallback=%llu\n",
@@ -163,6 +165,6 @@ int main() {
   }
 
   std::printf("module lookup and parameter-layout snapshot are isolated; "
-              "parameter queries use the warm cache\n");
+              "successful parameters are cached and failures retry\n");
   return 0;
 }
