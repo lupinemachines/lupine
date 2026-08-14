@@ -25,6 +25,17 @@ jobs:
           method: network
           sub-packages: '["nvcc"]'
 
+      - name: Install ROCm HIP headers
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | \
+            sudo gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
+          distro="$(. /etc/os-release && echo $UBUNTU_CODENAME)"
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.4 $distro main" | \
+            sudo tee /etc/apt/sources.list.d/rocm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hip-dev
+
       - name: Install codegen dependencies
         run: |
           python3 -m venv .venv-codegen
@@ -43,6 +54,9 @@ jobs:
             codegen/gen_nvml_client.inc \
             codegen/gen_nvml_server.h \
             codegen/gen_nvml_server.inc \
+            codegen/gen_hip_client.inc \
+            codegen/gen_hip_server.h \
+            codegen/gen_hip_server.inc \
             codegen/gen_server.cpp
 
       - name: Verify generated files are current

@@ -180,6 +180,43 @@ NVML_MANUAL_SERVER_FUNCTIONS = {
     "nvmlDeviceGetMPSComputeRunningProcesses_v2",
 }
 
+# HIP (AMD) runtime API. Marshalled as a second backend alongside CUDA/NVML.
+# v1 covers device enumeration and properties only; compute-path functions
+# (hipMalloc/hipMemcpy/hipModuleLaunchKernel/...) arrive in follow-up PRs and
+# will use @disabled client with hand-written client/server wire framing.
+HIP_RPC_FUNCTIONS = [
+    "hipInit",
+    "hipGetDeviceCount",
+    "hipDeviceGet",
+    # hipGetDeviceProperties is a macro in hip_runtime_api.h that expands to
+    # hipGetDevicePropertiesR0600 (the real, ABI-versioned exported symbol).
+    # An app compiled against the real HIP headers therefore references
+    # hipGetDevicePropertiesR0600 at link time, so the canonical RPC/wrapper
+    # name is the versioned one -- exactly like CUDA's cuCtxCreate_v2 et al.
+    "hipGetDevicePropertiesR0600",
+    "hipDeviceGetName",
+    "hipDeviceTotalMem",
+    "hipDeviceGetAttribute",
+    "hipDriverGetVersion",
+    "hipRuntimeGetVersion",
+]
+
+HIP_MANUAL_SERVER_FUNCTIONS = {
+    # Hand-written server handlers go here as compute-path functions are
+    # added in follow-up PRs. v1 only marshals device enumeration/properties,
+    # which the codegen emits on both sides.
+}
+
+# Bare public name -> versioned exported symbol. The bare name is a macro in
+# hip_runtime_api.h, so the generated client wrapper uses the versioned name
+# (listed in HIP_RPC_FUNCTIONS) to match what apps link against. This table
+# makes the client shim ALSO export the bare name -- via a thin alias emitted
+# into gen_hip_client.inc -- so callers that dlsym by the public name resolve
+# too. Mirrors CUDA's MANUAL_REMAPPINGS.
+HIP_MANUAL_REMAPPINGS = [
+    ("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),
+]
+
 PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
@@ -856,6 +893,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
 def error_const(return_type: str) -> str:
     if return_type == "nvmlReturn_t":
         return "NVML_ERROR_GPU_IS_LOST"
+    if return_type == "hipError_t":
+        return "hipErrorUnknown"
     if return_type == "CUresult":
         return "CUDA_ERROR_DEVICE_UNAVAILABLE"
     if return_type == "cudaError_t":
@@ -880,6 +919,8 @@ def invalid_device_const(return_type: str) -> str:
         return "CUDA_ERROR_INVALID_DEVICE"
     if return_type == "cudaError_t":
         return "cudaErrorInvalidDevice"
+    if return_type == "hipError_t":
+        return "hipErrorInvalidDevice"
     raise NotImplementedError(
         "No invalid-device error for return type: %s" % return_type
     )
@@ -888,6 +929,8 @@ def invalid_device_const(return_type: str) -> str:
 def invalid_argument_const(return_type: str) -> str:
     if return_type == "nvmlReturn_t":
         return "NVML_ERROR_INVALID_ARGUMENT"
+    if return_type == "hipError_t":
+        return "hipErrorInvalidValue"
     if return_type == "CUresult":
         return "CUDA_ERROR_INVALID_VALUE"
     if return_type == "cudaError_t":
@@ -1123,6 +1166,165 @@ def write_nvml_server_handler(f, function, operations):
     f.write("}\n\n")
 
 
+def collect_hip_functions(annotations: ParsedData):
+    by_name = {
+        function.name.format(): function
+        for function in annotations.namespace.functions
+    }
+    result = []
+    for name in HIP_RPC_FUNCTIONS:
+        if name in HIP_MANUAL_SERVER_FUNCTIONS:
+            continue
+        function = by_name.get(name)
+        if function is None:
+            raise RuntimeError(f"HIP annotation for {name} not found")
+        metadata = parse_annotation(function.doxygen, function.parameters)
+        result.append((function, function, metadata.operations, metadata))
+    return result
+
+
+def write_hip_client_validation(f, operations):
+    checks = []
+    for operation in operations:
+        name = operation.parameter.name
+        if isinstance(operation, NullTerminatedOperation) and operation.send:
+            checks.append(f"{name} == nullptr")
+        elif isinstance(operation, DereferenceOperation):
+            checks.append(f"{name} == nullptr")
+        elif isinstance(operation, ArrayOperation):
+            checks.append(
+                f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
+            )
+    if checks:
+        f.write("  if (" + " ||\n      ".join(checks) + ") {\n")
+        f.write("    return hipErrorInvalidValue;\n")
+        f.write("  }\n")
+
+
+def write_hip_client_rpc(f, function, operations):
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(f"static hipError_t lupine_rpc_{name}(conn_t *conn")
+    if params:
+        f.write(f", {params}")
+    f.write(") {\n")
+    f.write("  hipError_t return_value = rpc_error();\n")
+    for operation in operations:
+        if isinstance(operation, NullTerminatedOperation):
+            f.write(
+                "  {length_type} {name}_len = static_cast<{length_type}>("
+                "std::strlen({name}) + 1);\n".format(
+                    length_type=operation.length_type,
+                    name=operation.parameter.name,
+                )
+            )
+        elif isinstance(operation, NullableOperation) and operation.recv:
+            f.write(
+                "  {type_} {name}_null_check = nullptr;\n".format(
+                    type_=operation.ptr.format(), name=operation.parameter.name
+                )
+            )
+
+    f.write("  if (conn == nullptr ||\n")
+    f.write(f"      rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_write(f)
+    f.write("      rpc_wait_for_response(conn) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_read(f)
+    f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_read_end(conn) < 0) {\n")
+    f.write("    return rpc_error();\n")
+    f.write("  }\n")
+    f.write("  return return_value;\n")
+    f.write("}\n\n")
+
+
+def write_hip_client_wrapper(f, function, operations, metadata):
+    if metadata.disabled_client:
+        return
+
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(f'extern "C" hipError_t {name}({params}) {{\n')
+    write_hip_client_validation(f, operations)
+
+    call_args = format_call_args(function)
+    if metadata.routing_kind == "ALL":
+        raise RuntimeError(
+            f"{name}: ALL routing is not implemented for the HIP backend yet"
+        )
+    else:
+        if metadata.routing_kind == "HIP_DEVICE":
+            if metadata.routing_parameter is None:
+                raise RuntimeError(f"{name}: HIP_DEVICE routing requires a parameter")
+            route_name = metadata.routing_parameter.name
+            f.write(f"  conn_t *conn = connection_for_device(&{route_name});\n")
+        elif metadata.routing_kind is None:
+            f.write("  conn_t *conn = connection();\n")
+        else:
+            raise RuntimeError(
+                f"{name}: unsupported HIP routing key {metadata.routing_kind}"
+            )
+        suffix = f", {', '.join(call_args)}" if call_args else ""
+        f.write(f"  return lupine_rpc_{name}(conn{suffix});\n")
+    f.write("}\n\n")
+
+
+def write_hip_server_handler(f, function, operations):
+    name = function.name.format()
+    fn_params = ", ".join(
+        parameter.type.format() for parameter in function.parameters
+    )
+    f.write(f"int handle_{name}(conn_t *conn) {{\n")
+    owned_buffers = []
+    for operation in operations:
+        f.write(operation.server_declaration)
+        if (
+            isinstance(operation, DereferenceOperation)
+            and operation.recv
+            and not operation.send
+        ):
+            f.write(f"  {operation.parameter.name} = {{}};\n")
+    f.write("  int request_id;\n")
+    f.write("  hipError_t return_value;\n")
+    f.write(f"  using fn_t = hipError_t (*)({fn_params});\n")
+    f.write("  fn_t fn = nullptr;\n")
+    f.write("  if (\n")
+    for operation in operations:
+        if owned_buffer := operation.server_rpc_read(f):
+            owned_buffers.append(owned_buffer)
+    f.write("      false)\n")
+    f.write("    goto ERROR_0;\n\n")
+    f.write("  request_id = rpc_read_end(conn);\n")
+    f.write("  if (request_id < 0)\n")
+    f.write("    goto ERROR_0;\n\n")
+
+    call_args = []
+    for parameter in function.parameters:
+        operation = next(
+            op for op in operations if op.parameter.name == parameter.name
+        )
+        call_args.append(operation.server_reference)
+    f.write(f'  fn = hip_symbol<fn_t>("{name}");\n')
+    f.write(
+        "  return_value = fn == nullptr ? function_not_found()\n"
+        f"                               : fn({', '.join(call_args)});\n\n"
+    )
+    f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+    for operation in operations:
+        operation.server_rpc_write(f)
+    f.write("      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_write_end(conn) < 0)\n")
+    f.write("    goto ERROR_0;\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return 0;\n")
+    f.write("ERROR_0:\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return -1;\n")
+    f.write("}\n\n")
+
+
 # List of possible directories to search for header files
 COMMON_INCLUDE_DIRS = [
     "./",
@@ -1166,9 +1368,16 @@ def validate_async_annotation(
 
 
 def main():
+    # hip_common.h only auto-defines __HIP_PLATFORM_AMD__ under hip-clang; the
+    # comment in that header states that other compilers (GCC, ICC, ...) must set
+    # one of the platform macros explicitly. Without it, hip_runtime.h hits a
+    # hard #error ("Must define exactly one of __HIP_PLATFORM_AMD__ or
+    # __HIP_PLATFORM_NVIDIA__") and the preprocessor aborts. The define is inert
+    # for the CUDA/NVML parse (cuda.h ignores it).
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            include_paths=["/usr/local/cuda/include"],
+            include_paths=["/usr/local/cuda/include", "/opt/rocm/include"],
+            defines=["__HIP_PLATFORM_AMD__"],
         ),
     )
 
@@ -1220,6 +1429,7 @@ def main():
         )
 
     nvml_functions_with_annotations = collect_nvml_functions(annotations)
+    hip_functions_with_annotations = collect_hip_functions(annotations)
 
     annotated_names = annotated_rpc_names(annotations)
 
@@ -1250,6 +1460,8 @@ def main():
             write_rpc_define(f"RPC_{name}", name)
         for name in NVML_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
+        for name in HIP_RPC_FUNCTIONS:
+            write_rpc_define(f"RPC_{name}", name)
         f.write("\n")
         for name in PRIVATE_RPC_FUNCTIONS:
             write_rpc_define(f"LUPINE_RPC_{name}", name)
@@ -1272,6 +1484,57 @@ def main():
     with open("gen_nvml_server.h", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
         for function, _, _, metadata in nvml_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
+
+    with open("gen_hip_client.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        hip_client_function_by_name = {}
+        for function, _, operations, metadata in hip_functions_with_annotations:
+            if metadata.disabled_client:
+                continue
+            hip_client_function_by_name[function.name.format()] = function
+            write_hip_client_rpc(f, function, operations)
+            write_hip_client_wrapper(f, function, operations, metadata)
+        # Emit bare-name aliases for versioned HIP symbols. The bare name is a
+        # macro in hip_runtime_api.h (active in any TU that includes
+        # hip_compat.h -> hip_runtime.h), so #undef it first or the alias would
+        # expand into a duplicate of the versioned wrapper above. Mirrors the
+        # MANUAL_REMAPPINGS block emitted into gen_client.cpp for CUDA.
+        for alias, target in HIP_MANUAL_REMAPPINGS:
+            if alias in hip_client_function_by_name:
+                continue
+            target_function = hip_client_function_by_name.get(target)
+            if target_function is None:
+                continue
+            f.write("#ifdef {alias}\n#undef {alias}\n#endif\n".format(alias=alias))
+            f.write(
+                'extern "C" {return_type} {alias}({params}) {{\n'.format(
+                    return_type=target_function.return_type.format(),
+                    alias=alias,
+                    params=", ".join(format_function_params(target_function)),
+                )
+            )
+            call = "{target}({args})".format(
+                target=target,
+                args=", ".join(format_call_args(target_function)),
+            )
+            if target_function.return_type.format() == "void":
+                f.write("  {call};\n}}\n\n".format(call=call))
+            else:
+                f.write("  return {call};\n}}\n\n".format(call=call))
+
+    with open("gen_hip_server.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function, _, operations, metadata in hip_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            write_hip_server_handler(f, function, operations)
+
+    with open("gen_hip_server.h", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function, _, _, metadata in hip_functions_with_annotations:
             if metadata.disabled_server:
                 continue
             f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
@@ -1708,6 +1971,11 @@ def main():
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
+            # HIP handlers are compiled unconditionally (hip_server.cpp loads
+            # amdhip64 at runtime; the HIP types are vendored in hip_compat.h),
+            # so gen_server.cpp always pulls in hip_server.h for the handle_hip*
+            # prototypes it references in the dispatch table below.
+            '#include "hip_server.h"\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             if metadata.disabled_server:
@@ -1816,6 +2084,11 @@ def main():
                     )
                 )
         for name in NVML_RPC_FUNCTIONS:
+            f.write("    {{RPC_{name}, handle_{name}}},\n".format(name=name))
+        # The HIP dispatch entries reference handle_hip*, which hip_server.cpp
+        # (always compiled into the server) defines. Emitted unconditionally
+        # since the HIP backend is no longer a compile-time opt-in.
+        for name in HIP_RPC_FUNCTIONS:
             f.write("    {{RPC_{name}, handle_{name}}},\n".format(name=name))
         f.write("};\n\n")
 
