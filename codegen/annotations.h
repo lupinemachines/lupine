@@ -2343,7 +2343,8 @@ CUresult cuModuleUnload(CUmodule hmod);
  */
 CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
 /**
- * @disabled client - manual client receives the complete parameter layout
+ * @disabled client - manual client follows lookup with a best-effort parameter
+ * layout snapshot
  * @routingkey MODULE hmod
  * @recordowner FUNCTION hfunc
  * @param hfunc RECV_ONLY

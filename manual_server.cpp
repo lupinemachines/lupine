@@ -950,6 +950,50 @@ int handle_manual_lupineModuleGetFunctionWithLayout(conn_t *conn) {
   return 0;
 }
 
+static CUresult lupine_get_function_param_layout_snapshot(
+    CUfunction function, lupine_kernel_param_layout *layout) {
+  if (layout == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  *layout = {};
+  for (uint32_t i = 0;; ++i) {
+    size_t offset = 0;
+    size_t size = 0;
+    CUresult result = cuFuncGetParamInfo(function, i, &offset, &size);
+    if (result == CUDA_ERROR_INVALID_VALUE) {
+      return CUDA_SUCCESS;
+    }
+    if (result != CUDA_SUCCESS) {
+      *layout = {};
+      return result;
+    }
+    layout->offsets.push_back(offset);
+    layout->sizes.push_back(size);
+    layout->count = i + 1;
+  }
+}
+
+int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
+  CUfunction function = nullptr;
+  if (rpc_read(conn, &function, sizeof(function)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  lupine_kernel_param_layout layout;
+  CUresult result =
+      lupine_get_function_param_layout_snapshot(function, &layout);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_kernel_param_layout(conn, &layout) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_manual_cuLibraryLoadData(conn_t *conn) {
   uint32_t kind = 0;
   size_t image_size = 0;
