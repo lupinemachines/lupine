@@ -193,7 +193,6 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineFunctionParamLayoutSnapshot",
     "lupineLibrarySnapshot",
     "lupineManagedHostFlush",
-    "lupineModuleGetFunctionWithLayout",
 ]
 
 

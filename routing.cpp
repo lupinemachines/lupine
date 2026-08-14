@@ -161,11 +161,11 @@ int lupine_known_deviceptr_route_id(CUdeviceptr ptr) {
 }
 
 lupine_route lupine_route_from_known_kernel_deviceptr_args(
-    void *const *kernel_params, const lupine_kernel_param_layout &layout,
+    void *const *kernel_params, const std::vector<size_t> &param_sizes,
     lupine_route fallback) {
   int route_id = -2;
-  for (uint32_t i = 0; i < layout.count; ++i) {
-    if (layout.sizes[i] != sizeof(CUdeviceptr) || kernel_params == nullptr ||
+  for (size_t i = 0; i < param_sizes.size(); ++i) {
+    if (param_sizes[i] != sizeof(CUdeviceptr) || kernel_params == nullptr ||
         kernel_params[i] == nullptr) {
       continue;
     }

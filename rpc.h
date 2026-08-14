@@ -1,7 +1,6 @@
 #ifndef RPC_H
 #define RPC_H
 
-#include "cache.h"
 #include "cuda_compat.h"
 #include "lupine_platform.h"
 #include <stdint.h>
@@ -126,11 +125,22 @@ rpc_write_kernel_node_params(conn_t *conn,
                              const CUDA_KERNEL_NODE_PARAMS *node_params);
 extern int rpc_read_kernel_node_params(conn_t *conn,
                                        CUDA_KERNEL_NODE_PARAMS *node_params);
-extern int
-rpc_write_kernel_param_layout(conn_t *conn,
-                              const lupine_kernel_param_layout *layout);
+#ifdef LUPINE_RPC_SERVER
+extern int rpc_write_function_param_layout(conn_t *conn, CUfunction function,
+                                           CUresult *result);
+extern int rpc_read_kernel_param_values(conn_t *conn, CUfunction function,
+                                        uint32_t expected_count,
+                                        size_t payload_size,
+                                        std::vector<unsigned char> *storage,
+                                        std::vector<void *> *values,
+                                        CUresult *result);
+extern int rpc_write_kernel_param_layout_and_values(
+    conn_t *conn, CUfunction function, void *const *values,
+    size_t *payload_size, CUresult *result);
+#endif
 extern int rpc_read_kernel_param_layout(conn_t *conn,
-                                        lupine_kernel_param_layout *layout);
+                                        std::vector<size_t> *offsets,
+                                        std::vector<size_t> *sizes);
 extern int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config);
 extern int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
                                   std::vector<CUlaunchAttribute> *attributes);

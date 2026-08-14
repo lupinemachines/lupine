@@ -136,18 +136,17 @@ struct lupine_module_function_record {
   std::unordered_map<int, CUfunction> functions_by_route;
 };
 
-static CUresult
-lupine_read_func_param_layout(CUfunction function,
-                              lupine_kernel_param_layout *layout);
-static CUresult
-lupine_read_kernel_param_layout(CUkernel kernel,
-                                lupine_kernel_param_layout *layout);
+static CUresult lupine_read_func_param_layout(CUfunction function,
+                                              std::vector<size_t> *offsets,
+                                              std::vector<size_t> *sizes);
+static CUresult lupine_read_kernel_param_layout(CUkernel kernel,
+                                                std::vector<size_t> *offsets,
+                                                std::vector<size_t> *sizes);
 static CUresult lupine_warm_func_param_info(CUfunction function);
 static CUresult lupine_warm_kernel_param_info(CUkernel kernel);
 
 struct lupine_graph_kernel_node_params_storage {
   CUDA_KERNEL_NODE_PARAMS params = {};
-  lupine_kernel_param_layout layout = {};
   std::vector<unsigned char> packed;
   std::vector<void *> kernel_params;
 };
@@ -1063,26 +1062,28 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
   return CUDA_SUCCESS;
 }
 
-static void lupine_cache_function_param_layout(
-    CUfunction function, const lupine_kernel_param_layout &layout) {
+static void
+lupine_cache_function_param_layout(CUfunction function,
+                                   const std::vector<size_t> &offsets,
+                                   const std::vector<size_t> &sizes) {
   uintptr_t handle = reinterpret_cast<uintptr_t>(function);
-  for (uint32_t i = 0; i < layout.count; ++i) {
+  for (size_t i = 0; i < sizes.size(); ++i) {
     lupine_param_info_cache().insert_or_assign(
         lupine_param_info_key{handle, i, false},
-        lupine_param_info_value{CUDA_SUCCESS, layout.offsets[i],
-                                layout.sizes[i]});
+        lupine_param_info_value{CUDA_SUCCESS, offsets[i], sizes[i]});
   }
   lupine_param_info_cache().insert_or_assign(
-      lupine_param_info_key{handle, layout.count, false},
+      lupine_param_info_key{handle, sizes.size(), false},
       lupine_param_info_value{CUDA_ERROR_INVALID_VALUE, 0, 0});
 }
 
 static void lupine_prefetch_function_param_layout(CUfunction function,
                                                   lupine_route route) {
-  lupine_kernel_param_layout layout;
+  std::vector<size_t> offsets;
+  std::vector<size_t> sizes;
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_route_is_local(route)) {
-    result = lupine_read_func_param_layout(function, &layout);
+    result = lupine_read_func_param_layout(function, &offsets, &sizes);
   } else {
     conn_t *conn = lupine_route_remote_conn(route);
     if (conn == nullptr ||
@@ -1090,18 +1091,18 @@ static void lupine_prefetch_function_param_layout(CUfunction function,
             conn, LUPINE_RPC_lupineFunctionParamLayoutSnapshot) < 0 ||
         rpc_write(conn, &function, sizeof(function)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
-        rpc_read_kernel_param_layout(conn, &layout) < 0 ||
+        rpc_read_kernel_param_layout(conn, &offsets, &sizes) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
       return;
     }
   }
   if (result == CUDA_SUCCESS) {
-    lupine_cache_function_param_layout(function, layout);
+    lupine_cache_function_param_layout(function, offsets, sizes);
   }
 }
 
 extern "C" CUresult cuModuleGetFunction(CUfunction *function, CUmodule module,
-                                         const char *name) {
+                                        const char *name) {
   if (function == nullptr || name == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4571,13 +4572,14 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   return return_value;
 }
 
-static CUresult
-lupine_read_func_param_layout(CUfunction function,
-                              lupine_kernel_param_layout *layout) {
-  if (layout == nullptr) {
+static CUresult lupine_read_func_param_layout(CUfunction function,
+                                              std::vector<size_t> *offsets,
+                                              std::vector<size_t> *sizes) {
+  if (offsets == nullptr || sizes == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  *layout = {};
+  offsets->clear();
+  sizes->clear();
   for (uint32_t i = 0;; ++i) {
     size_t offset = 0;
     size_t size = 0;
@@ -4588,19 +4590,19 @@ lupine_read_func_param_layout(CUfunction function,
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    layout->offsets.push_back(offset);
-    layout->sizes.push_back(size);
-    layout->count = i + 1;
+    offsets->push_back(offset);
+    sizes->push_back(size);
   }
 }
 
-static CUresult
-lupine_read_kernel_param_layout(CUkernel kernel,
-                                lupine_kernel_param_layout *layout) {
-  if (layout == nullptr) {
+static CUresult lupine_read_kernel_param_layout(CUkernel kernel,
+                                                std::vector<size_t> *offsets,
+                                                std::vector<size_t> *sizes) {
+  if (offsets == nullptr || sizes == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  *layout = {};
+  offsets->clear();
+  sizes->clear();
   for (uint32_t i = 0;; ++i) {
     size_t offset = 0;
     size_t size = 0;
@@ -4611,9 +4613,8 @@ lupine_read_kernel_param_layout(CUkernel kernel,
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    layout->offsets.push_back(offset);
-    layout->sizes.push_back(size);
-    layout->count = i + 1;
+    offsets->push_back(offset);
+    sizes->push_back(size);
   }
 }
 
@@ -4714,27 +4715,29 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                       blockDimZ, sharedMemBytes, hStream, kernelParams, extra);
   }
 
-  lupine_kernel_param_layout layout;
-  status = kernel_handle ? lupine_read_kernel_param_layout(
-                               reinterpret_cast<CUkernel>(f), &layout)
-                         : lupine_read_func_param_layout(f, &layout);
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
+  status = kernel_handle
+               ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
+                                                 &param_offsets, &param_sizes)
+               : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
   if (status != CUDA_SUCCESS) {
     return status;
   }
 
   size_t payload_size = 0;
-  for (uint32_t i = 0; i < layout.count; ++i) {
+  for (size_t i = 0; i < param_sizes.size(); ++i) {
     if (kernelParams == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
     if (kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    payload_size += layout.sizes[i];
+    payload_size += param_sizes[i];
   }
 
   lupine_route arg_route = lupine_route_from_known_kernel_deviceptr_args(
-      kernelParams, layout, launch_route);
+      kernelParams, param_sizes, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
     status = lupine_resolve_launch_function_for_route(
@@ -4744,28 +4747,31 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     }
     route = lupine_route_for_function(f);
 
-    status = kernel_handle ? lupine_read_kernel_param_layout(
-                                 reinterpret_cast<CUkernel>(f), &layout)
-                           : lupine_read_func_param_layout(f, &layout);
+    status =
+        kernel_handle
+            ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
+                                              &param_offsets, &param_sizes)
+            : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
     if (status != CUDA_SUCCESS) {
       return status;
     }
     payload_size = 0;
-    for (uint32_t i = 0; i < layout.count; ++i) {
+    for (size_t i = 0; i < param_sizes.size(); ++i) {
       if (kernelParams == nullptr || kernelParams[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
-      payload_size += layout.sizes[i];
+      payload_size += param_sizes[i];
     }
     LUPINE_TRACE_LOG("LUPINE cuLaunchKernel rerouted by args f="
                      << f << " route=" << lupine_route_identity(route));
   }
 
   bool used_managed_mapping = false;
-  std::vector<CUdeviceptr> translated_params(layout.count);
-  std::vector<void *> rpc_params(layout.count);
+  uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
+  std::vector<CUdeviceptr> translated_params(param_count);
+  std::vector<void *> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
-      kernelParams, layout.sizes.data(), layout.count, translated_params.data(),
+      kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data(), &used_managed_mapping);
   if (status != CUDA_SUCCESS) {
     return status;
@@ -4795,9 +4801,9 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
-      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+      rpc_write_kernel_param_values(conn, param_count, param_sizes.data(),
                                     rpc_params.data()) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4840,27 +4846,29 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
                            : real(config, f, kernelParams, extra);
   }
 
-  lupine_kernel_param_layout layout;
-  status = kernel_handle ? lupine_read_kernel_param_layout(
-                               reinterpret_cast<CUkernel>(f), &layout)
-                         : lupine_read_func_param_layout(f, &layout);
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
+  status = kernel_handle
+               ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
+                                                 &param_offsets, &param_sizes)
+               : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
   if (status != CUDA_SUCCESS) {
     return status;
   }
 
   size_t payload_size = 0;
-  for (uint32_t i = 0; i < layout.count; ++i) {
+  for (size_t i = 0; i < param_sizes.size(); ++i) {
     if (kernelParams == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
     if (kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    payload_size += layout.sizes[i];
+    payload_size += param_sizes[i];
   }
 
   lupine_route arg_route = lupine_route_from_known_kernel_deviceptr_args(
-      kernelParams, layout, launch_route);
+      kernelParams, param_sizes, launch_route);
   if (lupine_route_identity(arg_route) != lupine_route_identity(launch_route)) {
     launch_route = arg_route;
     status = lupine_resolve_launch_function_for_route(
@@ -4870,26 +4878,29 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     }
     route = lupine_route_for_function(f);
 
-    status = kernel_handle ? lupine_read_kernel_param_layout(
-                                 reinterpret_cast<CUkernel>(f), &layout)
-                           : lupine_read_func_param_layout(f, &layout);
+    status =
+        kernel_handle
+            ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
+                                              &param_offsets, &param_sizes)
+            : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
     if (status != CUDA_SUCCESS) {
       return status;
     }
     payload_size = 0;
-    for (uint32_t i = 0; i < layout.count; ++i) {
+    for (size_t i = 0; i < param_sizes.size(); ++i) {
       if (kernelParams == nullptr || kernelParams[i] == nullptr) {
         return CUDA_ERROR_INVALID_VALUE;
       }
-      payload_size += layout.sizes[i];
+      payload_size += param_sizes[i];
     }
   }
 
   bool used_managed_mapping = false;
-  std::vector<CUdeviceptr> translated_params(layout.count);
-  std::vector<void *> rpc_params(layout.count);
+  uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
+  std::vector<CUdeviceptr> translated_params(param_count);
+  std::vector<void *> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
-      kernelParams, layout.sizes.data(), layout.count, translated_params.data(),
+      kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data(), &used_managed_mapping);
   if (status != CUDA_SUCCESS) {
     return status;
@@ -4917,9 +4928,9 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write_launch_config(conn, config) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &launch_context, sizeof(launch_context)) < 0 ||
-      rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
-      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+      rpc_write_kernel_param_values(conn, param_count, param_sizes.data(),
                                     rpc_params.data()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -4967,26 +4978,30 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
                       blockDimZ, sharedMemBytes, hStream, kernelParams);
   }
 
-  lupine_kernel_param_layout layout;
-  CUresult status = kernel_handle ? lupine_read_kernel_param_layout(
-                                        reinterpret_cast<CUkernel>(f), &layout)
-                                  : lupine_read_func_param_layout(f, &layout);
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
+  CUresult status =
+      kernel_handle
+          ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
+                                            &param_offsets, &param_sizes)
+          : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
   if (status != CUDA_SUCCESS) {
     return status;
   }
 
   size_t payload_size = 0;
-  for (uint32_t i = 0; i < layout.count; ++i) {
+  for (size_t i = 0; i < param_sizes.size(); ++i) {
     if (kernelParams == nullptr || kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
-    payload_size += layout.sizes[i];
+    payload_size += param_sizes[i];
   }
 
-  std::vector<CUdeviceptr> translated_params(layout.count);
-  std::vector<void *> rpc_params(layout.count);
+  uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
+  std::vector<CUdeviceptr> translated_params(param_count);
+  std::vector<void *> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
-      kernelParams, layout.sizes.data(), layout.count, translated_params.data(),
+      kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data());
   if (status != CUDA_SUCCESS) {
     return status;
@@ -5005,9 +5020,9 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
-      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+      rpc_write_kernel_param_values(conn, param_count, param_sizes.data(),
                                     rpc_params.data()) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -5593,16 +5608,17 @@ lupine_kernel_node_function(const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
 static void
 lupine_translate_kernel_node_function(CUDA_KERNEL_NODE_PARAMS *nodeParams);
 
-static CUresult
-lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
-                                  CUDA_KERNEL_NODE_PARAMS *serialParams,
-                                  lupine_kernel_param_layout *layout,
-                                  size_t *payloadSize) {
-  if (nodeParams == nullptr || serialParams == nullptr || layout == nullptr ||
+static CUresult lupine_prepare_kernel_node_params(
+    const CUDA_KERNEL_NODE_PARAMS *nodeParams,
+    CUDA_KERNEL_NODE_PARAMS *serialParams, std::vector<size_t> *paramOffsets,
+    std::vector<size_t> *paramSizes, size_t *payloadSize) {
+  if (nodeParams == nullptr || serialParams == nullptr ||
+      paramOffsets == nullptr || paramSizes == nullptr ||
       payloadSize == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  *layout = {};
+  paramOffsets->clear();
+  paramSizes->clear();
   *payloadSize = 0;
   if (nodeParams->extra != nullptr) {
     return CUDA_ERROR_NOT_SUPPORTED;
@@ -5610,16 +5626,18 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
   CUresult result;
 #if CUDA_VERSION >= 12000
   if (nodeParams->func == nullptr && nodeParams->kern != nullptr) {
-    result = lupine_read_kernel_param_layout(nodeParams->kern, layout);
+    result = lupine_read_kernel_param_layout(nodeParams->kern, paramOffsets,
+                                             paramSizes);
   } else {
 #endif
     if (lupine_is_private_function(nodeParams->func)) {
       result = lupine_read_kernel_param_layout(
           reinterpret_cast<CUkernel>(
               lupine_translate_private_function(nodeParams->func)),
-          layout);
+          paramOffsets, paramSizes);
     } else {
-      result = lupine_read_func_param_layout(nodeParams->func, layout);
+      result = lupine_read_func_param_layout(nodeParams->func, paramOffsets,
+                                             paramSizes);
     }
 #if CUDA_VERSION >= 12000
   }
@@ -5627,10 +5645,10 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
   if (result != CUDA_SUCCESS) {
     return result;
   }
-  if (layout->count != 0 && nodeParams->kernelParams == nullptr) {
+  if (!paramSizes->empty() && nodeParams->kernelParams == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  for (uint32_t i = 0; i < layout->count; ++i) {
+  for (size_t i = 0; i < paramSizes->size(); ++i) {
     if (nodeParams->kernelParams[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
@@ -5639,8 +5657,8 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
   lupine_translate_kernel_node_function(serialParams);
   serialParams->kernelParams = nullptr;
   serialParams->extra = nullptr;
-  for (uint32_t i = 0; i < layout->count; ++i) {
-    *payloadSize += layout->sizes[i];
+  for (size_t size : *paramSizes) {
+    *payloadSize += size;
   }
   return CUDA_SUCCESS;
 }
@@ -5648,9 +5666,11 @@ lupine_prepare_kernel_node_params(const CUDA_KERNEL_NODE_PARAMS *nodeParams,
 static CUresult
 lupine_write_kernel_param_values(conn_t *conn,
                                  const CUDA_KERNEL_NODE_PARAMS *nodeParams,
-                                 const lupine_kernel_param_layout &layout) {
+                                 const std::vector<size_t> &paramSizes) {
   if (nodeParams == nullptr ||
-      rpc_write_kernel_param_values(conn, layout.count, layout.sizes.data(),
+      rpc_write_kernel_param_values(conn,
+                                    static_cast<uint32_t>(paramSizes.size()),
+                                    paramSizes.data(),
                                     nodeParams->kernelParams) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -5658,20 +5678,22 @@ lupine_write_kernel_param_values(conn_t *conn,
 }
 
 static CUresult lupine_read_kernel_param_values(
-    conn_t *conn, const lupine_kernel_param_layout &layout, size_t payloadSize,
+    conn_t *conn, const std::vector<size_t> &paramOffsets,
+    const std::vector<size_t> &paramSizes, size_t payloadSize,
     std::vector<unsigned char> *storage) {
   if (storage == nullptr) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   size_t storage_size = 0;
-  for (uint32_t i = 0; i < layout.count; ++i) {
-    storage_size = std::max(storage_size, layout.offsets[i] + layout.sizes[i]);
+  for (size_t i = 0; i < paramSizes.size(); ++i) {
+    storage_size = std::max(storage_size, paramOffsets[i] + paramSizes[i]);
   }
   storage->assign(storage_size, 0);
-  std::vector<void *> values(layout.count);
+  std::vector<void *> values(paramSizes.size());
   if (rpc_read_kernel_param_values(
-          conn, layout.count, layout.offsets.data(), layout.sizes.data(),
-          payloadSize, storage->data(), storage->size(), values.data()) < 0) {
+          conn, static_cast<uint32_t>(paramSizes.size()), paramOffsets.data(),
+          paramSizes.data(), payloadSize, storage->data(), storage->size(),
+          values.data()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return CUDA_SUCCESS;
@@ -5767,7 +5789,8 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUDA_KERNEL_NODE_PARAMS serial_params = {};
-  lupine_kernel_param_layout layout = {};
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
   size_t payload_size = 0;
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (conn == nullptr ||
@@ -5775,14 +5798,14 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read_kernel_node_params(conn, &serial_params) < 0 ||
-      rpc_read_kernel_param_layout(conn, &layout) < 0 ||
+      rpc_read_kernel_param_layout(conn, &param_offsets, &param_sizes) < 0 ||
       rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
   std::vector<unsigned char> packed;
-  if (lupine_read_kernel_param_values(conn, layout, payload_size, &packed) !=
-          CUDA_SUCCESS ||
+  if (lupine_read_kernel_param_values(conn, param_offsets, param_sizes,
+                                      payload_size, &packed) != CUDA_SUCCESS ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5793,11 +5816,10 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
 
   lupine_graph_kernel_node_params_storage storage;
   storage.params = serial_params;
-  storage.layout = layout;
   storage.packed = std::move(packed);
-  storage.kernel_params.resize(layout.count);
-  for (uint32_t i = 0; i < layout.count; ++i) {
-    storage.kernel_params[i] = storage.packed.data() + layout.offsets[i];
+  storage.kernel_params.resize(param_sizes.size());
+  for (size_t i = 0; i < param_sizes.size(); ++i) {
+    storage.kernel_params[i] = storage.packed.data() + param_offsets[i];
   }
   storage.params.kernelParams =
       storage.kernel_params.empty() ? nullptr : storage.kernel_params.data();
@@ -5841,23 +5863,25 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
   }
 
   CUDA_KERNEL_NODE_PARAMS serial_params = {};
-  lupine_kernel_param_layout layout = {};
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
   size_t payload_size = 0;
   CUresult status = lupine_prepare_kernel_node_params(
-      nodeParams, &serial_params, &layout, &payload_size);
+      nodeParams, &serial_params, &param_offsets, &param_sizes, &payload_size);
   if (status != CUDA_SUCCESS) {
     return status;
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
+  uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetParams_v2) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_write_kernel_node_params(conn, &serial_params) < 0 ||
-      rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
-      lupine_write_kernel_param_values(conn, nodeParams, layout) !=
+      lupine_write_kernel_param_values(conn, nodeParams, param_sizes) !=
           CUDA_SUCCESS ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -5899,10 +5923,11 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   }
 
   CUDA_KERNEL_NODE_PARAMS serial_params = {};
-  lupine_kernel_param_layout layout = {};
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
   size_t payload_size = 0;
-  status = lupine_prepare_kernel_node_params(nodeParams, &serial_params,
-                                             &layout, &payload_size);
+  status = lupine_prepare_kernel_node_params(
+      nodeParams, &serial_params, &param_offsets, &param_sizes, &payload_size);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -5921,6 +5946,7 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
+  uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphAddKernelNode_v2) < 0 ||
@@ -5928,9 +5954,9 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
       rpc_write_kernel_node_params(conn, &serial_params) < 0 ||
-      rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
-      lupine_write_kernel_param_values(conn, nodeParams, layout) !=
+      lupine_write_kernel_param_values(conn, nodeParams, param_sizes) !=
           CUDA_SUCCESS ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
@@ -6021,10 +6047,11 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
   }
 
   CUDA_KERNEL_NODE_PARAMS serial_params = {};
-  lupine_kernel_param_layout layout = {};
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
   size_t payload_size = 0;
   CUresult status = lupine_prepare_kernel_node_params(
-      nodeParams, &serial_params, &layout, &payload_size);
+      nodeParams, &serial_params, &param_offsets, &param_sizes, &payload_size);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -6040,6 +6067,7 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
+  uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphExecKernelNodeSetParams_v2) <
@@ -6047,9 +6075,9 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
       rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_write_kernel_node_params(conn, &serial_params) < 0 ||
-      rpc_write(conn, &layout.count, sizeof(layout.count)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, &payload_size, sizeof(payload_size)) < 0 ||
-      lupine_write_kernel_param_values(conn, nodeParams, layout) !=
+      lupine_write_kernel_param_values(conn, nodeParams, param_sizes) !=
           CUDA_SUCCESS ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -6214,13 +6242,14 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
 
   CUgraphNodeParams serial_params = *nodeParams;
   CUDA_KERNEL_NODE_PARAMS serial_kernel_params = {};
-  lupine_kernel_param_layout layout = {};
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> param_sizes;
   uint32_t param_count = 0;
   size_t payload_size = 0;
   if (nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL) {
     status = lupine_prepare_kernel_node_params(
         reinterpret_cast<const CUDA_KERNEL_NODE_PARAMS *>(&nodeParams->kernel),
-        &serial_kernel_params, &layout, &payload_size);
+        &serial_kernel_params, &param_offsets, &param_sizes, &payload_size);
     if (status != CUDA_SUCCESS) {
       return status;
     }
@@ -6238,7 +6267,7 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
     serial_params.kernel.kern = serial_kernel_params.kern;
     serial_params.kernel.ctx = serial_kernel_params.ctx;
 #endif
-    param_count = layout.count;
+    param_count = static_cast<uint32_t>(param_sizes.size());
   } else if (nodeParams->type == CU_GRAPH_NODE_TYPE_CONDITIONAL) {
     serial_params.conditional.phGraph_out = nullptr;
   } else {
@@ -6285,7 +6314,7 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
            conn,
            reinterpret_cast<const CUDA_KERNEL_NODE_PARAMS *>(
                &nodeParams->kernel),
-           layout) != CUDA_SUCCESS) ||
+           param_sizes) != CUDA_SUCCESS) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       (child_count != 0 && rpc_read(conn, child_graphs.data(),
