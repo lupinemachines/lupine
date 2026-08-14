@@ -932,19 +932,22 @@ static int lupine_write_attributes(conn_t *conn, Query query) {
   if (conn == nullptr) {
     return -1;
   }
-  static_assert(sizeof(int32_t) == sizeof(uint32_t));
-  std::vector<int32_t> wire = {0};
+  uint32_t count = CU_FUNC_ATTRIBUTE_MAX;
+  if (rpc_write_copy(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
   for (int attribute = 0; attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
     int value = 0;
-    if (query(static_cast<CUfunction_attribute>(attribute), &value) ==
-        CUDA_SUCCESS) {
-      wire.push_back(static_cast<int32_t>(attribute));
-      wire.push_back(static_cast<int32_t>(value));
+    CUresult result =
+        query(static_cast<CUfunction_attribute>(attribute), &value);
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS &&
+         (rpc_write_copy(conn, &attribute, sizeof(attribute)) < 0 ||
+          rpc_write_copy(conn, &value, sizeof(value)) < 0))) {
+      return -1;
     }
   }
-  uint32_t count = static_cast<uint32_t>((wire.size() - 1) / 2);
-  memcpy(wire.data(), &count, sizeof(count));
-  return rpc_write_copy(conn, wire.data(), wire.size() * sizeof(wire[0]));
+  return 0;
 }
 
 static int lupine_write_function_attributes(conn_t *conn, CUfunction function) {
@@ -1002,10 +1005,7 @@ int handle_manual_lupineFunctionAttributeSnapshot(conn_t *conn) {
     return -1;
   }
 
-  CUresult result =
-      function == nullptr ? CUDA_ERROR_INVALID_VALUE : CUDA_SUCCESS;
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
       lupine_write_function_attributes(conn, function) < 0 ||
       rpc_write_end(conn) < 0) {
     return -1;

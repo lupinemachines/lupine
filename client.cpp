@@ -504,41 +504,61 @@ lupine_function_attribute_cache() {
   return *cache;
 }
 
-static int lupine_read_attribute_pairs(conn_t *conn,
-                                       std::vector<int32_t> *pairs) {
+static int lupine_read_function_attributes(conn_t *conn, lupine_route route,
+                                           CUfunction function) {
   uint32_t count = 0;
-  if (conn == nullptr || pairs == nullptr ||
-      rpc_read(conn, &count, sizeof(count)) < 0 || count > 4096) {
+  if (conn == nullptr || rpc_read(conn, &count, sizeof(count)) < 0 ||
+      count > 4096) {
     return -1;
   }
-  pairs->resize(static_cast<size_t>(count) * 2);
-  if (count != 0 &&
-      rpc_read(conn, pairs->data(), pairs->size() * sizeof(int32_t)) < 0) {
-    return -1;
+  int route_id = lupine_route_identity(route);
+  for (uint32_t i = 0; i < count; ++i) {
+    CUresult result = CUDA_ERROR_UNKNOWN;
+    if (rpc_read(conn, &result, sizeof(result)) < 0) {
+      return -1;
+    }
+    if (result != CUDA_SUCCESS) {
+      continue;
+    }
+    int attribute = 0;
+    int value = 0;
+    if (rpc_read(conn, &attribute, sizeof(attribute)) < 0 ||
+        rpc_read(conn, &value, sizeof(value)) < 0) {
+      return -1;
+    }
+    lupine_function_attribute_cache().insert_or_assign(
+        lupine_function_attribute_key{route_id, function, attribute}, value);
   }
   return 0;
 }
 
-static void
-lupine_cache_function_attributes(lupine_route route, CUfunction function,
-                                 const std::vector<int32_t> &pairs) {
-  int route_id = lupine_route_identity(route);
-  for (size_t pair = 0; pair < pairs.size() / 2; ++pair) {
-    lupine_function_attribute_cache().insert_or_assign(
-        lupine_function_attribute_key{route_id, function, pairs[pair * 2]},
-        pairs[pair * 2 + 1]);
+static int lupine_read_kernel_attributes(conn_t *conn, lupine_route route,
+                                         CUkernel kernel, CUdevice device) {
+  uint32_t count = 0;
+  if (conn == nullptr || rpc_read(conn, &count, sizeof(count)) < 0 ||
+      count > 4096) {
+    return -1;
   }
-}
-
-static void lupine_cache_kernel_attributes(lupine_route route, CUkernel kernel,
-                                           CUdevice device,
-                                           const std::vector<int32_t> &pairs) {
   int route_id = lupine_route_identity(route);
-  for (size_t pair = 0; pair < pairs.size() / 2; ++pair) {
+  for (uint32_t i = 0; i < count; ++i) {
+    CUresult result = CUDA_ERROR_UNKNOWN;
+    if (rpc_read(conn, &result, sizeof(result)) < 0) {
+      return -1;
+    }
+    if (result != CUDA_SUCCESS) {
+      continue;
+    }
+    int attribute = 0;
+    int value = 0;
+    if (rpc_read(conn, &attribute, sizeof(attribute)) < 0 ||
+        rpc_read(conn, &value, sizeof(value)) < 0) {
+      return -1;
+    }
     lupine_kernel_attribute_cache().insert_or_assign(
-        lupine_kernel_attribute_key{route_id, kernel, pairs[pair * 2], device},
-        pairs[pair * 2 + 1]);
+        lupine_kernel_attribute_key{route_id, kernel, attribute, device},
+        value);
   }
+  return 0;
 }
 
 static libcuckoo::cuckoohash_map<lupine_param_info_key, lupine_param_info_value,
@@ -1181,19 +1201,13 @@ static void lupine_prefill_function_attribute_snapshot(CUfunction function,
     return;
   }
 
-  CUresult result = CUDA_ERROR_UNKNOWN;
-  std::vector<int32_t> attributes;
   if (rpc_write_start_request(conn,
                               LUPINE_RPC_lupineFunctionAttributeSnapshot) < 0 ||
       rpc_write(conn, &function, sizeof(function)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 ||
-      lupine_read_attribute_pairs(conn, &attributes) < 0 ||
+      lupine_read_function_attributes(conn, route, function) < 0 ||
       rpc_read_end(conn) < 0) {
     return;
-  }
-  if (result == CUDA_SUCCESS) {
-    lupine_cache_function_attributes(route, function, attributes);
   }
 }
 
@@ -4591,13 +4605,6 @@ static void lupine_prefill_library_snapshot(CUlibrary library, conn_t *conn) {
   }
 }
 
-struct lupine_wire_library_attribute_record {
-  CUkernel kernel = nullptr;
-  CUfunction function = nullptr;
-  std::vector<int32_t> function_attributes;
-  std::vector<int32_t> kernel_attributes;
-};
-
 static void lupine_prefill_library_attribute_snapshot(CUlibrary library,
                                                       conn_t *conn) {
   if (library == nullptr || conn == nullptr) {
@@ -4622,33 +4629,24 @@ static void lupine_prefill_library_attribute_snapshot(CUlibrary library,
     return;
   }
 
-  std::vector<lupine_wire_library_attribute_record> records;
-  records.reserve(record_count);
+  lupine_route route = lupine_remote_route_for_conn(conn);
   for (uint32_t i = 0; i < record_count; ++i) {
-    lupine_wire_library_attribute_record record;
-    if (rpc_read(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
-        rpc_read(conn, &record.function, sizeof(record.function)) < 0 ||
-        lupine_read_attribute_pairs(conn, &record.function_attributes) < 0 ||
-        lupine_read_attribute_pairs(conn, &record.kernel_attributes) < 0) {
+    CUkernel kernel = nullptr;
+    CUfunction function = nullptr;
+    if (rpc_read(conn, &kernel, sizeof(kernel)) < 0 ||
+        rpc_read(conn, &function, sizeof(function)) < 0) {
       return;
     }
-    records.push_back(std::move(record));
+    if (function != nullptr) {
+      lupine_note_function_owner_route(function, route);
+    }
+    if (lupine_read_function_attributes(conn, route, function) < 0 ||
+        lupine_read_kernel_attributes(conn, route, kernel, remote_device) < 0) {
+      return;
+    }
   }
   if (rpc_read_end(conn) < 0) {
     return;
-  }
-
-  lupine_route route = lupine_remote_route_for_conn(conn);
-  for (const auto &record : records) {
-    if (record.function != nullptr) {
-      lupine_note_function_owner_route(record.function, route);
-      lupine_cache_function_attributes(route, record.function,
-                                       record.function_attributes);
-    }
-    if (record.kernel != nullptr && remote_device >= 0) {
-      lupine_cache_kernel_attributes(route, record.kernel, remote_device,
-                                     record.kernel_attributes);
-    }
   }
 }
 
