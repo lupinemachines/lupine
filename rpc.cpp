@@ -573,28 +573,28 @@ int rpc_write_kernel_node_params(conn_t *conn,
   if (conn == nullptr || node_params == nullptr) {
     return -1;
   }
-  if (rpc_write(conn, &node_params->func, sizeof(node_params->func)) < 0 ||
-      rpc_write(conn, &node_params->gridDimX, sizeof(node_params->gridDimX)) <
-          0 ||
-      rpc_write(conn, &node_params->gridDimY, sizeof(node_params->gridDimY)) <
-          0 ||
-      rpc_write(conn, &node_params->gridDimZ, sizeof(node_params->gridDimZ)) <
-          0 ||
-      rpc_write(conn, &node_params->blockDimX, sizeof(node_params->blockDimX)) <
-          0 ||
-      rpc_write(conn, &node_params->blockDimY, sizeof(node_params->blockDimY)) <
-          0 ||
-      rpc_write(conn, &node_params->blockDimZ, sizeof(node_params->blockDimZ)) <
-          0 ||
-      rpc_write(conn, &node_params->sharedMemBytes,
-                sizeof(node_params->sharedMemBytes)) < 0 ||
+  if (rpc_write_copy(conn, &node_params->func, sizeof(node_params->func)) < 0 ||
+      rpc_write_copy(conn, &node_params->gridDimX,
+                     sizeof(node_params->gridDimX)) < 0 ||
+      rpc_write_copy(conn, &node_params->gridDimY,
+                     sizeof(node_params->gridDimY)) < 0 ||
+      rpc_write_copy(conn, &node_params->gridDimZ,
+                     sizeof(node_params->gridDimZ)) < 0 ||
+      rpc_write_copy(conn, &node_params->blockDimX,
+                     sizeof(node_params->blockDimX)) < 0 ||
+      rpc_write_copy(conn, &node_params->blockDimY,
+                     sizeof(node_params->blockDimY)) < 0 ||
+      rpc_write_copy(conn, &node_params->blockDimZ,
+                     sizeof(node_params->blockDimZ)) < 0 ||
+      rpc_write_copy(conn, &node_params->sharedMemBytes,
+                     sizeof(node_params->sharedMemBytes)) < 0 ||
       rpc_write(conn, &rpc_kernel_node_reserved,
                 sizeof(rpc_kernel_node_reserved)) < 0) {
     return -1;
   }
 #if CUDA_VERSION >= 12000
-  if (rpc_write(conn, &node_params->kern, sizeof(node_params->kern)) < 0 ||
-      rpc_write(conn, &node_params->ctx, sizeof(node_params->ctx)) < 0) {
+  if (rpc_write_copy(conn, &node_params->kern, sizeof(node_params->kern)) < 0 ||
+      rpc_write_copy(conn, &node_params->ctx, sizeof(node_params->ctx)) < 0) {
     return -1;
   }
 #else
@@ -804,6 +804,39 @@ int rpc_read_kernel_param_values(conn_t *conn, CUfunction function,
   return 0;
 }
 
+int rpc_read_kernel_node_param_values(conn_t *conn,
+                                      CUDA_KERNEL_NODE_PARAMS *node_params,
+                                      std::vector<unsigned char> *storage,
+                                      std::vector<void *> *values,
+                                      CUresult *result) {
+  uint32_t param_count = 0;
+  size_t payload_size = 0;
+  if (conn == nullptr || node_params == nullptr || storage == nullptr ||
+      values == nullptr || result == nullptr ||
+      rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
+      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+    return -1;
+  }
+
+  CUfunction function = node_params->func;
+#if CUDA_VERSION >= 12000
+  if (function == nullptr) {
+    function = reinterpret_cast<CUfunction>(node_params->kern);
+  }
+#endif
+  *result = CUDA_SUCCESS;
+  if (rpc_read_kernel_param_values(conn, function, param_count, payload_size,
+                                   storage, values, result) < 0 ||
+      (*result != CUDA_SUCCESS && rpc_drain(conn, payload_size) < 0)) {
+    return -1;
+  }
+  if (*result == CUDA_SUCCESS) {
+    node_params->kernelParams = values->empty() ? nullptr : values->data();
+    node_params->extra = nullptr;
+  }
+  return 0;
+}
+
 int rpc_write_kernel_param_layout_and_values(
     conn_t *conn, CUfunction function, void *const *values,
     size_t *payload_size, CUresult *result) {
@@ -875,6 +908,43 @@ int rpc_read_kernel_param_layout(conn_t *conn, std::vector<size_t> *offsets,
       rpc_read(conn, sizes->data(), sizes->size() * sizeof((*sizes)[0])) < 0) {
     return -1;
   }
+  return 0;
+}
+
+int rpc_read_kernel_node_params_with_layout(
+    conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params,
+    std::vector<unsigned char> *storage, std::vector<void *> *values) {
+  std::vector<size_t> offsets;
+  std::vector<size_t> sizes;
+  size_t payload_size = 0;
+  if (conn == nullptr || node_params == nullptr || storage == nullptr ||
+      values == nullptr || rpc_read_kernel_node_params(conn, node_params) < 0 ||
+      rpc_read_kernel_param_layout(conn, &offsets, &sizes) < 0 ||
+      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+    return -1;
+  }
+
+  size_t storage_size = 0;
+  for (size_t i = 0; i < sizes.size(); ++i) {
+    if (offsets[i] > SIZE_MAX - sizes[i]) {
+      return -1;
+    }
+    storage_size = std::max(storage_size, offsets[i] + sizes[i]);
+  }
+  try {
+    storage->assign(storage_size, 0);
+    values->resize(sizes.size());
+  } catch (...) {
+    return -1;
+  }
+  if (rpc_read_kernel_param_values(conn, static_cast<uint32_t>(sizes.size()),
+                                   offsets.data(), sizes.data(), payload_size,
+                                   storage->data(), storage->size(),
+                                   values->data()) < 0) {
+    return -1;
+  }
+  node_params->kernelParams = values->empty() ? nullptr : values->data();
+  node_params->extra = nullptr;
   return 0;
 }
 

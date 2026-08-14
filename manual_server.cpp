@@ -2291,45 +2291,28 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   delete callback;
 }
 
-struct lupine_kernel_param_payload {
-  std::vector<unsigned char> storage;
-  std::vector<void *> params;
-};
-
-static CUresult
-lupine_read_kernel_param_values(conn_t *conn,
-                                const CUDA_KERNEL_NODE_PARAMS &nodeParams,
-                                uint32_t paramCount, size_t payloadSize,
-                                lupine_kernel_param_payload *payload);
-
 int handle_manual_cuGraphAddKernelNode(conn_t *conn) {
   CUgraph hGraph = nullptr;
   std::vector<CUgraphNode> deps;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
-  uint32_t param_count = 0;
-  size_t payload_size = 0;
-  lupine_kernel_param_payload payload;
+  std::vector<unsigned char> param_storage;
+  std::vector<void *> params;
   CUgraphNode graphNode = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_read_graph_dependencies(conn, &deps) < 0 ||
       rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
-      rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+      rpc_read_kernel_node_param_values(conn, &nodeParams, &param_storage,
+                                        &params, &result) < 0) {
     return -1;
   }
-  result = lupine_read_kernel_param_values(conn, nodeParams, param_count,
-                                           payload_size, &payload);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
 
   if (result == CUDA_SUCCESS) {
-    nodeParams.kernelParams =
-        payload.params.empty() ? nullptr : payload.params.data();
-    nodeParams.extra = nullptr;
     result = cuGraphAddKernelNode_v2(&graphNode, hGraph,
                                      deps.empty() ? nullptr : deps.data(),
                                      deps.size(), &nodeParams);
@@ -2352,28 +2335,6 @@ lupine_kernel_node_function(const CUDA_KERNEL_NODE_PARAMS &params) {
   }
 #endif
   return func;
-}
-
-static CUresult
-lupine_read_kernel_param_values(conn_t *conn,
-                                const CUDA_KERNEL_NODE_PARAMS &nodeParams,
-                                uint32_t paramCount, size_t payloadSize,
-                                lupine_kernel_param_payload *payload) {
-  if (conn == nullptr || payload == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  payload->storage.clear();
-  payload->params.clear();
-
-  CUfunction func = lupine_kernel_node_function(nodeParams);
-  CUresult result = CUDA_SUCCESS;
-  if (rpc_read_kernel_param_values(conn, func, paramCount, payloadSize,
-                                   &payload->storage, &payload->params,
-                                   &result) < 0 ||
-      (result != CUDA_SUCCESS && rpc_drain(conn, payloadSize) < 0)) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return result;
 }
 
 int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
@@ -2419,28 +2380,22 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
 int handle_manual_cuGraphKernelNodeSetParams(conn_t *conn) {
   CUgraphNode hNode = nullptr;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
-  uint32_t param_count = 0;
-  size_t payload_size = 0;
-  lupine_kernel_param_payload payload;
+  std::vector<unsigned char> param_storage;
+  std::vector<void *> params;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
-      rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+      rpc_read_kernel_node_param_values(conn, &nodeParams, &param_storage,
+                                        &params, &result) < 0) {
     return -1;
   }
-  result = lupine_read_kernel_param_values(conn, nodeParams, param_count,
-                                           payload_size, &payload);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
 
   if (result == CUDA_SUCCESS) {
-    nodeParams.kernelParams =
-        payload.params.empty() ? nullptr : payload.params.data();
-    nodeParams.extra = nullptr;
     result = cuGraphKernelNodeSetParams_v2(hNode, &nodeParams);
   }
 
@@ -2455,29 +2410,23 @@ int handle_manual_cuGraphExecKernelNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec = nullptr;
   CUgraphNode hNode = nullptr;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
-  uint32_t param_count = 0;
-  size_t payload_size = 0;
-  lupine_kernel_param_payload payload;
+  std::vector<unsigned char> param_storage;
+  std::vector<void *> params;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
-      rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+      rpc_read_kernel_node_param_values(conn, &nodeParams, &param_storage,
+                                        &params, &result) < 0) {
     return -1;
   }
-  result = lupine_read_kernel_param_values(conn, nodeParams, param_count,
-                                           payload_size, &payload);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
 
   if (result == CUDA_SUCCESS) {
-    nodeParams.kernelParams =
-        payload.params.empty() ? nullptr : payload.params.data();
-    nodeParams.extra = nullptr;
     result = cuGraphExecKernelNodeSetParams_v2(hGraphExec, hNode, &nodeParams);
   }
 
@@ -2654,23 +2603,25 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
   CUgraph hGraph = nullptr;
   std::vector<CUgraphNode> deps;
   CUgraphNodeParams nodeParams = {};
-  uint32_t param_count = 0;
-  size_t payload_size = 0;
-  lupine_kernel_param_payload payload;
+  std::vector<unsigned char> param_storage;
+  std::vector<void *> params;
   CUgraphNode graphNode = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_read_graph_dependencies(conn, &deps) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
-      rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0) {
     return -1;
   }
   if (nodeParams.type == CU_GRAPH_NODE_TYPE_KERNEL) {
-    result = lupine_read_kernel_param_values(
-        conn, *reinterpret_cast<CUDA_KERNEL_NODE_PARAMS *>(&nodeParams.kernel),
-        param_count, payload_size, &payload);
+    auto *kernel_params =
+        reinterpret_cast<CUDA_KERNEL_NODE_PARAMS *>(&nodeParams.kernel);
+    if (rpc_read_kernel_node_param_values(conn, kernel_params, &param_storage,
+                                          &params, &result) < 0) {
+      return -1;
+    }
+  } else if (rpc_drain(conn, sizeof(uint32_t) + sizeof(size_t)) < 0) {
+    return -1;
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -2680,9 +2631,6 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
   std::vector<CUgraph> child_graphs;
   if (nodeParams.type == CU_GRAPH_NODE_TYPE_KERNEL) {
     if (result == CUDA_SUCCESS) {
-      nodeParams.kernel.kernelParams =
-          payload.params.empty() ? nullptr : payload.params.data();
-      nodeParams.kernel.extra = nullptr;
       result = lupine_server_cuGraphAddNode(
           &graphNode, hGraph, deps.empty() ? nullptr : deps.data(), nullptr,
           deps.size(), &nodeParams);
@@ -2703,8 +2651,7 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }
   LUPINE_TRACE_LOG("LUPINE cuGraphAddNode type="
-                   << nodeParams.type << " param_count=" << param_count
-                   << " payload_size=" << payload_size << " graph=" << hGraph
+                   << nodeParams.type << " graph=" << hGraph
                    << " node=" << graphNode << " result=" << result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
