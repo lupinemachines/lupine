@@ -36,6 +36,10 @@ jobs:
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
             pytorch_index_url: https://download.pytorch.org/whl/cu124
+            # All torch cu124 wheels pin nvidia-cudnn-cu12==9.1.0.70, but that wheel
+            # was pruned from the cu124 index (2026-08) and now only exists on PyPI.
+            # Pre-installing it satisfies the pin without mixing indexes for torch.
+            pytorch_preinstall: nvidia-cudnn-cu12==9.1.0.70
           - label: cuda11-8
             name: CUDA 11.8
             client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
@@ -472,7 +476,7 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' PYTORCH_PREINSTALL='${{ matrix.pytorch_preinstall }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
@@ -483,6 +487,7 @@ jobs:
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
+            -e PYTORCH_PREINSTALL="$PYTORCH_PREINSTALL" \
             -e SERVER_HOST=host.docker.internal \
             -e SERVER_USER=gha \
             -e SERVER_SSH_TARGET=gha@host.docker.internal \
@@ -534,6 +539,9 @@ jobs:
               python3 -m venv /tmp/venv-pytorch
               /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
               /tmp/venv-pytorch/bin/pip install numpy >/dev/null
+              if [[ -n "${PYTORCH_PREINSTALL:-}" ]]; then
+                /tmp/venv-pytorch/bin/pip install $PYTORCH_PREINSTALL >/dev/null
+              fi
               /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
               export PYTHON_BIN=/tmp/venv-pytorch/bin/python
 
