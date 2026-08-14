@@ -115,6 +115,8 @@ lupine_manual_handlers() {
         "lupineModuleGetFunctionWithLayout"}},
       {RPC_cuLibraryLoadData,
        {handle_manual_cuLibraryLoadData, "cuLibraryLoadData"}},
+      {LUPINE_RPC_lupineLibrarySnapshot,
+       {handle_manual_lupineLibrarySnapshot, "lupineLibrarySnapshot"}},
       {RPC_cuCtxCreate_v2, {handle_manual_cuCtxCreate_v2, "cuCtxCreate_v2"}},
       {RPC_cuDevicePrimaryCtxRetain,
        {handle_manual_cuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain"}},

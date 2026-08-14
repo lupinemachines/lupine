@@ -1030,12 +1030,25 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
-  // The response carries every kernel in the library with its name and full
-  // parameter layout, so the client can serve cuLibraryGetKernel and the
-  // per-kernel param-info walk from cache instead of one round trip per
-  // query. Enumeration failures degrade to an empty table; the client then
-  // falls back to the per-call RPCs. Records are built before any rpc_write
-  // because queued iovecs are only transmitted at rpc_write_end.
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &library, sizeof(library)) < 0 ||
+      rpc_write_jit_outputs(conn, &jit_state) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_manual_lupineLibrarySnapshot(conn_t *conn) {
+  CUlibrary library = nullptr;
+  if (rpc_read(conn, &library, sizeof(library)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
   struct kernel_record {
     std::string name;
     CUkernel kernel = nullptr;
@@ -1044,18 +1057,19 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     std::vector<uint64_t> params;
   };
   std::vector<kernel_record> records;
+  CUresult result = CUDA_ERROR_NOT_SUPPORTED;
 #if CUDA_VERSION >= 12040
-  if (result == CUDA_SUCCESS) {
-    unsigned int kernel_count = 0;
-    std::vector<CUkernel> kernels;
-    if (cuLibraryGetKernelCount(&kernel_count, library) == CUDA_SUCCESS &&
-        kernel_count != 0) {
-      kernels.resize(kernel_count);
-      if (cuLibraryEnumerateKernels(kernels.data(), kernel_count, library) !=
-          CUDA_SUCCESS) {
-        kernels.clear();
-      }
+  unsigned int kernel_count = 0;
+  std::vector<CUkernel> kernels;
+  result = cuLibraryGetKernelCount(&kernel_count, library);
+  if (result == CUDA_SUCCESS && kernel_count != 0) {
+    kernels.resize(kernel_count);
+    result = cuLibraryEnumerateKernels(kernels.data(), kernel_count, library);
+    if (result != CUDA_SUCCESS) {
+      kernels.clear();
     }
+  }
+  if (result == CUDA_SUCCESS) {
     for (CUkernel kernel : kernels) {
       const char *name = nullptr;
       if (kernel == nullptr || cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
@@ -1084,8 +1098,7 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
 
   uint32_t table_count = static_cast<uint32_t>(records.size());
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &library, sizeof(library)) < 0 ||
-      rpc_write_jit_outputs(conn, &jit_state) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
       rpc_write(conn, &table_count, sizeof(table_count)) < 0) {
     return -1;
   }
@@ -1100,10 +1113,7 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
       return -1;
     }
   }
-  if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_write_end(conn) < 0 ? -1 : 0;
 }
 
 int handle_manual_cuMemPoolSetAttribute(conn_t *conn) {

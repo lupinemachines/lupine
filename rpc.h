@@ -46,6 +46,10 @@ struct rpc_http2_read_stats {
 // count-prefixed list of (attribute, value) pairs.
 #define LUPINE_DEVICE_SNAPSHOT_NAME_BYTES 256
 
+// LUPINE_RPC_lupineLibrarySnapshot is a best-effort metadata side channel.
+// The request contains one CUlibrary. The response contains a CUresult and a
+// count-prefixed list of kernel names, handles, and parameter layouts.
+
 typedef struct conn_t conn_t;
 
 struct conn_t {
