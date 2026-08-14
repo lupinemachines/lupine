@@ -415,6 +415,9 @@ struct lupine_device_snapshot_info {
   char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
   CUuuid uuid = {};
   uint64_t total_mem = 0;
+  bool name_valid = false;
+  bool uuid_valid = false;
+  bool total_mem_valid = false;
 };
 
 static libcuckoo::cuckoohash_map<int, lupine_device_snapshot_info> &
@@ -425,9 +428,9 @@ lupine_device_snapshot_cache() {
 }
 
 static libcuckoo::cuckoohash_map<conn_t *, bool> &
-lupine_device_snapshot_attempts() {
-  static auto *attempts = new libcuckoo::cuckoohash_map<conn_t *, bool>();
-  return *attempts;
+lupine_device_snapshot_completions() {
+  static auto *completions = new libcuckoo::cuckoohash_map<conn_t *, bool>();
+  return *completions;
 }
 
 // PyTorch's pin-memory path polls cuDevicePrimaryCtxGetState continuously
@@ -1760,65 +1763,143 @@ static bool lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
   }
 }
 
+static bool lupine_read_device_snapshot_result(conn_t *conn, CUresult *result) {
+  return rpc_read(conn, result, sizeof(*result)) >= 0;
+}
+
+static void
+lupine_cache_device_snapshot_info(CUdevice device,
+                                  const lupine_device_snapshot_info &info) {
+  if (!info.name_valid && !info.uuid_valid && !info.total_mem_valid) {
+    return;
+  }
+  lupine_device_snapshot_cache().upsert(
+      static_cast<int>(device),
+      [&info](lupine_device_snapshot_info &cached, libcuckoo::UpsertContext) {
+        if (info.name_valid) {
+          memcpy(cached.name, info.name, sizeof(cached.name));
+          cached.name_valid = true;
+        }
+        if (info.uuid_valid) {
+          cached.uuid = info.uuid;
+          cached.uuid_valid = true;
+        }
+        if (info.total_mem_valid) {
+          cached.total_mem = info.total_mem;
+          cached.total_mem_valid = true;
+        }
+      },
+      info);
+}
+
 // One round trip that pulls every immutable per-device value the server can
 // enumerate and prefills the client caches, so a metadata scan (for example
 // torch reading ~110 attributes for every device at init) costs one RTT
-// instead of one per query. Attempted once per connection; on any failure the
-// per-call RPC paths still work, so this is purely best-effort.
+// instead of one per query. Each CUDA result precedes its output, so only
+// successful queries enter the caches while failures do not interrupt the
+// batch. An incomplete stream remains eligible for retry.
 static void lupine_prefill_device_snapshot(conn_t *conn) {
-  if (conn == nullptr || !lupine_device_snapshot_attempts().insert(conn, true)) {
+  bool completed = false;
+  if (conn == nullptr ||
+      lupine_device_snapshot_completions().find(conn, completed)) {
     return;
   }
   CUresult result = CUDA_ERROR_UNKNOWN;
   if (rpc_write_start_request(conn, LUPINE_RPC_lupineDeviceSnapshot) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0) {
+      !lupine_read_device_snapshot_result(conn, &result)) {
     return;
   }
   if (result != CUDA_SUCCESS) {
-    rpc_read_end(conn);
+    (void)rpc_read_end(conn);
     return;
   }
-  uint32_t device_count = 0;
+  int device_count = 0;
   if (rpc_read(conn, &device_count, sizeof(device_count)) < 0) {
     return;
   }
-  std::vector<int32_t> pairs;
-  for (uint32_t ordinal = 0; ordinal < device_count; ++ordinal) {
-    lupine_device_snapshot_info info;
-    uint32_t pair_count = 0;
-    if (rpc_read(conn, info.name, sizeof(info.name)) < 0 ||
-        rpc_read(conn, &info.uuid, sizeof(info.uuid)) < 0 ||
-        rpc_read(conn, &info.total_mem, sizeof(info.total_mem)) < 0 ||
-        rpc_read(conn, &pair_count, sizeof(pair_count)) < 0) {
+
+  for (int ordinal = 0; ordinal < device_count; ++ordinal) {
+    CUdevice remote_device = 0;
+    if (!lupine_read_device_snapshot_result(conn, &result)) {
       return;
     }
-    pairs.resize(static_cast<size_t>(pair_count) * 2);
-    if (pair_count != 0 &&
-        rpc_read(conn, pairs.data(), pairs.size() * sizeof(int32_t)) < 0) {
-      return;
-    }
-    CUdevice local_dev =
-        lupine_local_device_for_remote(conn, static_cast<CUdevice>(ordinal));
-    if (local_dev < 0) {
+    if (result != CUDA_SUCCESS) {
       continue;
     }
-    for (uint32_t pair = 0; pair < pair_count; ++pair) {
-      int attrib = static_cast<int>(pairs[pair * 2]);
-      int value = static_cast<int>(pairs[pair * 2 + 1]);
-      if (lupine_device_attribute_is_virtualized(
-              static_cast<CUdevice_attribute>(attrib))) {
-        value = 0;
-      }
-      lupine_device_attribute_cache().insert_or_assign(
-          lupine_device_attribute_key{static_cast<int>(local_dev), attrib},
-          value);
+    if (rpc_read(conn, &remote_device, sizeof(remote_device)) < 0) {
+      return;
     }
-    info.name[sizeof(info.name) - 1] = '\0';
-    lupine_device_snapshot_cache().insert_or_assign(static_cast<int>(local_dev),
-                                                    info);
+
+    CUdevice local_dev = lupine_local_device_for_remote(conn, remote_device);
+
+    lupine_device_snapshot_info info;
+    if (!lupine_read_device_snapshot_result(conn, &result)) {
+      return;
+    }
+    if (result == CUDA_SUCCESS) {
+      if (rpc_read(conn, info.name, sizeof(info.name)) < 0) {
+        return;
+      }
+      info.name[sizeof(info.name) - 1] = '\0';
+      info.name_valid = true;
+    }
+
+    if (!lupine_read_device_snapshot_result(conn, &result)) {
+      return;
+    }
+    if (result == CUDA_SUCCESS) {
+      if (rpc_read(conn, &info.uuid, sizeof(info.uuid)) < 0) {
+        return;
+      }
+      info.uuid_valid = true;
+    }
+
+    if (!lupine_read_device_snapshot_result(conn, &result)) {
+      return;
+    }
+    if (result == CUDA_SUCCESS) {
+      if (rpc_read(conn, &info.total_mem, sizeof(info.total_mem)) < 0) {
+        return;
+      }
+      info.total_mem_valid = true;
+    }
+    if (local_dev >= 0) {
+      lupine_cache_device_snapshot_info(local_dev, info);
+    }
+
+    uint32_t attribute_count = 0;
+    if (rpc_read(conn, &attribute_count, sizeof(attribute_count)) < 0) {
+      return;
+    }
+    for (uint32_t attribute = 0; attribute < attribute_count; ++attribute) {
+      int attrib = 0;
+      int value = 0;
+      if (!lupine_read_device_snapshot_result(conn, &result)) {
+        return;
+      }
+      if (result != CUDA_SUCCESS) {
+        continue;
+      }
+      if (rpc_read(conn, &attrib, sizeof(attrib)) < 0 ||
+          rpc_read(conn, &value, sizeof(value)) < 0) {
+        return;
+      }
+      if (local_dev >= 0) {
+        if (lupine_device_attribute_is_virtualized(
+                static_cast<CUdevice_attribute>(attrib))) {
+          value = 0;
+        }
+        lupine_device_attribute_cache().insert_or_assign(
+            lupine_device_attribute_key{static_cast<int>(local_dev), attrib},
+            value);
+      }
+    }
   }
-  rpc_read_end(conn);
+  if (rpc_read_end(conn) < 0) {
+    return;
+  }
+  lupine_device_snapshot_completions().insert(conn, true);
 }
 
 extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
@@ -1895,7 +1976,8 @@ extern "C" CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
   if (len > 0) {
     lupine_prefill_device_snapshot(conn);
     lupine_device_snapshot_info info;
-    if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info)) {
+    if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info) &&
+        info.name_valid) {
       snprintf(name, static_cast<size_t>(len), "%s", info.name);
       return CUDA_SUCCESS;
     }
@@ -1935,7 +2017,8 @@ extern "C" CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
   conn_t *conn = lupine_route_remote_conn(route);
   lupine_prefill_device_snapshot(conn);
   lupine_device_snapshot_info info;
-  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info)) {
+  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info) &&
+      info.uuid_valid) {
     *uuid = info.uuid;
     return CUDA_SUCCESS;
   }
@@ -1972,7 +2055,8 @@ extern "C" CUresult cuDeviceTotalMem_v2(size_t *bytes, CUdevice dev) {
   conn_t *conn = lupine_route_remote_conn(route);
   lupine_prefill_device_snapshot(conn);
   lupine_device_snapshot_info info;
-  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info)) {
+  if (lupine_device_snapshot_cache().find(static_cast<int>(dev), info) &&
+      info.total_mem_valid) {
     *bytes = static_cast<size_t>(info.total_mem);
     return CUDA_SUCCESS;
   }
