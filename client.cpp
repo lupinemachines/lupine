@@ -4603,15 +4603,36 @@ static void lupine_prefill_library_attribute_snapshot(CUlibrary library,
 
   CUresult result = CUDA_ERROR_UNKNOWN;
   CUdevice remote_device = -1;
-  uint32_t record_count = 0;
   if (rpc_write_start_request(conn, LUPINE_RPC_lupineLibraryAttributeSnapshot) <
           0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 ||
-      rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
-      rpc_read(conn, &record_count, sizeof(record_count)) < 0 ||
-      record_count > 1024 * 1024) {
+      rpc_read(conn, &result, sizeof(result)) < 0) {
+    return;
+  }
+  if (result != CUDA_SUCCESS) {
+    (void)rpc_read_end(conn);
+    return;
+  }
+  if (rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0) {
+    return;
+  }
+  if (result != CUDA_SUCCESS) {
+    (void)rpc_read_end(conn);
+    return;
+  }
+
+  unsigned int kernel_count = 0;
+  if (rpc_read(conn, &kernel_count, sizeof(kernel_count)) < 0 ||
+      kernel_count > 1024 * 1024) {
+    return;
+  }
+  if (kernel_count == 0) {
+    (void)rpc_read_end(conn);
+    return;
+  }
+  if (rpc_read(conn, &result, sizeof(result)) < 0) {
     return;
   }
   if (result != CUDA_SUCCESS) {
@@ -4620,18 +4641,25 @@ static void lupine_prefill_library_attribute_snapshot(CUlibrary library,
   }
 
   lupine_route route = lupine_remote_route_for_conn(conn);
-  for (uint32_t i = 0; i < record_count; ++i) {
+  for (unsigned int i = 0; i < kernel_count; ++i) {
     CUkernel kernel = nullptr;
     CUfunction function = nullptr;
     if (rpc_read(conn, &kernel, sizeof(kernel)) < 0 ||
-        rpc_read(conn, &function, sizeof(function)) < 0) {
+        rpc_read(conn, &result, sizeof(result)) < 0) {
       return;
     }
-    if (function != nullptr) {
-      lupine_note_function_owner_route(function, route);
+    if (result == CUDA_SUCCESS) {
+      if (rpc_read(conn, &function, sizeof(function)) < 0) {
+        return;
+      }
+      if (function != nullptr) {
+        lupine_note_function_owner_route(function, route);
+      }
+      if (lupine_read_function_attributes(conn, route, function) < 0) {
+        return;
+      }
     }
-    if (lupine_read_function_attributes(conn, route, function) < 0 ||
-        lupine_read_kernel_attributes(conn, route, kernel, remote_device) < 0) {
+    if (lupine_read_kernel_attributes(conn, route, kernel, remote_device) < 0) {
       return;
     }
   }
