@@ -2350,6 +2350,13 @@ static CUresult lupine_cuGetParamInfo_cached(uintptr_t handle,
     return CUDA_SUCCESS;
   }
 
+  size_t param_count = 0;
+  if (lupine_param_layout_count_cache().find(
+          lupine_param_layout_key{handle, kernel}, param_count) &&
+      param_index >= param_count) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   size_t offset = 0;
   size_t size = 0;
