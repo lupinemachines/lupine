@@ -193,6 +193,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineLibrarySnapshot",
     "lupineManagedHostFlush",
     "lupineModuleGetFunctionWithLayout",
+    "lupineNvmlDeviceEnumerate",
 ]
 
 

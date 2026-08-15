@@ -365,27 +365,70 @@ nvmlReturn_t ensure_devices() {
     return NVML_SUCCESS;
   }
 
-  devices.clear();
-  for (int i = 0; i < nconns; ++i) {
+  std::vector<std::vector<nvmlDevice_t>> remote_devices(
+      static_cast<size_t>(nconns));
+  std::vector<nvmlReturn_t> results(static_cast<size_t>(nconns),
+                                    NVML_ERROR_UNKNOWN);
+  auto enumerate = [&remote_devices, &results](size_t connection_index) {
+    conn_t *c = &conns[connection_index];
     unsigned int count = 0;
-    nvmlReturn_t result =
-        call_uint_out_on(&conns[i], RPC_nvmlDeviceGetCount_v2, &count);
-    if (result != NVML_SUCCESS) {
-      devices.clear();
-      return result;
+    nvmlReturn_t result = rpc_error();
+    if (rpc_write_start_request(c, LUPINE_RPC_lupineNvmlDeviceEnumerate) < 0 ||
+        rpc_wait_for_response(c) < 0 ||
+        rpc_read(c, &result, sizeof(result)) < 0) {
+      results[connection_index] = rpc_error();
+      return;
     }
-    for (unsigned int ordinal = 0; ordinal < count; ++ordinal) {
-      nvmlDevice_t remote = nullptr;
-      result = call_device_from_index_on(
-          &conns[i], RPC_nvmlDeviceGetHandleByIndex_v2, ordinal, &remote);
-      if (result != NVML_SUCCESS) {
-        devices.clear();
-        return result;
+    if (result == NVML_SUCCESS &&
+        rpc_read(c, &count, sizeof(count)) >= 0) {
+      try {
+        remote_devices[connection_index].resize(count);
+      } catch (...) {
+        result = NVML_ERROR_MEMORY;
       }
+      if (result == NVML_SUCCESS && count != 0 &&
+          rpc_read(c, remote_devices[connection_index].data(),
+                   remote_devices[connection_index].size() *
+                       sizeof(nvmlDevice_t)) < 0) {
+        result = rpc_error();
+      }
+    }
+    if (rpc_read_end(c) < 0 && result == NVML_SUCCESS) {
+      result = rpc_error();
+    }
+    results[connection_index] = result;
+  };
+
+  std::vector<std::thread> workers;
+  size_t next_connection = 1;
+  try {
+    workers.reserve(results.size() - 1);
+    for (; next_connection < results.size(); ++next_connection) {
+      workers.emplace_back(enumerate, next_connection);
+    }
+  } catch (...) {
+    // Finish any connection whose worker could not be launched here.
+  }
+  enumerate(0);
+  for (size_t i = next_connection; i < results.size(); ++i) {
+    enumerate(i);
+  }
+  for (auto &worker : workers) {
+    worker.join();
+  }
+
+  devices.clear();
+  for (size_t i = 0; i < results.size(); ++i) {
+    if (results[i] != NVML_SUCCESS) {
+      devices.clear();
+      return results[i];
+    }
+    for (size_t ordinal = 0; ordinal < remote_devices[i].size(); ++ordinal) {
       const std::string &server_label =
           i < static_cast<int>(conn_labels.size()) ? conn_labels[i] : "";
       devices.push_back(lupine_nvml_remote_device{
-          static_cast<unsigned int>(i), ordinal, remote, server_label});
+          static_cast<unsigned int>(i), static_cast<unsigned int>(ordinal),
+          remote_devices[i][ordinal], server_label});
     }
   }
   devices_ready = true;
@@ -605,9 +648,30 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
     init_refcount.fetch_sub(1, std::memory_order_acq_rel);
     return NVML_ERROR_UNKNOWN;
   }
+  std::vector<nvmlReturn_t> results(static_cast<size_t>(nconns),
+                                    NVML_ERROR_UNKNOWN);
+  std::vector<std::thread> workers;
+  size_t next_connection = 1;
+  try {
+    workers.reserve(results.size() - 1);
+    for (; next_connection < results.size(); ++next_connection) {
+      workers.emplace_back([next_connection, &results]() {
+        results[next_connection] =
+            call_no_args_on(&conns[next_connection], RPC_nvmlInit_v2);
+      });
+    }
+  } catch (...) {
+    // Finish any connection whose worker could not be launched here.
+  }
+  results[0] = call_no_args_on(&conns[0], RPC_nvmlInit_v2);
+  for (size_t i = next_connection; i < results.size(); ++i) {
+    results[i] = call_no_args_on(&conns[i], RPC_nvmlInit_v2);
+  }
+  for (auto &worker : workers) {
+    worker.join();
+  }
   nvmlReturn_t first_error = NVML_SUCCESS;
-  for (int i = 0; i < nconns; ++i) {
-    nvmlReturn_t result = call_no_args_on(&conns[i], RPC_nvmlInit_v2);
+  for (nvmlReturn_t result : results) {
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }

@@ -123,3 +123,44 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses(conn_t *conn) {
 int handle_nvmlDeviceGetMPSComputeRunningProcesses_v2(conn_t *conn) {
   return handle_processes(conn, "nvmlDeviceGetMPSComputeRunningProcesses_v2");
 }
+
+int handle_lupineNvmlDeviceEnumerate(conn_t *conn) {
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  using CountFn = nvmlReturn_t (*)(unsigned int *);
+  using HandleFn = nvmlReturn_t (*)(unsigned int, nvmlDevice_t *);
+  CountFn count_fn = nvml_symbol<CountFn>("nvmlDeviceGetCount_v2");
+  HandleFn handle_fn =
+      nvml_symbol<HandleFn>("nvmlDeviceGetHandleByIndex_v2");
+  unsigned int count = 0;
+  nvmlReturn_t result =
+      count_fn == nullptr || handle_fn == nullptr
+          ? NVML_ERROR_FUNCTION_NOT_FOUND
+          : count_fn(&count);
+  std::vector<nvmlDevice_t> devices;
+  if (result == NVML_SUCCESS) {
+    try {
+      devices.resize(count);
+    } catch (...) {
+      result = NVML_ERROR_MEMORY;
+    }
+  }
+  for (unsigned int i = 0; result == NVML_SUCCESS && i < count; ++i) {
+    result = handle_fn(i, &devices[i]);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (result == NVML_SUCCESS &&
+       (rpc_write(conn, &count, sizeof(count)) < 0 ||
+        (count != 0 &&
+         rpc_write(conn, devices.data(),
+                   devices.size() * sizeof(nvmlDevice_t)) < 0))) ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
