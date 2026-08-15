@@ -559,7 +559,8 @@ jobs:
                 /src/test/run_pytorch_lupine_tests.sh || pytorch_status=$?
 
               custom_status=0
-              SERVER_PORT=20900 /src/test/run_custom_tests.sh || custom_status=$?
+              SERVER_PORT_BASE=20900 TEST_JOBS="$CUDA_SAMPLE_JOBS" \
+                /src/test/run_custom_tests.sh || custom_status=$?
 
               if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$custom_status" -ne 0 ]]; then
                 echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; custom tests exited $custom_status" >&2

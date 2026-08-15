@@ -3,15 +3,7 @@
 
 #include <cuda.h>
 
-#include <cstddef>
 #include <cstdint>
-#include <vector>
-
-struct lupine_kernel_param_layout {
-  uint32_t count = 0;
-  std::vector<size_t> offsets;
-  std::vector<size_t> sizes;
-};
 
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device);

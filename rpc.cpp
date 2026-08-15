@@ -71,10 +71,10 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
     if (delay_ms > kMaxBackoffMs) {
       delay_ms = kMaxBackoffMs;
     }
-    LUPINE_LOG_ERROR("Connecting to "
-                     << host << " port " << port << " failed, retrying in "
-                     << delay_ms << "ms (" << (kMaxRetries - attempt)
-                     << " retries left)");
+    LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
+                                      << " failed, retrying in " << delay_ms
+                                      << "ms (" << (kMaxRetries - attempt)
+                                      << " retries left)");
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
   }
 }
@@ -569,32 +569,33 @@ static_assert(sizeof(CUcontext) == sizeof(uint64_t),
 #endif
 
 int rpc_write_kernel_node_params(conn_t *conn,
-                                 const CUDA_KERNEL_NODE_PARAMS *node_params) {
+                                 const CUDA_KERNEL_NODE_PARAMS *node_params,
+                                 CUfunction function) {
   if (conn == nullptr || node_params == nullptr) {
     return -1;
   }
-  if (rpc_write(conn, &node_params->func, sizeof(node_params->func)) < 0 ||
-      rpc_write(conn, &node_params->gridDimX, sizeof(node_params->gridDimX)) <
-          0 ||
-      rpc_write(conn, &node_params->gridDimY, sizeof(node_params->gridDimY)) <
-          0 ||
-      rpc_write(conn, &node_params->gridDimZ, sizeof(node_params->gridDimZ)) <
-          0 ||
-      rpc_write(conn, &node_params->blockDimX, sizeof(node_params->blockDimX)) <
-          0 ||
-      rpc_write(conn, &node_params->blockDimY, sizeof(node_params->blockDimY)) <
-          0 ||
-      rpc_write(conn, &node_params->blockDimZ, sizeof(node_params->blockDimZ)) <
-          0 ||
-      rpc_write(conn, &node_params->sharedMemBytes,
-                sizeof(node_params->sharedMemBytes)) < 0 ||
+  if (rpc_write_copy(conn, &function, sizeof(function)) < 0 ||
+      rpc_write_copy(conn, &node_params->gridDimX,
+                     sizeof(node_params->gridDimX)) < 0 ||
+      rpc_write_copy(conn, &node_params->gridDimY,
+                     sizeof(node_params->gridDimY)) < 0 ||
+      rpc_write_copy(conn, &node_params->gridDimZ,
+                     sizeof(node_params->gridDimZ)) < 0 ||
+      rpc_write_copy(conn, &node_params->blockDimX,
+                     sizeof(node_params->blockDimX)) < 0 ||
+      rpc_write_copy(conn, &node_params->blockDimY,
+                     sizeof(node_params->blockDimY)) < 0 ||
+      rpc_write_copy(conn, &node_params->blockDimZ,
+                     sizeof(node_params->blockDimZ)) < 0 ||
+      rpc_write_copy(conn, &node_params->sharedMemBytes,
+                     sizeof(node_params->sharedMemBytes)) < 0 ||
       rpc_write(conn, &rpc_kernel_node_reserved,
                 sizeof(rpc_kernel_node_reserved)) < 0) {
     return -1;
   }
 #if CUDA_VERSION >= 12000
-  if (rpc_write(conn, &node_params->kern, sizeof(node_params->kern)) < 0 ||
-      rpc_write(conn, &node_params->ctx, sizeof(node_params->ctx)) < 0) {
+  if (rpc_write_copy(conn, &node_params->kern, sizeof(node_params->kern)) < 0 ||
+      rpc_write_copy(conn, &node_params->ctx, sizeof(node_params->ctx)) < 0) {
     return -1;
   }
 #else
@@ -646,83 +647,345 @@ int rpc_read_kernel_node_params(conn_t *conn,
   return 0;
 }
 
-int rpc_write_kernel_param_values(conn_t *conn, uint32_t count,
-                                  const size_t *sizes, void *const *values) {
-  if (conn == nullptr ||
-      (count != 0 && (sizes == nullptr || values == nullptr))) {
+struct rpc_kernel_param_values_header {
+  size_t count;
+};
+
+static_assert(sizeof(rpc_kernel_param_values_header) % alignof(void *) == 0);
+
+static rpc_kernel_param_values_header *
+rpc_kernel_param_values_header_for(void **values) {
+  return reinterpret_cast<rpc_kernel_param_values_header *>(values) - 1;
+}
+
+static void **rpc_alloc_kernel_param_values(size_t count) {
+  if (count == 0) {
+    return nullptr;
+  }
+  if (count >
+      (SIZE_MAX - sizeof(rpc_kernel_param_values_header)) / sizeof(void *)) {
+    std::abort();
+  }
+  size_t bytes =
+      sizeof(rpc_kernel_param_values_header) + count * sizeof(void *);
+  auto *header =
+      static_cast<rpc_kernel_param_values_header *>(std::calloc(1, bytes));
+  if (header == nullptr) {
+    std::abort();
+  }
+  header->count = count;
+  return reinterpret_cast<void **>(header + 1);
+}
+
+static void **rpc_resize_kernel_param_values(void **values, size_t count) {
+  if (values == nullptr) {
+    return rpc_alloc_kernel_param_values(count);
+  }
+  if (count >
+      (SIZE_MAX - sizeof(rpc_kernel_param_values_header)) / sizeof(void *)) {
+    std::abort();
+  }
+  size_t bytes =
+      sizeof(rpc_kernel_param_values_header) + count * sizeof(void *);
+  auto *header = rpc_kernel_param_values_header_for(values);
+  header = static_cast<rpc_kernel_param_values_header *>(
+      std::realloc(header, bytes));
+  if (header == nullptr) {
+    std::abort();
+  }
+  header->count = count;
+  values = reinterpret_cast<void **>(header + 1);
+  values[count - 1] = nullptr;
+  return values;
+}
+
+static void *rpc_alloc_kernel_param_value(size_t size) {
+  void *value = std::malloc(std::max(size, size_t{1}));
+  if (value == nullptr) {
+    std::abort();
+  }
+  return value;
+}
+
+void rpc_free_kernel_param_values(void **values) {
+  if (values == nullptr) {
+    return;
+  }
+  auto *header = rpc_kernel_param_values_header_for(values);
+  for (size_t i = 0; i < header->count; ++i) {
+    std::free(values[i]);
+  }
+  std::free(header);
+}
+
+#ifdef LUPINE_RPC_SERVER
+int rpc_write_func_param_info(conn_t *conn, CUfunction function) {
+  if (conn == nullptr) {
     return -1;
   }
-  for (uint32_t i = 0; i < count; ++i) {
-    if (values[i] == nullptr || rpc_write(conn, values[i], sizes[i]) < 0) {
+  for (uint32_t i = 0;; ++i) {
+    size_t offset = 0;
+    size_t size = 0;
+    CUresult result = cuFuncGetParamInfo(function, i, &offset, &size);
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0) {
       return -1;
     }
+    if (result != CUDA_SUCCESS) {
+      return 0;
+    }
+    if (rpc_write_copy(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_write_copy(conn, &size, sizeof(size)) < 0) {
+      return -1;
+    }
+  }
+}
+
+template <typename Query>
+static int rpc_read_param_values(conn_t *conn, void ***values, CUresult *result,
+                                 Query query) {
+  if (conn == nullptr || values == nullptr || result == nullptr) {
+    return -1;
+  }
+  *values = nullptr;
+  *result = CUDA_SUCCESS;
+  size_t count = 0;
+  for (;;) {
+    CUresult wire_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_read(conn, &wire_result, sizeof(wire_result)) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
+    }
+
+    size_t expected_offset = 0;
+    size_t expected_size = 0;
+    CUresult query_result = *result == CUDA_SUCCESS
+                                ? query(count, &expected_offset, &expected_size)
+                                : CUDA_ERROR_INVALID_VALUE;
+    if (wire_result != CUDA_SUCCESS) {
+      if (*result == CUDA_SUCCESS) {
+        if (wire_result == CUDA_ERROR_INVALID_VALUE) {
+          *result =
+              query_result == CUDA_ERROR_INVALID_VALUE
+                  ? CUDA_SUCCESS
+                  : (query_result == CUDA_SUCCESS ? CUDA_ERROR_INVALID_VALUE
+                                                  : query_result);
+        } else {
+          *result = wire_result;
+        }
+      }
+      break;
+    }
+
+    size_t wire_offset = 0;
+    size_t wire_size = 0;
+    if (rpc_read(conn, &wire_offset, sizeof(wire_offset)) < 0 ||
+        rpc_read(conn, &wire_size, sizeof(wire_size)) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
+    }
+
+    bool valid = query_result == CUDA_SUCCESS &&
+                 wire_offset == expected_offset && wire_size == expected_size;
+    if (*result == CUDA_SUCCESS && !valid) {
+      *result = query_result == CUDA_SUCCESS ? CUDA_ERROR_INVALID_VALUE
+                                             : query_result;
+    }
+    if (*result == CUDA_SUCCESS) {
+      *values = rpc_resize_kernel_param_values(*values, count + 1);
+      (*values)[count] = rpc_alloc_kernel_param_value(wire_size);
+      if (wire_size != 0 && rpc_read(conn, (*values)[count], wire_size) < 0) {
+        rpc_free_kernel_param_values(*values);
+        *values = nullptr;
+        return -1;
+      }
+    } else if (rpc_drain(conn, wire_size) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
+    }
+    ++count;
+  }
+
+  if (*result != CUDA_SUCCESS) {
+    rpc_free_kernel_param_values(*values);
+    *values = nullptr;
   }
   return 0;
 }
 
-int rpc_read_kernel_param_values(conn_t *conn, uint32_t count,
-                                 const size_t *offsets, const size_t *sizes,
-                                 size_t payload_size, void *storage,
-                                 size_t storage_size, void **values) {
-  if (conn == nullptr ||
-      (count != 0 && (offsets == nullptr || sizes == nullptr ||
-                      storage == nullptr || values == nullptr))) {
+int rpc_read_func_param_values(conn_t *conn, void ***values,
+                               CUfunction function, CUresult *result) {
+  return rpc_read_param_values(
+      conn, values, result,
+      [function](size_t index, size_t *offset, size_t *size) {
+        return cuFuncGetParamInfo(function, index, offset, size);
+      });
+}
+
+#if CUDA_VERSION >= 12000
+int rpc_read_kernel_param_values(conn_t *conn, void ***values, CUkernel kernel,
+                                 CUresult *result) {
+  return rpc_read_param_values(
+      conn, values, result,
+      [kernel](size_t index, size_t *offset, size_t *size) {
+        return cuKernelGetParamInfo(kernel, index, offset, size);
+      });
+}
+#endif
+
+int rpc_read_kernel_node_param_values(conn_t *conn,
+                                      CUDA_KERNEL_NODE_PARAMS *node_params,
+                                      CUresult *result) {
+  if (conn == nullptr || node_params == nullptr || result == nullptr) {
     return -1;
   }
 
-  size_t expected_payload_size = 0;
-  for (uint32_t i = 0; i < count; ++i) {
-    expected_payload_size += sizes[i];
+  *result = CUDA_SUCCESS;
+  int read_result = -1;
+  if (node_params->func != nullptr) {
+    read_result = rpc_read_func_param_values(conn, &node_params->kernelParams,
+                                             node_params->func, result);
   }
-  if (payload_size != expected_payload_size) {
+#if CUDA_VERSION >= 12000
+  else if (node_params->kern != nullptr) {
+    read_result = rpc_read_kernel_param_values(conn, &node_params->kernelParams,
+                                               node_params->kern, result);
+  }
+#endif
+  else {
+    read_result = rpc_read_func_param_values(conn, &node_params->kernelParams,
+                                             nullptr, result);
+  }
+  if (read_result < 0) {
     return -1;
   }
-
-  auto *bytes = static_cast<unsigned char *>(storage);
-  for (uint32_t i = 0; i < count; ++i) {
-    if (offsets[i] + sizes[i] > storage_size) {
-      return -1;
-    }
-    unsigned char *dst = bytes + offsets[i];
-    if (sizes[i] != 0 && rpc_read(conn, dst, sizes[i]) < 0) {
-      return -1;
-    }
-    values[i] = dst;
+  if (*result == CUDA_SUCCESS) {
+    node_params->extra = nullptr;
   }
   return 0;
 }
 
-int rpc_write_kernel_param_layout(conn_t *conn,
-                                  const lupine_kernel_param_layout *layout) {
-  if (conn == nullptr || layout == nullptr ||
-      layout->offsets.size() != layout->count ||
-      layout->sizes.size() != layout->count) {
-    return -1;
+#endif
+
+#if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
+#ifdef LUPINE_RPC_CLIENT
+extern "C" bool lupine_param_layout_count_for_rpc(uintptr_t handle, bool kernel,
+                                                  size_t *count);
+#endif
+
+template <typename Query>
+static int rpc_write_param_values(conn_t *conn, uintptr_t handle, bool kernel,
+                                  void *const *values, Query query) {
+#ifdef LUPINE_RPC_CLIENT
+  size_t count = 0;
+  if (!lupine_param_layout_count_for_rpc(handle, kernel, &count)) {
+    CUresult result = CUDA_ERROR_INVALID_HANDLE;
+    return rpc_write_copy(conn, &result, sizeof(result));
   }
-  if (rpc_write(conn, &layout->count, sizeof(layout->count)) < 0 ||
-      rpc_write(conn, layout->offsets.data(),
-                layout->offsets.size() * sizeof(layout->offsets[0])) < 0 ||
-      rpc_write(conn, layout->sizes.data(),
-                layout->sizes.size() * sizeof(layout->sizes[0])) < 0) {
-    return -1;
+#endif
+  for (size_t i = 0;; ++i) {
+    size_t offset = 0;
+    size_t size = 0;
+    CUresult result;
+#ifdef LUPINE_RPC_CLIENT
+    if (i == count) {
+      result = CUDA_ERROR_INVALID_VALUE;
+    } else {
+#endif
+      result = query(i, &offset, &size);
+#ifdef LUPINE_RPC_CLIENT
+    }
+#endif
+    if (result == CUDA_SUCCESS && (values == nullptr || values[i] == nullptr)) {
+      result = CUDA_ERROR_INVALID_VALUE;
+    }
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0) {
+      return -1;
+    }
+    if (result != CUDA_SUCCESS) {
+      return 0;
+    }
+    if (rpc_write_copy(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_write_copy(conn, &size, sizeof(size)) < 0 ||
+        rpc_write_copy(conn, values[i], size) < 0) {
+      return -1;
+    }
   }
-  return 0;
 }
 
-int rpc_read_kernel_param_layout(conn_t *conn,
-                                 lupine_kernel_param_layout *layout) {
-  if (conn == nullptr || layout == nullptr ||
-      rpc_read(conn, &layout->count, sizeof(layout->count)) < 0) {
+int rpc_write_func_param_values(conn_t *conn, CUfunction function,
+                                void *const *values) {
+  return rpc_write_param_values(
+      conn, reinterpret_cast<uintptr_t>(function), false, values,
+      [function](size_t index, size_t *offset, size_t *size) {
+        return cuFuncGetParamInfo(function, index, offset, size);
+      });
+}
+
+#if CUDA_VERSION >= 12000
+int rpc_write_kernel_param_values(conn_t *conn, CUkernel kernel,
+                                  void *const *values) {
+  return rpc_write_param_values(
+      conn, reinterpret_cast<uintptr_t>(kernel), true, values,
+      [kernel](size_t index, size_t *offset, size_t *size) {
+        return cuKernelGetParamInfo(kernel, index, offset, size);
+      });
+}
+#endif
+
+#endif
+
+int rpc_read_kernel_node_params_and_values(conn_t *conn,
+                                           CUDA_KERNEL_NODE_PARAMS *node_params,
+                                           CUresult *result) {
+  if (conn == nullptr || node_params == nullptr || result == nullptr ||
+      rpc_read_kernel_node_params(conn, node_params) < 0) {
     return -1;
   }
-  layout->offsets.resize(layout->count);
-  layout->sizes.resize(layout->count);
-  if (rpc_read(conn, layout->offsets.data(),
-               layout->offsets.size() * sizeof(layout->offsets[0])) < 0 ||
-      rpc_read(conn, layout->sizes.data(),
-               layout->sizes.size() * sizeof(layout->sizes[0])) < 0) {
-    return -1;
+
+  node_params->kernelParams = nullptr;
+  *result = CUDA_SUCCESS;
+  size_t count = 0;
+  for (;;) {
+    CUresult query_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_read(conn, &query_result, sizeof(query_result)) < 0) {
+      rpc_free_kernel_param_values(node_params->kernelParams);
+      node_params->kernelParams = nullptr;
+      return -1;
+    }
+    if (query_result != CUDA_SUCCESS) {
+      *result = query_result == CUDA_ERROR_INVALID_VALUE ? CUDA_SUCCESS
+                                                         : query_result;
+      break;
+    }
+
+    size_t offset = 0;
+    size_t size = 0;
+    if (rpc_read(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_read(conn, &size, sizeof(size)) < 0) {
+      rpc_free_kernel_param_values(node_params->kernelParams);
+      node_params->kernelParams = nullptr;
+      return -1;
+    }
+    node_params->kernelParams =
+        rpc_resize_kernel_param_values(node_params->kernelParams, count + 1);
+    node_params->kernelParams[count] = rpc_alloc_kernel_param_value(size);
+    if (size != 0 &&
+        rpc_read(conn, node_params->kernelParams[count], size) < 0) {
+      rpc_free_kernel_param_values(node_params->kernelParams);
+      node_params->kernelParams = nullptr;
+      return -1;
+    }
+    ++count;
   }
+
+  if (*result != CUDA_SUCCESS) {
+    rpc_free_kernel_param_values(node_params->kernelParams);
+    node_params->kernelParams = nullptr;
+  }
+  node_params->extra = nullptr;
   return 0;
 }
 

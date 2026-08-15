@@ -1,14 +1,13 @@
 #pragma once
 
 #include <cstddef>
+#include <vector>
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
 #include "rpc.h"
-
-struct lupine_kernel_param_layout;
 
 static constexpr int LUPINE_ROUTE_REMOTE = 0;
 static constexpr int LUPINE_ROUTE_LOCAL = 1;
@@ -27,7 +26,7 @@ int lupine_route_identity(lupine_route route);
 lupine_route lupine_route_from_identity(int route_id);
 int lupine_known_deviceptr_route_id(CUdeviceptr ptr);
 lupine_route lupine_route_from_known_kernel_deviceptr_args(
-    void *const *kernel_params, const lupine_kernel_param_layout &layout,
+    void *const *kernel_params, const std::vector<size_t> &param_sizes,
     lupine_route fallback);
 conn_t *lupine_thread_conn_by_index(unsigned int index);
 CUresult lupine_virtual_device_count(int *count);
