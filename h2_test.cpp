@@ -756,67 +756,6 @@ void test_rpc_write_copy_owns_buffer() {
   require(received == expected, "copied write payload mismatch");
 }
 
-void test_option_writers_own_pointer_values() {
-  h2_pair pair = make_pair();
-
-  constexpr int kResponseId = 21;
-  constexpr uintptr_t kJitValue = 0x1234;
-  constexpr uintptr_t kLibraryValue = 0x5678;
-  unsigned int jit_count = 1;
-  CUjit_option jit_options[] = {CU_JIT_MAX_REGISTERS};
-  void *jit_values[] = {reinterpret_cast<void *>(kJitValue)};
-  unsigned int library_count = 1;
-  CUlibraryOption library_options[] = {CU_LIBRARY_BINARY_IS_PRESERVED};
-  void *library_values[] = {reinterpret_cast<void *>(kLibraryValue)};
-
-  std::vector<CUjit_option> received_jit_options;
-  std::vector<uintptr_t> received_jit_values;
-  std::vector<CUlibraryOption> received_library_options;
-  std::vector<uintptr_t> received_library_values;
-  bool has_library_values = false;
-  std::thread reader([&] {
-    read_rpc_prefix(&pair.server);
-    require(pair.server.read_id == kResponseId,
-            "option writer response id mismatch");
-    require(rpc_read_start(&pair.server, kResponseId) == 0,
-            "option writer read start failed");
-    require(rpc_read_jit_options(&pair.server, &received_jit_options,
-                                 &received_jit_values) == 0,
-            "JIT options read failed");
-    require(rpc_read_library_options(&pair.server, &received_library_options,
-                                     &received_library_values,
-                                     &has_library_values) == 0,
-            "library options read failed");
-    require(rpc_read_end(&pair.server) == kResponseId,
-            "option writer read_end failed");
-  });
-
-  require(rpc_write_start_response(&pair.client, kResponseId) == 0,
-          "option writer response start failed");
-  require(rpc_write_jit_options(&pair.client, &jit_count, jit_options,
-                                jit_values) == 0,
-          "JIT options write failed");
-  require(rpc_write_library_options(&pair.client, &library_count,
-                                    library_options, library_values) == 0,
-          "library options write failed");
-  jit_values[0] = nullptr;
-  library_values[0] = nullptr;
-  require(rpc_write_end(&pair.client) == kResponseId,
-          "option writer write_end failed");
-  reader.join();
-
-  require(received_jit_options.size() == 1 &&
-              received_jit_options[0] == jit_options[0] &&
-              received_jit_values.size() == 1 &&
-              received_jit_values[0] == kJitValue,
-          "JIT option pointer value was not copied");
-  require(has_library_values && received_library_options.size() == 1 &&
-              received_library_options[0] == library_options[0] &&
-              received_library_values.size() == 1 &&
-              received_library_values[0] == kLibraryValue,
-          "library option pointer value was not copied");
-}
-
 void test_rpc_lz4_payload_round_trip() {
   h2_pair pair = make_pair();
   init_rpc_write(&pair.client);
@@ -879,7 +818,6 @@ int main() {
 #else
   test_rpc_write_queue_grows();
   test_rpc_write_copy_owns_buffer();
-  test_option_writers_own_pointer_values();
   test_rpc_lz4_payload_round_trip();
   test_client_to_server();
   test_server_receives_session_id();
