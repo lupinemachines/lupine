@@ -2184,7 +2184,6 @@ int handle_manual_cuModuleGetGlobal_v2(conn_t *conn) {
 
 int handle_manual_cuLaunchKernel(conn_t *conn) {
   CUfunction f = nullptr;
-  CUcontext ctx = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
   unsigned int gridDimZ = 0;
@@ -2198,7 +2197,6 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &f, sizeof(f)) < 0 ||
-      rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_read(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
       rpc_read(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
@@ -2211,15 +2209,7 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
     return -1;
   }
 
-  if (ctx != nullptr) {
-    CUcontext previous = nullptr;
-    result = cuCtxGetCurrent(&previous);
-    if (result == CUDA_SUCCESS && previous != ctx) {
-      result = cuCtxSetCurrent(ctx);
-    }
-  } else {
-    result = CUDA_SUCCESS;
-  }
+  result = CUDA_SUCCESS;
 
   void **params = nullptr;
   CUresult param_result = CUDA_SUCCESS;
@@ -2258,7 +2248,6 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
 int handle_manual_cuLaunchKernelEx(conn_t *conn) {
   CUlaunchConfig config = {};
   CUfunction f = nullptr;
-  CUcontext ctx = nullptr;
   bool kernel_handle = false;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
@@ -2266,7 +2255,6 @@ int handle_manual_cuLaunchKernelEx(conn_t *conn) {
   std::vector<CUlaunchAttribute> attributes;
   if (rpc_read_launch_config(conn, &config, &attributes) < 0 ||
       rpc_read(conn, &f, sizeof(f)) < 0 ||
-      rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_read(conn, &kernel_handle, sizeof(kernel_handle)) < 0) {
     return -1;
   }
@@ -2274,16 +2262,7 @@ int handle_manual_cuLaunchKernelEx(conn_t *conn) {
 #if CUDA_VERSION < 11080
   result = CUDA_ERROR_NOT_SUPPORTED;
 #else
-  if (ctx != nullptr) {
-    CUcontext previous = nullptr;
-    result = cuCtxGetCurrent(&previous);
-    if (result == CUDA_SUCCESS && previous != ctx) {
-      result = cuCtxSetCurrent(ctx);
-    }
-  } else {
-    result = CUDA_SUCCESS;
-  }
-
+  result = CUDA_SUCCESS;
 #endif
 
   void **params = nullptr;
