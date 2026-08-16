@@ -3766,12 +3766,6 @@ static size_t lupine_jit_option_size(unsigned int numOptions,
   return 0;
 }
 
-static size_t lupine_rpc_options_copy_size(unsigned int jit_count,
-                                           unsigned int library_count) {
-  return (static_cast<size_t>(jit_count) + static_cast<size_t>(library_count)) *
-         sizeof(uintptr_t);
-}
-
 static std::vector<rpc_jit_output_binding>
 lupine_capture_jit_client_bindings(unsigned int numOptions,
                                    const CUjit_option *options,
@@ -3819,7 +3813,8 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
       rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_copy_alloc(conn, lupine_rpc_options_copy_size(numOptions, 0)) < 0 ||
+  if (rpc_copy_alloc(conn,
+                     static_cast<size_t>(numOptions) * sizeof(uintptr_t)) < 0 ||
       rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0) {
     rpc_write_abort(conn);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3862,7 +3857,8 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_copy_alloc(conn, lupine_rpc_options_copy_size(numOptions, 0)) < 0 ||
+  if (rpc_copy_alloc(conn,
+                     static_cast<size_t>(numOptions) * sizeof(uintptr_t)) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_write(conn, &type, sizeof(type)) < 0 ||
       rpc_write(conn, &size, sizeof(size)) < 0 ||
@@ -3932,7 +3928,8 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   bool failed = conn == nullptr ||
                 rpc_write_start_request(conn, RPC_cuLinkAddFile_v2) < 0;
   if (!failed &&
-      (rpc_copy_alloc(conn, lupine_rpc_options_copy_size(numOptions, 0)) < 0 ||
+      (rpc_copy_alloc(conn, static_cast<size_t>(numOptions) *
+                                sizeof(uintptr_t)) < 0 ||
        rpc_write(conn, &state, sizeof(state)) < 0 ||
        rpc_write(conn, &type, sizeof(type)) < 0 ||
        rpc_write(conn, &path_len, sizeof(path_len)) < 0 ||
@@ -4751,8 +4748,9 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_copy_alloc(conn, lupine_rpc_options_copy_size(
-                               numJitOptions, numLibraryOptions)) < 0 ||
+  if (rpc_copy_alloc(conn, (static_cast<size_t>(numJitOptions) +
+                            static_cast<size_t>(numLibraryOptions)) *
+                               sizeof(uintptr_t)) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
