@@ -461,19 +461,21 @@ static uint64_t lupine_rpc_stats_now_ns() {
 // request and then waits for the corresponding response. this pattern is
 // so common that having this function keeps the codegen much cleaner.
 int rpc_wait_for_response(conn_t *conn) {
-  if (lupine_rpc_stats_path() != nullptr) {
-    int op = conn->write_op;
-    uint64_t start = lupine_rpc_stats_now_ns();
-    int write_id = rpc_write_end(conn);
-    if (write_id < 0 || rpc_read_start(conn, write_id) < 0) {
-      return -1;
-    }
-    lupine_rpc_stats_record(op, 0, lupine_rpc_stats_now_ns() - start);
-    return 0;
-  }
+  int op = conn->write_op;
+  uint64_t start =
+      lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
   int write_id = rpc_write_end(conn);
-  if (write_id < 0 || rpc_read_start(conn, write_id) < 0) {
+  if (write_id < 0) {
     return -1;
+  }
+  rpc_http2_response_wait_begin(conn);
+  int result = rpc_read_start(conn, write_id);
+  rpc_http2_response_wait_end(conn);
+  if (result < 0) {
+    return -1;
+  }
+  if (lupine_rpc_stats_path() != nullptr) {
+    lupine_rpc_stats_record(op, 0, lupine_rpc_stats_now_ns() - start);
   }
   return 0;
 }

@@ -12,6 +12,7 @@
 #include <iostream>
 #include <nghttp2/nghttp2.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <string>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -158,6 +159,31 @@ bool raw_read_exact(lupine_socket_t socket, unsigned char *data, size_t size) {
     size -= static_cast<size_t>(received);
   }
   return true;
+}
+
+void test_response_wait_sends_transport_heartbeat() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  rpc_http2_response_wait_begin(&pair.client);
+  bool received_ping = false;
+  for (int frame_count = 0; frame_count < 8 && !received_ping; ++frame_count) {
+    pollfd descriptor = {pair.server.connfd, POLLIN, 0};
+    require(poll(&descriptor, 1, 1000) > 0,
+            "response wait did not emit an HTTP/2 frame");
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_exact(pair.server.connfd, header.data(), header.size()),
+            "heartbeat frame header read failed");
+    size_t payload_size = (static_cast<size_t>(header[0]) << 16) |
+                          (static_cast<size_t>(header[1]) << 8) | header[2];
+    std::vector<unsigned char> payload(payload_size);
+    require(raw_read_exact(pair.server.connfd, payload.data(), payload.size()),
+            "heartbeat frame payload read failed");
+    received_ping =
+        header[3] == NGHTTP2_PING && (header[4] & NGHTTP2_FLAG_ACK) == 0;
+  }
+  rpc_http2_response_wait_end(&pair.client);
+  require(received_ping, "response wait did not emit an HTTP/2 PING heartbeat");
 }
 
 void test_client_to_server() {
@@ -924,6 +950,7 @@ int main() {
   test_rpc_write_queue_grows();
   test_rpc_write_copy_owns_buffer();
   test_rpc_lz4_payload_round_trip();
+  test_response_wait_sends_transport_heartbeat();
   test_client_to_server();
   test_server_receives_session_id();
   test_server_to_client_after_request_headers();

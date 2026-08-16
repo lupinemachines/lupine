@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <string>
+#include <time.h>
 #include <vector>
 
 namespace {
@@ -30,6 +31,10 @@ constexpr uint32_t kH2ServerWindow =
 constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
+// Linux restarts slow start after an idle period of one retransmission
+// timeout. Keeping response waits below the usual 200 ms minimum RTO avoids
+// collapsing the congestion window between bursts on high-latency links.
+constexpr long kH2HeartbeatIntervalMs = 100;
 
 struct h2_buffer {
   std::vector<unsigned char> data;
@@ -62,6 +67,11 @@ struct h2_transport {
   std::vector<unsigned char> compress_scratch;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
+  pthread_t heartbeat_thread = {};
+  unsigned int response_waiters = 0;
+  bool heartbeat_started = false;
+  bool heartbeat_stop = false;
+  bool heartbeat_failed = false;
   bool transport_failed = false;
   std::string request_method;
   std::string request_path;
@@ -557,6 +567,58 @@ int h2_flush_session_locked(h2_transport *transport) {
   return result == 0 ? 0 : -1;
 }
 
+timespec h2_heartbeat_deadline() {
+  timespec deadline = {};
+  clock_gettime(CLOCK_REALTIME, &deadline);
+  deadline.tv_nsec += kH2HeartbeatIntervalMs * 1000 * 1000;
+  if (deadline.tv_nsec >= 1000 * 1000 * 1000) {
+    ++deadline.tv_sec;
+    deadline.tv_nsec -= 1000 * 1000 * 1000;
+  }
+  return deadline;
+}
+
+void *h2_heartbeat_main(void *arg) {
+  auto *transport = static_cast<h2_transport *>(arg);
+  pthread_mutex_lock(&transport->session_mutex);
+  while (!transport->heartbeat_stop) {
+    while ((transport->response_waiters == 0 ||
+            transport->heartbeat_failed) &&
+           !transport->heartbeat_stop) {
+      pthread_cond_wait(&transport->session_progress,
+                        &transport->session_mutex);
+    }
+    if (transport->heartbeat_stop) {
+      break;
+    }
+
+    timespec deadline = h2_heartbeat_deadline();
+    int wait_result = 0;
+    while (transport->response_waiters != 0 && !transport->heartbeat_stop &&
+           wait_result != ETIMEDOUT) {
+      wait_result = pthread_cond_timedwait(
+          &transport->session_progress, &transport->session_mutex, &deadline);
+    }
+    if (transport->response_waiters == 0 || transport->heartbeat_stop) {
+      continue;
+    }
+    if (wait_result != ETIMEDOUT) {
+      continue;
+    }
+
+    std::array<uint8_t, 8> opaque = {};
+    if (nghttp2_submit_ping(transport->session, NGHTTP2_FLAG_NONE,
+                            opaque.data()) != 0 ||
+        h2_flush_session_locked(transport) < 0) {
+      // The heartbeat is best-effort. The normal RPC read/write path owns
+      // transport error reporting and the in-flight CUDA call's result.
+      transport->heartbeat_failed = true;
+    }
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return nullptr;
+}
+
 int h2_flush_session(h2_transport *transport) {
   pthread_mutex_lock(&transport->session_mutex);
   int result = h2_flush_session_locked(transport);
@@ -865,6 +927,44 @@ int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats) {
   return 0;
 }
 
+void rpc_http2_response_wait_begin(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  if (transport->server) {
+    return;
+  }
+  pthread_mutex_lock(&transport->session_mutex);
+  if (!transport->heartbeat_started && !transport->heartbeat_stop &&
+      !transport->heartbeat_failed) {
+    if (pthread_create(&transport->heartbeat_thread, nullptr, h2_heartbeat_main,
+                       transport) == 0) {
+      transport->heartbeat_started = true;
+    } else {
+      transport->heartbeat_failed = true;
+    }
+  }
+  if (transport->heartbeat_started && !transport->heartbeat_stop) {
+    ++transport->response_waiters;
+    pthread_cond_broadcast(&transport->session_progress);
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+}
+
+void rpc_http2_response_wait_end(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  if (transport->response_waiters != 0) {
+    --transport->response_waiters;
+  }
+  pthread_cond_broadcast(&transport->session_progress);
+  pthread_mutex_unlock(&transport->session_mutex);
+}
+
 void rpc_http2_window_hold_begin(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return;
@@ -954,6 +1054,14 @@ void rpc_http2_destroy(conn_t *conn) {
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   conn->http2 = nullptr;
+  pthread_mutex_lock(&transport->session_mutex);
+  transport->heartbeat_stop = true;
+  pthread_cond_broadcast(&transport->session_progress);
+  pthread_mutex_unlock(&transport->session_mutex);
+  if (transport->heartbeat_started) {
+    pthread_join(transport->heartbeat_thread, nullptr);
+    transport->heartbeat_started = false;
+  }
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);
     transport->session = nullptr;
