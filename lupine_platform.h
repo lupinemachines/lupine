@@ -11,7 +11,6 @@
 
 #include <BaseTsd.h>
 #include <algorithm>
-#include <chrono>
 #include <climits>
 #include <condition_variable>
 #include <cstdio>
@@ -77,15 +76,6 @@ inline int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex) {
 inline int pthread_cond_broadcast(pthread_cond_t *cond) {
   cond->cond.notify_all();
   return 0;
-}
-
-inline int lupine_cond_wait_for(pthread_cond_t *cond, pthread_mutex_t *mutex,
-                                int milliseconds) {
-  std::unique_lock<std::mutex> lock(mutex->mutex, std::adopt_lock);
-  std::cv_status status =
-      cond->cond.wait_for(lock, std::chrono::milliseconds(milliseconds));
-  lock.release();
-  return status == std::cv_status::timeout ? 1 : 0;
 }
 
 inline int pthread_create(pthread_t *thread, void *, void *(*start)(void *),
@@ -180,7 +170,6 @@ inline int lupine_fd_truncate(int fd, long length) {
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
-#include <time.h>
 #include <unistd.h>
 
 using lupine_socket_t = int;
@@ -191,16 +180,6 @@ using lupine_socket_t = int;
 inline int lupine_socket_init() { return 0; }
 inline bool lupine_socket_error_is_intr() { return errno == EINTR; }
 
-inline int lupine_cond_wait_for(pthread_cond_t *cond, pthread_mutex_t *mutex,
-                                int milliseconds) {
-  timespec deadline = {};
-  clock_gettime(CLOCK_REALTIME, &deadline);
-  deadline.tv_nsec += static_cast<long>(milliseconds) * 1000 * 1000;
-  deadline.tv_sec += deadline.tv_nsec / (1000 * 1000 * 1000);
-  deadline.tv_nsec %= 1000 * 1000 * 1000;
-  int result = pthread_cond_timedwait(cond, mutex, &deadline);
-  return result == 0 ? 0 : result == ETIMEDOUT ? 1 : -1;
-}
 inline int lupine_socket_close(lupine_socket_t socket) { return close(socket); }
 inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   const int enable = 1;

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <climits>
 #include <deque>
 #include <errno.h>
@@ -15,6 +16,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -576,21 +578,10 @@ void *h2_heartbeat_main(void *arg) {
       break;
     }
 
-    int wait_result = 0;
-    while (transport->response_waiters > 0 && wait_result == 0) {
-      wait_result = lupine_cond_wait_for(&transport->heartbeat_progress,
-                                         &transport->session_mutex,
-                                         kH2HeartbeatIntervalMs);
-    }
-    if (transport->response_waiters < 0) {
-      break;
-    }
-    if (transport->response_waiters == 0) {
-      continue;
-    }
-    if (wait_result < 0) {
-      break;
-    }
+    pthread_mutex_unlock(&transport->session_mutex);
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(kH2HeartbeatIntervalMs));
+    pthread_mutex_lock(&transport->session_mutex);
 
     std::array<uint8_t, 8> opaque = {};
     if (nghttp2_submit_ping(transport->session, NGHTTP2_FLAG_NONE,
@@ -938,7 +929,6 @@ void rpc_http2_response_wait_end(conn_t *conn) {
   if (transport->response_waiters > 0) {
     --transport->response_waiters;
   }
-  pthread_cond_broadcast(&transport->heartbeat_progress);
   pthread_mutex_unlock(&transport->session_mutex);
 }
 
