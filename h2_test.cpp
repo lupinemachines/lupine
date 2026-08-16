@@ -10,8 +10,8 @@
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
-#include <nghttp2/nghttp2.h>
 #include <netinet/in.h>
+#include <nghttp2/nghttp2.h>
 #include <poll.h>
 #include <string>
 #include <sys/mman.h>

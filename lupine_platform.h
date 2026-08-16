@@ -17,13 +17,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <io.h>
+#include <mstcpip.h>
+#include <mswsock.h>
 #include <mutex>
 #include <thread>
 #include <vector>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <mswsock.h>
-#include <mstcpip.h>
 
 using ssize_t = SSIZE_T;
 using socklen_t = int;

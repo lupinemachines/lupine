@@ -68,10 +68,7 @@ struct h2_transport {
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
   pthread_t heartbeat_thread = {};
-  unsigned int response_waiters = 0;
-  bool heartbeat_started = false;
-  bool heartbeat_stop = false;
-  bool heartbeat_failed = false;
+  int response_waiters = 0;
   bool transport_failed = false;
   std::string request_method;
   std::string request_path;
@@ -570,30 +567,29 @@ int h2_flush_session_locked(h2_transport *transport) {
 void *h2_heartbeat_main(void *arg) {
   auto *transport = static_cast<h2_transport *>(arg);
   pthread_mutex_lock(&transport->session_mutex);
-  while (!transport->heartbeat_stop) {
-    while ((transport->response_waiters == 0 ||
-            transport->heartbeat_failed) &&
-           !transport->heartbeat_stop) {
+  for (;;) {
+    while (transport->response_waiters == 0) {
       pthread_cond_wait(&transport->heartbeat_progress,
                         &transport->session_mutex);
     }
-    if (transport->heartbeat_stop) {
+    if (transport->response_waiters < 0) {
       break;
     }
 
     int wait_result = 0;
-    while (transport->response_waiters != 0 && !transport->heartbeat_stop &&
-           wait_result == 0) {
+    while (transport->response_waiters > 0 && wait_result == 0) {
       wait_result = lupine_cond_wait_for(&transport->heartbeat_progress,
                                          &transport->session_mutex,
                                          kH2HeartbeatIntervalMs);
     }
-    if (transport->response_waiters == 0 || transport->heartbeat_stop) {
+    if (transport->response_waiters < 0) {
+      break;
+    }
+    if (transport->response_waiters == 0) {
       continue;
     }
     if (wait_result < 0) {
-      transport->heartbeat_failed = true;
-      continue;
+      break;
     }
 
     std::array<uint8_t, 8> opaque = {};
@@ -602,7 +598,7 @@ void *h2_heartbeat_main(void *arg) {
         h2_flush_session_locked(transport) < 0) {
       // The heartbeat is best-effort. The normal RPC read/write path owns
       // transport error reporting and the in-flight CUDA call's result.
-      transport->heartbeat_failed = true;
+      break;
     }
   }
   pthread_mutex_unlock(&transport->session_mutex);
@@ -926,7 +922,7 @@ void rpc_http2_response_wait_begin(conn_t *conn) {
     return;
   }
   pthread_mutex_lock(&transport->session_mutex);
-  if (transport->heartbeat_started && !transport->heartbeat_stop) {
+  if (transport->heartbeat_thread != 0 && transport->response_waiters >= 0) {
     ++transport->response_waiters;
     pthread_cond_broadcast(&transport->heartbeat_progress);
   }
@@ -939,7 +935,7 @@ void rpc_http2_response_wait_end(conn_t *conn) {
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
-  if (transport->response_waiters != 0) {
+  if (transport->response_waiters > 0) {
     --transport->response_waiters;
   }
   pthread_cond_broadcast(&transport->heartbeat_progress);
@@ -1000,13 +996,10 @@ void rpc_http2_client_start_heartbeat(conn_t *conn) {
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
-  if (!transport->heartbeat_started && !transport->heartbeat_stop &&
-      !transport->heartbeat_failed) {
-    if (pthread_create(&transport->heartbeat_thread, nullptr, h2_heartbeat_main,
-                       transport) == 0) {
-      transport->heartbeat_started = true;
-    } else {
-      transport->heartbeat_failed = true;
+  if (transport->heartbeat_thread == 0 && transport->response_waiters >= 0) {
+    pthread_t thread = {};
+    if (pthread_create(&thread, nullptr, h2_heartbeat_main, transport) == 0) {
+      transport->heartbeat_thread = thread;
     }
   }
   pthread_mutex_unlock(&transport->session_mutex);
@@ -1054,12 +1047,12 @@ void rpc_http2_destroy(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   conn->http2 = nullptr;
   pthread_mutex_lock(&transport->session_mutex);
-  transport->heartbeat_stop = true;
+  transport->response_waiters = -1;
   pthread_cond_broadcast(&transport->heartbeat_progress);
   pthread_mutex_unlock(&transport->session_mutex);
-  if (transport->heartbeat_started) {
+  if (transport->heartbeat_thread != 0) {
     pthread_join(transport->heartbeat_thread, nullptr);
-    transport->heartbeat_started = false;
+    transport->heartbeat_thread = 0;
   }
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);
