@@ -15,7 +15,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <string>
-#include <time.h>
 #include <vector>
 
 namespace {
@@ -67,6 +66,7 @@ struct h2_transport {
   std::vector<unsigned char> compress_scratch;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
+  pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
   pthread_t heartbeat_thread = {};
   unsigned int response_waiters = 0;
   bool heartbeat_started = false;
@@ -567,17 +567,6 @@ int h2_flush_session_locked(h2_transport *transport) {
   return result == 0 ? 0 : -1;
 }
 
-timespec h2_heartbeat_deadline() {
-  timespec deadline = {};
-  clock_gettime(CLOCK_REALTIME, &deadline);
-  deadline.tv_nsec += kH2HeartbeatIntervalMs * 1000 * 1000;
-  if (deadline.tv_nsec >= 1000 * 1000 * 1000) {
-    ++deadline.tv_sec;
-    deadline.tv_nsec -= 1000 * 1000 * 1000;
-  }
-  return deadline;
-}
-
 void *h2_heartbeat_main(void *arg) {
   auto *transport = static_cast<h2_transport *>(arg);
   pthread_mutex_lock(&transport->session_mutex);
@@ -585,24 +574,25 @@ void *h2_heartbeat_main(void *arg) {
     while ((transport->response_waiters == 0 ||
             transport->heartbeat_failed) &&
            !transport->heartbeat_stop) {
-      pthread_cond_wait(&transport->session_progress,
+      pthread_cond_wait(&transport->heartbeat_progress,
                         &transport->session_mutex);
     }
     if (transport->heartbeat_stop) {
       break;
     }
 
-    timespec deadline = h2_heartbeat_deadline();
     int wait_result = 0;
     while (transport->response_waiters != 0 && !transport->heartbeat_stop &&
-           wait_result != ETIMEDOUT) {
-      wait_result = pthread_cond_timedwait(
-          &transport->session_progress, &transport->session_mutex, &deadline);
+           wait_result == 0) {
+      wait_result = lupine_cond_wait_for(&transport->heartbeat_progress,
+                                         &transport->session_mutex,
+                                         kH2HeartbeatIntervalMs);
     }
     if (transport->response_waiters == 0 || transport->heartbeat_stop) {
       continue;
     }
-    if (wait_result != ETIMEDOUT) {
+    if (wait_result < 0) {
+      transport->heartbeat_failed = true;
       continue;
     }
 
@@ -936,18 +926,9 @@ void rpc_http2_response_wait_begin(conn_t *conn) {
     return;
   }
   pthread_mutex_lock(&transport->session_mutex);
-  if (!transport->heartbeat_started && !transport->heartbeat_stop &&
-      !transport->heartbeat_failed) {
-    if (pthread_create(&transport->heartbeat_thread, nullptr, h2_heartbeat_main,
-                       transport) == 0) {
-      transport->heartbeat_started = true;
-    } else {
-      transport->heartbeat_failed = true;
-    }
-  }
   if (transport->heartbeat_started && !transport->heartbeat_stop) {
     ++transport->response_waiters;
-    pthread_cond_broadcast(&transport->session_progress);
+    pthread_cond_broadcast(&transport->heartbeat_progress);
   }
   pthread_mutex_unlock(&transport->session_mutex);
 }
@@ -961,7 +942,7 @@ void rpc_http2_response_wait_end(conn_t *conn) {
   if (transport->response_waiters != 0) {
     --transport->response_waiters;
   }
-  pthread_cond_broadcast(&transport->session_progress);
+  pthread_cond_broadcast(&transport->heartbeat_progress);
   pthread_mutex_unlock(&transport->session_mutex);
 }
 
@@ -1013,6 +994,24 @@ int rpc_http2_client_init(conn_t *conn) {
   return h2_init_direct(conn, false, false);
 }
 
+void rpc_http2_client_start_heartbeat(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  if (!transport->heartbeat_started && !transport->heartbeat_stop &&
+      !transport->heartbeat_failed) {
+    if (pthread_create(&transport->heartbeat_thread, nullptr, h2_heartbeat_main,
+                       transport) == 0) {
+      transport->heartbeat_started = true;
+    } else {
+      transport->heartbeat_failed = true;
+    }
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+}
+
 const char *rpc_http2_client_probe(conn_t *conn) {
   if (h2_init_direct(conn, false, true) < 0) {
     return nullptr;
@@ -1056,7 +1055,7 @@ void rpc_http2_destroy(conn_t *conn) {
   conn->http2 = nullptr;
   pthread_mutex_lock(&transport->session_mutex);
   transport->heartbeat_stop = true;
-  pthread_cond_broadcast(&transport->session_progress);
+  pthread_cond_broadcast(&transport->heartbeat_progress);
   pthread_mutex_unlock(&transport->session_mutex);
   if (transport->heartbeat_started) {
     pthread_join(transport->heartbeat_thread, nullptr);
@@ -1066,6 +1065,7 @@ void rpc_http2_destroy(conn_t *conn) {
     nghttp2_session_del(transport->session);
     transport->session = nullptr;
   }
+  pthread_cond_destroy(&transport->heartbeat_progress);
   pthread_cond_destroy(&transport->session_progress);
   pthread_mutex_destroy(&transport->session_mutex);
   delete transport;

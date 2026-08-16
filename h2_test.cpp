@@ -61,6 +61,7 @@ h2_pair make_pair() {
   h2_pair pair;
   init_pair_sockets(&pair);
   require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+  rpc_http2_client_start_heartbeat(&pair.client);
   require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
   return pair;
 }

@@ -186,6 +186,7 @@ extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
                             int entry_count);
 extern int rpc_http2_client_init(conn_t *conn);
+extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 // Sends HEAD / and returns the x-lupine-cuda-version response header, or
 // nullptr when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or

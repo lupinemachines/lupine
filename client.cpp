@@ -755,6 +755,7 @@ static int lupine_connect_endpoint(conn_t *conn,
     lupine_socket_close(sockfd);
     return -1;
   }
+  rpc_http2_client_start_heartbeat(conn);
 
   return 0;
 }

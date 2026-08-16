@@ -225,6 +225,7 @@ int open_connection() {
           freeaddrinfo(res);
           continue;
         }
+        rpc_http2_client_start_heartbeat(c);
         conn_labels.push_back(server_label);
         ++nconns;
         freeaddrinfo(res);
