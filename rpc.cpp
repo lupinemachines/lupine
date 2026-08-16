@@ -147,21 +147,18 @@ static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
   return 0;
 }
 
-static void rpc_write_queue_release_owned(conn_t *conn) {
+static void rpc_write_copy_release(conn_t *conn) {
   if (conn == nullptr) {
     return;
   }
-  for (int i = 0; i < conn->write_queue_count; ++i) {
-    rpc_write_entry *entry = &conn->write_queue[i];
-    if (entry->owned) {
-      free(entry->iov.iov_base);
-      *entry = {};
-    }
-  }
+  free(conn->write_copy_buffer);
+  conn->write_copy_buffer = nullptr;
+  conn->write_copy_capacity = 0;
+  conn->write_copy_offset = 0;
 }
 
 static int rpc_write_queue_reset(conn_t *conn, int count) {
-  rpc_write_queue_release_owned(conn);
+  rpc_write_copy_release(conn);
   if (conn != nullptr) {
     conn->write_queue_count = 0;
   }
@@ -176,13 +173,12 @@ static int rpc_write_queue_reset(conn_t *conn, int count) {
 }
 
 static int rpc_write_queue_push(conn_t *conn, const void *data, size_t size,
-                                unsigned char framed, unsigned char owned) {
+                                unsigned char framed) {
   if (conn == nullptr || conn->write_queue_count == INT_MAX ||
       rpc_write_queue_reserve(conn, conn->write_queue_count + 1) < 0) {
     return -1;
   }
-  conn->write_queue[conn->write_queue_count++] = {
-      {(void *)data, size}, framed, owned};
+  conn->write_queue[conn->write_queue_count++] = {{(void *)data, size}, framed};
   return 0;
 }
 
@@ -190,7 +186,7 @@ void rpc_write_queue_free(conn_t *conn) {
   if (conn == nullptr) {
     return;
   }
-  rpc_write_queue_release_owned(conn);
+  rpc_write_copy_release(conn);
   free(conn->write_queue);
   conn->write_queue = nullptr;
   conn->write_queue_count = 0;
@@ -549,25 +545,45 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
-  return rpc_write_queue_push(conn, data, size, 0, 0);
+  return rpc_write_queue_push(conn, data, size, 0);
+}
+
+int rpc_copy_alloc(conn_t *conn, const size_t size) {
+  if (conn == nullptr || conn->write_copy_buffer != nullptr ||
+      conn->write_copy_capacity != 0 || conn->write_copy_offset != 0) {
+    return -1;
+  }
+  if (size == 0) {
+    return 0;
+  }
+  conn->write_copy_buffer = static_cast<unsigned char *>(malloc(size));
+  if (conn->write_copy_buffer == nullptr) {
+    // Continuing after request serialization runs out of memory would leave
+    // client-visible CUDA state ambiguous, so fail the process immediately.
+    std::abort();
+  }
+  conn->write_copy_capacity = size;
+  return 0;
 }
 
 int rpc_write_copy(conn_t *conn, const void *data, const size_t size) {
-  if (size == 0) {
-    return rpc_write_queue_push(conn, data, size, 0, 0);
-  }
-  if (data == nullptr) {
+  if (conn == nullptr || (size != 0 && data == nullptr) ||
+      conn->write_copy_offset > conn->write_copy_capacity ||
+      size > conn->write_copy_capacity - conn->write_copy_offset) {
     return -1;
   }
-  void *copy = malloc(size);
-  if (copy == nullptr) {
+  unsigned char *copy = conn->write_copy_buffer;
+  if (size != 0) {
+    if (copy == nullptr) {
+      return -1;
+    }
+    copy += conn->write_copy_offset;
+    memcpy(copy, data, size);
+  }
+  if (rpc_write_queue_push(conn, copy, size, 0) < 0) {
     return -1;
   }
-  memcpy(copy, data, size);
-  if (rpc_write_queue_push(conn, copy, size, 0, 1) < 0) {
-    free(copy);
-    return -1;
-  }
+  conn->write_copy_offset += size;
   return 0;
 }
 
@@ -762,6 +778,10 @@ void rpc_free_kernel_param_values(void **values) {
 #ifdef LUPINE_RPC_SERVER
 int rpc_write_func_param_info(conn_t *conn, CUfunction function) {
   if (conn == nullptr) {
+    return -1;
+  }
+  constexpr size_t copy_size = rpc_max_kernel_param_layout_copy_size();
+  if (rpc_copy_alloc(conn, copy_size) < 0) {
     return -1;
   }
   for (uint32_t i = 0;; ++i) {
@@ -1252,6 +1272,12 @@ int rpc_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state) {
   uint32_t output_count = static_cast<uint32_t>(state->capture_wall_time) +
                           static_cast<uint32_t>(state->capture_info_log) +
                           static_cast<uint32_t>(state->capture_error_log);
+  size_t copy_size =
+      sizeof(output_count) + static_cast<size_t>(output_count) *
+                                 (sizeof(CUjit_option) + sizeof(size_t));
+  if (rpc_copy_alloc(conn, copy_size) < 0) {
+    return -1;
+  }
   if (rpc_write_copy(conn, &output_count, sizeof(output_count)) < 0) {
     return -1;
   }
@@ -1326,7 +1352,7 @@ int rpc_read_jit_outputs(conn_t *conn,
 // buffer must stay valid until rpc_write_end() returns, exactly like
 // rpc_write(). See compress.cpp for the framing format.
 int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  return rpc_write_queue_push(conn, data, size, 1, 0);
+  return rpc_write_queue_push(conn, data, size, 1);
 }
 
 // rpc_write_end finalizes the current request builder on the given connection
@@ -1337,7 +1363,7 @@ int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
 int rpc_write_end(conn_t *conn) {
   bool request = conn->write_op != -1;
   if (conn->closed) {
-    rpc_write_queue_release_owned(conn);
+    rpc_write_copy_release(conn);
     pthread_mutex_unlock(&conn->write_mutex);
     if (request) {
       pthread_mutex_unlock(&conn->call_mutex);
@@ -1353,10 +1379,23 @@ int rpc_write_end(conn_t *conn) {
     conn->write_queue[2] = {{&conn->write_op, sizeof(conn->write_op)}, 0};
     result = rpc_http2_writev(conn, conn->write_queue, conn->write_queue_count);
   }
-  rpc_write_queue_release_owned(conn);
+  rpc_write_copy_release(conn);
   pthread_mutex_unlock(&conn->write_mutex);
   if (request) {
     pthread_mutex_unlock(&conn->call_mutex);
   }
   return result == 0 ? write_id : -1;
+}
+
+void rpc_write_abort(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+  bool request = conn->write_op != -1;
+  rpc_write_copy_release(conn);
+  conn->write_queue_count = 0;
+  pthread_mutex_unlock(&conn->write_mutex);
+  if (request) {
+    pthread_mutex_unlock(&conn->call_mutex);
+  }
 }

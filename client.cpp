@@ -1440,13 +1440,19 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     size_t image_size = record.image.size();
     unsigned int zero_options = 0;
     if (conn == nullptr ||
-        rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+        rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (rpc_copy_alloc(conn, 0) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
         rpc_write_payload(conn, record.image.data(), image_size) < 0 ||
         rpc_write_jit_options(conn, &zero_options, nullptr, nullptr) < 0 ||
-        rpc_write_library_options(conn, &zero_options, nullptr, nullptr) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
+        rpc_write_library_options(conn, &zero_options, nullptr, nullptr) < 0) {
+      rpc_write_abort(conn);
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
         rpc_read_jit_outputs(conn, {}) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -3761,6 +3767,30 @@ static size_t lupine_jit_option_size(unsigned int numOptions,
   return 0;
 }
 
+static bool lupine_rpc_copy_size_add(size_t *total, size_t size) {
+  if (total == nullptr || size > SIZE_MAX - *total) {
+    return false;
+  }
+  *total += size;
+  return true;
+}
+
+static bool lupine_rpc_options_copy_size(unsigned int jit_count,
+                                         unsigned int library_count,
+                                         size_t *copy_size) {
+  if (jit_count > SIZE_MAX / sizeof(uintptr_t) ||
+      library_count > SIZE_MAX / sizeof(uintptr_t)) {
+    return false;
+  }
+  size_t total = static_cast<size_t>(jit_count) * sizeof(uintptr_t);
+  if (!lupine_rpc_copy_size_add(&total, static_cast<size_t>(library_count) *
+                                            sizeof(uintptr_t))) {
+    return false;
+  }
+  *copy_size = total;
+  return true;
+}
+
 static std::vector<rpc_jit_output_binding>
 lupine_capture_jit_client_bindings(unsigned int numOptions,
                                    const CUjit_option *options,
@@ -3804,10 +3834,20 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  size_t copy_size = 0;
+  if (!lupine_rpc_options_copy_size(numOptions, 0, &copy_size)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0 ||
-      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_copy_alloc(conn, copy_size) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, stateOut, sizeof(*stateOut)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -3841,16 +3881,26 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
   auto bindings =
       lupine_capture_jit_client_bindings(numOptions, options, optionValues);
+  size_t copy_size = 0;
+  if (!lupine_rpc_options_copy_size(numOptions, 0, &copy_size)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_write(conn, &type, sizeof(type)) < 0 ||
       rpc_write(conn, &size, sizeof(size)) < 0 ||
       (size != 0 && rpc_write(conn, data, size) < 0) ||
       rpc_write(conn, &name_len, sizeof(name_len)) < 0 ||
       (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
-      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -3906,21 +3956,33 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   file_payload = file_mapping;
   file_size = mapped_file_size;
   has_file_data = 1;
-  bool failed =
-      conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLinkAddFile_v2) < 0 ||
-      rpc_write(conn, &state, sizeof(state)) < 0 ||
-      rpc_write(conn, &type, sizeof(type)) < 0 ||
-      rpc_write(conn, &path_len, sizeof(path_len)) < 0 ||
-      (path_len != 0 && rpc_write(conn, path, path_len) < 0) ||
-      rpc_write(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
-      rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
-      (file_size != 0 && rpc_write(conn, file_payload, mapped_file_size) < 0) ||
-      rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read_jit_outputs(conn, bindings) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0;
+  size_t copy_size = 0;
+  if (!lupine_rpc_options_copy_size(numOptions, 0, &copy_size)) {
+    munmap(file_mapping, mapped_file_size);
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  bool failed = conn == nullptr ||
+                rpc_write_start_request(conn, RPC_cuLinkAddFile_v2) < 0;
+  if (!failed &&
+      (rpc_copy_alloc(conn, copy_size) < 0 ||
+       rpc_write(conn, &state, sizeof(state)) < 0 ||
+       rpc_write(conn, &type, sizeof(type)) < 0 ||
+       rpc_write(conn, &path_len, sizeof(path_len)) < 0 ||
+       (path_len != 0 && rpc_write(conn, path, path_len) < 0) ||
+       rpc_write(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
+       rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
+       (file_size != 0 &&
+        rpc_write(conn, file_payload, mapped_file_size) < 0) ||
+       rpc_write_jit_options(conn, &numOptions, options, optionValues) < 0)) {
+    rpc_write_abort(conn);
+    failed = true;
+  }
+  if (!failed && (rpc_wait_for_response(conn) < 0 ||
+                  rpc_read_jit_outputs(conn, bindings) < 0 ||
+                  rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+                  rpc_read_end(conn) < 0)) {
+    failed = true;
+  }
   if (file_mapping != MAP_FAILED) {
     munmap(file_mapping, mapped_file_size);
   }
@@ -4717,16 +4779,27 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t image_size = image_bytes.size();
+  size_t copy_size = 0;
+  if (!lupine_rpc_options_copy_size(numJitOptions, numLibraryOptions,
+                                    &copy_size)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
       rpc_write_jit_options(conn, &numJitOptions, jitOptions,
                             jitOptionsValues) < 0 ||
       rpc_write_library_options(conn, &numLibraryOptions, libraryOptions,
-                                libraryOptionValues) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+                                libraryOptionValues) < 0) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4860,6 +4933,25 @@ static CUresult lupine_resolve_launch_function_for_route(
   return result;
 }
 
+static bool
+lupine_rpc_param_values_copy_size(const std::vector<size_t> &param_sizes,
+                                  size_t prefix_size, size_t *copy_size) {
+  size_t total = prefix_size;
+  if (!lupine_rpc_copy_size_add(&total, sizeof(CUresult))) {
+    return false;
+  }
+  for (size_t size : param_sizes) {
+    if (!lupine_rpc_copy_size_add(&total, sizeof(CUresult)) ||
+        !lupine_rpc_copy_size_add(&total, sizeof(size_t)) ||
+        !lupine_rpc_copy_size_add(&total, sizeof(size_t)) ||
+        !lupine_rpc_copy_size_add(&total, size)) {
+      return false;
+    }
+  }
+  *copy_size = total;
+  return true;
+}
+
 extern "C" CUresult
 cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                unsigned int gridDimZ, unsigned int blockDimX,
@@ -4963,9 +5055,17 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
        lupine_managed_kernel_requires_launch_sync(route_function) ||
        lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
+  size_t copy_size = 0;
+  if (!lupine_rpc_param_values_copy_size(param_sizes, sizeof(kernel_handle),
+                                         &copy_size)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
   // Fire-and-forget; launch errors are sticky and surface at the next sync.
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -4980,11 +5080,15 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       (kernel_handle
            ? rpc_write_kernel_param_values(conn, reinterpret_cast<CUkernel>(f),
                                            rpc_params.data())
-           : rpc_write_func_param_values(conn, f, rpc_params.data())) < 0 ||
+           : rpc_write_func_param_values(conn, f, rpc_params.data())) < 0
 #else
-      rpc_write_func_param_values(conn, f, rpc_params.data()) < 0 ||
+      rpc_write_func_param_values(conn, f, rpc_params.data()) < 0
 #endif
-      rpc_write_end(conn) < 0) {
+  ) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (sync_after_launch) {
@@ -5092,8 +5196,16 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   // cluster dimensions) are reported from the launch itself. The server
   // applies the same numAttrs rule when deciding whether to respond.
   bool fire_and_forget = config->numAttrs == 0;
+  size_t copy_size = 0;
+  if (!lupine_rpc_param_values_copy_size(param_sizes, sizeof(kernel_handle),
+                                         &copy_size)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write_launch_config(conn, config) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write_copy(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
@@ -5105,6 +5217,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
 #else
       rpc_write_func_param_values(conn, f, rpc_params.data()) < 0) {
 #endif
+    rpc_write_abort(conn);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (fire_and_forget) {
@@ -5180,8 +5293,16 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  size_t copy_size = 0;
+  if (!lupine_rpc_param_values_copy_size(param_sizes, sizeof(kernel_handle),
+                                         &copy_size)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernel) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernel) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -5196,11 +5317,15 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       (kernel_handle
            ? rpc_write_kernel_param_values(conn, reinterpret_cast<CUkernel>(f),
                                            rpc_params.data())
-           : rpc_write_func_param_values(conn, f, rpc_params.data())) < 0 ||
+           : rpc_write_func_param_values(conn, f, rpc_params.data())) < 0
 #else
-      rpc_write_func_param_values(conn, f, rpc_params.data()) < 0 ||
+      rpc_write_func_param_values(conn, f, rpc_params.data()) < 0
 #endif
-      rpc_wait_for_response(conn) < 0 ||
+  ) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5773,6 +5898,11 @@ lupine_write_kernel_node_params(conn_t *conn,
   if (conn == nullptr || nodeParams == nullptr) {
     return -1;
   }
+  constexpr size_t copy_size = rpc_kernel_node_params_copy_size() +
+                               rpc_max_kernel_param_values_copy_size();
+  if (rpc_copy_alloc(conn, copy_size) < 0) {
+    return -1;
+  }
   CUfunction function = nodeParams->func;
   if (rpc_write_kernel_node_params(conn, nodeParams, function) < 0) {
     return -1;
@@ -5803,6 +5933,14 @@ static int lupine_write_graph_node_params(conn_t *conn,
 
   if (nodeParams->type != CU_GRAPH_NODE_TYPE_KERNEL &&
       nodeParams->type != CU_GRAPH_NODE_TYPE_CONDITIONAL) {
+    return -1;
+  }
+  size_t copy_size = sizeof(*nodeParams);
+  if (nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL) {
+    copy_size += sizeof(nodeParams->kernel.func) +
+                 rpc_max_kernel_param_values_copy_size();
+  }
+  if (rpc_copy_alloc(conn, copy_size) < 0) {
     return -1;
   }
   if (rpc_write_copy(conn, nodeParams, sizeof(*nodeParams)) < 0) {
@@ -5988,10 +6126,15 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetParams_v2) < 0 ||
-      rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      lupine_write_kernel_node_params(conn, nodeParams) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetParams_v2) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
+      lupine_write_kernel_node_params(conn, nodeParams) < 0) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6046,12 +6189,17 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphAddKernelNode_v2) < 0 ||
-      rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphAddKernelNode_v2) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
-      lupine_write_kernel_node_params(conn, nodeParams) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      lupine_write_kernel_node_params(conn, nodeParams) < 0) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -6151,13 +6299,17 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuGraphExecKernelNodeSetParams_v2) <
-          0 ||
-      rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
+  if (conn == nullptr || rpc_write_start_request(
+                             conn, RPC_cuGraphExecKernelNodeSetParams_v2) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      lupine_write_kernel_node_params(conn, nodeParams) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      lupine_write_kernel_node_params(conn, nodeParams) < 0) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6351,12 +6503,17 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
                                  : 0;
   std::vector<CUgraph> child_graphs(child_count);
   if (conn == nullptr ||
-      rpc_write_start_request(conn, LUPINE_RPC_cuGraphAddNode_v2) < 0 ||
-      rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
+      rpc_write_start_request(conn, LUPINE_RPC_cuGraphAddNode_v2) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
-      lupine_write_graph_node_params(conn, nodeParams) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      lupine_write_graph_node_params(conn, nodeParams) < 0) {
+    rpc_write_abort(conn);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       (child_count != 0 && rpc_read(conn, child_graphs.data(),
                                     child_count * sizeof(CUgraph)) < 0) ||

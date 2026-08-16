@@ -17,8 +17,6 @@ struct rpc_write_entry {
   // every block is stored raw (the source is already compressed, so the LZ4
   // attempt would only waste CPU; the wire format is unchanged).
   unsigned char framed;
-  // The queue owns iov_base and releases it after rpc_write_end or reset.
-  unsigned char owned;
 };
 
 struct rpc_http2_read_stats {
@@ -40,6 +38,30 @@ struct rpc_http2_read_stats {
 // request is a count followed by that many handles, and its response is one
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
+
+// CUDA currently caps a kernel's packed parameter area below 64 KiB. These
+// bounds also cover the pathological case where each byte is reported as a
+// separate parameter record.
+static constexpr size_t LUPINE_RPC_MAX_KERNEL_PARAM_BYTES = 64 * 1024;
+static constexpr size_t LUPINE_RPC_MAX_KERNEL_PARAM_COUNT = 64 * 1024;
+
+static constexpr size_t rpc_max_kernel_param_layout_copy_size() {
+  return sizeof(CUresult) + LUPINE_RPC_MAX_KERNEL_PARAM_COUNT *
+                                (sizeof(CUresult) + 2 * sizeof(size_t));
+}
+
+static constexpr size_t rpc_max_kernel_param_values_copy_size() {
+  return rpc_max_kernel_param_layout_copy_size() +
+         LUPINE_RPC_MAX_KERNEL_PARAM_BYTES;
+}
+
+static constexpr size_t rpc_kernel_node_params_copy_size() {
+  size_t size = sizeof(CUfunction) + 7 * sizeof(unsigned int);
+#if CUDA_VERSION >= 12000
+  size += sizeof(CUkernel) + sizeof(CUcontext);
+#endif
+  return size;
+}
 
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
 // nothing: a non-success result carries no payload, otherwise every device
@@ -74,6 +96,9 @@ struct conn_t {
   rpc_write_entry *write_queue;
   int write_queue_count;
   int write_queue_capacity;
+  unsigned char *write_copy_buffer;
+  size_t write_copy_capacity;
+  size_t write_copy_offset;
   int local_request_parity;
   int logical_index;
   int closed;
@@ -92,6 +117,12 @@ extern int rpc_wait_for_response(conn_t *conn);
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
+// Reserves the request-owned storage used by subsequent rpc_write_copy calls.
+// The reservation must be made once, before the first copy in an RPC, and is
+// released by write completion, reset, abort, or connection destruction. An
+// allocation failure is fatal because the partially serialized CUDA state is
+// not recoverable.
+extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 // Copies data into request-owned storage. Unlike rpc_write, the caller may
 // modify or release its source buffer before rpc_write_end returns.
 extern int rpc_write_copy(conn_t *conn, const void *data, const size_t size);
@@ -99,6 +130,8 @@ extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
                             size_t count);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
+// Discards an active request/response builder without sending it.
+extern void rpc_write_abort(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Marks a connection closed and atomically takes ownership of its transport
 // socket before aborting it. Safe after a transport error has already set
