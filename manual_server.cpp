@@ -999,14 +999,8 @@ int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
     return -1;
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_write_func_param_info(conn, function) < 0) {
-    rpc_write_abort(conn);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_func_param_info(conn, function) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -1022,15 +1016,10 @@ int handle_manual_lupineFunctionAttributeSnapshot(conn_t *conn) {
     return -1;
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, lupine_attribute_snapshot_copy_size()) < 0 ||
-      lupine_write_function_attributes(conn, function) < 0) {
-    rpc_write_abort(conn);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, lupine_attribute_snapshot_copy_size()) < 0 ||
+      lupine_write_function_attributes(conn, function) < 0 ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -1116,16 +1105,10 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_write(conn, &library, sizeof(library)) < 0 ||
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &library, sizeof(library)) < 0 ||
       rpc_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -1247,17 +1230,11 @@ int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
                     2 * lupine_attribute_snapshot_copy_size());
     }
   }
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, copy_size) < 0) {
-    rpc_write_abort(conn);
-    return -1;
-  }
-  if (rpc_write_copy(conn, &device_result, sizeof(device_result)) < 0 ||
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, copy_size) < 0 ||
+      rpc_write_copy(conn, &device_result, sizeof(device_result)) < 0 ||
       (device_result == CUDA_SUCCESS &&
        rpc_write_copy(conn, &device, sizeof(device)) < 0)) {
-    rpc_write_abort(conn);
     return -1;
   }
   if (device_result != CUDA_SUCCESS) {
@@ -1267,7 +1244,6 @@ int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
   if (rpc_write_copy(conn, &count_result, sizeof(count_result)) < 0 ||
       (count_result == CUDA_SUCCESS &&
        rpc_write_copy(conn, &kernel_count, sizeof(kernel_count)) < 0)) {
-    rpc_write_abort(conn);
     return -1;
   }
   if (count_result != CUDA_SUCCESS || kernel_count == 0) {
@@ -1277,7 +1253,6 @@ int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
   enumerate_result =
       cuLibraryEnumerateKernels(kernels.data(), kernel_count, library);
   if (rpc_write_copy(conn, &enumerate_result, sizeof(enumerate_result)) < 0) {
-    rpc_write_abort(conn);
     return -1;
   }
   if (enumerate_result != CUDA_SUCCESS) {
@@ -1295,18 +1270,14 @@ int handle_manual_lupineLibraryAttributeSnapshot(conn_t *conn) {
          (rpc_write_copy(conn, &function, sizeof(function)) < 0 ||
           lupine_write_function_attributes(conn, function) < 0)) ||
         lupine_write_kernel_attributes(conn, kernel, device) < 0) {
-      rpc_write_abort(conn);
       return -1;
     }
   }
 #else
   CUresult result = CUDA_ERROR_NOT_SUPPORTED;
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, sizeof(result)) < 0 ||
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, sizeof(result)) < 0 ||
       rpc_write_copy(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
     return -1;
   }
 #endif
@@ -1787,15 +1758,9 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
         jit_state.option_values.empty() ? nullptr
                                         : jit_state.option_values.data());
   }
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_jit_outputs(conn, &jit_state) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -1855,15 +1820,9 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
         jit_state.option_values.empty() ? nullptr
                                         : jit_state.option_values.data());
   }
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_jit_outputs(conn, &jit_state) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -1894,17 +1853,11 @@ int handle_manual_cuLinkComplete(conn_t *conn) {
     jit_state = &link_state->jit;
   }
   size_t returned_size = result == CUDA_SUCCESS ? size : 0;
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_write(conn, &returned_size, sizeof(returned_size)) < 0 ||
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &returned_size, sizeof(returned_size)) < 0 ||
       (returned_size != 0 && rpc_write(conn, cubin, returned_size) < 0) ||
       rpc_write_jit_outputs(conn, jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -2490,18 +2443,16 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   void *client_user_data = callback->userData;
   void *response = nullptr;
   auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false);
-  if (rpc_write_start_request(conn, 2) >= 0) {
-    if (rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
-        lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
-        rpc_write(conn, &stream, sizeof(stream)) < 0 ||
-        rpc_write(conn, &status, sizeof(status)) < 0 ||
-        rpc_write(conn, &fn, sizeof(fn)) < 0 ||
-        rpc_write(conn, &client_user_data, sizeof(client_user_data)) < 0) {
-      rpc_write_abort(conn);
-    } else if (rpc_wait_for_response(conn) >= 0) {
-      rpc_read(conn, &response, sizeof(response));
-      rpc_read_end(conn);
-    }
+  if (rpc_write_start_request(conn, 2) >= 0 &&
+      rpc_copy_alloc(conn, sizeof(uint32_t)) >= 0 &&
+      lupine_write_pending_dtoh_copies(conn, pending, true) >= 0 &&
+      rpc_write(conn, &stream, sizeof(stream)) >= 0 &&
+      rpc_write(conn, &status, sizeof(status)) >= 0 &&
+      rpc_write(conn, &fn, sizeof(fn)) >= 0 &&
+      rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
+      rpc_wait_for_response(conn) >= 0) {
+    rpc_read(conn, &response, sizeof(response));
+    rpc_read_end(conn);
   }
   lupine_cleanup_pending_dtoh_copies(&pending);
   delete callback;
@@ -2564,14 +2515,11 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
     copy_size += rpc_kernel_node_params_copy_size() +
                  rpc_max_kernel_param_values_copy_size();
   }
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, copy_size) < 0 ||
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
       (result == CUDA_SUCCESS &&
        rpc_write_kernel_node_params(conn, &nodeParams, nodeParams.func) < 0)) {
-    rpc_write_abort(conn);
     return -1;
   }
   if (result == CUDA_SUCCESS) {
@@ -2591,7 +2539,6 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
       write_result = rpc_write_copy(conn, &param_result, sizeof(param_result));
     }
     if (write_result < 0) {
-      rpc_write_abort(conn);
       return -1;
     }
   }
@@ -3247,23 +3194,12 @@ int handle_manual_cuEventQuery(conn_t *conn) {
   if (result == CUDA_SUCCESS) {
     pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
   }
-  if (rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
-      lupine_write_pending_dtoh_copies(conn, pending, true) < 0) {
-    rpc_write_abort(conn);
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
+  bool failed = rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
+                lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write_end(conn) < 0;
   lupine_cleanup_pending_dtoh_copies(&pending);
-  return 0;
+  return failed ? -1 : 0;
 }
 
 int handle_manual_lupineEventQueryBatch(conn_t *conn) {
@@ -4080,24 +4016,14 @@ int handle_manual_cuCtxSynchronize(conn_t *conn) {
   CUresult result = cuCtxSynchronize();
   lupine_finish_stdout_capture(&capture);
   auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, sizeof(uint32_t) + sizeof(uint64_t)) < 0 ||
-      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
-      lupine_write_captured_stdout(conn, capture) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
+  bool failed = rpc_write_start_response(conn, request_id) < 0 ||
+                rpc_copy_alloc(conn, sizeof(uint32_t) + sizeof(uint64_t)) < 0 ||
+                lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+                lupine_write_captured_stdout(conn, capture) < 0 ||
+                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write_end(conn) < 0;
   lupine_cleanup_pending_dtoh_copies(&pending);
-  return 0;
+  return failed ? -1 : 0;
 }
 
 int handle_manual_cuStreamSynchronize(conn_t *conn) {
@@ -4125,11 +4051,9 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
       lupine_detach_pending_dtoh_copies(conn, stream, all_pending_streams);
   uint32_t pending_copy_count = static_cast<uint32_t>(pending.size());
   copy_count = graph_copy_count + pending_copy_count;
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
+  bool failed =
+      rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
       rpc_write(conn, &copy_count, sizeof(copy_count)) < 0 ||
       std::any_of(
           graph_copies.begin(), graph_copies.end(),
@@ -4142,17 +4066,9 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
           }) ||
       lupine_write_pending_dtoh_copies(conn, pending, false) < 0 ||
       lupine_write_captured_stdout(conn, capture) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0;
   lupine_cleanup_pending_dtoh_copies(&pending);
-  return 0;
+  return failed ? -1 : 0;
 }
 
 int handle_manual_cuGraphLaunch(conn_t *conn) {
@@ -4193,24 +4109,14 @@ int handle_manual_cuEventSynchronize(conn_t *conn) {
   CUresult result = cuEventSynchronize(event);
   lupine_finish_stdout_capture(&capture);
   auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, sizeof(uint32_t) + sizeof(uint64_t)) < 0 ||
-      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
-      lupine_write_captured_stdout(conn, capture) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
-    rpc_write_abort(conn);
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
-  if (rpc_write_end(conn) < 0) {
-    lupine_cleanup_pending_dtoh_copies(&pending);
-    return -1;
-  }
+  bool failed = rpc_write_start_response(conn, request_id) < 0 ||
+                rpc_copy_alloc(conn, sizeof(uint32_t) + sizeof(uint64_t)) < 0 ||
+                lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+                lupine_write_captured_stdout(conn, capture) < 0 ||
+                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write_end(conn) < 0;
   lupine_cleanup_pending_dtoh_copies(&pending);
-  return 0;
+  return failed ? -1 : 0;
 }
 
 int handle_manual_cuOccupancyMaxPotentialBlockSize(conn_t *conn,

@@ -130,8 +130,6 @@ extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
                             size_t count);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
-// Discards an active request/response builder without sending it.
-extern void rpc_write_abort(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Marks a connection closed and atomically takes ownership of its transport
 // socket before aborting it. Safe after a transport error has already set

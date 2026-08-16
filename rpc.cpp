@@ -1386,16 +1386,3 @@ int rpc_write_end(conn_t *conn) {
   }
   return result == 0 ? write_id : -1;
 }
-
-void rpc_write_abort(conn_t *conn) {
-  if (conn == nullptr) {
-    return;
-  }
-  bool request = conn->write_op != -1;
-  rpc_write_copy_release(conn);
-  conn->write_queue_count = 0;
-  pthread_mutex_unlock(&conn->write_mutex);
-  if (request) {
-    pthread_mutex_unlock(&conn->call_mutex);
-  }
-}

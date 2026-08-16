@@ -944,9 +944,10 @@ void test_rpc_write_copy_rejects_overflow_without_moving_buffer() {
           "failed copy invalidated an earlier iovec");
   require(*static_cast<int *>(base) == first,
           "failed copy changed earlier copied bytes");
-  rpc_write_abort(&pair.client);
+  require(rpc_write_end(&pair.client) == 21,
+          "overflow response write end failed");
   require(pair.client.write_copy_buffer == nullptr,
-          "rpc_write_abort retained the copy buffer");
+          "rpc_write_end retained the copy buffer");
 
   require(rpc_copy_alloc(&pair.client, 32) == 0,
           "stale copy allocation failed");
@@ -955,8 +956,8 @@ void test_rpc_write_copy_rejects_overflow_without_moving_buffer() {
   require(pair.client.write_copy_buffer == nullptr,
           "response reset retained a stale copy buffer");
   require(rpc_copy_alloc(&pair.client, sizeof(second)) == 0,
-          "copy allocation after abort failed");
-  rpc_write_abort(&pair.client);
+          "copy allocation after reset failed");
+  require(rpc_write_end(&pair.client) == 22, "reset response write end failed");
 }
 
 void test_rpc_write_copy_cleans_up_on_transport_failure_and_destroy() {
