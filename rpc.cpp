@@ -81,6 +81,44 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
 
 extern void rpc_http2_destroy(conn_t *conn);
 
+void rpc_close_transport_socket(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+
+#ifdef _WIN32
+  conn->closed = 1;
+  lupine_socket_t socket = conn->connfd;
+  conn->connfd = LUPINE_INVALID_SOCKET;
+#else
+  __atomic_store_n(&conn->closed, 1, __ATOMIC_RELEASE);
+  lupine_socket_t socket = __atomic_exchange_n(
+      &conn->connfd, LUPINE_INVALID_SOCKET, __ATOMIC_ACQ_REL);
+#endif
+  if (socket == LUPINE_INVALID_SOCKET) {
+    return;
+  }
+  struct linger abortive = {};
+  abortive.l_onoff = 1;
+  abortive.l_linger = 0;
+#ifdef _WIN32
+  (void)setsockopt(socket, SOL_SOCKET, SO_LINGER,
+                   reinterpret_cast<const char *>(&abortive),
+                   sizeof(abortive));
+#else
+  (void)setsockopt(socket, SOL_SOCKET, SO_LINGER, &abortive,
+                   sizeof(abortive));
+#endif
+  // Wake a reader blocked in recv without sending a FIN. SHUT_RDWR would
+  // gracefully close the write side before SO_LINGER can reset the peer.
+#ifdef _WIN32
+  (void)shutdown(socket, SD_RECEIVE);
+#else
+  (void)shutdown(socket, SHUT_RD);
+#endif
+  (void)lupine_socket_close(socket);
+}
+
 static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
   if (conn == nullptr || capacity < 0) {
     return -1;
@@ -163,6 +201,7 @@ void rpc_conn_destroy(conn_t *conn) {
   if (conn == nullptr) {
     return;
   }
+  rpc_close_transport_socket(conn);
   rpc_http2_destroy(conn);
   rpc_write_queue_free(conn);
   pthread_mutex_destroy(&conn->read_mutex);

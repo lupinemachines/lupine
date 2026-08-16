@@ -231,6 +231,10 @@ inline int lupine_fd_truncate(int fd, off_t length) {
 //     With the defaults a dead peer is detected in ~105s instead of hanging on
 //     the retransmit timer. Socket buffer sizing is left to the OS, which
 //     auto-tunes on modern kernels.
+//   * TCP_USER_TIMEOUT, where available, applies the same dead-peer bound
+//     while application data is unacknowledged. TCP keepalive does not run
+//     while data is in flight, which otherwise leaves a disconnected client
+//     on the much longer system retransmission timeout.
 //
 // Returns 0 on success, -1 on an invalid descriptor.
 inline int lupine_socket_apply_transport_options(lupine_socket_t fd) {
@@ -270,12 +274,19 @@ inline int lupine_socket_apply_transport_options(lupine_socket_t fd) {
              sizeof(keepcnt));
 #endif
 #else
+  constexpr int kDeadPeerTimeoutMs =
+      (kKeepidleSec + kKeepintvlSec * kKeepcnt) * 1000;
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE,
              reinterpret_cast<const char *>(&keepidle), sizeof(keepidle));
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL,
              reinterpret_cast<const char *>(&keepintvl), sizeof(keepintvl));
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT,
              reinterpret_cast<const char *>(&keepcnt), sizeof(keepcnt));
+#ifdef TCP_USER_TIMEOUT
+  int user_timeout = kDeadPeerTimeoutMs;
+  setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout,
+             sizeof(user_timeout));
+#endif
 #endif
   return 0;
 }

@@ -100,6 +100,10 @@ extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
+// Marks a connection closed and atomically takes ownership of its transport
+// socket before aborting it. Safe after a transport error has already set
+// conn->closed, and safe for concurrent/idempotent cleanup.
+extern void rpc_close_transport_socket(conn_t *conn);
 extern void rpc_write_queue_free(conn_t *conn);
 extern void rpc_conn_destroy(conn_t *conn);
 

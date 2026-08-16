@@ -4,11 +4,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <nghttp2/nghttp2.h>
+#include <netinet/in.h>
 #include <string>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -313,6 +316,108 @@ void test_truncated_read_clears_direct_destination() {
     }
     require(guarded[i] == 0xa5, "truncated read wrote outside prefix");
   }
+}
+
+void test_close_already_failed_transport_socket() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  // Transport readers mark the logical connection closed before the owner
+  // performs descriptor cleanup. That state must not suppress shutdown: a
+  // peer can otherwise retain its per-connection resources indefinitely.
+  pair.client.closed = 1;
+  rpc_close_transport_socket(&pair.client);
+  require(pair.client.connfd == LUPINE_INVALID_SOCKET,
+          "failed transport socket was not claimed");
+
+  char buffer[4096];
+  ssize_t received = 0;
+  do {
+    received = recv(pair.server.connfd, buffer, sizeof(buffer), 0);
+  } while (received > 0);
+  require(received == 0 || (received < 0 && errno == ECONNRESET),
+          "failed transport socket did not notify peer");
+
+  // Cleanup can race the dispatch thread and the library destructor.
+  rpc_close_transport_socket(&pair.client);
+  require(pair.client.connfd == LUPINE_INVALID_SOCKET,
+          "transport socket close was not idempotent");
+}
+
+void test_abort_failed_transport_with_queued_data() {
+  int listener = socket(AF_INET, SOCK_STREAM, 0);
+  require(listener >= 0, "queued close listener socket failed");
+
+  sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = 0;
+  require(bind(listener, reinterpret_cast<sockaddr *>(&address),
+               sizeof(address)) == 0,
+          "queued close bind failed");
+  socklen_t address_size = sizeof(address);
+  require(getsockname(listener, reinterpret_cast<sockaddr *>(&address),
+                      &address_size) == 0,
+          "queued close getsockname failed");
+  require(listen(listener, 1) == 0, "queued close listen failed");
+
+  conn_t connection = {};
+  connection.connfd = socket(AF_INET, SOCK_STREAM, 0);
+  require(connection.connfd >= 0, "queued close client socket failed");
+  require(lupine_socket_apply_transport_options(connection.connfd) == 0,
+          "queued close transport setup failed");
+#ifdef TCP_USER_TIMEOUT
+  int user_timeout = 0;
+  socklen_t user_timeout_size = sizeof(user_timeout);
+  require(getsockopt(connection.connfd, IPPROTO_TCP, TCP_USER_TIMEOUT,
+                     &user_timeout, &user_timeout_size) == 0 &&
+              user_timeout == 105000,
+          "unacknowledged transport data has no dead-peer timeout");
+#endif
+  int buffer_size = 4096;
+  require(setsockopt(connection.connfd, SOL_SOCKET, SO_SNDBUF, &buffer_size,
+                     sizeof(buffer_size)) == 0,
+          "queued close send buffer setup failed");
+  require(connect(connection.connfd, reinterpret_cast<sockaddr *>(&address),
+                  sizeof(address)) == 0,
+          "queued close connect failed");
+  int peer = accept(listener, nullptr, nullptr);
+  require(peer >= 0, "queued close accept failed");
+  require(setsockopt(peer, SOL_SOCKET, SO_RCVBUF, &buffer_size,
+                     sizeof(buffer_size)) == 0,
+          "queued close receive buffer setup failed");
+
+  int flags = fcntl(connection.connfd, F_GETFL, 0);
+  require(flags >= 0 &&
+              fcntl(connection.connfd, F_SETFL, flags | O_NONBLOCK) == 0,
+          "queued close nonblocking setup failed");
+  std::array<char, 64 * 1024> payload = {};
+  size_t queued = 0;
+  for (;;) {
+    ssize_t sent = send(connection.connfd, payload.data(), payload.size(),
+                        MSG_NOSIGNAL);
+    if (sent > 0) {
+      queued += static_cast<size_t>(sent);
+      continue;
+    }
+    require(sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK),
+            "queued close fill failed");
+    break;
+  }
+  require(queued != 0, "queued close did not queue data");
+
+  connection.closed = 1;
+  rpc_close_transport_socket(&connection);
+
+  ssize_t received = 0;
+  do {
+    received = recv(peer, payload.data(), payload.size(), 0);
+  } while (received > 0);
+  require(received < 0 && errno == ECONNRESET,
+          "queued transport close was not abortive");
+
+  close(peer);
+  close(listener);
 }
 
 void test_concurrent_response_lanes() {
@@ -827,6 +932,8 @@ int main() {
   test_fragmented_frames_direct();
   test_partial_read_stages_only_overflow();
   test_truncated_read_clears_direct_destination();
+  test_close_already_failed_transport_socket();
+  test_abort_failed_transport_with_queued_data();
   test_concurrent_response_lanes();
   test_large_payload();
   test_framed_payload_round_trip();

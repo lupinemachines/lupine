@@ -263,11 +263,7 @@ void close_connections() {
   int count = nconns;
   for (int i = 0; i < count; ++i) {
     conn_t *c = &conns[i];
-    if (!c->closed) {
-      c->closed = 1;
-      shutdown(c->connfd, SHUT_RDWR);
-      close(c->connfd);
-    }
+    rpc_close_transport_socket(c);
     pthread_mutex_lock(&c->read_mutex);
     pthread_cond_broadcast(&c->read_cond);
     pthread_mutex_unlock(&c->read_mutex);

@@ -8241,11 +8241,7 @@ void rpc_close(conn_t *conn) {
   // lane threads with no CUDA context. Invalidate all per-lane context hints.
   lupine_invalidate_current_context_cache();
 
-  if (!conn->closed) {
-    conn->closed = 1;
-    shutdown(conn->connfd, SHUT_RDWR);
-    close(conn->connfd);
-  }
+  rpc_close_transport_socket(conn);
 
   pthread_mutex_lock(&conn->read_mutex);
   pthread_cond_broadcast(&conn->read_cond);

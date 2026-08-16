@@ -367,18 +367,15 @@ int client_handler(lupine_socket_t connfd) {
   int http2_init_result = rpc_http2_server_init(&conn);
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");
-    lupine_socket_close(connfd);
     rpc_conn_destroy(&conn);
     return lupine_server_checkpoint_child_finish();
   }
   if (http2_init_result != 0) {
-    lupine_socket_close(connfd);
     rpc_conn_destroy(&conn);
     return lupine_server_checkpoint_child_finish();
   }
   if (!lupine_server_initialize_connection(&conn)) {
     LUPINE_LOG_ERROR("Error initializing per-connection staging state.");
-    lupine_socket_close(connfd);
     rpc_conn_destroy(&conn);
     return lupine_server_checkpoint_child_finish();
   }
@@ -522,9 +519,8 @@ int client_handler(lupine_socket_t connfd) {
     }
   }
 
-  conn.closed = 1;
+  rpc_close_transport_socket(&conn);
   pthread_cond_broadcast(&conn.read_cond);
-  lupine_socket_close(connfd);
   if (conn.rpc_thread != 0) {
     pthread_join(conn.rpc_thread, nullptr);
     conn.rpc_thread = 0;
