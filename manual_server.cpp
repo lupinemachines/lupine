@@ -749,8 +749,7 @@ int handle_manual_cuGetExportTableMetadata(conn_t *conn) {
       rpc_write(conn, &byte_size, sizeof(byte_size)) < 0 ||
       rpc_write(conn, &slot_count, sizeof(slot_count)) < 0 ||
       rpc_write(conn, &trusted, sizeof(trusted)) < 0 ||
-      rpc_write(conn, hashes, hash_bytes) < 0 ||
-      rpc_write_end(conn) < 0) {
+      rpc_write(conn, hashes, hash_bytes) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -1164,7 +1163,6 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   CUlibrary library = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   rpc_jit_server_state jit_state;
-  bool has_library_option_values = false;
 
   if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
       rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
@@ -1180,8 +1178,8 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   }
   std::vector<CUlibraryOption> library_options;
   std::vector<uintptr_t> library_raw_values;
-  if (rpc_read_library_options(conn, &library_options, &library_raw_values,
-                               &has_library_option_values) < 0) {
+  if (rpc_read_library_options(conn, &library_options, &library_raw_values) <
+      0) {
     return -1;
   }
   unsigned int num_library_options =
@@ -1209,9 +1207,8 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
                         : jit_state.option_values.data();
   CUlibraryOption *lib_opts =
       library_options.empty() ? nullptr : library_options.data();
-  void **lib_vals = !has_library_option_values || library_option_values.empty()
-                        ? nullptr
-                        : library_option_values.data();
+  void **lib_vals =
+      library_option_values.empty() ? nullptr : library_option_values.data();
   unsigned int num_jit_options =
       static_cast<unsigned int>(jit_state.options.size());
 
@@ -3341,7 +3338,7 @@ int handle_manual_lupineEventQueryBatch(conn_t *conn) {
     return -1;
   }
   CUevent events[LUPINE_EVENT_QUERY_BATCH_MAX];
-  if (rpc_read(conn, events, count * sizeof(events[0])) < 0) {
+  if (rpc_read(conn, events, count * sizeof(*events)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -3355,7 +3352,7 @@ int handle_manual_lupineEventQueryBatch(conn_t *conn) {
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, results, count * sizeof(results[0])) < 0 ||
+      rpc_write(conn, results, count * sizeof(*results)) < 0 ||
       rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -4190,7 +4187,7 @@ int handle_manual_cuStreamSynchronize(conn_t *conn) {
           graph_copies.begin(), graph_copies.end(),
           [&](const lupine_graph_host_copy &copy) {
             return rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) <
-                   0 ||
+                       0 ||
                    rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
                    rpc_write_payload(conn, copy.server_src, copy.bytes) < 0;
           }) ||

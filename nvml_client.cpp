@@ -158,7 +158,7 @@ int open_connection() {
     if (sockfd >= 0) {
       lupine_socket_apply_transport_options(sockfd);
       if (connect(sockfd, res->ai_addr, res->ai_addrlen) == 0) {
-        if (nconns >= static_cast<int>(sizeof(conns) / sizeof(conns[0]))) {
+        if (nconns >= static_cast<int>(sizeof(conns) / sizeof(*conns))) {
           close(sockfd);
           freeaddrinfo(res);
           break;
@@ -482,7 +482,7 @@ nvmlReturn_t call_processes(int op, nvmlDevice_t device,
       rpc_read(c, &returned_count, sizeof(returned_count)) < 0 ||
       rpc_read(c, &copied_count, sizeof(copied_count)) < 0 ||
       (copied_count != 0 &&
-       rpc_read(c, infos, copied_count * sizeof(infos[0])) < 0) ||
+       rpc_read(c, infos, copied_count * sizeof(*infos)) < 0) ||
       rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
     return rpc_error();
   }

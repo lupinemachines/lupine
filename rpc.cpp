@@ -136,7 +136,7 @@ static int rpc_write_queue_reserve(conn_t *conn, int capacity) {
   }
 
   void *next = realloc(conn->write_queue, static_cast<size_t>(new_capacity) *
-                                              sizeof(conn->write_queue[0]));
+                                              sizeof(*conn->write_queue));
   if (next == nullptr) {
     return -1;
   }
@@ -787,10 +787,10 @@ static int rpc_read_launch_param_values(conn_t *conn, void ***values,
 
   std::vector<size_t> offsets(count);
   std::vector<size_t> sizes(count);
-  if (count != 0 &&
-      (rpc_read(conn, offsets.data(), offsets.size() * sizeof(offsets[0])) <
-           0 ||
-       rpc_read(conn, sizes.data(), sizes.size() * sizeof(sizes[0])) < 0)) {
+  if (count != 0 && (rpc_read(conn, offsets.data(),
+                              offsets.size() * sizeof(*offsets.data())) < 0 ||
+                     rpc_read(conn, sizes.data(),
+                              sizes.size() * sizeof(*sizes.data())) < 0)) {
     return -1;
   }
 
@@ -955,14 +955,14 @@ int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
   if (rpc_read(conn, config, sizeof(*config)) < 0) {
     return -1;
   }
-  if (config->numAttrs == 0 || config->attrs == nullptr) {
+  if (config->numAttrs == 0) {
     attributes->clear();
     config->attrs = nullptr;
     return 0;
   }
   attributes->resize(config->numAttrs);
   if (rpc_read(conn, attributes->data(),
-               config->numAttrs * sizeof((*attributes)[0])) < 0) {
+               config->numAttrs * sizeof(*attributes->data())) < 0) {
     return -1;
   }
   config->attrs = attributes->data();
@@ -988,7 +988,7 @@ int rpc_read_jit_options(conn_t *conn, std::vector<CUjit_option> *options,
   }
   if (num_options != 0 &&
       rpc_read(conn, raw_values->data(),
-               num_options * sizeof((*raw_values)[0])) < 0) {
+               num_options * sizeof(*raw_values->data())) < 0) {
     return -1;
   }
   return 0;
@@ -1051,14 +1051,10 @@ int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state) {
   return 0;
 }
 
-static constexpr uintptr_t LUPINE_RPC_NULL_OPTION_VALUES = UINTPTR_MAX;
-
 int rpc_read_library_options(conn_t *conn,
                              std::vector<CUlibraryOption> *options,
-                             std::vector<uintptr_t> *raw_values,
-                             bool *has_option_values) {
-  if (conn == nullptr || options == nullptr || raw_values == nullptr ||
-      has_option_values == nullptr) {
+                             std::vector<uintptr_t> *raw_values) {
+  if (conn == nullptr || options == nullptr || raw_values == nullptr) {
     return -1;
   }
 
@@ -1069,23 +1065,14 @@ int rpc_read_library_options(conn_t *conn,
 
   options->resize(num_options);
   raw_values->resize(num_options);
-  *has_option_values = num_options == 0;
   if (num_options != 0 && rpc_read(conn, options->data(),
                                    num_options * sizeof(CUlibraryOption)) < 0) {
     return -1;
   }
   if (num_options != 0 &&
       rpc_read(conn, raw_values->data(),
-               num_options * sizeof((*raw_values)[0])) < 0) {
+               num_options * sizeof(*raw_values->data())) < 0) {
     return -1;
-  }
-  for (unsigned int i = 0; i < num_options; ++i) {
-    bool value_is_present = (*raw_values)[i] != LUPINE_RPC_NULL_OPTION_VALUES;
-    if (i == 0) {
-      *has_option_values = value_is_present;
-    } else if (*has_option_values != value_is_present) {
-      return -1;
-    }
   }
   return 0;
 }

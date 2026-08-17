@@ -172,8 +172,7 @@ extern int rpc_read_jit_options(conn_t *conn,
 extern int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state);
 extern int rpc_read_library_options(conn_t *conn,
                                     std::vector<CUlibraryOption> *options,
-                                    std::vector<uintptr_t> *raw_values,
-                                    bool *has_option_values);
+                                    std::vector<uintptr_t> *raw_values);
 extern int
 rpc_read_jit_outputs(conn_t *conn,
                      const std::vector<rpc_jit_output_binding> &bindings);
