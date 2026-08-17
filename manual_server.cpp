@@ -3670,56 +3670,9 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
 }
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary
-// context state, context limits) is deliberately excluded. The response is all
-// or nothing: any query failure fails the whole RPC and the client falls back
-// to the per-call paths. Individual attributes the driver rejects are simply
-// absent from the pair list; that is expected, not an error.
-struct lupine_device_snapshot_record {
-  char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
-  CUuuid uuid = {};
-  uint64_t total_mem = 0;
-  uint32_t pair_count = 0;
-  std::vector<int32_t> pairs;
-};
-
-static CUresult
-lupine_build_device_snapshot_record(size_t ordinal,
-                                    lupine_device_snapshot_record *record) {
-  CUdevice device = 0;
-  size_t bytes = 0;
-  CUresult result = cuDeviceGet(&device, static_cast<int>(ordinal));
-  if (result == CUDA_SUCCESS) {
-    result = cuDeviceGetName(record->name, sizeof(record->name), device);
-    record->name[sizeof(record->name) - 1] = '\0';
-  }
-  if (result == CUDA_SUCCESS) {
-    result = cuDeviceGetUuid_v2(&record->uuid, device);
-  }
-  if (result == CUDA_SUCCESS) {
-    result = cuDeviceTotalMem_v2(&bytes, device);
-    record->total_mem = bytes;
-  }
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-
-  try {
-    record->pairs.reserve(static_cast<size_t>(CU_DEVICE_ATTRIBUTE_MAX - 1) * 2);
-  } catch (...) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  for (int attrib = 1; attrib < CU_DEVICE_ATTRIBUTE_MAX; ++attrib) {
-    int value = 0;
-    if (cuDeviceGetAttribute(&value, static_cast<CUdevice_attribute>(attrib),
-                             device) == CUDA_SUCCESS) {
-      record->pairs.push_back(static_cast<int32_t>(attrib));
-      record->pairs.push_back(static_cast<int32_t>(value));
-    }
-  }
-  record->pair_count = static_cast<uint32_t>(record->pairs.size() / 2);
-  return CUDA_SUCCESS;
-}
-
+// context state, context limits) is deliberately excluded. Each CUDA query is
+// followed by its result and, on success, its output. Individual query failures
+// omit only that output; the rest of the batch continues.
 int handle_manual_lupineDeviceSnapshot(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -3731,70 +3684,69 @@ int handle_manual_lupineDeviceSnapshot(conn_t *conn) {
   if (result == CUDA_SUCCESS && device_count < 0) {
     result = CUDA_ERROR_UNKNOWN;
   }
-
-  // rpc_write queues iovecs that are only sent at rpc_write_end, so all
-  // records are built first in storage that stays stable until then.
-  std::vector<lupine_device_snapshot_record> records;
-  std::vector<CUresult> record_results;
-  if (result == CUDA_SUCCESS) {
-    try {
-      records.resize(static_cast<size_t>(device_count));
-      record_results.resize(records.size(), CUDA_ERROR_UNKNOWN);
-    } catch (...) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-    }
-  }
-  if (result == CUDA_SUCCESS && !records.empty()) {
-    std::vector<std::thread> workers;
-    auto build_record = [&records, &record_results](size_t ordinal) {
-      record_results[ordinal] =
-          lupine_build_device_snapshot_record(ordinal, &records[ordinal]);
-    };
-    size_t next_ordinal = 1;
-    try {
-      workers.reserve(records.size() - 1);
-      for (; next_ordinal < records.size(); ++next_ordinal) {
-        workers.emplace_back(build_record, next_ordinal);
-      }
-    } catch (...) {
-      // Any unlaunched devices fall back to this RPC thread below.
-    }
-
-    build_record(0);
-    for (size_t ordinal = next_ordinal; ordinal < records.size(); ++ordinal) {
-      build_record(ordinal);
-    }
-    for (auto &worker : workers) {
-      worker.join();
-    }
-    for (CUresult record_result : record_results) {
-      if (record_result != CUDA_SUCCESS) {
-        result = record_result;
-        break;
-      }
-    }
-  }
-
-  uint32_t devices = static_cast<uint32_t>(records.size());
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0) {
+      rpc_write_copy(conn, &result, sizeof(result)) < 0) {
     return -1;
   }
   if (result != CUDA_SUCCESS) {
     return rpc_write_end(conn) < 0 ? -1 : 0;
   }
-  if (rpc_write(conn, &devices, sizeof(devices)) < 0) {
+  if (rpc_write_copy(conn, &device_count, sizeof(device_count)) < 0) {
     return -1;
   }
-  for (const auto &record : records) {
-    if (rpc_write(conn, record.name, sizeof(record.name)) < 0 ||
-        rpc_write(conn, &record.uuid, sizeof(record.uuid)) < 0 ||
-        rpc_write(conn, &record.total_mem, sizeof(record.total_mem)) < 0 ||
-        rpc_write(conn, &record.pair_count, sizeof(record.pair_count)) < 0 ||
-        (record.pair_count != 0 &&
-         rpc_write(conn, record.pairs.data(),
-                   record.pairs.size() * sizeof(int32_t)) < 0)) {
+
+  const uint32_t attribute_count = CU_DEVICE_ATTRIBUTE_MAX - 1;
+  for (int ordinal = 0; ordinal < device_count; ++ordinal) {
+    CUdevice device = 0;
+    result = cuDeviceGet(&device, ordinal);
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS &&
+         rpc_write_copy(conn, &device, sizeof(device)) < 0)) {
       return -1;
+    }
+    if (result != CUDA_SUCCESS) {
+      continue;
+    }
+
+    char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
+    result = cuDeviceGetName(name, sizeof(name), device);
+    name[sizeof(name) - 1] = '\0';
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS &&
+         rpc_write_copy(conn, name, sizeof(name)) < 0)) {
+      return -1;
+    }
+
+    CUuuid uuid = {};
+    result = cuDeviceGetUuid_v2(&uuid, device);
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS &&
+         rpc_write_copy(conn, &uuid, sizeof(uuid)) < 0)) {
+      return -1;
+    }
+
+    size_t total_mem_bytes = 0;
+    result = cuDeviceTotalMem_v2(&total_mem_bytes, device);
+    uint64_t total_mem = total_mem_bytes;
+    if (rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS &&
+         rpc_write_copy(conn, &total_mem, sizeof(total_mem)) < 0)) {
+      return -1;
+    }
+
+    if (rpc_write_copy(conn, &attribute_count, sizeof(attribute_count)) < 0) {
+      return -1;
+    }
+    for (int attrib = 1; attrib < CU_DEVICE_ATTRIBUTE_MAX; ++attrib) {
+      int value = 0;
+      result = cuDeviceGetAttribute(
+          &value, static_cast<CUdevice_attribute>(attrib), device);
+      if (rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
+          (result == CUDA_SUCCESS &&
+           (rpc_write_copy(conn, &attrib, sizeof(attrib)) < 0 ||
+            rpc_write_copy(conn, &value, sizeof(value)) < 0))) {
+        return -1;
+      }
     }
   }
   return rpc_write_end(conn) < 0 ? -1 : 0;

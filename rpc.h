@@ -41,10 +41,11 @@ struct rpc_http2_read_stats {
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 
-// Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
-// nothing: a non-success result carries no payload, otherwise every device
-// record holds a fixed-size name buffer, uuid, total memory, and a
-// count-prefixed list of (attribute, value) pairs.
+// Wire layout for LUPINE_RPC_lupineDeviceSnapshot. Every CUDA query writes its
+// CUresult first and writes its output only on success. A successful device
+// count is followed by that many streamed device records; each record contains
+// device, name, uuid, total-memory, and attribute query results in that order.
+// Individual query failures omit only their output and do not end the batch.
 #define LUPINE_DEVICE_SNAPSHOT_NAME_BYTES 256
 
 // LUPINE_RPC_lupineLibrarySnapshot is a best-effort metadata side channel.
