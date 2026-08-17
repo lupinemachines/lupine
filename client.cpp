@@ -4874,18 +4874,8 @@ static CUresult lupine_resolve_launch_function_for_route(
   return result;
 }
 
-static size_t
-lupine_rpc_param_values_copy_size(const std::vector<size_t> &param_sizes,
-                                  size_t prefix_size) {
-  auto add_param_info = [](size_t size) {
-    return (size + alignof(size_t) - 1) / alignof(size_t) * alignof(size_t) +
-           rpc_param_info_buffer_size();
-  };
-  size_t total = prefix_size;
-  for (size_t size : param_sizes) {
-    total = add_param_info(total) + size;
-  }
-  return add_param_info(total);
+static size_t lupine_rpc_param_info_storage_size(size_t param_count) {
+  return (param_count + 1) * rpc_param_info_buffer_size();
 }
 
 extern "C" CUresult
@@ -4994,8 +4984,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   // Fire-and-forget; launch errors are sticky and surface at the next sync.
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
-      rpc_copy_alloc(conn, lupine_rpc_param_values_copy_size(
-                               param_sizes, sizeof(kernel_handle))) < 0 ||
+      rpc_copy_alloc(
+          conn, lupine_rpc_param_info_storage_size(param_sizes.size())) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -5005,7 +4995,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write_copy(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
+      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
 #if CUDA_VERSION >= 12000
       (kernel_handle
            ? rpc_write_kernel_param_values(conn, reinterpret_cast<CUkernel>(f),
@@ -5124,11 +5114,11 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   bool fire_and_forget = config->numAttrs == 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
-      rpc_copy_alloc(conn, lupine_rpc_param_values_copy_size(
-                               param_sizes, sizeof(kernel_handle))) < 0 ||
+      rpc_copy_alloc(
+          conn, lupine_rpc_param_info_storage_size(param_sizes.size())) < 0 ||
       rpc_write_launch_config(conn, config) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
-      rpc_write_copy(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
+      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
 #if CUDA_VERSION >= 12000
       (kernel_handle
            ? rpc_write_kernel_param_values(conn, reinterpret_cast<CUkernel>(f),
@@ -5214,8 +5204,8 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   CUresult return_value;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernel) < 0 ||
-      rpc_copy_alloc(conn, lupine_rpc_param_values_copy_size(
-                               param_sizes, sizeof(kernel_handle))) < 0 ||
+      rpc_copy_alloc(
+          conn, lupine_rpc_param_info_storage_size(param_sizes.size())) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -5225,7 +5215,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write_copy(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
+      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
 #if CUDA_VERSION >= 12000
       (kernel_handle
            ? rpc_write_kernel_param_values(conn, reinterpret_cast<CUkernel>(f),
@@ -5801,6 +5791,22 @@ static size_t lupine_memcpy3d_host_span_bytes(const CUDA_MEMCPY3D &params,
   return pitch * rows;
 }
 
+static int lupine_write_buffered_cuda_result(conn_t *conn, CUresult value) {
+  size_t padding =
+      (alignof(CUresult) - conn->write_copy_offset % alignof(CUresult)) %
+      alignof(CUresult);
+  if (padding != 0 && rpc_write_buffer(conn, padding) == nullptr) {
+    return -1;
+  }
+  auto *result =
+      static_cast<CUresult *>(rpc_write_buffer(conn, sizeof(CUresult)));
+  if (result == nullptr) {
+    return -1;
+  }
+  *result = value;
+  return rpc_write(conn, result, sizeof(*result));
+}
+
 static int
 lupine_write_kernel_node_params(conn_t *conn,
                                 const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
@@ -5809,12 +5815,11 @@ lupine_write_kernel_node_params(conn_t *conn,
   }
   CUfunction function = nodeParams->func;
   if (rpc_copy_alloc(conn, sizeof(*nodeParams)) < 0 ||
-      rpc_write_copy(conn, nodeParams, sizeof(*nodeParams)) < 0) {
+      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0) {
     return -1;
   }
   if (nodeParams->extra != nullptr) {
-    CUresult result = CUDA_ERROR_NOT_SUPPORTED;
-    return rpc_write_copy(conn, &result, sizeof(result));
+    return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_NOT_SUPPORTED);
   }
   if (function != nullptr) {
     return rpc_write_func_param_values(conn, function,
@@ -5826,8 +5831,7 @@ lupine_write_kernel_node_params(conn_t *conn,
                                          nodeParams->kernelParams);
   }
 #endif
-  CUresult result = CUDA_ERROR_INVALID_HANDLE;
-  return rpc_write_copy(conn, &result, sizeof(result));
+  return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_INVALID_HANDLE);
 }
 
 static int lupine_write_graph_node_params(conn_t *conn,
@@ -5841,7 +5845,7 @@ static int lupine_write_graph_node_params(conn_t *conn,
     return -1;
   }
   if (rpc_copy_alloc(conn, sizeof(*nodeParams)) < 0 ||
-      rpc_write_copy(conn, nodeParams, sizeof(*nodeParams)) < 0) {
+      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0) {
     return -1;
   }
   if (nodeParams->type == CU_GRAPH_NODE_TYPE_CONDITIONAL) {
@@ -5849,8 +5853,7 @@ static int lupine_write_graph_node_params(conn_t *conn,
   }
 
   if (nodeParams->kernel.extra != nullptr) {
-    CUresult result = CUDA_ERROR_NOT_SUPPORTED;
-    return rpc_write_copy(conn, &result, sizeof(result));
+    return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_NOT_SUPPORTED);
   }
   if (nodeParams->kernel.func != nullptr) {
     return rpc_write_func_param_values(conn, nodeParams->kernel.func,
@@ -5862,8 +5865,7 @@ static int lupine_write_graph_node_params(conn_t *conn,
                                          nodeParams->kernel.kernelParams);
   }
 #endif
-  CUresult result = CUDA_ERROR_INVALID_HANDLE;
-  return rpc_write_copy(conn, &result, sizeof(result));
+  return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_INVALID_HANDLE);
 }
 
 static CUfunction lupine_client_function_for_remote(CUfunction remote) {

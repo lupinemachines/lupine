@@ -99,17 +99,14 @@ extern int rpc_wait_for_response(conn_t *conn);
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
-// Reserves the request-owned storage used by subsequent rpc_write_buffer and
-// rpc_write_copy calls. The reservation must be made once before the first
-// copied write in an RPC and is released with the request.
+// Reserves the request-owned storage used by subsequent rpc_write_buffer
+// calls. The reservation must be made once before the first buffered write in
+// an RPC and is released with the request.
 extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 // Returns the next request-owned span and advances the copy cursor. A later
 // call may grow the arena, so callers must queue or consume the returned span
 // before requesting another one.
 extern void *rpc_write_buffer(conn_t *conn, const size_t size);
-// Copies data into request-owned storage. Unlike rpc_write, the caller may
-// modify or release its source buffer before rpc_write_end returns.
-extern int rpc_write_copy(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
                             size_t count);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);

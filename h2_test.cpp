@@ -857,84 +857,30 @@ void test_rpc_write_queue_grows() {
   require(received == values, "large queue payload mismatch");
 }
 
-void test_rpc_write_copy_uses_request_buffer() {
-  h2_pair pair = make_pair();
-
-  constexpr int kResponseId = 19;
-  const std::vector<int> first = {2, 3, 5};
-  const std::vector<int> second = {7, 11};
-  std::vector<int> expected = first;
-  expected.insert(expected.end(), second.begin(), second.end());
-  std::vector<int> received(expected.size(), 0);
-  std::thread reader([&] {
-    read_rpc_prefix(&pair.server);
-    require(pair.server.read_id == kResponseId,
-            "copied write response id mismatch");
-    require(rpc_read_start(&pair.server, kResponseId) == 0,
-            "copied write read start failed");
-    require(rpc_read(&pair.server, received.data(),
-                     received.size() * sizeof(received[0])) ==
-                static_cast<int>(received.size() * sizeof(received[0])),
-            "copied write payload read failed");
-    require(rpc_read_end(&pair.server) == kResponseId,
-            "copied write read_end failed");
-  });
-
-  require(rpc_write_start_response(&pair.client, kResponseId) == 0,
-          "copied write response start failed");
-  const size_t first_size = first.size() * sizeof(first[0]);
-  const size_t second_size = second.size() * sizeof(second[0]);
-  require(rpc_copy_alloc(&pair.client, first_size + second_size) == 0,
-          "rpc_copy_alloc failed");
-  std::vector<int> first_source = first;
-  std::vector<int> second_source = second;
-  require(rpc_write_copy(&pair.client, first_source.data(), first_size) == 0,
-          "first rpc_write_copy failed");
-  require(rpc_write_copy(&pair.client, second_source.data(), second_size) == 0,
-          "second rpc_write_copy failed");
-  require(pair.client.write_queue_count == 5,
-          "copied write queue count mismatch");
-  require(pair.client.write_queue[3].iov.iov_base ==
-              pair.client.write_copy_buffer,
-          "first copied write did not start at the request buffer");
-  require(pair.client.write_queue[4].iov.iov_base ==
-              pair.client.write_copy_buffer + first_size,
-          "second copied write did not follow the first copy");
-  require(pair.client.write_copy_offset == first_size + second_size,
-          "copied write did not consume exact capacity");
-  require(pair.client.write_queue[3].iov.iov_base != first_source.data(),
-          "copied write retained the source buffer");
-  std::fill(first_source.begin(), first_source.end(), -1);
-  std::fill(second_source.begin(), second_source.end(), -1);
-
-  require(rpc_write_end(&pair.client) == kResponseId,
-          "copied write write_end failed");
-  require(pair.client.write_copy_buffer == nullptr &&
-              pair.client.write_copy_capacity == 0 &&
-              pair.client.write_copy_offset == 0,
-          "copied write buffer survived write_end");
-  reader.join();
-  require(received == expected, "copied write payload mismatch");
-}
-
-void test_rpc_write_buffer_grows_and_rebases_queued_copies() {
+void test_rpc_write_buffer_grows_and_rebases_queued_writes() {
   h2_pair pair = make_pair();
   require(rpc_write_start_response(&pair.client, 21) == 0,
           "growing response start failed");
   int first = 17;
   int second = 19;
-  require(rpc_write_copy(&pair.client, &first, sizeof(first)) < 0,
-          "rpc_write_copy accepted data without a reservation");
+  require(rpc_write_buffer(&pair.client, sizeof(first)) == nullptr,
+          "rpc_write_buffer accepted data without a reservation");
   require(rpc_copy_alloc(&pair.client, sizeof(first)) == 0,
           "growing copy allocation failed");
   require(rpc_copy_alloc(&pair.client, sizeof(first)) < 0,
           "rpc_copy_alloc replaced an active reservation");
-  require(rpc_write_copy(&pair.client, nullptr, sizeof(first)) < 0,
-          "rpc_write_copy accepted a null source");
-  require(rpc_write_copy(&pair.client, &first, sizeof(first)) == 0,
-          "growing first copy failed");
-  require(rpc_write_copy(&pair.client, &second, sizeof(second)) == 0,
-          "growing second copy failed");
+  auto *first_buffer =
+      static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(first)));
+  require(first_buffer != nullptr, "growing first buffer failed");
+  *first_buffer = first;
+  require(rpc_write(&pair.client, first_buffer, sizeof(*first_buffer)) == 0,
+          "growing first write failed");
+  auto *second_buffer =
+      static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(second)));
+  require(second_buffer != nullptr, "growing second buffer failed");
+  *second_buffer = second;
+  require(rpc_write(&pair.client, second_buffer, sizeof(*second_buffer)) == 0,
+          "growing second write failed");
   auto *direct =
       static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(int)));
   require(direct != nullptr, "direct write buffer allocation failed");
@@ -974,7 +920,7 @@ void test_rpc_write_buffer_grows_and_rebases_queued_copies() {
   require(rpc_write_end(&pair.client) == 22, "reset response write end failed");
 }
 
-void test_rpc_write_copy_cleans_up_on_transport_failure_and_destroy() {
+void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
   {
     h2_pair pair = make_pair();
     require(rpc_write_start_response(&pair.client, 25) == 0,
@@ -982,8 +928,12 @@ void test_rpc_write_copy_cleans_up_on_transport_failure_and_destroy() {
     int value = 23;
     require(rpc_copy_alloc(&pair.client, sizeof(value)) == 0,
             "failed transport copy allocation failed");
-    require(rpc_write_copy(&pair.client, &value, sizeof(value)) == 0,
-            "failed transport copy failed");
+    auto *buffer =
+        static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(value)));
+    require(buffer != nullptr, "failed transport buffer allocation failed");
+    *buffer = value;
+    require(rpc_write(&pair.client, buffer, sizeof(*buffer)) == 0,
+            "failed transport buffer write failed");
     close(pair.client.connfd);
     pair.client.connfd = -1;
     require(rpc_write_end(&pair.client) < 0,
@@ -1066,9 +1016,8 @@ int main() {
   test_head_probe_cuda_version_metadata();
 #else
   test_rpc_write_queue_grows();
-  test_rpc_write_copy_uses_request_buffer();
-  test_rpc_write_buffer_grows_and_rebases_queued_copies();
-  test_rpc_write_copy_cleans_up_on_transport_failure_and_destroy();
+  test_rpc_write_buffer_grows_and_rebases_queued_writes();
+  test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
   test_rpc_lz4_payload_round_trip();
   test_response_wait_sends_transport_heartbeat();
   test_client_to_server();
