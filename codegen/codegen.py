@@ -1011,8 +1011,7 @@ def write_nvml_client_rpc(f, function, operations):
                 )
             )
 
-    f.write("  if (conn == nullptr ||\n")
-    f.write(f"      rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
+    f.write(f"  if (rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
     for operation in operations:
         operation.client_rpc_write(f)
     f.write("      rpc_wait_for_response(conn) < 0 ||\n")
@@ -1563,8 +1562,7 @@ def main():
             if metadata.async_fire_forget:
                 error_return = error_const(function.return_type.format())
                 f.write(
-                    "    if (conn == nullptr ||\n"
-                    "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
+                    "    if (rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
                         name=function.name.format()
                     )
                 )
@@ -1585,8 +1583,7 @@ def main():
                 continue
 
             f.write(
-                "    if (conn == nullptr ||\n"
-                "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
+                "    if (rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
                     name=function.name.format()
                 )
             )

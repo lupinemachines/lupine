@@ -887,7 +887,7 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   conn_t *conn = allocation->stale_fetch_conn;
   auto *dst = reinterpret_cast<unsigned char *>(allocation->host_base + offset);
   CUdeviceptr src = allocation->device_ptr + offset;
-  if (conn == nullptr || allocation->host_base == 0 || bytes == 0 ||
+  if (allocation->host_base == 0 || bytes == 0 ||
       allocation->device_ptr == 0) {
     return bytes == 0;
   }
@@ -1308,8 +1308,7 @@ static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   *remote_host = nullptr;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemHostAlloc) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemHostAlloc) < 0 ||
       rpc_write(conn, remote_host, sizeof(*remote_host)) < 0 ||
       rpc_write(conn, &bytesize, sizeof(bytesize)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
@@ -1337,7 +1336,7 @@ static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuMemFreeHost) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemFreeHost) < 0 ||
       rpc_write(conn, &remote_host, sizeof(remote_host)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -1364,8 +1363,7 @@ static CUresult lupine_remote_cuMemHostGetDevicePointer(CUdeviceptr *device_ptr,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   *device_ptr = 0;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemHostGetDevicePointer_v2) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemHostGetDevicePointer_v2) < 0 ||
       rpc_write(conn, device_ptr, sizeof(*device_ptr)) < 0 ||
       rpc_write(conn, &remote_host, sizeof(remote_host)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
@@ -1393,8 +1391,7 @@ static CUresult lupine_remote_cuMemHostGetFlags(unsigned int *flags,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemHostGetFlags) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemHostGetFlags) < 0 ||
       rpc_write(conn, flags, sizeof(*flags)) < 0 ||
       rpc_write(conn, &remote_host, sizeof(remote_host)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2014,8 +2011,7 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
   size_t backing_size = std::max(bytesize, LUPINE_MANAGED_ALLOCATION_MIN_BYTES);
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemAllocManaged) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemAllocManaged) < 0 ||
       rpc_write(conn, &device_alloc_base, sizeof(device_alloc_base)) < 0 ||
       rpc_write(conn, &backing_size, sizeof(backing_size)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
@@ -2118,8 +2114,7 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
     }
     conn_t *conn = lupine_route_remote_conn(route);
     CUresult return_value;
-    if (conn == nullptr ||
-        rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||
+    if (rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||
         rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2253,8 +2248,7 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
       rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
       rpc_write(conn, &target_ptr, sizeof(target_ptr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
@@ -2535,8 +2529,7 @@ static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
   conn_t *conn = lupine_route_remote_conn(route);
   int location_type = static_cast<int>(route_location.type);
   CUresult return_value;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, LUPINE_RPC_cuMemPrefetchAsync) < 0 ||
+  if (rpc_write_start_request(conn, LUPINE_RPC_cuMemPrefetchAsync) < 0 ||
       rpc_write(conn, &translated, sizeof(translated)) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_write(conn, &location_type, sizeof(location_type)) < 0 ||

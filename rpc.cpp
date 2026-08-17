@@ -480,7 +480,7 @@ int rpc_wait_for_response(conn_t *conn) {
 // only one request can be active at a time, so this function will take the
 // request lock from the connection.
 int rpc_write_start_request(conn_t *conn, const int op) {
-  if (conn->closed) {
+  if (conn == nullptr || conn->closed) {
     return -1;
   }
   if (pthread_mutex_lock(&conn->call_mutex) < 0) {

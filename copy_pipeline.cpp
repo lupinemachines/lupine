@@ -26,8 +26,7 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -93,9 +92,6 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   }
   lupine_ensure_mapped_host_readable(srcHost, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||

@@ -64,6 +64,8 @@ extern "C" conn_t *lupine_rpc_conn_for_event(CUevent event);
 extern "C" conn_t *lupine_rpc_conn_for_deviceptr(CUdeviceptr ptr);
 
 extern "C" bool lupine_route_is_local(lupine_route route);
+// May return null for local/invalid routes; rpc_write_start_request absorbs
+// the null, so callers need not re-check before starting a request chain.
 extern "C" conn_t *lupine_route_remote_conn(lupine_route route);
 extern "C" bool lupine_routes_share_server(lupine_route first,
                                            lupine_route second);

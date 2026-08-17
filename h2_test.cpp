@@ -1002,12 +1002,25 @@ void test_rpc_lz4_payload_round_trip() {
           "lz4 payload did not use direct receive");
 }
 
+// Handlers start request chains without their own null checks; an unreachable
+// server (null route conn) or a failed connection must fail the chain here
+// instead of dereferencing the conn.
+void test_request_start_rejects_null_and_closed_conn() {
+  require(rpc_write_start_request(nullptr, 42) == -1,
+          "null conn request start did not fail");
+  conn_t closed = {};
+  closed.closed = 1;
+  require(rpc_write_start_request(&closed, 42) == -1,
+          "closed conn request start did not fail");
+}
+
 } // namespace
 
 int main() {
 #ifdef LUPINE_H2_UNKNOWN_CUDA_VERSION_TEST
   test_head_probe_cuda_version_metadata();
 #else
+  test_request_start_rejects_null_and_closed_conn();
   test_rpc_write_queue_grows();
   test_rpc_write_buffer_uses_fixed_allocation();
   test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();

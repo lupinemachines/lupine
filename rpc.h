@@ -95,6 +95,9 @@ extern int rpc_read_end(conn_t *conn);
 
 extern int rpc_wait_for_response(conn_t *conn);
 
+// Owns connection validation for the request chain: a null conn (route with no
+// remote server) or a closed conn fails here, so callers surface their
+// unavailable-server result without per-call-site null checks.
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
