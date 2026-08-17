@@ -900,8 +900,8 @@ int rpc_read_jit_options(conn_t *conn, std::vector<CUjit_option> *options,
     return -1;
   }
   if (num_options != 0 &&
-      rpc_read_buffer(conn, raw_values->data(),
-                      num_options * sizeof((*raw_values)[0])) < 0) {
+      rpc_read(conn, raw_values->data(),
+               num_options * sizeof((*raw_values)[0])) < 0) {
     return -1;
   }
   return 0;
@@ -988,8 +988,8 @@ int rpc_read_library_options(conn_t *conn,
     return -1;
   }
   if (num_options != 0 &&
-      rpc_read_buffer(conn, raw_values->data(),
-                      num_options * sizeof((*raw_values)[0])) < 0) {
+      rpc_read(conn, raw_values->data(),
+               num_options * sizeof((*raw_values)[0])) < 0) {
     return -1;
   }
   for (unsigned int i = 0; i < num_options; ++i) {

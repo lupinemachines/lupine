@@ -83,14 +83,10 @@ lupine_own_kernel_param_values(void **values) {
   return lupine_kernel_param_values_owner(values, rpc_free_kernel_param_values);
 }
 
-static constexpr size_t lupine_param_info_copy_size() {
-  return 2 * sizeof(size_t);
-}
-
 // CUDA's packed kernel parameter area is smaller than 64 KiB. One metadata
 // pair per byte plus the terminal record bounds a non-preflighted write.
 static constexpr size_t lupine_param_info_copy_capacity() {
-  return (64 * 1024 + 1) * lupine_param_info_copy_size();
+  return (64 * 1024 + 1) * 2 * sizeof(size_t);
 }
 
 template <typename T> static constexpr size_t lupine_cuda_value_copy_size() {
@@ -102,54 +98,6 @@ static constexpr size_t lupine_attribute_copy_size() {
   return (sizeof(CUresult) + alignof(int) - 1) / alignof(int) * alignof(int) +
          2 * sizeof(int);
 }
-
-template <typename Query>
-static int lupine_write_param_values(conn_t *conn, void *const *values,
-                                     Query query) {
-  static constexpr CUresult success = CUDA_SUCCESS;
-  for (size_t i = 0;; ++i) {
-    auto *offset = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    auto *size = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (offset == nullptr || size == nullptr) {
-      return -1;
-    }
-    *offset = 0;
-    *size = 0;
-    CUresult param_result = query(i, offset, size);
-    if (param_result == CUDA_SUCCESS &&
-        (values == nullptr || values[i] == nullptr)) {
-      param_result = CUDA_ERROR_INVALID_VALUE;
-    }
-    if (param_result != CUDA_SUCCESS) {
-      return static_cast<int>(param_result);
-    }
-
-    if (rpc_write(conn, &success, sizeof(success)) < 0 ||
-        rpc_write(conn, values[i], *size) < 0) {
-      return -1;
-    }
-  }
-}
-
-static int lupine_write_func_param_values(conn_t *conn, CUfunction function,
-                                          void *const *values) {
-  return lupine_write_param_values(
-      conn, values, [function](size_t index, size_t *offset, size_t *size) {
-        return cuFuncGetParamInfo(function, index, offset, size);
-      });
-}
-
-#if CUDA_VERSION >= 12000
-static int lupine_write_kernel_param_values(conn_t *conn, CUkernel kernel,
-                                            void *const *values) {
-  return lupine_write_param_values(
-      conn, values, [kernel](size_t index, size_t *offset, size_t *size) {
-        return cuKernelGetParamInfo(kernel, index, offset, size);
-      });
-}
-#endif
 
 // The CUDA linker requires output option buffers to remain valid for the
 // lifetime of CUlinkState. The mutex serializes cuLinkDestroy against a
@@ -1179,11 +1127,6 @@ int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (offset == nullptr || size == nullptr) {
-      return -1;
-    }
-    *offset = 0;
-    *size = 0;
     param_result = cuFuncGetParamInfo(function, i, offset, size);
     const CUresult *wire_result =
         param_result == CUDA_SUCCESS ? &success : &param_result;
@@ -2712,21 +2655,31 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
     return -1;
   }
   if (result == CUDA_SUCCESS) {
-    int param_status = CUDA_ERROR_INVALID_HANDLE;
-    if (node_params.func != nullptr) {
-      param_status = lupine_write_func_param_values(conn, node_params.func,
-                                                    node_params.kernelParams);
-    }
+    static constexpr CUresult param_success = CUDA_SUCCESS;
+    for (size_t i = 0;; ++i) {
+      auto *offset = static_cast<size_t *>(
+          rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+      auto *size = static_cast<size_t *>(
+          rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+      if (node_params.func != nullptr) {
+        param_result = cuFuncGetParamInfo(node_params.func, i, offset, size);
+      }
 #if CUDA_VERSION >= 12000
-    else if (node_params.kern != nullptr) {
-      param_status = lupine_write_kernel_param_values(conn, node_params.kern,
-                                                      node_params.kernelParams);
-    }
+      else if (node_params.kern != nullptr) {
+        param_result = cuKernelGetParamInfo(node_params.kern, i, offset, size);
+      }
 #endif
-    param_result = static_cast<CUresult>(param_status);
-    if (param_status < 0 ||
-        rpc_write(conn, &param_result, sizeof(param_result)) < 0) {
-      return -1;
+      const CUresult *wire_result =
+          param_result == CUDA_SUCCESS ? &param_success : &param_result;
+      if (rpc_write(conn, wire_result, sizeof(*wire_result)) < 0) {
+        return -1;
+      }
+      if (param_result != CUDA_SUCCESS) {
+        break;
+      }
+      if (rpc_write(conn, node_params.kernelParams[i], *size) < 0) {
+        return -1;
+      }
     }
   }
   if (rpc_write_end(conn) < 0) {
