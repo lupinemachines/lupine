@@ -5808,8 +5808,8 @@ lupine_write_kernel_node_params(conn_t *conn,
     return -1;
   }
   CUfunction function = nodeParams->func;
-  if (rpc_copy_alloc(conn, rpc_kernel_node_params_copy_size()) < 0 ||
-      rpc_write_kernel_node_params(conn, nodeParams, function) < 0) {
+  if (rpc_copy_alloc(conn, sizeof(*nodeParams)) < 0 ||
+      rpc_write_copy(conn, nodeParams, sizeof(*nodeParams)) < 0) {
     return -1;
   }
   if (nodeParams->extra != nullptr) {
@@ -5840,11 +5840,7 @@ static int lupine_write_graph_node_params(conn_t *conn,
       nodeParams->type != CU_GRAPH_NODE_TYPE_CONDITIONAL) {
     return -1;
   }
-  size_t copy_size = sizeof(*nodeParams);
-  if (nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL) {
-    copy_size += sizeof(nodeParams->kernel.func);
-  }
-  if (rpc_copy_alloc(conn, copy_size) < 0 ||
+  if (rpc_copy_alloc(conn, sizeof(*nodeParams)) < 0 ||
       rpc_write_copy(conn, nodeParams, sizeof(*nodeParams)) < 0) {
     return -1;
   }
@@ -5852,16 +5848,12 @@ static int lupine_write_graph_node_params(conn_t *conn,
     return 0;
   }
 
-  CUfunction function = nodeParams->kernel.func;
-  if (rpc_write_copy(conn, &function, sizeof(function)) < 0) {
-    return -1;
-  }
   if (nodeParams->kernel.extra != nullptr) {
     CUresult result = CUDA_ERROR_NOT_SUPPORTED;
     return rpc_write_copy(conn, &result, sizeof(result));
   }
-  if (function != nullptr) {
-    return rpc_write_func_param_values(conn, function,
+  if (nodeParams->kernel.func != nullptr) {
+    return rpc_write_func_param_values(conn, nodeParams->kernel.func,
                                        nodeParams->kernel.kernelParams);
   }
 #if CUDA_VERSION >= 12000

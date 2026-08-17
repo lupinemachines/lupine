@@ -2556,13 +2556,13 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
 
   size_t copy_size = sizeof(result);
   if (result == CUDA_SUCCESS) {
-    copy_size += rpc_kernel_node_params_copy_size();
+    copy_size += sizeof(nodeParams);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write_copy(conn, &result, sizeof(result)) < 0 ||
       (result == CUDA_SUCCESS &&
-       rpc_write_kernel_node_params(conn, &nodeParams, nodeParams.func) < 0)) {
+       rpc_write_copy(conn, &nodeParams, sizeof(nodeParams)) < 0)) {
     return -1;
   }
   if (result == CUDA_SUCCESS) {
@@ -2822,10 +2822,6 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
     return -1;
   }
   if (nodeParams.type == CU_GRAPH_NODE_TYPE_KERNEL) {
-    if (rpc_read(conn, &nodeParams.kernel.func,
-                 sizeof(nodeParams.kernel.func)) < 0) {
-      return -1;
-    }
     int read_result = -1;
     if (nodeParams.kernel.func != nullptr) {
       read_result =

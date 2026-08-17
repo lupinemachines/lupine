@@ -39,14 +39,6 @@ struct rpc_http2_read_stats {
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 
-static constexpr size_t rpc_kernel_node_params_copy_size() {
-  size_t size = sizeof(CUfunction) + 7 * sizeof(unsigned int);
-#if CUDA_VERSION >= 12000
-  size += sizeof(CUkernel) + sizeof(CUcontext);
-#endif
-  return size;
-}
-
 static constexpr size_t rpc_param_info_buffer_size() {
   return (sizeof(CUresult) + alignof(size_t) - 1) / alignof(size_t) *
              alignof(size_t) +
@@ -139,10 +131,6 @@ extern void rpc_conn_destroy(conn_t *conn);
 // permanent failure.
 extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port);
 
-extern int
-rpc_write_kernel_node_params(conn_t *conn,
-                             const CUDA_KERNEL_NODE_PARAMS *node_params,
-                             CUfunction function);
 extern int rpc_read_kernel_node_params(conn_t *conn,
                                        CUDA_KERNEL_NODE_PARAMS *node_params);
 extern int rpc_read_kernel_node_params_and_values(
