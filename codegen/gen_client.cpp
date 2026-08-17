@@ -820,17 +820,13 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
       rpc_write(conn, &fileName_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, fileName, fileName_len) < 0 ||
       rpc_write(conn, &numJitOptions, sizeof(unsigned int)) < 0 ||
-      (numJitOptions * sizeof(CUjit_option) != 0 &&
-       rpc_write(conn, jitOptions, numJitOptions * sizeof(CUjit_option)) < 0) ||
-      (numJitOptions * sizeof(void *) != 0 &&
-       rpc_write(conn, jitOptionsValues, numJitOptions * sizeof(void *)) < 0) ||
+      rpc_write(conn, jitOptions, numJitOptions * sizeof(CUjit_option)) < 0 ||
+      rpc_write(conn, jitOptionsValues, numJitOptions * sizeof(void *)) < 0 ||
       rpc_write(conn, &numLibraryOptions, sizeof(unsigned int)) < 0 ||
-      (numLibraryOptions * sizeof(CUlibraryOption) != 0 &&
-       rpc_write(conn, libraryOptions,
-                 numLibraryOptions * sizeof(CUlibraryOption)) < 0) ||
-      (numLibraryOptions * sizeof(void *) != 0 &&
-       rpc_write(conn, libraryOptionValues,
-                 numLibraryOptions * sizeof(void *)) < 0) ||
+      rpc_write(conn, libraryOptions,
+                numLibraryOptions * sizeof(CUlibraryOption)) < 0 ||
+      rpc_write(conn, libraryOptionValues, numLibraryOptions * sizeof(void *)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1418,7 +1414,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
       rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
-      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0) ||
+      rpc_write_payload(conn, srcHost, ByteCount) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -2374,8 +2370,7 @@ CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
-      (count * sizeof(const CUmemAccessDesc) != 0 &&
-       rpc_write(conn, desc, count * sizeof(const CUmemAccessDesc)) < 0) ||
+      rpc_write(conn, desc, count * sizeof(const CUmemAccessDesc)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -2551,8 +2546,7 @@ CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
       rpc_write_start_request(conn, RPC_cuMemPoolSetAccess) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
-      (count * sizeof(const CUmemAccessDesc) != 0 &&
-       rpc_write(conn, map, count * sizeof(const CUmemAccessDesc)) < 0) ||
+      rpc_write(conn, map, count * sizeof(const CUmemAccessDesc)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -3349,14 +3343,11 @@ CUresult cuSignalExternalSemaphoresAsync(
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuSignalExternalSemaphoresAsync) < 0 ||
       rpc_write(conn, &numExtSems, sizeof(unsigned int)) < 0 ||
-      (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
-       rpc_write(conn, extSemArray,
-                 numExtSems * sizeof(const CUexternalSemaphore)) < 0) ||
-      (numExtSems * sizeof(const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS) != 0 &&
-       rpc_write(conn, paramsArray,
-                 numExtSems *
-                     sizeof(const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS)) <
-           0) ||
+      rpc_write(conn, extSemArray,
+                numExtSems * sizeof(const CUexternalSemaphore)) < 0 ||
+      rpc_write(conn, paramsArray,
+                numExtSems *
+                    sizeof(const CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS)) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3390,13 +3381,11 @@ CUresult cuWaitExternalSemaphoresAsync(
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuWaitExternalSemaphoresAsync) < 0 ||
       rpc_write(conn, &numExtSems, sizeof(unsigned int)) < 0 ||
-      (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
-       rpc_write(conn, extSemArray,
-                 numExtSems * sizeof(const CUexternalSemaphore)) < 0) ||
-      (numExtSems * sizeof(const CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS) != 0 &&
-       rpc_write(conn, paramsArray,
-                 numExtSems *
-                     sizeof(const CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS)) < 0) ||
+      rpc_write(conn, extSemArray,
+                numExtSems * sizeof(const CUexternalSemaphore)) < 0 ||
+      rpc_write(conn, paramsArray,
+                numExtSems *
+                    sizeof(const CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS)) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4018,9 +4007,8 @@ CUresult cuGraphAddChildGraphNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, &childGraph, sizeof(CUgraph)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -4085,9 +4073,8 @@ CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4123,9 +4110,8 @@ CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -4205,9 +4191,8 @@ CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -4290,18 +4275,15 @@ CUresult cuGraphAddExternalSemaphoresSignalNode(
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->extSemArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
-           0) ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->paramsArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
-           0) ||
+      rpc_write(conn, nodeParams->extSemArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
+          0 ||
+      rpc_write(conn, nodeParams->paramsArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4385,14 +4367,12 @@ CUresult cuGraphExternalSemaphoresSignalNodeSetParams(
           conn, RPC_cuGraphExternalSemaphoresSignalNodeSetParams) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->extSemArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
-           0) ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->paramsArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
-           0) ||
+      rpc_write(conn, nodeParams->extSemArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
+          0 ||
+      rpc_write(conn, nodeParams->paramsArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -4427,18 +4407,15 @@ CUresult cuGraphAddExternalSemaphoresWaitNode(
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->extSemArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
-           0) ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->paramsArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
-           0) ||
+      rpc_write(conn, nodeParams->extSemArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
+          0 ||
+      rpc_write(conn, nodeParams->paramsArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4521,14 +4498,12 @@ CUresult cuGraphExternalSemaphoresWaitNodeSetParams(
           conn, RPC_cuGraphExternalSemaphoresWaitNodeSetParams) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->extSemArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
-           0) ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->paramsArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
-           0) ||
+      rpc_write(conn, nodeParams->extSemArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
+          0 ||
+      rpc_write(conn, nodeParams->paramsArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -4562,13 +4537,11 @@ CUresult cuGraphAddBatchMemOpNode(
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->count != 0 &&
-       rpc_write(conn, nodeParams->paramArray,
-                 nodeParams->count * sizeof(*nodeParams->paramArray)) < 0) ||
+      rpc_write(conn, nodeParams->paramArray,
+                nodeParams->count * sizeof(*nodeParams->paramArray)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4637,9 +4610,8 @@ CUresult cuGraphBatchMemOpNodeSetParams(
       rpc_write_start_request(conn, RPC_cuGraphBatchMemOpNodeSetParams) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->count != 0 &&
-       rpc_write(conn, nodeParams->paramArray,
-                 nodeParams->count * sizeof(*nodeParams->paramArray)) < 0) ||
+      rpc_write(conn, nodeParams->paramArray,
+                nodeParams->count * sizeof(*nodeParams->paramArray)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -4668,9 +4640,8 @@ CUresult cuGraphExecBatchMemOpNodeSetParams(
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->count != 0 &&
-       rpc_write(conn, nodeParams->paramArray,
-                 nodeParams->count * sizeof(*nodeParams->paramArray)) < 0) ||
+      rpc_write(conn, nodeParams->paramArray,
+                nodeParams->count * sizeof(*nodeParams->paramArray)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -4703,9 +4674,8 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(CUDA_MEM_ALLOC_NODE_PARAMS)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -4766,9 +4736,8 @@ CUresult cuGraphAddMemFreeNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
-      (numDependencies * sizeof(const CUgraphNode) != 0 &&
-       rpc_write(conn, dependencies,
-                 numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -5208,14 +5177,12 @@ CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->extSemArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
-           0) ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->paramsArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
-           0) ||
+      rpc_write(conn, nodeParams->extSemArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
+          0 ||
+      rpc_write(conn, nodeParams->paramsArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -5244,14 +5211,12 @@ CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->extSemArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
-           0) ||
-      (nodeParams->numExtSems != 0 &&
-       rpc_write(conn, nodeParams->paramsArray,
-                 nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
-           0) ||
+      rpc_write(conn, nodeParams->extSemArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->extSemArray)) <
+          0 ||
+      rpc_write(conn, nodeParams->paramsArray,
+                nodeParams->numExtSems * sizeof(*nodeParams->paramsArray)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -5638,9 +5603,8 @@ CUresult cuOccupancyMaxPotentialClusterSize(int *clusterSize, CUfunction func,
       rpc_write(conn, clusterSize, sizeof(int)) < 0 ||
       rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, config, sizeof(*config)) < 0 ||
-      (config->numAttrs != 0 &&
-       rpc_write(conn, config->attrs,
-                 config->numAttrs * sizeof(*config->attrs)) < 0) ||
+      rpc_write(conn, config->attrs,
+                config->numAttrs * sizeof(*config->attrs)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, clusterSize, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5668,9 +5632,8 @@ CUresult cuOccupancyMaxActiveClusters(int *numClusters, CUfunction func,
       rpc_write(conn, numClusters, sizeof(int)) < 0 ||
       rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, config, sizeof(*config)) < 0 ||
-      (config->numAttrs != 0 &&
-       rpc_write(conn, config->attrs,
-                 config->numAttrs * sizeof(*config->attrs)) < 0) ||
+      rpc_write(conn, config->attrs,
+                config->numAttrs * sizeof(*config->attrs)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, numClusters, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6643,8 +6606,7 @@ CUresult cuGraphicsMapResources(unsigned int count,
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphicsMapResources) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      (count * sizeof(CUgraphicsResource) != 0 &&
-       rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0) ||
+      rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6671,8 +6633,7 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuGraphicsUnmapResources) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      (count * sizeof(CUgraphicsResource) != 0 &&
-       rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0) ||
+      rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||

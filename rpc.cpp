@@ -543,6 +543,9 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
+  if (size == 0) {
+    return 0;
+  }
   return rpc_write_queue_push(conn, data, size, 0);
 }
 

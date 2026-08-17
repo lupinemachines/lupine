@@ -97,8 +97,7 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
           : fn((length * sizeof(char) == 0 ? nullptr : version), length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, version, length * sizeof(char)) < 0) ||
+      rpc_write(conn, version, length * sizeof(char)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -133,8 +132,7 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
           : fn((length * sizeof(char) == 0 ? nullptr : version), length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, version, length * sizeof(char)) < 0) ||
+      rpc_write(conn, version, length * sizeof(char)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -350,8 +348,7 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
           : fn(device, (length * sizeof(char) == 0 ? nullptr : name), length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, name, length * sizeof(char)) < 0) ||
+      rpc_write(conn, name, length * sizeof(char)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -388,8 +385,7 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
           : fn(device, (length * sizeof(char) == 0 ? nullptr : uuid), length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, uuid, length * sizeof(char)) < 0) ||
+      rpc_write(conn, uuid, length * sizeof(char)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -860,8 +856,7 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
                length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, version, length * sizeof(char)) < 0) ||
+      rpc_write(conn, version, length * sizeof(char)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -898,8 +893,7 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
           : fn(device, (length * sizeof(char) == 0 ? nullptr : serial), length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, serial, length * sizeof(char)) < 0) ||
+      rpc_write(conn, serial, length * sizeof(char)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -937,8 +931,7 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
                length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (length * sizeof(char) != 0 &&
-       rpc_write(conn, partNumber, length * sizeof(char)) < 0) ||
+      rpc_write(conn, partNumber, length * sizeof(char)) < 0 ||
       rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

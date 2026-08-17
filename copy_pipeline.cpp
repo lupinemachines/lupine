@@ -100,7 +100,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      (ByteCount != 0 && rpc_write_payload(conn, srcHost, ByteCount) < 0)) {
+      rpc_write_payload(conn, srcHost, ByteCount) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : CUDA_SUCCESS;
@@ -1462,8 +1462,7 @@ static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
                                             size_t bytes) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (result == CUDA_SUCCESS && bytes != 0 &&
-       rpc_write_payload(conn, data, bytes) < 0) ||
+      (result == CUDA_SUCCESS && rpc_write_payload(conn, data, bytes) < 0) ||
       rpc_write_end(conn) < 0) {
     return -1;
   }

@@ -809,15 +809,13 @@ void test_framed_payload_round_trip() {
 }
 
 void test_rpc_write_queue_grows() {
-  int value = 7;
-
   conn_t zero_length = {};
-  require(rpc_write(&zero_length, &value, 0) == 0,
+  require(rpc_write(&zero_length, nullptr, 0) == 0,
           "zero-length rpc_write failed");
-  require(zero_length.write_queue_count == 1,
-          "zero-length rpc_write did not consume one queue entry");
-  require(zero_length.write_queue[0].iov.iov_len == 0,
-          "zero-length rpc_write changed length");
+  require(rpc_write_payload(&zero_length, nullptr, 0) == 0,
+          "zero-length rpc_write_payload failed");
+  require(zero_length.write_queue_count == 0,
+          "zero-length write consumed a queue entry");
   rpc_write_queue_free(&zero_length);
 
   h2_pair pair = make_pair();

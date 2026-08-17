@@ -88,8 +88,7 @@ int handle_processes(conn_t *conn, const char *name) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &returned_count, sizeof(returned_count)) < 0 ||
       rpc_write(conn, &copied_count, sizeof(copied_count)) < 0 ||
-      (copied_count != 0 &&
-       rpc_write(conn, infos.data(), copied_count * sizeof(infos[0])) < 0) ||
+      rpc_write(conn, infos.data(), copied_count * sizeof(infos[0])) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }

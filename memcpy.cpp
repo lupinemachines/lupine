@@ -2421,9 +2421,8 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   conn_t *conn = lupine_route_remote_conn(route);
   if (rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
-      (numAttributes != 0 &&
-       rpc_write(conn, attributes,
-                 numAttributes * sizeof(CUpointer_attribute)) < 0) ||
+      rpc_write(conn, attributes,
+                numAttributes * sizeof(CUpointer_attribute)) < 0 ||
       rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

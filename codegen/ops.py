@@ -228,7 +228,7 @@ class ArrayOperation:
             return
         if isinstance(self.length, int):
             f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
                     param_name=self.parameter.name,
                     size=self.length,
                 )
@@ -243,7 +243,7 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        ({size} != 0 && {write_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        {write_fn}(conn, {param_name}, {size}) < 0 ||\n".format(
                     write_fn="rpc_write_payload" if self.compressible else "rpc_write",
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
@@ -463,14 +463,14 @@ class ArrayOperation:
             return
         if isinstance(self.length, int):
             f.write(
-                "        ({size} != 0 && rpc_write(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
                     param_name=self.parameter.name,
                     size=self.length,
                 )
             )
         else:
             f.write(
-                "        ({size} != 0 && {write_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
+                "        {write_fn}(conn, {param_name}, {size}) < 0 ||\n".format(
                     write_fn="rpc_write_payload" if self.compressible else "rpc_write",
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
@@ -622,7 +622,7 @@ class OptionalArrayOperation:
         name = self.parameter.name
         count = self.count.name
         f.write(
-            f"        ({name}_present && {count} != 0 && "
+            f"        ({name}_present && "
             f"rpc_write(conn, {name}, {count} * sizeof({elem})) < 0) ||\n"
         )
 
@@ -718,9 +718,8 @@ class DeepStructOperation:
         f.write(f"        rpc_write(conn, &{name}, sizeof({name})) < 0 ||\n")
         for member, count in self.members:
             f.write(
-                f"        ({name}.{count} != 0 && "
-                f"rpc_write(conn, {name}.{member}, "
-                f"{name}.{count} * sizeof(*{name}.{member})) < 0) ||\n"
+                f"        rpc_write(conn, {name}.{member}, "
+                f"{name}.{count} * sizeof(*{name}.{member})) < 0 ||\n"
             )
 
     def client_rpc_write(self, f):
@@ -730,9 +729,8 @@ class DeepStructOperation:
         f.write(f"        rpc_write(conn, {name}, sizeof(*{name})) < 0 ||\n")
         for member, count in self.members:
             f.write(
-                f"        ({name}->{count} != 0 && "
-                f"rpc_write(conn, {name}->{member}, "
-                f"{name}->{count} * sizeof(*{name}->{member})) < 0) ||\n"
+                f"        rpc_write(conn, {name}->{member}, "
+                f"{name}->{count} * sizeof(*{name}->{member})) < 0 ||\n"
             )
 
     def client_rpc_read(self, f):
