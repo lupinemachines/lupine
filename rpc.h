@@ -39,11 +39,6 @@ struct rpc_http2_read_stats {
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 
-// CUDA caps a kernel's packed parameter area below 64 KiB. Reserving one
-// metadata slot per byte covers the pathological upper bound without growing
-// an RPC's copy arena after serialization has started.
-static constexpr size_t LUPINE_RPC_MAX_KERNEL_PARAM_COUNT = 64 * 1024;
-
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
 // nothing: a non-success result carries no payload, otherwise every device
 // record holds a fixed-size name buffer, uuid, total memory, and a
