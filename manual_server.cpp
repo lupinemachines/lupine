@@ -84,9 +84,11 @@ lupine_own_kernel_param_values(void **values) {
 }
 
 // CUDA's packed kernel parameter area is smaller than 64 KiB. One metadata
-// pair per byte plus the terminal record bounds a non-preflighted write.
+// record per byte plus the terminal record bounds a non-preflighted write.
 static constexpr size_t lupine_param_info_copy_capacity() {
-  return (64 * 1024 + 1) * 2 * sizeof(size_t);
+  constexpr size_t record_size =
+      2 * sizeof(size_t) + sizeof(CUresult) + alignof(size_t) - 1;
+  return (64 * 1024 + 1) * record_size;
 }
 
 template <typename T> static constexpr size_t lupine_cuda_value_copy_size() {
@@ -126,69 +128,40 @@ static size_t lupine_jit_outputs_copy_size(const rpc_jit_server_state &state) {
 }
 
 static int lupine_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state) {
-  if (conn == nullptr || state == nullptr) {
-    return -1;
-  }
-
-  auto *output_count = static_cast<uint32_t *>(
-      rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t)));
-  if (output_count == nullptr) {
-    return -1;
-  }
-  *output_count = static_cast<uint32_t>(state->capture_wall_time) +
-                  static_cast<uint32_t>(state->capture_info_log) +
-                  static_cast<uint32_t>(state->capture_error_log);
+  *static_cast<uint32_t *>(
+      rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t))) =
+      static_cast<uint32_t>(state->capture_wall_time) +
+      static_cast<uint32_t>(state->capture_info_log) +
+      static_cast<uint32_t>(state->capture_error_log);
 
   if (state->capture_wall_time) {
-    auto *option = static_cast<CUjit_option *>(
-        rpc_write_buffer(conn, sizeof(CUjit_option), alignof(CUjit_option)));
-    if (option == nullptr) {
-      return -1;
-    }
-    *option = CU_JIT_WALL_TIME;
-    auto *size = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (size == nullptr) {
-      return -1;
-    }
-    *size = sizeof(state->wall_time);
-    if (rpc_write(conn, &state->wall_time, *size) < 0) {
+    *static_cast<CUjit_option *>(rpc_write_buffer(
+        conn, sizeof(CUjit_option), alignof(CUjit_option))) = CU_JIT_WALL_TIME;
+    *static_cast<size_t *>(rpc_write_buffer(
+        conn, sizeof(size_t), alignof(size_t))) = sizeof(state->wall_time);
+    if (rpc_write(conn, &state->wall_time, sizeof(state->wall_time)) < 0) {
       return -1;
     }
   }
 
   if (state->capture_info_log) {
-    auto *option = static_cast<CUjit_option *>(
-        rpc_write_buffer(conn, sizeof(CUjit_option), alignof(CUjit_option)));
-    if (option == nullptr) {
-      return -1;
-    }
-    *option = CU_JIT_INFO_LOG_BUFFER;
-    auto *size = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (size == nullptr) {
-      return -1;
-    }
-    *size = state->info_log.size();
-    if (rpc_write(conn, state->info_log.data(), *size) < 0) {
+    *static_cast<CUjit_option *>(
+        rpc_write_buffer(conn, sizeof(CUjit_option), alignof(CUjit_option))) =
+        CU_JIT_INFO_LOG_BUFFER;
+    *static_cast<size_t *>(rpc_write_buffer(
+        conn, sizeof(size_t), alignof(size_t))) = state->info_log.size();
+    if (rpc_write(conn, state->info_log.data(), state->info_log.size()) < 0) {
       return -1;
     }
   }
 
   if (state->capture_error_log) {
-    auto *option = static_cast<CUjit_option *>(
-        rpc_write_buffer(conn, sizeof(CUjit_option), alignof(CUjit_option)));
-    if (option == nullptr) {
-      return -1;
-    }
-    *option = CU_JIT_ERROR_LOG_BUFFER;
-    auto *size = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (size == nullptr) {
-      return -1;
-    }
-    *size = state->error_log.size();
-    if (rpc_write(conn, state->error_log.data(), *size) < 0) {
+    *static_cast<CUjit_option *>(
+        rpc_write_buffer(conn, sizeof(CUjit_option), alignof(CUjit_option))) =
+        CU_JIT_ERROR_LOG_BUFFER;
+    *static_cast<size_t *>(rpc_write_buffer(
+        conn, sizeof(size_t), alignof(size_t))) = state->error_log.size();
+    if (rpc_write(conn, state->error_log.data(), state->error_log.size()) < 0) {
       return -1;
     }
   }
@@ -1111,9 +1084,6 @@ int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
     return -1;
   }
 
-  CUresult param_result = CUDA_ERROR_INVALID_VALUE;
-  const CUresult success = CUDA_SUCCESS;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_copy_alloc(conn, lupine_param_info_copy_capacity()) < 0) {
     return -1;
@@ -1124,13 +1094,10 @@ int handle_manual_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    param_result = cuFuncGetParamInfo(function, i, offset, size);
-    const CUresult *wire_result =
-        param_result == CUDA_SUCCESS ? &success : &param_result;
-    if (rpc_write(conn, wire_result, sizeof(*wire_result)) < 0) {
-      return -1;
-    }
-    if (param_result != CUDA_SUCCESS) {
+    auto *param_result = static_cast<CUresult *>(
+        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
+    *param_result = cuFuncGetParamInfo(function, i, offset, size);
+    if (*param_result != CUDA_SUCCESS) {
       break;
     }
   }
@@ -2627,7 +2594,6 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
   int request_id;
   CUDA_KERNEL_NODE_PARAMS node_params = {};
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  CUresult param_result = CUDA_ERROR_INVALID_HANDLE;
 
   if (rpc_read(conn, &hNode, sizeof(hNode)) < 0) {
     return -1;
@@ -2649,26 +2615,23 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
     return -1;
   }
   if (result == CUDA_SUCCESS) {
-    static constexpr CUresult param_success = CUDA_SUCCESS;
     for (size_t i = 0;; ++i) {
       auto *offset = static_cast<size_t *>(
           rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
       auto *size = static_cast<size_t *>(
           rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+      auto *param_result = static_cast<CUresult *>(
+          rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
+      *param_result = CUDA_ERROR_INVALID_HANDLE;
       if (node_params.func != nullptr) {
-        param_result = cuFuncGetParamInfo(node_params.func, i, offset, size);
+        *param_result = cuFuncGetParamInfo(node_params.func, i, offset, size);
       }
 #if CUDA_VERSION >= 12000
       else if (node_params.kern != nullptr) {
-        param_result = cuKernelGetParamInfo(node_params.kern, i, offset, size);
+        *param_result = cuKernelGetParamInfo(node_params.kern, i, offset, size);
       }
 #endif
-      const CUresult *wire_result =
-          param_result == CUDA_SUCCESS ? &param_success : &param_result;
-      if (rpc_write(conn, wire_result, sizeof(*wire_result)) < 0) {
-        return -1;
-      }
-      if (param_result != CUDA_SUCCESS) {
+      if (*param_result != CUDA_SUCCESS) {
         break;
       }
       if (rpc_write(conn, node_params.kernelParams[i], *size) < 0) {
