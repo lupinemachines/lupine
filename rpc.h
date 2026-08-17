@@ -85,6 +85,11 @@ struct conn_t {
 extern int rpc_dispatch(conn_t *conn, int parity);
 extern int rpc_read_start(conn_t *conn, int write_id);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
+// Reads a field emitted by rpc_write_buffer. Keeping buffered reads distinct
+// makes request and response serializers exact field-for-field inverses.
+static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
+  return rpc_read(conn, data, size);
+}
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
 
@@ -97,9 +102,13 @@ extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 // calls. The reservation must be made once before the first buffered write in
 // an RPC and is released with the request.
 extern int rpc_copy_alloc(conn_t *conn, const size_t size);
-// Returns the next aligned request-owned span and advances the copy cursor. A
-// later call may grow the arena, so callers must queue or consume the returned
-// span before requesting another one.
+// Ensures a group of buffered fields can be populated without a later field
+// relocating an earlier field in the group.
+extern int rpc_write_buffer_reserve(conn_t *conn, size_t size,
+                                    size_t alignment);
+// Returns and queues the next aligned request-owned span. A later call may
+// grow the arena, so callers must finish populating the returned span before
+// requesting another one.
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
                             size_t count);

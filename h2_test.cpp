@@ -875,20 +875,14 @@ void test_rpc_write_buffer_grows_and_rebases_queued_writes() {
       rpc_write_buffer(&pair.client, sizeof(first), alignof(uint8_t)));
   require(first_buffer != nullptr, "growing first buffer failed");
   *first_buffer = first;
-  require(rpc_write(&pair.client, first_buffer, sizeof(*first_buffer)) == 0,
-          "growing first write failed");
   auto *second_buffer = static_cast<uint64_t *>(
       rpc_write_buffer(&pair.client, sizeof(second), alignof(uint64_t)));
   require(second_buffer != nullptr, "growing second buffer failed");
   *second_buffer = second;
-  require(rpc_write(&pair.client, second_buffer, sizeof(*second_buffer)) == 0,
-          "growing second write failed");
   auto *direct = static_cast<uint32_t *>(
       rpc_write_buffer(&pair.client, sizeof(third), alignof(uint32_t)));
   require(direct != nullptr, "direct write buffer allocation failed");
   *direct = third;
-  require(rpc_write(&pair.client, direct, sizeof(*direct)) == 0,
-          "direct write buffer queue failed");
   require(pair.client.write_queue_count == 6,
           "growing copy queue count mismatch");
   require(pair.client.write_copy_offset == 20, "growing copy cursor mismatch");
@@ -934,8 +928,6 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
         rpc_write_buffer(&pair.client, sizeof(value), alignof(int)));
     require(buffer != nullptr, "failed transport buffer allocation failed");
     *buffer = value;
-    require(rpc_write(&pair.client, buffer, sizeof(*buffer)) == 0,
-            "failed transport buffer write failed");
     close(pair.client.connfd);
     pair.client.connfd = -1;
     require(rpc_write_end(&pair.client) < 0,

@@ -564,9 +564,9 @@ int rpc_copy_alloc(conn_t *conn, const size_t size) {
   return 0;
 }
 
-void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment) {
+int rpc_write_buffer_reserve(conn_t *conn, size_t size, size_t alignment) {
   if (conn == nullptr || conn->write_copy_buffer == nullptr) {
-    return nullptr;
+    return -1;
   }
 
   size_t offset =
@@ -594,9 +594,22 @@ void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment) {
     conn->write_copy_buffer = buffer;
     conn->write_copy_capacity = capacity;
   }
+  return 0;
+}
 
+void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment) {
+  if (rpc_write_buffer_reserve(conn, size, alignment) < 0) {
+    return nullptr;
+  }
+
+  size_t offset =
+      (conn->write_copy_offset + alignment - 1) / alignment * alignment;
+  size_t required = offset + size;
   void *buffer = conn->write_copy_buffer + offset;
   conn->write_copy_offset = required;
+  if (rpc_write(conn, buffer, size) < 0) {
+    return nullptr;
+  }
   return buffer;
 }
 
@@ -626,7 +639,7 @@ int rpc_read_kernel_node_params(conn_t *conn,
     return -1;
   }
 
-  if (rpc_read(conn, node_params, sizeof(*node_params)) < 0) {
+  if (rpc_read_buffer(conn, node_params, sizeof(*node_params)) < 0) {
     return -1;
   }
   node_params->kernelParams = nullptr;
@@ -717,7 +730,11 @@ static int rpc_read_param_values(conn_t *conn, void ***values, CUresult *result,
   size_t count = 0;
   for (;;) {
     CUresult wire_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-    if (rpc_read(conn, &wire_result, sizeof(wire_result)) < 0) {
+    size_t wire_offset = 0;
+    size_t wire_size = 0;
+    if (rpc_read_buffer(conn, &wire_result, sizeof(wire_result)) < 0 ||
+        rpc_read_buffer(conn, &wire_offset, sizeof(wire_offset)) < 0 ||
+        rpc_read_buffer(conn, &wire_size, sizeof(wire_size)) < 0) {
       rpc_free_kernel_param_values(*values);
       *values = nullptr;
       return -1;
@@ -741,15 +758,6 @@ static int rpc_read_param_values(conn_t *conn, void ***values, CUresult *result,
         }
       }
       break;
-    }
-
-    size_t wire_offset = 0;
-    size_t wire_size = 0;
-    if (rpc_read(conn, &wire_offset, sizeof(wire_offset)) < 0 ||
-        rpc_read(conn, &wire_size, sizeof(wire_size)) < 0) {
-      rpc_free_kernel_param_values(*values);
-      *values = nullptr;
-      return -1;
     }
 
     bool valid = query_result == CUDA_SUCCESS &&
@@ -848,7 +856,11 @@ int rpc_read_kernel_node_params_and_values(conn_t *conn,
   size_t count = 0;
   for (;;) {
     CUresult query_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-    if (rpc_read(conn, &query_result, sizeof(query_result)) < 0) {
+    size_t offset = 0;
+    size_t size = 0;
+    if (rpc_read_buffer(conn, &query_result, sizeof(query_result)) < 0 ||
+        rpc_read_buffer(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_read_buffer(conn, &size, sizeof(size)) < 0) {
       rpc_free_kernel_param_values(node_params->kernelParams);
       node_params->kernelParams = nullptr;
       return -1;
@@ -857,15 +869,6 @@ int rpc_read_kernel_node_params_and_values(conn_t *conn,
       *result = query_result == CUDA_ERROR_INVALID_VALUE ? CUDA_SUCCESS
                                                          : query_result;
       break;
-    }
-
-    size_t offset = 0;
-    size_t size = 0;
-    if (rpc_read(conn, &offset, sizeof(offset)) < 0 ||
-        rpc_read(conn, &size, sizeof(size)) < 0) {
-      rpc_free_kernel_param_values(node_params->kernelParams);
-      node_params->kernelParams = nullptr;
-      return -1;
     }
     node_params->kernelParams =
         rpc_resize_kernel_param_values(node_params->kernelParams, count + 1);
@@ -926,10 +929,10 @@ int rpc_read_jit_options(conn_t *conn, std::vector<CUjit_option> *options,
       rpc_read(conn, options->data(), num_options * sizeof(CUjit_option)) < 0) {
     return -1;
   }
-  for (unsigned int i = 0; i < num_options; ++i) {
-    if (rpc_read(conn, &(*raw_values)[i], sizeof((*raw_values)[i])) < 0) {
-      return -1;
-    }
+  if (num_options != 0 &&
+      rpc_read_buffer(conn, raw_values->data(),
+                      num_options * sizeof((*raw_values)[0])) < 0) {
+    return -1;
   }
   return 0;
 }
@@ -1014,10 +1017,12 @@ int rpc_read_library_options(conn_t *conn,
                                    num_options * sizeof(CUlibraryOption)) < 0) {
     return -1;
   }
+  if (num_options != 0 &&
+      rpc_read_buffer(conn, raw_values->data(),
+                      num_options * sizeof((*raw_values)[0])) < 0) {
+    return -1;
+  }
   for (unsigned int i = 0; i < num_options; ++i) {
-    if (rpc_read(conn, &(*raw_values)[i], sizeof((*raw_values)[i])) < 0) {
-      return -1;
-    }
     bool value_is_present = (*raw_values)[i] != LUPINE_RPC_NULL_OPTION_VALUES;
     if (i == 0) {
       *has_option_values = value_is_present;
@@ -1042,7 +1047,7 @@ rpc_find_jit_output_binding(const std::vector<rpc_jit_output_binding> &bindings,
 int rpc_read_jit_outputs(conn_t *conn,
                          const std::vector<rpc_jit_output_binding> &bindings) {
   uint32_t output_count = 0;
-  if (rpc_read(conn, &output_count, sizeof(output_count)) < 0) {
+  if (rpc_read_buffer(conn, &output_count, sizeof(output_count)) < 0) {
     return -1;
   }
   if (output_count > 32) {
@@ -1051,8 +1056,8 @@ int rpc_read_jit_outputs(conn_t *conn,
   for (uint32_t i = 0; i < output_count; ++i) {
     CUjit_option option;
     size_t payload_size = 0;
-    if (rpc_read(conn, &option, sizeof(option)) < 0 ||
-        rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+    if (rpc_read_buffer(conn, &option, sizeof(option)) < 0 ||
+        rpc_read_buffer(conn, &payload_size, sizeof(payload_size)) < 0) {
       return -1;
     }
     if (payload_size > (16ull << 20)) {
