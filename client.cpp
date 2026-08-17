@@ -571,13 +571,6 @@ lupine_param_layout_count_cache() {
   return *cache;
 }
 
-static bool lupine_param_layout_count(uintptr_t handle, bool kernel,
-                                      size_t *count) {
-  return count != nullptr &&
-         lupine_param_layout_count_cache().find(
-             lupine_param_layout_key{handle, kernel}, *count);
-}
-
 // CUDA's packed kernel parameter area is smaller than 64 KiB. One metadata
 // pair per byte plus the terminal record bounds a non-preflighted write.
 static constexpr size_t lupine_param_info_copy_capacity() {
@@ -5933,18 +5926,6 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   static constexpr CUresult param_success = CUDA_SUCCESS;
-  size_t param_count = 0;
-  bool has_layout = false;
-  if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-    has_layout = lupine_param_layout_count(
-        reinterpret_cast<uintptr_t>(nodeParams->func), false, &param_count);
-  }
-#if CUDA_VERSION >= 12000
-  else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-    has_layout = lupine_param_layout_count(
-        reinterpret_cast<uintptr_t>(nodeParams->kern), true, &param_count);
-  }
-#endif
   CUresult param_result = nodeParams->extra == nullptr
                               ? CUDA_ERROR_INVALID_HANDLE
                               : CUDA_ERROR_NOT_SUPPORTED;
@@ -5953,18 +5934,14 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (has_layout) {
-      if (i == param_count) {
-        param_result = CUDA_ERROR_INVALID_VALUE;
-      } else if (nodeParams->func != nullptr) {
-        param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
-      }
-#if CUDA_VERSION >= 12000
-      else {
-        param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
-      }
-#endif
+    if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
+      param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
     }
+#if CUDA_VERSION >= 12000
+    else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
+      param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
+    }
+#endif
     const CUresult *wire_result =
         param_result == CUDA_SUCCESS ? &param_success : &param_result;
     if (rpc_write(conn, wire_result, sizeof(*wire_result)) < 0) {
@@ -6041,18 +6018,6 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   static constexpr CUresult param_success = CUDA_SUCCESS;
-  size_t param_count = 0;
-  bool has_layout = false;
-  if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-    has_layout = lupine_param_layout_count(
-        reinterpret_cast<uintptr_t>(nodeParams->func), false, &param_count);
-  }
-#if CUDA_VERSION >= 12000
-  else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-    has_layout = lupine_param_layout_count(
-        reinterpret_cast<uintptr_t>(nodeParams->kern), true, &param_count);
-  }
-#endif
   CUresult param_result = nodeParams->extra == nullptr
                               ? CUDA_ERROR_INVALID_HANDLE
                               : CUDA_ERROR_NOT_SUPPORTED;
@@ -6061,18 +6026,14 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (has_layout) {
-      if (i == param_count) {
-        param_result = CUDA_ERROR_INVALID_VALUE;
-      } else if (nodeParams->func != nullptr) {
-        param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
-      }
-#if CUDA_VERSION >= 12000
-      else {
-        param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
-      }
-#endif
+    if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
+      param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
     }
+#if CUDA_VERSION >= 12000
+    else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
+      param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
+    }
+#endif
     const CUresult *wire_result =
         param_result == CUDA_SUCCESS ? &param_success : &param_result;
     if (rpc_write(conn, wire_result, sizeof(*wire_result)) < 0) {
@@ -6194,18 +6155,6 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   static constexpr CUresult param_success = CUDA_SUCCESS;
-  size_t param_count = 0;
-  bool has_layout = false;
-  if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-    has_layout = lupine_param_layout_count(
-        reinterpret_cast<uintptr_t>(nodeParams->func), false, &param_count);
-  }
-#if CUDA_VERSION >= 12000
-  else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-    has_layout = lupine_param_layout_count(
-        reinterpret_cast<uintptr_t>(nodeParams->kern), true, &param_count);
-  }
-#endif
   CUresult param_result = nodeParams->extra == nullptr
                               ? CUDA_ERROR_INVALID_HANDLE
                               : CUDA_ERROR_NOT_SUPPORTED;
@@ -6214,18 +6163,14 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    if (has_layout) {
-      if (i == param_count) {
-        param_result = CUDA_ERROR_INVALID_VALUE;
-      } else if (nodeParams->func != nullptr) {
-        param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
-      }
-#if CUDA_VERSION >= 12000
-      else {
-        param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
-      }
-#endif
+    if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
+      param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
     }
+#if CUDA_VERSION >= 12000
+    else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
+      param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
+    }
+#endif
     const CUresult *wire_result =
         param_result == CUDA_SUCCESS ? &param_success : &param_result;
     if (rpc_write(conn, wire_result, sizeof(*wire_result)) < 0) {
@@ -6445,22 +6390,6 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   }
   if (nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL) {
     static constexpr CUresult param_success = CUDA_SUCCESS;
-    size_t param_count = 0;
-    bool has_layout = false;
-    if (nodeParams->kernel.extra == nullptr &&
-        nodeParams->kernel.func != nullptr) {
-      has_layout = lupine_param_layout_count(
-          reinterpret_cast<uintptr_t>(nodeParams->kernel.func), false,
-          &param_count);
-    }
-#if CUDA_VERSION >= 12000
-    else if (nodeParams->kernel.extra == nullptr &&
-             nodeParams->kernel.kern != nullptr) {
-      has_layout = lupine_param_layout_count(
-          reinterpret_cast<uintptr_t>(nodeParams->kernel.kern), true,
-          &param_count);
-    }
-#endif
     CUresult param_result = nodeParams->kernel.extra == nullptr
                                 ? CUDA_ERROR_INVALID_HANDLE
                                 : CUDA_ERROR_NOT_SUPPORTED;
@@ -6469,20 +6398,18 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
           rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
       auto *size = static_cast<size_t *>(
           rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-      if (has_layout) {
-        if (i == param_count) {
-          param_result = CUDA_ERROR_INVALID_VALUE;
-        } else if (nodeParams->kernel.func != nullptr) {
-          param_result =
-              cuFuncGetParamInfo(nodeParams->kernel.func, i, offset, size);
-        }
-#if CUDA_VERSION >= 12000
-        else {
-          param_result =
-              cuKernelGetParamInfo(nodeParams->kernel.kern, i, offset, size);
-        }
-#endif
+      if (nodeParams->kernel.extra == nullptr &&
+          nodeParams->kernel.func != nullptr) {
+        param_result =
+            cuFuncGetParamInfo(nodeParams->kernel.func, i, offset, size);
       }
+#if CUDA_VERSION >= 12000
+      else if (nodeParams->kernel.extra == nullptr &&
+               nodeParams->kernel.kern != nullptr) {
+        param_result =
+            cuKernelGetParamInfo(nodeParams->kernel.kern, i, offset, size);
+      }
+#endif
       const CUresult *wire_result =
           param_result == CUDA_SUCCESS ? &param_success : &param_result;
       if (rpc_write(conn, wire_result, sizeof(*wire_result)) < 0) {
