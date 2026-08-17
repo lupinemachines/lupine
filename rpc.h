@@ -128,34 +128,11 @@ extern void rpc_conn_destroy(conn_t *conn);
 // permanent failure.
 extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port);
 
-extern int rpc_read_kernel_node_params(conn_t *conn,
-                                       CUDA_KERNEL_NODE_PARAMS *node_params);
-extern int rpc_read_kernel_node_params_and_values(
-    conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params, CUresult *result);
-extern void rpc_free_kernel_param_values(void **values);
-extern int rpc_read_param_values(conn_t *conn, void ***values,
-                                 CUresult *result);
-#ifdef LUPINE_RPC_SERVER
-extern int rpc_read_launch_param_values(conn_t *conn, void ***values);
-#endif
-extern int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
-                                  std::vector<CUlaunchAttribute> *attributes);
 struct rpc_jit_output_binding {
   CUjit_option option;
   void *dst;
   size_t size;
 };
-struct rpc_jit_server_state {
-  std::vector<CUjit_option> options;
-  std::vector<void *> option_values;
-  float wall_time = 0.0f;
-  std::vector<char> info_log;
-  std::vector<char> error_log;
-};
-extern int rpc_read_jit_options(conn_t *conn,
-                                std::vector<CUjit_option> *options,
-                                std::vector<uintptr_t> *raw_values);
-extern int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state);
 extern int
 rpc_read_jit_outputs(conn_t *conn,
                      const std::vector<rpc_jit_output_binding> &bindings);
