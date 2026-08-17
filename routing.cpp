@@ -188,27 +188,31 @@ lupine_route lupine_route_from_known_kernel_deviceptr_args(
   return route.kind == LUPINE_ROUTE_INVALID ? fallback : route;
 }
 
-static CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count) {
+static CUresult lupine_remote_device_enumerate(conn_t *conn,
+                                                std::vector<CUdevice> *devices) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr || count == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetCount) < 0 ||
+  uint32_t count = 0;
+  if (conn == nullptr || devices == nullptr ||
+      rpc_write_start_request(conn, LUPINE_RPC_lupineDeviceEnumerate) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, count, sizeof(*count)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_read(conn, &result, sizeof(result)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return result;
-}
-
-static CUresult lupine_remote_cuDeviceGet(conn_t *conn, CUdevice *device,
-                                          int ordinal) {
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (conn == nullptr || device == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceGet) < 0 ||
-      rpc_write(conn, &ordinal, sizeof(ordinal)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, device, sizeof(*device)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+  if (result != CUDA_SUCCESS) {
+    rpc_read_end(conn);
+    return result;
+  }
+  if (rpc_read(conn, &count, sizeof(count)) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  try {
+    devices->resize(count);
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  if ((count != 0 &&
+       rpc_read(conn, devices->data(), devices->size() * sizeof(CUdevice)) < 0) ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return result;
@@ -247,19 +251,13 @@ static CUresult lupine_ensure_device_table() {
     int connection_count = rpc_size();
     for (int i = 0; i < connection_count; ++i) {
       conn_t *conn = rpc_client_get_connection(static_cast<unsigned int>(i));
-      int remote_count = 0;
-      CUresult result = lupine_remote_cuDeviceGetCount(conn, &remote_count);
+      std::vector<CUdevice> remote_devices;
+      CUresult result = lupine_remote_device_enumerate(conn, &remote_devices);
       if (result != CUDA_SUCCESS) {
         devices.clear();
         return result;
       }
-      for (int ordinal = 0; ordinal < remote_count; ++ordinal) {
-        CUdevice remote_device = 0;
-        result = lupine_remote_cuDeviceGet(conn, &remote_device, ordinal);
-        if (result != CUDA_SUCCESS) {
-          devices.clear();
-          return result;
-        }
+      for (CUdevice remote_device : remote_devices) {
         lupine_device_entry entry;
         entry.local = false;
         entry.conn_index = static_cast<unsigned int>(i);
