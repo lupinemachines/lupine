@@ -857,51 +857,52 @@ void test_rpc_write_queue_grows() {
   require(received == values, "large queue payload mismatch");
 }
 
-void test_rpc_write_buffer_grows_and_rebases_queued_writes() {
+void test_rpc_write_buffer_uses_fixed_allocation() {
   h2_pair pair = make_pair();
   require(rpc_write_start_response(&pair.client, 21) == 0,
-          "growing response start failed");
+          "buffered response start failed");
   uint8_t first = 17;
   uint64_t second = 19;
   uint32_t third = 23;
   require(rpc_write_buffer(&pair.client, sizeof(first), alignof(uint8_t)) ==
               nullptr,
           "rpc_write_buffer accepted data without a reservation");
-  require(rpc_copy_alloc(&pair.client, sizeof(first)) == 0,
-          "growing copy allocation failed");
+  require(rpc_copy_alloc(&pair.client, 20) == 0,
+          "fixed copy allocation failed");
   require(rpc_copy_alloc(&pair.client, sizeof(first)) < 0,
           "rpc_copy_alloc replaced an active reservation");
   auto *first_buffer = static_cast<uint8_t *>(
       rpc_write_buffer(&pair.client, sizeof(first), alignof(uint8_t)));
-  require(first_buffer != nullptr, "growing first buffer failed");
+  require(first_buffer != nullptr, "fixed first buffer failed");
   *first_buffer = first;
   auto *second_buffer = static_cast<uint64_t *>(
       rpc_write_buffer(&pair.client, sizeof(second), alignof(uint64_t)));
-  require(second_buffer != nullptr, "growing second buffer failed");
+  require(second_buffer != nullptr, "fixed second buffer failed");
   *second_buffer = second;
   auto *direct = static_cast<uint32_t *>(
       rpc_write_buffer(&pair.client, sizeof(third), alignof(uint32_t)));
   require(direct != nullptr, "direct write buffer allocation failed");
   *direct = third;
+  require(rpc_write_buffer(&pair.client, 1, alignof(uint8_t)) == nullptr,
+          "rpc_write_buffer exceeded its fixed allocation");
   require(pair.client.write_queue_count == 6,
-          "growing copy queue count mismatch");
-  require(pair.client.write_copy_offset == 20, "growing copy cursor mismatch");
+          "fixed copy queue count mismatch");
+  require(pair.client.write_copy_offset == 20, "fixed copy cursor mismatch");
   require(pair.client.write_queue[3].iov.iov_base ==
                   pair.client.write_copy_buffer &&
               pair.client.write_queue[4].iov.iov_base ==
                   pair.client.write_copy_buffer + 8 &&
               pair.client.write_queue[5].iov.iov_base ==
                   pair.client.write_copy_buffer + 16,
-          "growing copy did not rebase queued iovecs");
+          "fixed copy queued the wrong spans");
   require(*static_cast<uint8_t *>(pair.client.write_queue[3].iov.iov_base) ==
                   first &&
               *static_cast<uint64_t *>(
                   pair.client.write_queue[4].iov.iov_base) == second &&
               *static_cast<uint32_t *>(
                   pair.client.write_queue[5].iov.iov_base) == third,
-          "growing copy changed buffered values");
-  require(rpc_write_end(&pair.client) == 21,
-          "growing response write end failed");
+          "fixed copy changed buffered values");
+  require(rpc_write_end(&pair.client) == 21, "fixed response write end failed");
   require(pair.client.write_copy_buffer == nullptr,
           "rpc_write_end retained the copy buffer");
 
@@ -1010,7 +1011,7 @@ int main() {
   test_head_probe_cuda_version_metadata();
 #else
   test_rpc_write_queue_grows();
-  test_rpc_write_buffer_grows_and_rebases_queued_writes();
+  test_rpc_write_buffer_uses_fixed_allocation();
   test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
   test_rpc_lz4_payload_round_trip();
   test_response_wait_sends_transport_heartbeat();

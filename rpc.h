@@ -39,6 +39,11 @@ struct rpc_http2_read_stats {
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 
+// CUDA caps a kernel's packed parameter area below 64 KiB. Reserving one
+// metadata slot per byte covers the pathological upper bound without growing
+// an RPC's copy arena after serialization has started.
+static constexpr size_t LUPINE_RPC_MAX_KERNEL_PARAM_COUNT = 64 * 1024;
+
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
 // nothing: a non-success result carries no payload, otherwise every device
 // record holds a fixed-size name buffer, uuid, total memory, and a
@@ -102,13 +107,9 @@ extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 // calls. The reservation must be made once before the first buffered write in
 // an RPC and is released with the request.
 extern int rpc_copy_alloc(conn_t *conn, const size_t size);
-// Ensures a group of buffered fields can be populated without a later field
-// relocating an earlier field in the group.
-extern int rpc_write_buffer_reserve(conn_t *conn, size_t size,
-                                    size_t alignment);
-// Returns and queues the next aligned request-owned span. A later call may
-// grow the arena, so callers must finish populating the returned span before
-// requesting another one.
+// Returns and queues the next aligned span in the request-owned allocation.
+// The complete allocation is fixed before serialization starts, so returned
+// pointers remain valid until the request ends.
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
                             size_t count);

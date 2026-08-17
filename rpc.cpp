@@ -564,47 +564,17 @@ int rpc_copy_alloc(conn_t *conn, const size_t size) {
   return 0;
 }
 
-int rpc_write_buffer_reserve(conn_t *conn, size_t size, size_t alignment) {
-  if (conn == nullptr || conn->write_copy_buffer == nullptr) {
-    return -1;
-  }
-
-  size_t offset =
-      (conn->write_copy_offset + alignment - 1) / alignment * alignment;
-  size_t required = offset + size;
-  if (required > conn->write_copy_capacity) {
-    size_t capacity = std::max(required, conn->write_copy_capacity * size_t{2});
-    uintptr_t previous = reinterpret_cast<uintptr_t>(conn->write_copy_buffer);
-    auto *buffer = static_cast<unsigned char *>(
-        realloc(conn->write_copy_buffer, capacity));
-    if (buffer == nullptr) {
-      std::abort();
-    }
-    uintptr_t next = reinterpret_cast<uintptr_t>(buffer);
-    if (next != previous) {
-      for (int i = 0; i < conn->write_queue_count; ++i) {
-        uintptr_t base =
-            reinterpret_cast<uintptr_t>(conn->write_queue[i].iov.iov_base);
-        if (base >= previous && base < previous + conn->write_copy_offset) {
-          conn->write_queue[i].iov.iov_base =
-              reinterpret_cast<void *>(next + base - previous);
-        }
-      }
-    }
-    conn->write_copy_buffer = buffer;
-    conn->write_copy_capacity = capacity;
-  }
-  return 0;
-}
-
 void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment) {
-  if (rpc_write_buffer_reserve(conn, size, alignment) < 0) {
+  if (conn == nullptr || conn->write_copy_buffer == nullptr) {
     return nullptr;
   }
 
   size_t offset =
       (conn->write_copy_offset + alignment - 1) / alignment * alignment;
   size_t required = offset + size;
+  if (required > conn->write_copy_capacity) {
+    return nullptr;
+  }
   void *buffer = conn->write_copy_buffer + offset;
   conn->write_copy_offset = required;
   if (rpc_write(conn, buffer, size) < 0) {
@@ -730,11 +700,7 @@ static int rpc_read_param_values(conn_t *conn, void ***values, CUresult *result,
   size_t count = 0;
   for (;;) {
     CUresult wire_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-    size_t wire_offset = 0;
-    size_t wire_size = 0;
-    if (rpc_read_buffer(conn, &wire_result, sizeof(wire_result)) < 0 ||
-        rpc_read_buffer(conn, &wire_offset, sizeof(wire_offset)) < 0 ||
-        rpc_read_buffer(conn, &wire_size, sizeof(wire_size)) < 0) {
+    if (rpc_read_buffer(conn, &wire_result, sizeof(wire_result)) < 0) {
       rpc_free_kernel_param_values(*values);
       *values = nullptr;
       return -1;
@@ -758,6 +724,15 @@ static int rpc_read_param_values(conn_t *conn, void ***values, CUresult *result,
         }
       }
       break;
+    }
+
+    size_t wire_offset = 0;
+    size_t wire_size = 0;
+    if (rpc_read_buffer(conn, &wire_offset, sizeof(wire_offset)) < 0 ||
+        rpc_read_buffer(conn, &wire_size, sizeof(wire_size)) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
     }
 
     bool valid = query_result == CUDA_SUCCESS &&
@@ -856,11 +831,7 @@ int rpc_read_kernel_node_params_and_values(conn_t *conn,
   size_t count = 0;
   for (;;) {
     CUresult query_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-    size_t offset = 0;
-    size_t size = 0;
-    if (rpc_read_buffer(conn, &query_result, sizeof(query_result)) < 0 ||
-        rpc_read_buffer(conn, &offset, sizeof(offset)) < 0 ||
-        rpc_read_buffer(conn, &size, sizeof(size)) < 0) {
+    if (rpc_read_buffer(conn, &query_result, sizeof(query_result)) < 0) {
       rpc_free_kernel_param_values(node_params->kernelParams);
       node_params->kernelParams = nullptr;
       return -1;
@@ -869,6 +840,14 @@ int rpc_read_kernel_node_params_and_values(conn_t *conn,
       *result = query_result == CUDA_ERROR_INVALID_VALUE ? CUDA_SUCCESS
                                                          : query_result;
       break;
+    }
+    size_t offset = 0;
+    size_t size = 0;
+    if (rpc_read_buffer(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_read_buffer(conn, &size, sizeof(size)) < 0) {
+      rpc_free_kernel_param_values(node_params->kernelParams);
+      node_params->kernelParams = nullptr;
+      return -1;
     }
     node_params->kernelParams =
         rpc_resize_kernel_param_values(node_params->kernelParams, count + 1);
