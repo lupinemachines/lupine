@@ -62,7 +62,10 @@ jobs:
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      CUDA_SAMPLE_JOBS: 16
+      # Match the four vCPUs on g2-standard-4. Higher fan-out runs too many
+      # independent CUDA contexts on one L4 and causes device-unavailable
+      # cascades in otherwise passing cuBLAS and PyTorch tests.
+      CUDA_SAMPLE_JOBS: 4
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
       USE_SPOT: "false"
