@@ -1347,29 +1347,6 @@ CUresult cuIpcCloseMemHandle(CUdeviceptr dptr) {
   return return_value;
 }
 
-CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src, size_t ByteCount) {
-  lupine_route route = lupine_route_for_deviceptr(dst);
-  if (!lupine_deviceptrs_share_route(dst, src)) {
-    return lupine_cuMemcpyDtoD_via_client(dst, src, ByteCount, nullptr, false);
-  }
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUdeviceptr, CUdeviceptr, size_t);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuMemcpy", &return_value, dst, src, ByteCount)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuMemcpy) < 0 ||
-      rpc_write(conn, &dst, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &src, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
                       size_t ByteCount) {
@@ -3151,25 +3128,6 @@ CUresult cuEventSynchronize(CUevent hEvent) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
     return_value = lupine_sync_mapped_device_to_host();
-  return return_value;
-}
-
-CUresult cuEventDestroy_v2(CUevent hEvent) {
-  lupine_route route = lupine_route_for_event(hEvent);
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUevent);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventDestroy_v2",
-                                                  &return_value, hEvent)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cuEventDestroy_v2) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
 }
 
@@ -6791,14 +6749,6 @@ extern "C" CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
 
 #endif
 
-#ifdef cuMemcpy_ptds
-#undef cuMemcpy_ptds
-#endif
-extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
-                                  size_t ByteCount) {
-  return cuMemcpy(dst, src, ByteCount);
-}
-
 #ifdef cuMemcpyPeer_ptds
 #undef cuMemcpyPeer_ptds
 #endif
@@ -7402,7 +7352,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemsetD2D32", (void *)cuMemsetD2D32_v2},
     {"cuIpcOpenMemHandle", (void *)cuIpcOpenMemHandle_v2},
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
-    {"cuMemcpy_ptds", (void *)cuMemcpy},
     {"cuMemcpyPeer_ptds", (void *)cuMemcpyPeer},
     {"cuMemcpyPeerAsync_ptsz", (void *)cuMemcpyPeerAsync},
     {"cuMemsetD8Async_ptsz", (void *)cuMemsetD8Async},

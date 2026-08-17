@@ -2694,6 +2694,7 @@ CUresult cuMemHostRegister_v2(void *p, size_t bytesize, unsigned int Flags);
  */
 CUresult cuMemHostUnregister(void *p);
 /**
+ * @disabled client
  * @routingkey DEVICEPTR dst
  * @crossservercopy dst src ByteCount
  * @param dst SEND_ONLY
@@ -3563,6 +3564,7 @@ CUresult cuEventQuery(CUevent hEvent);
  */
 CUresult cuEventSynchronize(CUevent hEvent);
 /**
+ * @disabled client
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
@@ -4736,10 +4738,11 @@ CUresult cuSurfObjectDestroy(CUsurfObject surfObject);
 CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
                                      CUsurfObject surfObject);
 /**
+ * @disabled both
  * @param tensorMap SEND_RECV
  * @param tensorDataType SEND_ONLY
  * @param tensorRank SEND_ONLY
- * @param globalAddress SEND_RECV
+ * @param globalAddress SEND_ONLY
  * @param globalDim SEND_RECV
  * @param globalStrides SEND_RECV
  * @param boxDim SEND_RECV

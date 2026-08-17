@@ -26,8 +26,14 @@ static void lupine_pointer_attribute_cache_clear();
 #include "rpc.h"
 
 extern int rpc_size();
+CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
+                         size_t ByteCount);
 CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
+extern "C" CUresult
+lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
+                               size_t ByteCount, CUstream stream,
+                               bool async_copy);
 
 #ifdef CU_MEM_LOCATION_TYPE_HOST
 static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
@@ -806,6 +812,33 @@ extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
   return true;
 }
 
+static bool
+lupine_translate_client_host_ptr_to_server(CUdeviceptr ptr,
+                                            CUdeviceptr *translated,
+                                            CUdeviceptr *server_base = nullptr,
+                                            CUdeviceptr *device_base = nullptr) {
+  void *host = reinterpret_cast<void *>(ptr);
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(host);
+  if (it == lupine_mutable_host_allocations_locked().end() ||
+      it->second.server_host_ptr == 0 || it->second.local_cuda) {
+    return false;
+  }
+
+  uintptr_t client_base = reinterpret_cast<uintptr_t>(it->first);
+  uintptr_t client_addr = reinterpret_cast<uintptr_t>(host);
+  if (translated != nullptr) {
+    *translated = it->second.server_host_ptr + (client_addr - client_base);
+  }
+  if (server_base != nullptr) {
+    *server_base = it->second.server_host_ptr;
+  }
+  if (device_base != nullptr) {
+    *device_base = it->second.device_ptr;
+  }
+  return true;
+}
+
 static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
   void *host = reinterpret_cast<void *>(ptr);
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -833,6 +866,85 @@ static void lupine_mark_mapped_device_dirty(void *host) {
       !it->second.client_to_server_only) {
     it->second.device_dirty = true;
   }
+}
+
+static bool lupine_is_client_host_address(CUdeviceptr ptr) {
+  if (ptr == 0) {
+    return false;
+  }
+  long page_size = sysconf(_SC_PAGESIZE);
+  if (page_size <= 0) {
+    return false;
+  }
+  uintptr_t page = static_cast<uintptr_t>(ptr) &
+                   ~(static_cast<uintptr_t>(page_size) - 1);
+  unsigned char residency = 0;
+  return mincore(reinterpret_cast<void *>(page), page_size, &residency) == 0;
+}
+
+extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
+                             size_t ByteCount) {
+  if (ByteCount == 0) {
+    return CUDA_SUCCESS;
+  }
+
+  CUdeviceptr dst_rpc = dst;
+  CUdeviceptr src_rpc = src;
+  bool dst_host_alias =
+      lupine_translate_client_host_ptr_to_server(dst, &dst_rpc);
+  bool src_host_alias =
+      lupine_translate_client_host_ptr_to_server(src, &src_rpc);
+  bool dst_device = lupine_deviceptr_is_tracked(dst_rpc);
+  bool src_device = lupine_deviceptr_is_tracked(src_rpc);
+  bool dst_is_host =
+      dst_host_alias || (!dst_device && lupine_is_client_host_address(dst));
+  bool src_is_host =
+      src_host_alias || (!src_device && lupine_is_client_host_address(src));
+
+  if (dst_is_host && src_is_host) {
+    memmove(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
+            ByteCount);
+    return CUDA_SUCCESS;
+  }
+  if (src_is_host) {
+    return cuMemcpyHtoD_v2(dst_rpc, reinterpret_cast<const void *>(src),
+                           ByteCount);
+  }
+  if (dst_is_host) {
+    return cuMemcpyDtoH_v2(reinterpret_cast<void *>(dst), src_rpc, ByteCount);
+  }
+
+  lupine_route route = lupine_route_for_deviceptr(dst_rpc);
+  if (!lupine_deviceptrs_share_route(dst_rpc, src_rpc)) {
+    return lupine_cuMemcpyDtoD_via_client(dst_rpc, src_rpc, ByteCount, nullptr,
+                                          false);
+  }
+
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  using real_fn_t = CUresult (*)(CUdeviceptr, CUdeviceptr, size_t);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuMemcpy", &result, dst, src, ByteCount)) {
+    return result;
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cuMemcpy) < 0 ||
+      rpc_write(conn, &dst_rpc, sizeof(dst_rpc)) < 0 ||
+      rpc_write(conn, &src_rpc, sizeof(src_rpc)) < 0 ||
+      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
+#ifdef cuMemcpy_ptds
+#undef cuMemcpy_ptds
+#endif
+extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
+                                   size_t ByteCount) {
+  return cuMemcpy(dst, src, ByteCount);
 }
 
 CUresult lupine_sync_mapped_host_to_device_for_launch(
@@ -2188,6 +2300,13 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
 
   CUdeviceptr query_ptr = ptr;
   bool managed_alias = lupine_translate_managed_host_ptr(ptr, &query_ptr);
+  CUdeviceptr remote_host_base = 0;
+  CUdeviceptr remote_device_base = 0;
+  bool remote_host_alias = false;
+  if (!managed_alias) {
+    remote_host_alias = lupine_translate_client_host_ptr_to_server(
+        ptr, &query_ptr, &remote_host_base, &remote_device_base);
+  }
   lupine_route route = lupine_route_for_deviceptr(query_ptr);
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(void *, CUpointer_attribute, CUdeviceptr);
@@ -2209,9 +2328,15 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
   if (return_value == CUDA_SUCCESS) {
     memcpy(data, value, value_size);
-    if (managed_alias && attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+    if ((managed_alias || remote_host_alias) &&
+        attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
       void *host = reinterpret_cast<void *>(ptr);
       memcpy(data, &host, sizeof(host));
+    } else if (remote_host_alias &&
+               attribute == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+      CUdeviceptr device_alias =
+          remote_device_base + (query_ptr - remote_host_base);
+      memcpy(data, &device_alias, sizeof(device_alias));
     } else if (managed_alias && attribute == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
       int is_managed = 1;
       memcpy(data, &is_managed, sizeof(is_managed));
@@ -2231,7 +2356,9 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
   }
 
   CUdeviceptr target_ptr = ptr;
-  lupine_translate_managed_host_ptr(ptr, &target_ptr);
+  if (!lupine_translate_managed_host_ptr(ptr, &target_ptr)) {
+    lupine_translate_client_host_ptr_to_server(ptr, &target_ptr);
+  }
   lupine_route route = lupine_route_for_deviceptr(target_ptr);
   if (lupine_route_is_local(route)) {
     using real_fn_t =
@@ -2322,6 +2449,13 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
 
   CUdeviceptr query_ptr = ptr;
   bool managed_alias = lupine_translate_managed_host_ptr(ptr, &query_ptr);
+  CUdeviceptr remote_host_base = 0;
+  CUdeviceptr remote_device_base = 0;
+  bool remote_host_alias = false;
+  if (!managed_alias) {
+    remote_host_alias = lupine_translate_client_host_ptr_to_server(
+        ptr, &query_ptr, &remote_host_base, &remote_device_base);
+  }
   lupine_route route = lupine_route_for_deviceptr(query_ptr);
   if (lupine_route_is_local(route)) {
     using real_fn_t =
@@ -2394,8 +2528,13 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   // aliases are recomputed for the queried pointer on a hit.
   lupine_pointer_attribute_cache_key cache_key;
   std::vector<std::vector<unsigned char>> cached_values;
-  bool cacheable =
-      managed_alias && lupine_managed_host_alias_base(ptr, &cache_key.ptr);
+  bool cacheable = false;
+  if (managed_alias) {
+    cacheable = lupine_managed_host_alias_base(ptr, &cache_key.ptr);
+  } else if (remote_host_alias) {
+    cache_key.ptr = remote_host_base;
+    cacheable = true;
+  }
   if (cacheable) {
     cache_key.attributes.assign(attributes, attributes + numAttributes);
     if (lupine_pointer_attribute_cache().find(cache_key, cached_values)) {
@@ -2404,12 +2543,20 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
           return CUDA_ERROR_INVALID_VALUE;
         }
         memcpy(data[i], cached_values[i].data(), cached_values[i].size());
-        if (attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+        if ((managed_alias || remote_host_alias) &&
+            attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
           void *host = reinterpret_cast<void *>(ptr);
           memcpy(data[i], &host, sizeof(host));
-        } else if (attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+        } else if (managed_alias &&
+                   attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
           memcpy(data[i], &query_ptr, sizeof(query_ptr));
-        } else if (attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
+        } else if (remote_host_alias &&
+                   attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+          CUdeviceptr device_alias =
+              remote_device_base + (query_ptr - remote_host_base);
+          memcpy(data[i], &device_alias, sizeof(device_alias));
+        } else if (managed_alias &&
+                   attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
           int is_managed = 1;
           memcpy(data[i], &is_managed, sizeof(is_managed));
         }
@@ -2457,9 +2604,15 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
         return CUDA_ERROR_INVALID_VALUE;
       }
       memcpy(data[i], values[i].data(), values[i].size());
-      if (managed_alias && attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+      if ((managed_alias || remote_host_alias) &&
+          attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
         void *host = reinterpret_cast<void *>(ptr);
         memcpy(data[i], &host, sizeof(host));
+      } else if (remote_host_alias &&
+                 attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+        CUdeviceptr device_alias =
+            remote_device_base + (query_ptr - remote_host_base);
+        memcpy(data[i], &device_alias, sizeof(device_alias));
       } else if (managed_alias &&
                  attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
         int is_managed = 1;

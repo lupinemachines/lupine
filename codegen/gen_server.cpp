@@ -8812,6 +8812,8 @@ static const std::unordered_map<int, RequestHandler> opHandlers = {
      handle_nvmlDeviceGetNvLinkRemoteDeviceType},
     {RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2,
      handle_nvmlDeviceGetNvLinkRemotePciInfo_v2},
+    {RPC_nvmlDeviceGetCudaComputeCapability,
+     handle_nvmlDeviceGetCudaComputeCapability},
 };
 
 RequestHandler get_handler(const int op) {

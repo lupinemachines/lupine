@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <shared_mutex>
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
 #include "cuda_compat.h"
@@ -41,6 +42,7 @@ struct lupine_event_table {
 typedef conn_t *(*lupine_event_conn_resolver)(CUevent event);
 
 void lupine_event_note_recorded(lupine_event_table *table, CUevent event);
+void lupine_event_note_destroyed(lupine_event_table *table, CUevent event);
 bool lupine_event_query_needed(lupine_event_table *table, CUevent event,
                                uint64_t *recorded);
 uint32_t lupine_event_collect_query_prefetch(
@@ -56,6 +58,8 @@ void lupine_event_note_dtoh_drained(lupine_event_table *table,
                                     uint64_t drained);
 
 void lupine_note_event_recorded(CUevent event);
+void lupine_note_event_destroyed(CUevent event);
+std::shared_mutex &lupine_event_lifecycle_mutex();
 bool lupine_event_query_needed(CUevent event, uint64_t *recorded);
 uint32_t lupine_collect_event_query_prefetch(CUevent exclude, conn_t *conn,
                                              CUevent *events,

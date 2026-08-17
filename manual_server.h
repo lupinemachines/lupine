@@ -89,5 +89,8 @@ int handle_manual_cuGraphLaunch(conn_t *conn);
 int handle_manual_cuEventSynchronize(conn_t *conn);
 int handle_manual_cuOccupancyMaxPotentialBlockSize(conn_t *conn,
                                                    bool with_flags);
+#if CUDA_VERSION >= 12000
+int handle_manual_cuTensorMapEncodeTiled(conn_t *conn);
+#endif
 
 #endif

@@ -1202,3 +1202,32 @@ nvmlDeviceGetNvLinkRemotePciInfo_v2(nvmlDevice_t device, unsigned int link,
   return lupine_rpc_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn, device, link,
                                                         pci);
 }
+
+static nvmlReturn_t
+lupine_rpc_nvmlDeviceGetCudaComputeCapability(conn_t *conn, nvmlDevice_t device,
+                                              int *major, int *minor) {
+  nvmlReturn_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_nvmlDeviceGetCudaComputeCapability) <
+          0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, major, sizeof(int)) < 0 ||
+      rpc_read(conn, minor, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetCudaComputeCapability(nvmlDevice_t device,
+                                                           int *major,
+                                                           int *minor) {
+  if (major == nullptr || minor == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetCudaComputeCapability(conn, device, major,
+                                                       minor);
+}
