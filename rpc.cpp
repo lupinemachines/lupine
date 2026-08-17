@@ -768,10 +768,94 @@ int rpc_read_func_param_values(conn_t *conn, void ***values,
       });
 }
 
+template <typename Query>
+static int rpc_read_launch_param_values(conn_t *conn, void ***values,
+                                        CUresult *result, Query query) {
+  if (conn == nullptr || values == nullptr || result == nullptr) {
+    return -1;
+  }
+
+  *values = nullptr;
+  *result = CUDA_SUCCESS;
+  uint32_t count = 0;
+  if (rpc_read(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+
+  std::vector<size_t> offsets(count);
+  std::vector<size_t> sizes(count);
+  if (count != 0 &&
+      (rpc_read(conn, offsets.data(), offsets.size() * sizeof(offsets[0])) <
+           0 ||
+       rpc_read(conn, sizes.data(), sizes.size() * sizeof(sizes[0])) < 0)) {
+    return -1;
+  }
+
+  for (size_t i = 0; i < count; ++i) {
+    size_t expected_offset = 0;
+    size_t expected_size = 0;
+    CUresult query_result = *result == CUDA_SUCCESS
+                                ? query(i, &expected_offset, &expected_size)
+                                : CUDA_ERROR_INVALID_VALUE;
+    if (*result == CUDA_SUCCESS &&
+        (query_result != CUDA_SUCCESS || offsets[i] != expected_offset ||
+         sizes[i] != expected_size)) {
+      *result = query_result == CUDA_SUCCESS ? CUDA_ERROR_INVALID_VALUE
+                                             : query_result;
+    }
+    if (*result == CUDA_SUCCESS) {
+      *values = rpc_resize_kernel_param_values(*values, i + 1);
+      (*values)[i] = rpc_alloc_kernel_param_value(sizes[i]);
+      if (sizes[i] != 0 && rpc_read(conn, (*values)[i], sizes[i]) < 0) {
+        rpc_free_kernel_param_values(*values);
+        *values = nullptr;
+        return -1;
+      }
+    } else if (rpc_drain(conn, sizes[i]) < 0) {
+      rpc_free_kernel_param_values(*values);
+      *values = nullptr;
+      return -1;
+    }
+  }
+
+  if (*result == CUDA_SUCCESS) {
+    size_t terminal_offset = 0;
+    size_t terminal_size = 0;
+    CUresult terminal_result = query(count, &terminal_offset, &terminal_size);
+    if (terminal_result != CUDA_ERROR_INVALID_VALUE) {
+      *result = terminal_result == CUDA_SUCCESS ? CUDA_ERROR_INVALID_VALUE
+                                                : terminal_result;
+    }
+  }
+  if (*result != CUDA_SUCCESS) {
+    rpc_free_kernel_param_values(*values);
+    *values = nullptr;
+  }
+  return 0;
+}
+
+int rpc_read_func_launch_param_values(conn_t *conn, void ***values,
+                                      CUfunction function, CUresult *result) {
+  return rpc_read_launch_param_values(
+      conn, values, result,
+      [function](size_t index, size_t *offset, size_t *size) {
+        return cuFuncGetParamInfo(function, index, offset, size);
+      });
+}
+
 #if CUDA_VERSION >= 12000
 int rpc_read_kernel_param_values(conn_t *conn, void ***values, CUkernel kernel,
                                  CUresult *result) {
   return rpc_read_param_values(
+      conn, values, result,
+      [kernel](size_t index, size_t *offset, size_t *size) {
+        return cuKernelGetParamInfo(kernel, index, offset, size);
+      });
+}
+
+int rpc_read_kernel_launch_param_values(conn_t *conn, void ***values,
+                                        CUkernel kernel, CUresult *result) {
+  return rpc_read_launch_param_values(
       conn, values, result,
       [kernel](size_t index, size_t *offset, size_t *size) {
         return cuKernelGetParamInfo(kernel, index, offset, size);

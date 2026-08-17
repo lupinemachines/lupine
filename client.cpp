@@ -3801,13 +3801,10 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
       rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
       (numOptions != 0 &&
-       rpc_write(conn, options, numOptions * sizeof(*options)) < 0)) {
+       (rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+        rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) <
+            0))) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  for (unsigned int i = 0; i < numOptions; ++i) {
-    if (rpc_write(conn, &optionValues[i], sizeof(optionValues[i])) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
   }
   if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, stateOut, sizeof(*stateOut)) < 0 ||
@@ -3854,13 +3851,10 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
       (numOptions != 0 &&
-       rpc_write(conn, options, numOptions * sizeof(*options)) < 0)) {
+       (rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+        rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) <
+            0))) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  for (unsigned int i = 0; i < numOptions; ++i) {
-    if (rpc_write(conn, &optionValues[i], sizeof(optionValues[i])) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
   }
   if (rpc_wait_for_response(conn) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
@@ -3915,40 +3909,35 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   if (file_mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
+  struct file_mapping_guard {
+    void *mapping;
+    size_t size;
+    ~file_mapping_guard() { munmap(mapping, size); }
+  } mapping_guard{file_mapping, mapped_file_size};
   file_payload = file_mapping;
   file_size = mapped_file_size;
   has_file_data = 1;
-  bool failed =
-      conn == nullptr ||
+  if (conn == nullptr ||
       (numOptions != 0 && (options == nullptr || optionValues == nullptr)) ||
-      rpc_write_start_request(conn, RPC_cuLinkAddFile_v2) < 0;
-  if (!failed &&
-      (rpc_write(conn, &state, sizeof(state)) < 0 ||
-       rpc_write(conn, &type, sizeof(type)) < 0 ||
-       rpc_write(conn, &path_len, sizeof(path_len)) < 0 ||
-       (path_len != 0 && rpc_write(conn, path, path_len) < 0) ||
-       rpc_write(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
-       rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
-       (file_size != 0 &&
-        rpc_write(conn, file_payload, mapped_file_size) < 0) ||
-       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-       (numOptions != 0 &&
-        rpc_write(conn, options, numOptions * sizeof(*options)) < 0))) {
-    failed = true;
+      rpc_write_start_request(conn, RPC_cuLinkAddFile_v2) < 0 ||
+      rpc_write(conn, &state, sizeof(state)) < 0 ||
+      rpc_write(conn, &type, sizeof(type)) < 0 ||
+      rpc_write(conn, &path_len, sizeof(path_len)) < 0 ||
+      (path_len != 0 && rpc_write(conn, path, path_len) < 0) ||
+      rpc_write(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
+      rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
+      (file_size != 0 && rpc_write(conn, file_payload, mapped_file_size) < 0) ||
+      rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
+      (numOptions != 0 &&
+       (rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+        rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) <
+            0))) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  for (unsigned int i = 0; !failed && i < numOptions; ++i) {
-    failed = rpc_write(conn, &optionValues[i], sizeof(optionValues[i])) < 0;
-  }
-  if (!failed && (rpc_wait_for_response(conn) < 0 ||
-                  rpc_read_jit_outputs(conn, bindings) < 0 ||
-                  rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-                  rpc_read_end(conn) < 0)) {
-    failed = true;
-  }
-  if (file_mapping != MAP_FAILED) {
-    munmap(file_mapping, mapped_file_size);
-  }
-  if (failed) {
+  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_read_jit_outputs(conn, bindings) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
@@ -4752,14 +4741,10 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
       rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
       (numJitOptions != 0 &&
-       rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0)) {
+       (rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
+        rpc_write(conn, jitOptionsValues,
+                  numJitOptions * sizeof(*jitOptionsValues)) < 0))) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  for (unsigned int i = 0; i < numJitOptions; ++i) {
-    if (rpc_write(conn, &jitOptionsValues[i], sizeof(jitOptionsValues[i])) <
-        0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
   }
   if (rpc_write(conn, &numLibraryOptions, sizeof(numLibraryOptions)) < 0 ||
       (numLibraryOptions != 0 &&
@@ -4767,14 +4752,18 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
                  numLibraryOptions * sizeof(*libraryOptions)) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  static constexpr uintptr_t null_option_value = UINTPTR_MAX;
-  for (unsigned int i = 0; i < numLibraryOptions; ++i) {
-    const void *value =
-        libraryOptionValues == nullptr
-            ? static_cast<const void *>(&null_option_value)
-            : static_cast<const void *>(&libraryOptionValues[i]);
-    if (rpc_write(conn, value, sizeof(uintptr_t)) < 0) {
+  if (libraryOptionValues != nullptr) {
+    if (numLibraryOptions != 0 &&
+        rpc_write(conn, libraryOptionValues,
+                  numLibraryOptions * sizeof(*libraryOptionValues)) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  } else {
+    static constexpr uintptr_t null_option_value = UINTPTR_MAX;
+    for (unsigned int i = 0; i < numLibraryOptions; ++i) {
+      if (rpc_write(conn, &null_option_value, sizeof(null_option_value)) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
     }
   }
   if (rpc_wait_for_response(conn) < 0 ||
@@ -5001,7 +4990,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   bool used_managed_mapping = false;
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   std::vector<CUdeviceptr> translated_params(param_count);
-  std::vector<void *> rpc_params(param_count);
+  std::vector<struct iovec> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
       kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data(), &used_managed_mapping);
@@ -5026,25 +5015,17 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0) {
+      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
+      (param_count != 0 &&
+       (rpc_write(conn, param_offsets.data(),
+                  param_offsets.size() * sizeof(param_offsets[0])) < 0 ||
+        rpc_write(conn, param_sizes.data(),
+                  param_sizes.size() * sizeof(param_sizes[0])) < 0)) ||
+      rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  static constexpr CUresult param_success = CUDA_SUCCESS;
-  for (size_t i = 0; i < param_sizes.size(); ++i) {
-    if (rpc_write(conn, &param_offsets[i], sizeof(param_offsets[i])) < 0 ||
-        rpc_write(conn, &param_sizes[i], sizeof(param_sizes[i])) < 0 ||
-        rpc_write(conn, &param_success, sizeof(param_success)) < 0 ||
-        rpc_write(conn, rpc_params[i], param_sizes[i]) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-  size_t terminal_offset = 0;
-  size_t terminal_size = 0;
-  CUresult param_result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_write(conn, &terminal_offset, sizeof(terminal_offset)) < 0 ||
-      rpc_write(conn, &terminal_size, sizeof(terminal_size)) < 0 ||
-      rpc_write(conn, &param_result, sizeof(param_result)) < 0 ||
-      rpc_write_end(conn) < 0) {
+  if (rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (sync_after_launch) {
@@ -5133,7 +5114,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   bool used_managed_mapping = false;
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   std::vector<CUdeviceptr> translated_params(param_count);
-  std::vector<void *> rpc_params(param_count);
+  std::vector<struct iovec> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
       kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data(), &used_managed_mapping);
@@ -5159,24 +5140,14 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
        rpc_write(conn, config->attrs,
                  config->numAttrs * sizeof(config->attrs[0])) < 0) ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
-      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  static constexpr CUresult param_success = CUDA_SUCCESS;
-  for (size_t i = 0; i < param_sizes.size(); ++i) {
-    if (rpc_write(conn, &param_offsets[i], sizeof(param_offsets[i])) < 0 ||
-        rpc_write(conn, &param_sizes[i], sizeof(param_sizes[i])) < 0 ||
-        rpc_write(conn, &param_success, sizeof(param_success)) < 0 ||
-        rpc_write(conn, rpc_params[i], param_sizes[i]) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-  size_t terminal_offset = 0;
-  size_t terminal_size = 0;
-  CUresult param_result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_write(conn, &terminal_offset, sizeof(terminal_offset)) < 0 ||
-      rpc_write(conn, &terminal_size, sizeof(terminal_size)) < 0 ||
-      rpc_write(conn, &param_result, sizeof(param_result)) < 0) {
+      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
+      (param_count != 0 &&
+       (rpc_write(conn, param_offsets.data(),
+                  param_offsets.size() * sizeof(param_offsets[0])) < 0 ||
+        rpc_write(conn, param_sizes.data(),
+                  param_sizes.size() * sizeof(param_sizes[0])) < 0)) ||
+      rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (fire_and_forget) {
@@ -5242,7 +5213,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   std::vector<CUdeviceptr> translated_params(param_count);
-  std::vector<void *> rpc_params(param_count);
+  std::vector<struct iovec> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
       kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data());
@@ -5263,25 +5234,17 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0) {
+      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
+      rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
+      (param_count != 0 &&
+       (rpc_write(conn, param_offsets.data(),
+                  param_offsets.size() * sizeof(param_offsets[0])) < 0 ||
+        rpc_write(conn, param_sizes.data(),
+                  param_sizes.size() * sizeof(param_sizes[0])) < 0)) ||
+      rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  static constexpr CUresult param_success = CUDA_SUCCESS;
-  for (size_t i = 0; i < param_sizes.size(); ++i) {
-    if (rpc_write(conn, &param_offsets[i], sizeof(param_offsets[i])) < 0 ||
-        rpc_write(conn, &param_sizes[i], sizeof(param_sizes[i])) < 0 ||
-        rpc_write(conn, &param_success, sizeof(param_success)) < 0 ||
-        rpc_write(conn, rpc_params[i], param_sizes[i]) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-  size_t terminal_offset = 0;
-  size_t terminal_size = 0;
-  CUresult param_result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_write(conn, &terminal_offset, sizeof(terminal_offset)) < 0 ||
-      rpc_write(conn, &terminal_size, sizeof(terminal_size)) < 0 ||
-      rpc_write(conn, &param_result, sizeof(param_result)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

@@ -10,6 +10,8 @@
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
 #endif
+
+struct iovec;
 #ifdef cuMemPrefetchAsync_ptsz
 #undef cuMemPrefetchAsync_ptsz
 #endif
@@ -32,5 +34,5 @@ extern "C" CUresult lupine_sync_mapped_device_to_host();
 
 CUresult lupine_sync_mapped_host_to_device_for_launch(
     void *const *kernel_params, const size_t *sizes, uint32_t count,
-    CUdeviceptr *translated_params, void **rpc_params,
+    CUdeviceptr *translated_params, struct iovec *rpc_params,
     bool *used_managed_mapping = nullptr);

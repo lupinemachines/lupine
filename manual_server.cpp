@@ -2377,11 +2377,12 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
 #if CUDA_VERSION >= 12000
   int read_result =
       kernel_handle
-          ? rpc_read_kernel_param_values(
+          ? rpc_read_kernel_launch_param_values(
                 conn, &params, reinterpret_cast<CUkernel>(f), &param_result)
-          : rpc_read_func_param_values(conn, &params, f, &param_result);
+          : rpc_read_func_launch_param_values(conn, &params, f, &param_result);
 #else
-  int read_result = rpc_read_func_param_values(conn, &params, f, &param_result);
+  int read_result =
+      rpc_read_func_launch_param_values(conn, &params, f, &param_result);
 #endif
   if (read_result < 0) {
     return -1;
@@ -2431,11 +2432,12 @@ int handle_manual_cuLaunchKernelEx(conn_t *conn) {
 #if CUDA_VERSION >= 12000
   int read_result =
       kernel_handle
-          ? rpc_read_kernel_param_values(
+          ? rpc_read_kernel_launch_param_values(
                 conn, &params, reinterpret_cast<CUkernel>(f), &param_result)
-          : rpc_read_func_param_values(conn, &params, f, &param_result);
+          : rpc_read_func_launch_param_values(conn, &params, f, &param_result);
 #else
-  int read_result = rpc_read_func_param_values(conn, &params, f, &param_result);
+  int read_result =
+      rpc_read_func_launch_param_values(conn, &params, f, &param_result);
 #endif
   if (read_result < 0) {
     return -1;
@@ -2502,12 +2504,13 @@ int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {
   void **params = nullptr;
   int read_result;
 #if CUDA_VERSION >= 12000
-  read_result = kernel_handle
-                    ? rpc_read_kernel_param_values(
-                          conn, &params, reinterpret_cast<CUkernel>(f), &result)
-                    : rpc_read_func_param_values(conn, &params, f, &result);
+  read_result =
+      kernel_handle
+          ? rpc_read_kernel_launch_param_values(
+                conn, &params, reinterpret_cast<CUkernel>(f), &result)
+          : rpc_read_func_launch_param_values(conn, &params, f, &result);
 #else
-  read_result = rpc_read_func_param_values(conn, &params, f, &result);
+  read_result = rpc_read_func_launch_param_values(conn, &params, f, &result);
 #endif
   if (read_result < 0) {
     return -1;
