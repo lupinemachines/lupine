@@ -642,8 +642,15 @@ static std::mutex &lupine_graph_kernel_node_params_mutex() {
 }
 
 struct lupine_graph_kernel_node_params_storage {
-  std::vector<std::vector<unsigned char>> values;
-  std::vector<void *> params;
+  size_t count = 0;
+  void **params = nullptr;
+
+  ~lupine_graph_kernel_node_params_storage() {
+    for (size_t i = 0; i < count; ++i) {
+      std::free(params[i]);
+    }
+    std::free(params);
+  }
 };
 
 static std::unordered_map<
@@ -5846,11 +5853,15 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
                                 : param_result;
         break;
       }
-      kernel_params->values.emplace_back(param_size);
-      if (rpc_read(conn, kernel_params->values.back().data(), param_size) < 0) {
+      kernel_params->params = static_cast<void **>(std::realloc(
+          kernel_params->params,
+          (kernel_params->count + 1) * sizeof(*kernel_params->params)));
+      kernel_params->params[kernel_params->count] = std::malloc(param_size);
+      if (rpc_read(conn, kernel_params->params[kernel_params->count],
+                   param_size) < 0) {
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
       }
-      kernel_params->params.push_back(kernel_params->values.back().data());
+      ++kernel_params->count;
     }
   }
   if (rpc_read_end(conn) < 0) {
@@ -5875,7 +5886,7 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
   std::lock_guard<std::mutex> lock(lupine_graph_kernel_node_params_mutex());
   auto &slot = lupine_graph_kernel_node_params_cache()[hNode];
   slot = std::move(kernel_params);
-  nodeParams->kernelParams = slot->params.data();
+  nodeParams->kernelParams = slot->params;
   return return_value;
 }
 
