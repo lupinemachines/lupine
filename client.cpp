@@ -3783,8 +3783,7 @@ lupine_capture_jit_client_bindings(unsigned int numOptions,
 extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
                                     CUjit_option *options, void **optionValues,
                                     CUlinkState *stateOut) {
-  if (stateOut == nullptr ||
-      (numOptions != 0 && (options == nullptr || optionValues == nullptr))) {
+  if (stateOut == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   lupine_route route = lupine_route_for_default();
@@ -3801,10 +3800,8 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
       rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
       rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
-      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, stateOut, sizeof(*stateOut)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -3839,7 +3836,6 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   auto bindings =
       lupine_capture_jit_client_bindings(numOptions, options, optionValues);
   if (conn == nullptr ||
-      (numOptions != 0 && (options == nullptr || optionValues == nullptr)) ||
       rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_write(conn, &type, sizeof(type)) < 0 ||
@@ -3849,10 +3845,8 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, name, name_len) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
       rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
-      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -3909,7 +3903,6 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   file_size = mapped_file_size;
   has_file_data = 1;
   if (conn == nullptr ||
-      (numOptions != 0 && (options == nullptr || optionValues == nullptr)) ||
       rpc_write_start_request(conn, RPC_cuLinkAddFile_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_write(conn, &type, sizeof(type)) < 0 ||
