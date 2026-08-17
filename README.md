@@ -315,7 +315,7 @@ annotations_header = find_header_file("annotations.h")
 ### Run codegen
 
 ```bash
-cd codegen && python3 ./codegen.py
+uv run codegen/codegen.py
 ```
 
 Ensure there are no errors in the output of the codegen.

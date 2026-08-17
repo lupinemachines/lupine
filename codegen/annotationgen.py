@@ -1,3 +1,9 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["cxxheaderparser"]
+# ///
+import os
+
 from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
 from cxxheaderparser.types import Type, Pointer, Array
@@ -84,4 +90,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # annotations.h is read and appended to CWD-relative.
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     main()

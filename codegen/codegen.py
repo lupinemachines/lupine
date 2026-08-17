@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["clang-format==18.1.3", "cxxheaderparser"]
+# ///
 from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
 from cxxheaderparser.types import Type, Pointer, Parameter, Function, Array
@@ -6,6 +10,7 @@ from dataclasses import dataclass
 import io
 import os
 import glob
+import subprocess
 import zlib
 from ops import (
     NullableOperation,
@@ -1831,6 +1836,21 @@ def main():
         f.write("    return it->second;\n")
         f.write("}\n")
 
+    subprocess.run(
+        [
+            "clang-format",
+            "-i",
+            "gen_client.cpp",
+            "gen_nvml_client.inc",
+            "gen_nvml_server.h",
+            "gen_nvml_server.inc",
+            "gen_server.cpp",
+        ],
+        check=True,
+    )
+
 
 if __name__ == "__main__":
+    # Inputs (annotations.h) and gen_* outputs are CWD-relative.
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     main()
