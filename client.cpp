@@ -4762,23 +4762,25 @@ static void lupine_prefill_library_attribute_snapshot(CUlibrary library,
       rpc_read_buffer(conn, &result, sizeof(result)) < 0) {
     return;
   }
+  if (result != CUDA_SUCCESS) {
+    (void)rpc_read_end(conn);
+    return;
+  }
 #if CUDA_VERSION >= 12040
   if (rpc_read_buffer(conn, &remote_device, sizeof(remote_device)) < 0) {
     return;
   }
 #endif
-  if (result != CUDA_SUCCESS) {
-    (void)rpc_read_end(conn);
-    return;
-  }
 
   unsigned int kernel_count = 0;
-  if (rpc_read_buffer(conn, &result, sizeof(result)) < 0 ||
-      rpc_read_buffer(conn, &kernel_count, sizeof(kernel_count)) < 0) {
+  if (rpc_read_buffer(conn, &result, sizeof(result)) < 0) {
     return;
   }
   if (result != CUDA_SUCCESS) {
     (void)rpc_read_end(conn);
+    return;
+  }
+  if (rpc_read_buffer(conn, &kernel_count, sizeof(kernel_count)) < 0) {
     return;
   }
   if (kernel_count > 1024 * 1024) {
