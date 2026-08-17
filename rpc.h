@@ -39,28 +39,18 @@ struct rpc_http2_read_stats {
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 
-// CUDA currently caps a kernel's packed parameter area below 64 KiB. These
-// bounds also cover the pathological case where each byte is reported as a
-// separate parameter record.
-static constexpr size_t LUPINE_RPC_MAX_KERNEL_PARAM_BYTES = 64 * 1024;
-static constexpr size_t LUPINE_RPC_MAX_KERNEL_PARAM_COUNT = 64 * 1024;
-
-static constexpr size_t rpc_max_kernel_param_layout_copy_size() {
-  return sizeof(CUresult) + LUPINE_RPC_MAX_KERNEL_PARAM_COUNT *
-                                (sizeof(CUresult) + 2 * sizeof(size_t));
-}
-
-static constexpr size_t rpc_max_kernel_param_values_copy_size() {
-  return rpc_max_kernel_param_layout_copy_size() +
-         LUPINE_RPC_MAX_KERNEL_PARAM_BYTES;
-}
-
 static constexpr size_t rpc_kernel_node_params_copy_size() {
   size_t size = sizeof(CUfunction) + 7 * sizeof(unsigned int);
 #if CUDA_VERSION >= 12000
   size += sizeof(CUkernel) + sizeof(CUcontext);
 #endif
   return size;
+}
+
+static constexpr size_t rpc_param_info_buffer_size() {
+  return (sizeof(CUresult) + alignof(size_t) - 1) / alignof(size_t) *
+             alignof(size_t) +
+         2 * sizeof(size_t);
 }
 
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
@@ -117,12 +107,14 @@ extern int rpc_wait_for_response(conn_t *conn);
 extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
-// Reserves the request-owned storage used by subsequent rpc_write_copy calls.
-// The reservation must be made once, before the first copy in an RPC, and is
-// released by write completion, reset, abort, or connection destruction. An
-// allocation failure is fatal because the partially serialized CUDA state is
-// not recoverable.
+// Reserves the request-owned storage used by subsequent rpc_write_buffer and
+// rpc_write_copy calls. The reservation must be made once before the first
+// copied write in an RPC and is released with the request.
 extern int rpc_copy_alloc(conn_t *conn, const size_t size);
+// Returns the next request-owned span and advances the copy cursor. A later
+// call may grow the arena, so callers must queue or consume the returned span
+// before requesting another one.
+extern void *rpc_write_buffer(conn_t *conn, const size_t size);
 // Copies data into request-owned storage. Unlike rpc_write, the caller may
 // modify or release its source buffer before rpc_write_end returns.
 extern int rpc_write_copy(conn_t *conn, const void *data, const size_t size);

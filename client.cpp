@@ -4877,11 +4877,15 @@ static CUresult lupine_resolve_launch_function_for_route(
 static size_t
 lupine_rpc_param_values_copy_size(const std::vector<size_t> &param_sizes,
                                   size_t prefix_size) {
-  size_t total = prefix_size + sizeof(CUresult);
+  auto add_param_info = [](size_t size) {
+    return (size + alignof(size_t) - 1) / alignof(size_t) * alignof(size_t) +
+           rpc_param_info_buffer_size();
+  };
+  size_t total = prefix_size;
   for (size_t size : param_sizes) {
-    total += sizeof(CUresult) + 2 * sizeof(size_t) + size;
+    total = add_param_info(total) + size;
   }
-  return total;
+  return add_param_info(total);
 }
 
 extern "C" CUresult
@@ -5803,10 +5807,8 @@ lupine_write_kernel_node_params(conn_t *conn,
   if (conn == nullptr || nodeParams == nullptr) {
     return -1;
   }
-  constexpr size_t copy_size = rpc_kernel_node_params_copy_size() +
-                               rpc_max_kernel_param_values_copy_size();
   CUfunction function = nodeParams->func;
-  if (rpc_copy_alloc(conn, copy_size) < 0 ||
+  if (rpc_copy_alloc(conn, rpc_kernel_node_params_copy_size()) < 0 ||
       rpc_write_kernel_node_params(conn, nodeParams, function) < 0) {
     return -1;
   }
@@ -5840,8 +5842,7 @@ static int lupine_write_graph_node_params(conn_t *conn,
   }
   size_t copy_size = sizeof(*nodeParams);
   if (nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL) {
-    copy_size += sizeof(nodeParams->kernel.func) +
-                 rpc_max_kernel_param_values_copy_size();
+    copy_size += sizeof(nodeParams->kernel.func);
   }
   if (rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write_copy(conn, nodeParams, sizeof(*nodeParams)) < 0) {

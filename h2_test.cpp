@@ -432,8 +432,8 @@ void test_abort_failed_transport_with_queued_data() {
   std::array<char, 64 * 1024> payload = {};
   size_t queued = 0;
   for (;;) {
-    ssize_t sent = send(connection.connfd, payload.data(), payload.size(),
-                        MSG_NOSIGNAL);
+    ssize_t sent =
+        send(connection.connfd, payload.data(), payload.size(), MSG_NOSIGNAL);
     if (sent > 0) {
       queued += static_cast<size_t>(sent);
       continue;
@@ -917,35 +917,49 @@ void test_rpc_write_copy_uses_request_buffer() {
   require(received == expected, "copied write payload mismatch");
 }
 
-void test_rpc_write_copy_rejects_overflow_without_moving_buffer() {
+void test_rpc_write_buffer_grows_and_rebases_queued_copies() {
   h2_pair pair = make_pair();
   require(rpc_write_start_response(&pair.client, 21) == 0,
-          "overflow response start failed");
+          "growing response start failed");
   int first = 17;
   int second = 19;
   require(rpc_write_copy(&pair.client, &first, sizeof(first)) < 0,
           "rpc_write_copy accepted data without a reservation");
   require(rpc_copy_alloc(&pair.client, sizeof(first)) == 0,
-          "overflow copy allocation failed");
+          "growing copy allocation failed");
   require(rpc_copy_alloc(&pair.client, sizeof(first)) < 0,
           "rpc_copy_alloc replaced an active reservation");
   require(rpc_write_copy(&pair.client, nullptr, sizeof(first)) < 0,
           "rpc_write_copy accepted a null source");
   require(rpc_write_copy(&pair.client, &first, sizeof(first)) == 0,
-          "overflow first copy failed");
-  void *base = pair.client.write_queue[3].iov.iov_base;
-  require(rpc_write_copy(&pair.client, &second, sizeof(second)) < 0,
-          "undersized copy allocation accepted an overflow");
-  require(pair.client.write_queue_count == 4,
-          "failed copy appended a queue entry");
-  require(pair.client.write_copy_offset == sizeof(first),
-          "failed copy advanced the request cursor");
-  require(pair.client.write_queue[3].iov.iov_base == base,
-          "failed copy invalidated an earlier iovec");
-  require(*static_cast<int *>(base) == first,
-          "failed copy changed earlier copied bytes");
+          "growing first copy failed");
+  require(rpc_write_copy(&pair.client, &second, sizeof(second)) == 0,
+          "growing second copy failed");
+  auto *direct =
+      static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(int)));
+  require(direct != nullptr, "direct write buffer allocation failed");
+  *direct = 23;
+  require(rpc_write(&pair.client, direct, sizeof(*direct)) == 0,
+          "direct write buffer queue failed");
+  require(pair.client.write_queue_count == 6,
+          "growing copy queue count mismatch");
+  require(pair.client.write_copy_offset == 3 * sizeof(first),
+          "growing copy cursor mismatch");
+  require(pair.client.write_queue[3].iov.iov_base ==
+                  pair.client.write_copy_buffer &&
+              pair.client.write_queue[4].iov.iov_base ==
+                  pair.client.write_copy_buffer + sizeof(first) &&
+              pair.client.write_queue[5].iov.iov_base ==
+                  pair.client.write_copy_buffer + 2 * sizeof(first),
+          "growing copy did not rebase queued iovecs");
+  require(
+      *static_cast<int *>(pair.client.write_queue[3].iov.iov_base) == first &&
+          *static_cast<int *>(pair.client.write_queue[4].iov.iov_base) ==
+              second &&
+          *static_cast<int *>(pair.client.write_queue[5].iov.iov_base) == 23,
+      "growing copy changed buffered values");
   require(rpc_write_end(&pair.client) == 21,
-          "overflow response write end failed");
+          "growing response write end failed");
   require(pair.client.write_copy_buffer == nullptr,
           "rpc_write_end retained the copy buffer");
 
@@ -1053,7 +1067,7 @@ int main() {
 #else
   test_rpc_write_queue_grows();
   test_rpc_write_copy_uses_request_buffer();
-  test_rpc_write_copy_rejects_overflow_without_moving_buffer();
+  test_rpc_write_buffer_grows_and_rebases_queued_copies();
   test_rpc_write_copy_cleans_up_on_transport_failure_and_destroy();
   test_rpc_lz4_payload_round_trip();
   test_response_wait_sends_transport_heartbeat();

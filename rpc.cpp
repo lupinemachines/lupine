@@ -103,11 +103,9 @@ void rpc_close_transport_socket(conn_t *conn) {
   abortive.l_linger = 0;
 #ifdef _WIN32
   (void)setsockopt(socket, SOL_SOCKET, SO_LINGER,
-                   reinterpret_cast<const char *>(&abortive),
-                   sizeof(abortive));
+                   reinterpret_cast<const char *>(&abortive), sizeof(abortive));
 #else
-  (void)setsockopt(socket, SOL_SOCKET, SO_LINGER, &abortive,
-                   sizeof(abortive));
+  (void)setsockopt(socket, SOL_SOCKET, SO_LINGER, &abortive, sizeof(abortive));
 #endif
   // Wake a reader blocked in recv without sending a FIN. SHUT_RDWR would
   // gracefully close the write side before SO_LINGER can reset the peer.
@@ -566,25 +564,52 @@ int rpc_copy_alloc(conn_t *conn, const size_t size) {
   return 0;
 }
 
+void *rpc_write_buffer(conn_t *conn, const size_t size) {
+  if (conn == nullptr || conn->write_copy_buffer == nullptr) {
+    return nullptr;
+  }
+
+  size_t required = conn->write_copy_offset + size;
+  if (required > conn->write_copy_capacity) {
+    size_t capacity = std::max(required, conn->write_copy_capacity * size_t{2});
+    uintptr_t previous = reinterpret_cast<uintptr_t>(conn->write_copy_buffer);
+    auto *buffer = static_cast<unsigned char *>(
+        realloc(conn->write_copy_buffer, capacity));
+    if (buffer == nullptr) {
+      std::abort();
+    }
+    uintptr_t next = reinterpret_cast<uintptr_t>(buffer);
+    if (next != previous) {
+      for (int i = 0; i < conn->write_queue_count; ++i) {
+        uintptr_t base =
+            reinterpret_cast<uintptr_t>(conn->write_queue[i].iov.iov_base);
+        if (base >= previous && base < previous + conn->write_copy_offset) {
+          conn->write_queue[i].iov.iov_base =
+              reinterpret_cast<void *>(next + base - previous);
+        }
+      }
+    }
+    conn->write_copy_buffer = buffer;
+    conn->write_copy_capacity = capacity;
+  }
+
+  void *buffer = conn->write_copy_buffer + conn->write_copy_offset;
+  conn->write_copy_offset = required;
+  return buffer;
+}
+
 int rpc_write_copy(conn_t *conn, const void *data, const size_t size) {
-  if (conn == nullptr || (size != 0 && data == nullptr) ||
-      conn->write_copy_offset > conn->write_copy_capacity ||
-      size > conn->write_copy_capacity - conn->write_copy_offset) {
+  if (size != 0 && data == nullptr) {
     return -1;
   }
-  unsigned char *copy = conn->write_copy_buffer;
+  void *copy = rpc_write_buffer(conn, size);
+  if (copy == nullptr) {
+    return -1;
+  }
   if (size != 0) {
-    if (copy == nullptr) {
-      return -1;
-    }
-    copy += conn->write_copy_offset;
     memcpy(copy, data, size);
   }
-  if (rpc_write_queue_push(conn, copy, size, 0) < 0) {
-    return -1;
-  }
-  conn->write_copy_offset += size;
-  return 0;
+  return rpc_write(conn, copy, size);
 }
 
 int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
@@ -775,27 +800,52 @@ void rpc_free_kernel_param_values(void **values) {
   std::free(header);
 }
 
+#if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
+struct rpc_param_info {
+  CUresult result;
+  size_t offset;
+  size_t size;
+};
+
+static_assert(sizeof(rpc_param_info) == rpc_param_info_buffer_size());
+
+static rpc_param_info *rpc_write_param_info_buffer(conn_t *conn) {
+  if (conn == nullptr) {
+    return nullptr;
+  }
+  size_t padding = (alignof(rpc_param_info) -
+                    conn->write_copy_offset % alignof(rpc_param_info)) %
+                   alignof(rpc_param_info);
+  if (padding != 0 && rpc_write_buffer(conn, padding) == nullptr) {
+    return nullptr;
+  }
+  return static_cast<rpc_param_info *>(
+      rpc_write_buffer(conn, sizeof(rpc_param_info)));
+}
+#endif
+
 #ifdef LUPINE_RPC_SERVER
 int rpc_write_func_param_info(conn_t *conn, CUfunction function) {
   if (conn == nullptr) {
     return -1;
   }
-  constexpr size_t copy_size = rpc_max_kernel_param_layout_copy_size();
-  if (rpc_copy_alloc(conn, copy_size) < 0) {
+  if (rpc_copy_alloc(conn, sizeof(rpc_param_info)) < 0) {
     return -1;
   }
   for (uint32_t i = 0;; ++i) {
-    size_t offset = 0;
-    size_t size = 0;
-    CUresult result = cuFuncGetParamInfo(function, i, &offset, &size);
-    if (rpc_write_copy(conn, &result, sizeof(result)) < 0) {
+    auto *info = rpc_write_param_info_buffer(conn);
+    if (info == nullptr) {
       return -1;
     }
-    if (result != CUDA_SUCCESS) {
+    info->result = cuFuncGetParamInfo(function, i, &info->offset, &info->size);
+    if (rpc_write(conn, &info->result, sizeof(info->result)) < 0) {
+      return -1;
+    }
+    if (info->result != CUDA_SUCCESS) {
       return 0;
     }
-    if (rpc_write_copy(conn, &offset, sizeof(offset)) < 0 ||
-        rpc_write_copy(conn, &size, sizeof(size)) < 0) {
+    if (rpc_write(conn, &info->offset, sizeof(info->offset)) < 0 ||
+        rpc_write(conn, &info->size, sizeof(info->size)) < 0) {
       return -1;
     }
   }
@@ -947,30 +997,32 @@ static int rpc_write_param_values(conn_t *conn, uintptr_t handle, bool kernel,
   }
 #endif
   for (size_t i = 0;; ++i) {
-    size_t offset = 0;
-    size_t size = 0;
-    CUresult result;
-#ifdef LUPINE_RPC_CLIENT
-    if (i == count) {
-      result = CUDA_ERROR_INVALID_VALUE;
-    } else {
-#endif
-      result = query(i, &offset, &size);
-#ifdef LUPINE_RPC_CLIENT
-    }
-#endif
-    if (result == CUDA_SUCCESS && (values == nullptr || values[i] == nullptr)) {
-      result = CUDA_ERROR_INVALID_VALUE;
-    }
-    if (rpc_write_copy(conn, &result, sizeof(result)) < 0) {
+    auto *info = rpc_write_param_info_buffer(conn);
+    if (info == nullptr) {
       return -1;
     }
-    if (result != CUDA_SUCCESS) {
+#ifdef LUPINE_RPC_CLIENT
+    if (i == count) {
+      info->result = CUDA_ERROR_INVALID_VALUE;
+    } else {
+#endif
+      info->result = query(i, &info->offset, &info->size);
+#ifdef LUPINE_RPC_CLIENT
+    }
+#endif
+    if (info->result == CUDA_SUCCESS &&
+        (values == nullptr || values[i] == nullptr)) {
+      info->result = CUDA_ERROR_INVALID_VALUE;
+    }
+    if (rpc_write(conn, &info->result, sizeof(info->result)) < 0) {
+      return -1;
+    }
+    if (info->result != CUDA_SUCCESS) {
       return 0;
     }
-    if (rpc_write_copy(conn, &offset, sizeof(offset)) < 0 ||
-        rpc_write_copy(conn, &size, sizeof(size)) < 0 ||
-        rpc_write_copy(conn, values[i], size) < 0) {
+    if (rpc_write(conn, &info->offset, sizeof(info->offset)) < 0 ||
+        rpc_write(conn, &info->size, sizeof(info->size)) < 0 ||
+        rpc_write_copy(conn, values[i], info->size) < 0) {
       return -1;
     }
   }
