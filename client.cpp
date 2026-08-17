@@ -853,8 +853,31 @@ extern "C" CUresult cuInit(unsigned int flags) {
     }
   }
   if (rpc_open() == 0) {
-    for (int i = 0; i < nconns; ++i) {
-      CUresult result = lupine_remote_cuInit(&conns[i], flags);
+    std::vector<CUresult> results(static_cast<size_t>(nconns),
+                                  CUDA_ERROR_UNKNOWN);
+    std::vector<std::thread> workers;
+    size_t next_connection = 1;
+    try {
+      workers.reserve(results.size() - 1);
+      for (; next_connection < results.size(); ++next_connection) {
+        workers.emplace_back([flags, next_connection, &results]() {
+          results[next_connection] =
+              lupine_remote_cuInit(&conns[next_connection], flags);
+        });
+      }
+    } catch (...) {
+      // Finish any connections whose worker could not be launched here.
+    }
+    if (!results.empty()) {
+      results[0] = lupine_remote_cuInit(&conns[0], flags);
+    }
+    for (size_t i = next_connection; i < results.size(); ++i) {
+      results[i] = lupine_remote_cuInit(&conns[i], flags);
+    }
+    for (auto &worker : workers) {
+      worker.join();
+    }
+    for (CUresult result : results) {
       if (result != CUDA_SUCCESS && first_error == CUDA_SUCCESS) {
         first_error = result;
       } else if (result == CUDA_SUCCESS) {
@@ -8412,11 +8435,12 @@ int rpc_open() {
 
   lupine_server_endpoints().clear();
 
+  std::vector<lupine_server_endpoint> endpoints;
   char *server_ip = strdup(server_ips);
   char *server_ip_cursor = server_ip;
   char *token;
   while ((token = strsep(&server_ip_cursor, ","))) {
-    if (nconns >= static_cast<int>(sizeof(conns) / sizeof(conns[0]))) {
+    if (endpoints.size() >= sizeof(conns) / sizeof(conns[0])) {
       LUPINE_LOG_ERROR("Too many LUPINE_SERVER entries; ignoring the rest");
       break;
     }
@@ -8444,15 +8468,66 @@ int rpc_open() {
       port = colon + 1;
     }
 
-    lupine_server_endpoint endpoint{host, port, tls};
-    if (lupine_connect_endpoint(&conns[nconns], endpoint,
-                                static_cast<unsigned int>(nconns)) < 0) {
-      continue;
-    }
-    lupine_server_endpoints().push_back(endpoint);
-    nconns++;
+    endpoints.push_back(lupine_server_endpoint{host, port, tls});
   }
   free(server_ip);
+
+  std::vector<int> connect_results(endpoints.size(), -1);
+  std::vector<std::thread> workers;
+  size_t next_endpoint = 0;
+  try {
+    workers.reserve(endpoints.size());
+    for (; next_endpoint < endpoints.size(); ++next_endpoint) {
+      workers.emplace_back([next_endpoint, &endpoints, &connect_results]() {
+        connect_results[next_endpoint] = lupine_connect_endpoint(
+            &conns[next_endpoint], endpoints[next_endpoint],
+            static_cast<unsigned int>(next_endpoint));
+      });
+    }
+  } catch (...) {
+    // Finish any endpoint whose worker could not be launched here.
+  }
+  for (size_t i = next_endpoint; i < endpoints.size(); ++i) {
+    connect_results[i] = lupine_connect_endpoint(
+        &conns[i], endpoints[i], static_cast<unsigned int>(i));
+  }
+  for (auto &worker : workers) {
+    worker.join();
+  }
+
+  bool all_connected = !endpoints.empty();
+  for (int result : connect_results) {
+    all_connected = all_connected && result == 0;
+  }
+  if (all_connected) {
+    nconns = static_cast<int>(endpoints.size());
+    lupine_server_endpoints() = std::move(endpoints);
+  } else {
+    // Preserve the existing behavior of compacting successful endpoints when
+    // one configured server is unavailable.
+    for (size_t i = 0; i < connect_results.size(); ++i) {
+      if (connect_results[i] == 0) {
+        rpc_close(&conns[i]);
+        lupine_join_connection_threads(&conns[i]);
+#ifdef LUPINE_TLS_OPENSSL
+        if (conns[i].tls_session != nullptr) {
+          SSL_free(static_cast<SSL *>(conns[i].tls_session));
+          conns[i].tls_session = nullptr;
+        }
+#endif
+        rpc_conn_destroy(&conns[i]);
+      }
+    }
+    for (size_t i = 0; i < endpoints.size(); ++i) {
+      if (connect_results[i] != 0 ||
+          lupine_connect_endpoint(&conns[nconns], endpoints[i],
+                                  static_cast<unsigned int>(nconns)) < 0) {
+        continue;
+      }
+      lupine_server_endpoints().push_back(endpoints[i]);
+      nconns++;
+    }
+  }
 
   if (pthread_mutex_unlock(&conn_mutex) < 0)
     return -1;
