@@ -1079,11 +1079,18 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
                    sizeof(*library_option_values.data())) < 0) {
     return -1;
   }
+  bool has_library_option_values = false;
+  for (unsigned int i = 0; i < num_library_options; ++i) {
+    has_library_option_values |=
+        reinterpret_cast<uintptr_t>(library_option_values[i]) !=
+        ~static_cast<uintptr_t>(library_options[i]);
+  }
   for (unsigned int i = 0; i < num_library_options; ++i) {
     // The client-side image is not the buffer passed to CUDA on this process.
     // Clear the preservation hint so the driver retains its own copy rather
     // than requiring a global library-to-image lifetime table.
-    if (library_options[i] == CU_LIBRARY_BINARY_IS_PRESERVED) {
+    if (has_library_option_values &&
+        library_options[i] == CU_LIBRARY_BINARY_IS_PRESERVED) {
       library_option_values[i] = nullptr;
     }
   }
@@ -1104,12 +1111,14 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     result = cuLibraryLoadData(
         &library, &wrapper, jit_state.options, jit_state.option_values,
         jit_state.num_options, library_options.data(),
-        library_option_values.data(), num_library_options);
+        has_library_option_values ? library_option_values.data() : nullptr,
+        num_library_options);
   } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
     result = cuLibraryLoadData(
         &library, image.data(), jit_state.options, jit_state.option_values,
         jit_state.num_options, library_options.data(),
-        library_option_values.data(), num_library_options);
+        has_library_option_values ? library_option_values.data() : nullptr,
+        num_library_options);
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }

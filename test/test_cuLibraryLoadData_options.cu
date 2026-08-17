@@ -66,9 +66,17 @@ int main() {
   CUlibraryOption lopts[1] = {CU_LIBRARY_BINARY_IS_PRESERVED};
   void *lvals[1] = {(void *)1};
 
+  CUlibrary null_values_lib = nullptr;
+  CUresult r = cuLibraryLoadData(&null_values_lib, kSetvalPtx, nullptr, nullptr,
+                                 0, lopts, nullptr, 1);
+  if (r != CUDA_SUCCESS) {
+    printf("RESULT: FAIL null library option values=%s(%d)\n", cn(r), (int)r);
+    return 1;
+  }
+  cuLibraryUnload(null_values_lib);
+
   CUlibrary lib = nullptr;
-  CUresult r =
-      cuLibraryLoadData(&lib, kSetvalPtx, opts, vals, 4, lopts, lvals, 1);
+  r = cuLibraryLoadData(&lib, kSetvalPtx, opts, vals, 4, lopts, lvals, 1);
   if (r != CUDA_SUCCESS) {
     printf("RESULT: FAIL cuLibraryLoadData=%s(%d) info_log=\"%s\"\n", cn(r),
            (int)r, info_log);

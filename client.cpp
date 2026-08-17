@@ -4718,6 +4718,9 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   size_t image_size = image_bytes.size();
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+      rpc_copy_alloc(conn, libraryOptionValues == nullptr
+                               ? numLibraryOptions * sizeof(uintptr_t)
+                               : 0) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
@@ -4727,10 +4730,22 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
                 numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
       rpc_write(conn, &numLibraryOptions, sizeof(numLibraryOptions)) < 0 ||
       rpc_write(conn, libraryOptions,
-                numLibraryOptions * sizeof(*libraryOptions)) < 0 ||
-      rpc_write(conn, libraryOptionValues,
-                numLibraryOptions * sizeof(*libraryOptionValues)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+                numLibraryOptions * sizeof(*libraryOptions)) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (libraryOptionValues != nullptr) {
+    if (rpc_write(conn, libraryOptionValues,
+                  numLibraryOptions * sizeof(*libraryOptionValues)) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  } else {
+    auto *wire_values = static_cast<uintptr_t *>(rpc_write_buffer(
+        conn, numLibraryOptions * sizeof(uintptr_t), alignof(uintptr_t)));
+    for (unsigned int i = 0; i < numLibraryOptions; ++i) {
+      wire_values[i] = ~static_cast<uintptr_t>(libraryOptions[i]);
+    }
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
       rpc_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
