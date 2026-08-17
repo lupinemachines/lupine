@@ -39,12 +39,6 @@ struct rpc_http2_read_stats {
 // CUresult per handle in the same order.
 #define LUPINE_EVENT_QUERY_BATCH_MAX 16
 
-static constexpr size_t rpc_param_info_buffer_size() {
-  return (sizeof(CUresult) + alignof(size_t) - 1) / alignof(size_t) *
-             alignof(size_t) +
-         2 * sizeof(size_t);
-}
-
 // Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
 // nothing: a non-success result carries no payload, otherwise every device
 // record holds a fixed-size name buffer, uuid, total memory, and a
@@ -134,7 +128,6 @@ extern int rpc_read_kernel_node_params_and_values(
     conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params, CUresult *result);
 extern void rpc_free_kernel_param_values(void **values);
 #ifdef LUPINE_RPC_SERVER
-extern int rpc_write_func_param_info(conn_t *conn, CUfunction function);
 extern int rpc_read_func_param_values(conn_t *conn, void ***values,
                                       CUfunction function, CUresult *result);
 #if CUDA_VERSION >= 12000
@@ -144,15 +137,6 @@ extern int rpc_read_kernel_param_values(conn_t *conn, void ***values,
 extern int rpc_read_kernel_node_param_values(
     conn_t *conn, CUDA_KERNEL_NODE_PARAMS *node_params, CUresult *result);
 #endif
-#if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
-extern int rpc_write_func_param_values(conn_t *conn, CUfunction function,
-                                       void *const *values);
-#if CUDA_VERSION >= 12000
-extern int rpc_write_kernel_param_values(conn_t *conn, CUkernel kernel,
-                                         void *const *values);
-#endif
-#endif
-extern int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config);
 extern int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
                                   std::vector<CUlaunchAttribute> *attributes);
 struct rpc_jit_output_binding {
@@ -170,22 +154,14 @@ struct rpc_jit_server_state {
   bool capture_info_log = false;
   bool capture_error_log = false;
 };
-extern int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,
-                                 const CUjit_option *options,
-                                 void *const *option_values);
 extern int rpc_read_jit_options(conn_t *conn,
                                 std::vector<CUjit_option> *options,
                                 std::vector<uintptr_t> *raw_values);
 extern int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state);
-extern int rpc_write_library_options(conn_t *conn,
-                                     const unsigned int *num_options,
-                                     const CUlibraryOption *options,
-                                     void *const *option_values);
 extern int rpc_read_library_options(conn_t *conn,
                                     std::vector<CUlibraryOption> *options,
                                     std::vector<uintptr_t> *raw_values,
                                     bool *has_option_values);
-extern int rpc_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state);
 extern int
 rpc_read_jit_outputs(conn_t *conn,
                      const std::vector<rpc_jit_output_binding> &bindings);

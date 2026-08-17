@@ -705,45 +705,7 @@ void rpc_free_kernel_param_values(void **values) {
   std::free(header);
 }
 
-#if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
-struct rpc_param_info {
-  CUresult result;
-  size_t offset;
-  size_t size;
-};
-
-static_assert(sizeof(rpc_param_info) == rpc_param_info_buffer_size());
-
-#endif
-
 #ifdef LUPINE_RPC_SERVER
-int rpc_write_func_param_info(conn_t *conn, CUfunction function) {
-  if (conn == nullptr) {
-    return -1;
-  }
-  if (rpc_copy_alloc(conn, sizeof(rpc_param_info)) < 0) {
-    return -1;
-  }
-  for (uint32_t i = 0;; ++i) {
-    auto *info = static_cast<rpc_param_info *>(rpc_write_buffer(
-        conn, sizeof(rpc_param_info), alignof(rpc_param_info)));
-    if (info == nullptr) {
-      return -1;
-    }
-    info->result = cuFuncGetParamInfo(function, i, &info->offset, &info->size);
-    if (rpc_write(conn, &info->result, sizeof(info->result)) < 0) {
-      return -1;
-    }
-    if (info->result != CUDA_SUCCESS) {
-      return 0;
-    }
-    if (rpc_write(conn, &info->offset, sizeof(info->offset)) < 0 ||
-        rpc_write(conn, &info->size, sizeof(info->size)) < 0) {
-      return -1;
-    }
-  }
-}
-
 template <typename Query>
 static int rpc_read_param_values(conn_t *conn, void ***values, CUresult *result,
                                  Query query) {
@@ -873,82 +835,6 @@ int rpc_read_kernel_node_param_values(conn_t *conn,
 
 #endif
 
-#if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
-#ifdef LUPINE_RPC_CLIENT
-extern "C" bool lupine_param_layout_count_for_rpc(uintptr_t handle, bool kernel,
-                                                  size_t *count);
-#endif
-
-template <typename Query>
-static int rpc_write_param_values(conn_t *conn, uintptr_t handle, bool kernel,
-                                  void *const *values, Query query) {
-#ifdef LUPINE_RPC_CLIENT
-  size_t count = 0;
-  if (!lupine_param_layout_count_for_rpc(handle, kernel, &count)) {
-    auto *result = static_cast<CUresult *>(
-        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-    if (result == nullptr) {
-      return -1;
-    }
-    *result = CUDA_ERROR_INVALID_HANDLE;
-    return rpc_write(conn, result, sizeof(*result));
-  }
-#endif
-  for (size_t i = 0;; ++i) {
-    auto *info = static_cast<rpc_param_info *>(rpc_write_buffer(
-        conn, sizeof(rpc_param_info), alignof(rpc_param_info)));
-    if (info == nullptr) {
-      return -1;
-    }
-#ifdef LUPINE_RPC_CLIENT
-    if (i == count) {
-      info->result = CUDA_ERROR_INVALID_VALUE;
-    } else {
-#endif
-      info->result = query(i, &info->offset, &info->size);
-#ifdef LUPINE_RPC_CLIENT
-    }
-#endif
-    if (info->result == CUDA_SUCCESS &&
-        (values == nullptr || values[i] == nullptr)) {
-      info->result = CUDA_ERROR_INVALID_VALUE;
-    }
-    if (rpc_write(conn, &info->result, sizeof(info->result)) < 0) {
-      return -1;
-    }
-    if (info->result != CUDA_SUCCESS) {
-      return 0;
-    }
-    if (rpc_write(conn, &info->offset, sizeof(info->offset)) < 0 ||
-        rpc_write(conn, &info->size, sizeof(info->size)) < 0 ||
-        rpc_write(conn, values[i], info->size) < 0) {
-      return -1;
-    }
-  }
-}
-
-int rpc_write_func_param_values(conn_t *conn, CUfunction function,
-                                void *const *values) {
-  return rpc_write_param_values(
-      conn, reinterpret_cast<uintptr_t>(function), false, values,
-      [function](size_t index, size_t *offset, size_t *size) {
-        return cuFuncGetParamInfo(function, index, offset, size);
-      });
-}
-
-#if CUDA_VERSION >= 12000
-int rpc_write_kernel_param_values(conn_t *conn, CUkernel kernel,
-                                  void *const *values) {
-  return rpc_write_param_values(
-      conn, reinterpret_cast<uintptr_t>(kernel), true, values,
-      [kernel](size_t index, size_t *offset, size_t *size) {
-        return cuKernelGetParamInfo(kernel, index, offset, size);
-      });
-}
-#endif
-
-#endif
-
 int rpc_read_kernel_node_params_and_values(conn_t *conn,
                                            CUDA_KERNEL_NODE_PARAMS *node_params,
                                            CUresult *result) {
@@ -1001,19 +887,6 @@ int rpc_read_kernel_node_params_and_values(conn_t *conn,
   return 0;
 }
 
-int rpc_write_launch_config(conn_t *conn, const CUlaunchConfig *config) {
-  if (conn == nullptr || config == nullptr) {
-    return -1;
-  }
-  if (rpc_write(conn, config, sizeof(*config)) < 0 ||
-      (config->numAttrs != 0 && config->attrs != nullptr &&
-       rpc_write(conn, config->attrs,
-                 config->numAttrs * sizeof(config->attrs[0])) < 0)) {
-    return -1;
-  }
-  return 0;
-}
-
 int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
                            std::vector<CUlaunchAttribute> *attributes) {
   if (conn == nullptr || config == nullptr || attributes == nullptr) {
@@ -1033,38 +906,6 @@ int rpc_read_launch_config(conn_t *conn, CUlaunchConfig *config,
     return -1;
   }
   config->attrs = attributes->data();
-  return 0;
-}
-
-int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,
-                          const CUjit_option *options,
-                          void *const *option_values) {
-  if (conn == nullptr || num_options == nullptr ||
-      (*num_options != 0 && (options == nullptr || option_values == nullptr))) {
-    return -1;
-  }
-
-  if (rpc_write(conn, num_options, sizeof(*num_options)) < 0 ||
-      (*num_options != 0 &&
-       rpc_write(conn, options, *num_options * sizeof(CUjit_option)) < 0)) {
-    return -1;
-  }
-  if (*num_options != 0) {
-    auto *raw_values = static_cast<uintptr_t *>(rpc_write_buffer(
-        conn, static_cast<size_t>(*num_options) * sizeof(uintptr_t),
-        alignof(uintptr_t)));
-    if (raw_values == nullptr) {
-      return -1;
-    }
-    for (unsigned int i = 0; i < *num_options; ++i) {
-      raw_values[i] = reinterpret_cast<uintptr_t>(option_values[i]);
-    }
-    if (rpc_write(conn, raw_values,
-                  static_cast<size_t>(*num_options) * sizeof(*raw_values)) <
-        0) {
-      return -1;
-    }
-  }
   return 0;
 }
 
@@ -1152,40 +993,6 @@ int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state) {
 
 static constexpr uintptr_t LUPINE_RPC_NULL_OPTION_VALUES = UINTPTR_MAX;
 
-int rpc_write_library_options(conn_t *conn, const unsigned int *num_options,
-                              const CUlibraryOption *options,
-                              void *const *option_values) {
-  if (conn == nullptr || num_options == nullptr ||
-      (*num_options != 0 && options == nullptr)) {
-    return -1;
-  }
-
-  if (rpc_write(conn, num_options, sizeof(*num_options)) < 0 ||
-      (*num_options != 0 &&
-       rpc_write(conn, options, *num_options * sizeof(CUlibraryOption)) < 0)) {
-    return -1;
-  }
-  if (*num_options != 0) {
-    auto *raw_values = static_cast<uintptr_t *>(rpc_write_buffer(
-        conn, static_cast<size_t>(*num_options) * sizeof(uintptr_t),
-        alignof(uintptr_t)));
-    if (raw_values == nullptr) {
-      return -1;
-    }
-    for (unsigned int i = 0; i < *num_options; ++i) {
-      raw_values[i] = option_values == nullptr
-                          ? LUPINE_RPC_NULL_OPTION_VALUES
-                          : reinterpret_cast<uintptr_t>(option_values[i]);
-    }
-    if (rpc_write(conn, raw_values,
-                  static_cast<size_t>(*num_options) * sizeof(*raw_values)) <
-        0) {
-      return -1;
-    }
-  }
-  return 0;
-}
-
 int rpc_read_library_options(conn_t *conn,
                              std::vector<CUlibraryOption> *options,
                              std::vector<uintptr_t> *raw_values,
@@ -1215,72 +1022,6 @@ int rpc_read_library_options(conn_t *conn,
     if (i == 0) {
       *has_option_values = value_is_present;
     } else if (*has_option_values != value_is_present) {
-      return -1;
-    }
-  }
-  return 0;
-}
-
-struct rpc_jit_output_header {
-  CUjit_option option;
-  size_t size;
-};
-
-static int rpc_write_jit_output(conn_t *conn, CUjit_option option, size_t size,
-                                const void *data) {
-  if (conn == nullptr || (size != 0 && data == nullptr)) {
-    return -1;
-  }
-  auto *header = static_cast<rpc_jit_output_header *>(rpc_write_buffer(
-      conn, sizeof(rpc_jit_output_header), alignof(rpc_jit_output_header)));
-  if (header == nullptr) {
-    return -1;
-  }
-  header->option = option;
-  header->size = size;
-  return rpc_write(conn, &header->option, sizeof(header->option)) < 0 ||
-                 rpc_write(conn, &header->size, sizeof(header->size)) < 0 ||
-                 (size != 0 && rpc_write(conn, data, size) < 0)
-             ? -1
-             : 0;
-}
-
-int rpc_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state) {
-  if (conn == nullptr || state == nullptr) {
-    return -1;
-  }
-
-  if (rpc_copy_alloc(conn, sizeof(uint32_t)) < 0) {
-    return -1;
-  }
-  auto *output_count = static_cast<uint32_t *>(
-      rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t)));
-  if (output_count == nullptr) {
-    return -1;
-  }
-  *output_count = static_cast<uint32_t>(state->capture_wall_time) +
-                  static_cast<uint32_t>(state->capture_info_log) +
-                  static_cast<uint32_t>(state->capture_error_log);
-  if (rpc_write(conn, output_count, sizeof(*output_count)) < 0) {
-    return -1;
-  }
-  if (state->capture_wall_time) {
-    if (rpc_write_jit_output(conn, CU_JIT_WALL_TIME, sizeof(state->wall_time),
-                             &state->wall_time) < 0) {
-      return -1;
-    }
-  }
-  if (state->capture_info_log) {
-    if (rpc_write_jit_output(conn, CU_JIT_INFO_LOG_BUFFER,
-                             state->info_log.size(),
-                             state->info_log.data()) < 0) {
-      return -1;
-    }
-  }
-  if (state->capture_error_log) {
-    if (rpc_write_jit_output(conn, CU_JIT_ERROR_LOG_BUFFER,
-                             state->error_log.size(),
-                             state->error_log.data()) < 0) {
       return -1;
     }
   }
