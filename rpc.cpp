@@ -564,12 +564,14 @@ int rpc_copy_alloc(conn_t *conn, const size_t size) {
   return 0;
 }
 
-void *rpc_write_buffer(conn_t *conn, const size_t size) {
+void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment) {
   if (conn == nullptr || conn->write_copy_buffer == nullptr) {
     return nullptr;
   }
 
-  size_t required = conn->write_copy_offset + size;
+  size_t offset =
+      (conn->write_copy_offset + alignment - 1) / alignment * alignment;
+  size_t required = offset + size;
   if (required > conn->write_copy_capacity) {
     size_t capacity = std::max(required, conn->write_copy_capacity * size_t{2});
     uintptr_t previous = reinterpret_cast<uintptr_t>(conn->write_copy_buffer);
@@ -593,7 +595,7 @@ void *rpc_write_buffer(conn_t *conn, const size_t size) {
     conn->write_copy_capacity = capacity;
   }
 
-  void *buffer = conn->write_copy_buffer + conn->write_copy_offset;
+  void *buffer = conn->write_copy_buffer + offset;
   conn->write_copy_offset = required;
   return buffer;
 }
@@ -703,18 +705,6 @@ void rpc_free_kernel_param_values(void **values) {
   std::free(header);
 }
 
-template <typename T> static T *rpc_write_value_buffer(conn_t *conn) {
-  if (conn == nullptr) {
-    return nullptr;
-  }
-  size_t padding =
-      (alignof(T) - conn->write_copy_offset % alignof(T)) % alignof(T);
-  if (padding != 0 && rpc_write_buffer(conn, padding) == nullptr) {
-    return nullptr;
-  }
-  return static_cast<T *>(rpc_write_buffer(conn, sizeof(T)));
-}
-
 #if defined(LUPINE_RPC_CLIENT) || defined(LUPINE_RPC_SERVER)
 struct rpc_param_info {
   CUresult result;
@@ -724,9 +714,6 @@ struct rpc_param_info {
 
 static_assert(sizeof(rpc_param_info) == rpc_param_info_buffer_size());
 
-static rpc_param_info *rpc_write_param_info_buffer(conn_t *conn) {
-  return rpc_write_value_buffer<rpc_param_info>(conn);
-}
 #endif
 
 #ifdef LUPINE_RPC_SERVER
@@ -738,7 +725,8 @@ int rpc_write_func_param_info(conn_t *conn, CUfunction function) {
     return -1;
   }
   for (uint32_t i = 0;; ++i) {
-    auto *info = rpc_write_param_info_buffer(conn);
+    auto *info = static_cast<rpc_param_info *>(rpc_write_buffer(
+        conn, sizeof(rpc_param_info), alignof(rpc_param_info)));
     if (info == nullptr) {
       return -1;
     }
@@ -897,7 +885,8 @@ static int rpc_write_param_values(conn_t *conn, uintptr_t handle, bool kernel,
 #ifdef LUPINE_RPC_CLIENT
   size_t count = 0;
   if (!lupine_param_layout_count_for_rpc(handle, kernel, &count)) {
-    auto *result = rpc_write_value_buffer<CUresult>(conn);
+    auto *result = static_cast<CUresult *>(
+        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
     if (result == nullptr) {
       return -1;
     }
@@ -906,7 +895,8 @@ static int rpc_write_param_values(conn_t *conn, uintptr_t handle, bool kernel,
   }
 #endif
   for (size_t i = 0;; ++i) {
-    auto *info = rpc_write_param_info_buffer(conn);
+    auto *info = static_cast<rpc_param_info *>(rpc_write_buffer(
+        conn, sizeof(rpc_param_info), alignof(rpc_param_info)));
     if (info == nullptr) {
       return -1;
     }
@@ -1061,7 +1051,8 @@ int rpc_write_jit_options(conn_t *conn, const unsigned int *num_options,
   }
   if (*num_options != 0) {
     auto *raw_values = static_cast<uintptr_t *>(rpc_write_buffer(
-        conn, static_cast<size_t>(*num_options) * sizeof(uintptr_t)));
+        conn, static_cast<size_t>(*num_options) * sizeof(uintptr_t),
+        alignof(uintptr_t)));
     if (raw_values == nullptr) {
       return -1;
     }
@@ -1176,7 +1167,8 @@ int rpc_write_library_options(conn_t *conn, const unsigned int *num_options,
   }
   if (*num_options != 0) {
     auto *raw_values = static_cast<uintptr_t *>(rpc_write_buffer(
-        conn, static_cast<size_t>(*num_options) * sizeof(uintptr_t)));
+        conn, static_cast<size_t>(*num_options) * sizeof(uintptr_t),
+        alignof(uintptr_t)));
     if (raw_values == nullptr) {
       return -1;
     }
@@ -1239,7 +1231,8 @@ static int rpc_write_jit_output(conn_t *conn, CUjit_option option, size_t size,
   if (conn == nullptr || (size != 0 && data == nullptr)) {
     return -1;
   }
-  auto *header = rpc_write_value_buffer<rpc_jit_output_header>(conn);
+  auto *header = static_cast<rpc_jit_output_header *>(rpc_write_buffer(
+      conn, sizeof(rpc_jit_output_header), alignof(rpc_jit_output_header)));
   if (header == nullptr) {
     return -1;
   }
@@ -1257,26 +1250,18 @@ int rpc_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state) {
     return -1;
   }
 
-  uint32_t output_count = static_cast<uint32_t>(state->capture_wall_time) +
-                          static_cast<uint32_t>(state->capture_info_log) +
-                          static_cast<uint32_t>(state->capture_error_log);
-  size_t storage_size = sizeof(output_count);
-  if (output_count != 0) {
-    storage_size =
-        (storage_size + alignof(rpc_jit_output_header) - 1) /
-            alignof(rpc_jit_output_header) * alignof(rpc_jit_output_header) +
-        static_cast<size_t>(output_count) * sizeof(rpc_jit_output_header);
-  }
-  if (rpc_copy_alloc(conn, storage_size) < 0) {
+  if (rpc_copy_alloc(conn, sizeof(uint32_t)) < 0) {
     return -1;
   }
-  auto *buffered_output_count = rpc_write_value_buffer<uint32_t>(conn);
-  if (buffered_output_count == nullptr) {
+  auto *output_count = static_cast<uint32_t *>(
+      rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t)));
+  if (output_count == nullptr) {
     return -1;
   }
-  *buffered_output_count = output_count;
-  if (rpc_write(conn, buffered_output_count, sizeof(*buffered_output_count)) <
-      0) {
+  *output_count = static_cast<uint32_t>(state->capture_wall_time) +
+                  static_cast<uint32_t>(state->capture_info_log) +
+                  static_cast<uint32_t>(state->capture_error_log);
+  if (rpc_write(conn, output_count, sizeof(*output_count)) < 0) {
     return -1;
   }
   if (state->capture_wall_time) {

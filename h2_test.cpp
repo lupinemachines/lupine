@@ -861,49 +861,51 @@ void test_rpc_write_buffer_grows_and_rebases_queued_writes() {
   h2_pair pair = make_pair();
   require(rpc_write_start_response(&pair.client, 21) == 0,
           "growing response start failed");
-  int first = 17;
-  int second = 19;
-  require(rpc_write_buffer(&pair.client, sizeof(first)) == nullptr,
+  uint8_t first = 17;
+  uint64_t second = 19;
+  uint32_t third = 23;
+  require(rpc_write_buffer(&pair.client, sizeof(first), alignof(uint8_t)) ==
+              nullptr,
           "rpc_write_buffer accepted data without a reservation");
   require(rpc_copy_alloc(&pair.client, sizeof(first)) == 0,
           "growing copy allocation failed");
   require(rpc_copy_alloc(&pair.client, sizeof(first)) < 0,
           "rpc_copy_alloc replaced an active reservation");
-  auto *first_buffer =
-      static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(first)));
+  auto *first_buffer = static_cast<uint8_t *>(
+      rpc_write_buffer(&pair.client, sizeof(first), alignof(uint8_t)));
   require(first_buffer != nullptr, "growing first buffer failed");
   *first_buffer = first;
   require(rpc_write(&pair.client, first_buffer, sizeof(*first_buffer)) == 0,
           "growing first write failed");
-  auto *second_buffer =
-      static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(second)));
+  auto *second_buffer = static_cast<uint64_t *>(
+      rpc_write_buffer(&pair.client, sizeof(second), alignof(uint64_t)));
   require(second_buffer != nullptr, "growing second buffer failed");
   *second_buffer = second;
   require(rpc_write(&pair.client, second_buffer, sizeof(*second_buffer)) == 0,
           "growing second write failed");
-  auto *direct =
-      static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(int)));
+  auto *direct = static_cast<uint32_t *>(
+      rpc_write_buffer(&pair.client, sizeof(third), alignof(uint32_t)));
   require(direct != nullptr, "direct write buffer allocation failed");
-  *direct = 23;
+  *direct = third;
   require(rpc_write(&pair.client, direct, sizeof(*direct)) == 0,
           "direct write buffer queue failed");
   require(pair.client.write_queue_count == 6,
           "growing copy queue count mismatch");
-  require(pair.client.write_copy_offset == 3 * sizeof(first),
-          "growing copy cursor mismatch");
+  require(pair.client.write_copy_offset == 20, "growing copy cursor mismatch");
   require(pair.client.write_queue[3].iov.iov_base ==
                   pair.client.write_copy_buffer &&
               pair.client.write_queue[4].iov.iov_base ==
-                  pair.client.write_copy_buffer + sizeof(first) &&
+                  pair.client.write_copy_buffer + 8 &&
               pair.client.write_queue[5].iov.iov_base ==
-                  pair.client.write_copy_buffer + 2 * sizeof(first),
+                  pair.client.write_copy_buffer + 16,
           "growing copy did not rebase queued iovecs");
-  require(
-      *static_cast<int *>(pair.client.write_queue[3].iov.iov_base) == first &&
-          *static_cast<int *>(pair.client.write_queue[4].iov.iov_base) ==
-              second &&
-          *static_cast<int *>(pair.client.write_queue[5].iov.iov_base) == 23,
-      "growing copy changed buffered values");
+  require(*static_cast<uint8_t *>(pair.client.write_queue[3].iov.iov_base) ==
+                  first &&
+              *static_cast<uint64_t *>(
+                  pair.client.write_queue[4].iov.iov_base) == second &&
+              *static_cast<uint32_t *>(
+                  pair.client.write_queue[5].iov.iov_base) == third,
+          "growing copy changed buffered values");
   require(rpc_write_end(&pair.client) == 21,
           "growing response write end failed");
   require(pair.client.write_copy_buffer == nullptr,
@@ -928,8 +930,8 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
     int value = 23;
     require(rpc_copy_alloc(&pair.client, sizeof(value)) == 0,
             "failed transport copy allocation failed");
-    auto *buffer =
-        static_cast<int *>(rpc_write_buffer(&pair.client, sizeof(value)));
+    auto *buffer = static_cast<int *>(
+        rpc_write_buffer(&pair.client, sizeof(value), alignof(int)));
     require(buffer != nullptr, "failed transport buffer allocation failed");
     *buffer = value;
     require(rpc_write(&pair.client, buffer, sizeof(*buffer)) == 0,

@@ -103,10 +103,10 @@ extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 // calls. The reservation must be made once before the first buffered write in
 // an RPC and is released with the request.
 extern int rpc_copy_alloc(conn_t *conn, const size_t size);
-// Returns the next request-owned span and advances the copy cursor. A later
-// call may grow the arena, so callers must queue or consume the returned span
-// before requesting another one.
-extern void *rpc_write_buffer(conn_t *conn, const size_t size);
+// Returns the next aligned request-owned span and advances the copy cursor. A
+// later call may grow the arena, so callers must queue or consume the returned
+// span before requesting another one.
+extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
                             size_t count);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);

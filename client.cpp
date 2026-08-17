@@ -145,11 +145,6 @@ static CUresult lupine_read_kernel_param_layout(CUkernel kernel,
 static CUresult lupine_warm_func_param_info(CUfunction function);
 static CUresult lupine_warm_kernel_param_info(CUkernel kernel);
 
-struct lupine_graph_kernel_node_params_storage {
-  CUDA_KERNEL_NODE_PARAMS params = {};
-  std::shared_ptr<void *> kernel_params;
-};
-
 extern int rpc_size();
 extern int rpc_open();
 extern conn_t *rpc_client_get_connection(unsigned int index);
@@ -657,12 +652,10 @@ static std::mutex &lupine_graph_kernel_node_params_mutex() {
   return *mutex;
 }
 
-static std::unordered_map<CUgraphNode,
-                          lupine_graph_kernel_node_params_storage> &
+static std::unordered_map<CUgraphNode, std::shared_ptr<void *>> &
 lupine_graph_kernel_node_params_cache() {
   static auto *cache =
-      new std::unordered_map<CUgraphNode,
-                             lupine_graph_kernel_node_params_storage>();
+      new std::unordered_map<CUgraphNode, std::shared_ptr<void *>>();
   return *cache;
 }
 
@@ -5791,22 +5784,6 @@ static size_t lupine_memcpy3d_host_span_bytes(const CUDA_MEMCPY3D &params,
   return pitch * rows;
 }
 
-static int lupine_write_buffered_cuda_result(conn_t *conn, CUresult value) {
-  size_t padding =
-      (alignof(CUresult) - conn->write_copy_offset % alignof(CUresult)) %
-      alignof(CUresult);
-  if (padding != 0 && rpc_write_buffer(conn, padding) == nullptr) {
-    return -1;
-  }
-  auto *result =
-      static_cast<CUresult *>(rpc_write_buffer(conn, sizeof(CUresult)));
-  if (result == nullptr) {
-    return -1;
-  }
-  *result = value;
-  return rpc_write(conn, result, sizeof(*result));
-}
-
 static int
 lupine_write_kernel_node_params(conn_t *conn,
                                 const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
@@ -5819,7 +5796,13 @@ lupine_write_kernel_node_params(conn_t *conn,
     return -1;
   }
   if (nodeParams->extra != nullptr) {
-    return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_NOT_SUPPORTED);
+    auto *result = static_cast<CUresult *>(
+        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
+    if (result == nullptr) {
+      return -1;
+    }
+    *result = CUDA_ERROR_NOT_SUPPORTED;
+    return rpc_write(conn, result, sizeof(*result));
   }
   if (function != nullptr) {
     return rpc_write_func_param_values(conn, function,
@@ -5831,7 +5814,13 @@ lupine_write_kernel_node_params(conn_t *conn,
                                          nodeParams->kernelParams);
   }
 #endif
-  return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_INVALID_HANDLE);
+  auto *result = static_cast<CUresult *>(
+      rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
+  if (result == nullptr) {
+    return -1;
+  }
+  *result = CUDA_ERROR_INVALID_HANDLE;
+  return rpc_write(conn, result, sizeof(*result));
 }
 
 static int lupine_write_graph_node_params(conn_t *conn,
@@ -5853,7 +5842,13 @@ static int lupine_write_graph_node_params(conn_t *conn,
   }
 
   if (nodeParams->kernel.extra != nullptr) {
-    return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_NOT_SUPPORTED);
+    auto *result = static_cast<CUresult *>(
+        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
+    if (result == nullptr) {
+      return -1;
+    }
+    *result = CUDA_ERROR_NOT_SUPPORTED;
+    return rpc_write(conn, result, sizeof(*result));
   }
   if (nodeParams->kernel.func != nullptr) {
     return rpc_write_func_param_values(conn, nodeParams->kernel.func,
@@ -5865,7 +5860,13 @@ static int lupine_write_graph_node_params(conn_t *conn,
                                          nodeParams->kernel.kernelParams);
   }
 #endif
-  return lupine_write_buffered_cuda_result(conn, CUDA_ERROR_INVALID_HANDLE);
+  auto *result = static_cast<CUresult *>(
+      rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
+  if (result == nullptr) {
+    return -1;
+  }
+  *result = CUDA_ERROR_INVALID_HANDLE;
+  return rpc_write(conn, result, sizeof(*result));
 }
 
 static CUfunction lupine_client_function_for_remote(CUfunction remote) {
@@ -5957,7 +5958,7 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  lupine_graph_kernel_node_params_storage storage;
+  std::shared_ptr<void *> kernel_params;
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   CUresult param_info_result = CUDA_SUCCESS;
   if (conn == nullptr ||
@@ -5968,14 +5969,17 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    if (rpc_read_kernel_node_params_and_values(conn, &storage.params,
+    if (rpc_read_kernel_node_params_and_values(conn, nodeParams,
                                                &param_info_result) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    storage.kernel_params = std::shared_ptr<void *>(
-        storage.params.kernelParams, rpc_free_kernel_param_values);
+    kernel_params = std::shared_ptr<void *>(nodeParams->kernelParams,
+                                            rpc_free_kernel_param_values);
   }
   if (rpc_read_end(conn) < 0) {
+    if (return_value == CUDA_SUCCESS) {
+      nodeParams->kernelParams = nullptr;
+    }
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value != CUDA_SUCCESS) {
@@ -5985,21 +5989,19 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
     return param_info_result;
   }
 
-  if (storage.params.func != nullptr) {
-    storage.params.func =
-        lupine_client_function_for_remote(storage.params.func);
+  if (nodeParams->func != nullptr) {
+    nodeParams->func = lupine_client_function_for_remote(nodeParams->func);
   }
 #if CUDA_VERSION >= 12000
-  if (storage.params.kern != nullptr) {
-    storage.params.kern = lupine_client_kernel_for_remote(storage.params.kern);
+  if (nodeParams->kern != nullptr) {
+    nodeParams->kern = lupine_client_kernel_for_remote(nodeParams->kern);
   }
 #endif
 
   std::lock_guard<std::mutex> lock(lupine_graph_kernel_node_params_mutex());
   auto &slot = lupine_graph_kernel_node_params_cache()[hNode];
-  slot = std::move(storage);
-  slot.params.kernelParams = slot.kernel_params.get();
-  *nodeParams = slot.params;
+  slot = std::move(kernel_params);
+  nodeParams->kernelParams = slot.get();
   return return_value;
 }
 
