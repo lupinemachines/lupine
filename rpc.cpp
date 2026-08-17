@@ -1036,16 +1036,13 @@ int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state) {
   for (size_t i = 0; i < state->options.size(); ++i) {
     switch (state->options[i]) {
     case CU_JIT_WALL_TIME:
-      state->capture_wall_time = true;
       state->option_values[i] = &state->wall_time;
       break;
     case CU_JIT_INFO_LOG_BUFFER:
-      state->capture_info_log = !state->info_log.empty();
       state->option_values[i] =
           state->info_log.empty() ? nullptr : state->info_log.data();
       break;
     case CU_JIT_ERROR_LOG_BUFFER:
-      state->capture_error_log = !state->error_log.empty();
       state->option_values[i] =
           state->error_log.empty() ? nullptr : state->error_log.data();
       break;
@@ -1096,32 +1093,33 @@ rpc_find_jit_output_binding(const std::vector<rpc_jit_output_binding> &bindings,
 
 int rpc_read_jit_outputs(conn_t *conn,
                          const std::vector<rpc_jit_output_binding> &bindings) {
-  uint32_t output_count = 0;
-  if (rpc_read_buffer(conn, &output_count, sizeof(output_count)) < 0) {
+  const auto *binding = rpc_find_jit_output_binding(bindings, CU_JIT_WALL_TIME);
+  size_t direct_size =
+      binding == nullptr ? 0 : std::min(binding->size, sizeof(float));
+  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
+      rpc_drain(conn, sizeof(float) - direct_size) < 0) {
     return -1;
   }
-  if (output_count > 32) {
+
+  size_t payload_size = 0;
+  if (rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
     return -1;
   }
-  for (uint32_t i = 0; i < output_count; ++i) {
-    CUjit_option option;
-    size_t payload_size = 0;
-    if (rpc_read_buffer(conn, &option, sizeof(option)) < 0 ||
-        rpc_read_buffer(conn, &payload_size, sizeof(payload_size)) < 0) {
-      return -1;
-    }
-    if (payload_size > (16ull << 20)) {
-      return -1;
-    }
-    const auto *binding = rpc_find_jit_output_binding(bindings, option);
-    size_t direct_size =
-        binding == nullptr ? 0 : std::min(binding->size, payload_size);
-    if (direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) {
-      return -1;
-    }
-    if (rpc_drain(conn, payload_size - direct_size) < 0) {
-      return -1;
-    }
+  binding = rpc_find_jit_output_binding(bindings, CU_JIT_INFO_LOG_BUFFER);
+  direct_size = binding == nullptr ? 0 : std::min(binding->size, payload_size);
+  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
+      rpc_drain(conn, payload_size - direct_size) < 0) {
+    return -1;
+  }
+
+  if (rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+    return -1;
+  }
+  binding = rpc_find_jit_output_binding(bindings, CU_JIT_ERROR_LOG_BUFFER);
+  direct_size = binding == nullptr ? 0 : std::min(binding->size, payload_size);
+  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
+      rpc_drain(conn, payload_size - direct_size) < 0) {
+    return -1;
   }
   return 0;
 }

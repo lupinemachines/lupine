@@ -4680,8 +4680,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   }
   if ((numJitOptions != 0 &&
        (jitOptions == nullptr || jitOptionsValues == nullptr)) ||
-      (numLibraryOptions != 0 &&
-       (libraryOptions == nullptr || libraryOptionValues == nullptr))) {
+      (numLibraryOptions != 0 && libraryOptions == nullptr)) {
     return CUDA_ERROR_INVALID_VALUE;
   }
 
@@ -4993,8 +4992,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
 
 extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
                                      void **kernelParams, void **extra) {
-  if (config == nullptr ||
-      (config->numAttrs != 0 && config->attrs == nullptr)) {
+  if (config == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
 #if CUDA_VERSION < 11080

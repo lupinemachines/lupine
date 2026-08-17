@@ -112,62 +112,6 @@ struct lupine_link_state {
   std::mutex mutex;
 };
 
-static size_t lupine_jit_outputs_copy_size(const rpc_jit_server_state &state) {
-  size_t output_count = static_cast<size_t>(state.capture_wall_time) +
-                        static_cast<size_t>(state.capture_info_log) +
-                        static_cast<size_t>(state.capture_error_log);
-  size_t size = sizeof(uint32_t);
-  for (size_t i = 0; i < output_count; ++i) {
-    size = (size + alignof(CUjit_option) - 1) / alignof(CUjit_option) *
-               alignof(CUjit_option) +
-           sizeof(CUjit_option);
-    size = (size + alignof(size_t) - 1) / alignof(size_t) * alignof(size_t) +
-           sizeof(size_t);
-  }
-  return size;
-}
-
-static int lupine_write_jit_outputs(conn_t *conn, rpc_jit_server_state *state) {
-  *static_cast<uint32_t *>(
-      rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t))) =
-      static_cast<uint32_t>(state->capture_wall_time) +
-      static_cast<uint32_t>(state->capture_info_log) +
-      static_cast<uint32_t>(state->capture_error_log);
-
-  if (state->capture_wall_time) {
-    *static_cast<CUjit_option *>(rpc_write_buffer(
-        conn, sizeof(CUjit_option), alignof(CUjit_option))) = CU_JIT_WALL_TIME;
-    *static_cast<size_t *>(rpc_write_buffer(
-        conn, sizeof(size_t), alignof(size_t))) = sizeof(state->wall_time);
-    if (rpc_write(conn, &state->wall_time, sizeof(state->wall_time)) < 0) {
-      return -1;
-    }
-  }
-
-  if (state->capture_info_log) {
-    *static_cast<CUjit_option *>(
-        rpc_write_buffer(conn, sizeof(CUjit_option), alignof(CUjit_option))) =
-        CU_JIT_INFO_LOG_BUFFER;
-    *static_cast<size_t *>(rpc_write_buffer(
-        conn, sizeof(size_t), alignof(size_t))) = state->info_log.size();
-    if (rpc_write(conn, state->info_log.data(), state->info_log.size()) < 0) {
-      return -1;
-    }
-  }
-
-  if (state->capture_error_log) {
-    *static_cast<CUjit_option *>(
-        rpc_write_buffer(conn, sizeof(CUjit_option), alignof(CUjit_option))) =
-        CU_JIT_ERROR_LOG_BUFFER;
-    *static_cast<size_t *>(rpc_write_buffer(
-        conn, sizeof(size_t), alignof(size_t))) = state->error_log.size();
-    if (rpc_write(conn, state->error_log.data(), state->error_log.size()) < 0) {
-      return -1;
-    }
-  }
-  return 0;
-}
-
 static lupine_link_state *lupine_link_state_from_handle(CUlinkState state) {
   return reinterpret_cast<lupine_link_state *>(state);
 }
@@ -1201,10 +1145,15 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
+  size_t info_log_size = jit_state.info_log.size();
+  size_t error_log_size = jit_state.error_log.size();
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_copy_alloc(conn, lupine_jit_outputs_copy_size(jit_state)) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
-      lupine_write_jit_outputs(conn, &jit_state) < 0 ||
+      rpc_write(conn, &jit_state.wall_time, sizeof(jit_state.wall_time)) < 0 ||
+      rpc_write(conn, &info_log_size, sizeof(info_log_size)) < 0 ||
+      rpc_write(conn, jit_state.info_log.data(), info_log_size) < 0 ||
+      rpc_write(conn, &error_log_size, sizeof(error_log_size)) < 0 ||
+      rpc_write(conn, jit_state.error_log.data(), error_log_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1852,9 +1801,14 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
         jit_state.option_values.empty() ? nullptr
                                         : jit_state.option_values.data());
   }
+  size_t info_log_size = jit_state.info_log.size();
+  size_t error_log_size = jit_state.error_log.size();
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_copy_alloc(conn, lupine_jit_outputs_copy_size(jit_state)) < 0 ||
-      lupine_write_jit_outputs(conn, &jit_state) < 0 ||
+      rpc_write(conn, &jit_state.wall_time, sizeof(jit_state.wall_time)) < 0 ||
+      rpc_write(conn, &info_log_size, sizeof(info_log_size)) < 0 ||
+      rpc_write(conn, jit_state.info_log.data(), info_log_size) < 0 ||
+      rpc_write(conn, &error_log_size, sizeof(error_log_size)) < 0 ||
+      rpc_write(conn, jit_state.error_log.data(), error_log_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1915,9 +1869,14 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
         jit_state.option_values.empty() ? nullptr
                                         : jit_state.option_values.data());
   }
+  size_t info_log_size = jit_state.info_log.size();
+  size_t error_log_size = jit_state.error_log.size();
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_copy_alloc(conn, lupine_jit_outputs_copy_size(jit_state)) < 0 ||
-      lupine_write_jit_outputs(conn, &jit_state) < 0 ||
+      rpc_write(conn, &jit_state.wall_time, sizeof(jit_state.wall_time)) < 0 ||
+      rpc_write(conn, &info_log_size, sizeof(info_log_size)) < 0 ||
+      rpc_write(conn, jit_state.info_log.data(), info_log_size) < 0 ||
+      rpc_write(conn, &error_log_size, sizeof(error_log_size)) < 0 ||
+      rpc_write(conn, jit_state.error_log.data(), error_log_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -1949,11 +1908,17 @@ int handle_manual_cuLinkComplete(conn_t *conn) {
     jit_state = &link_state->jit;
   }
   size_t returned_size = result == CUDA_SUCCESS ? size : 0;
+  size_t info_log_size = jit_state->info_log.size();
+  size_t error_log_size = jit_state->error_log.size();
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_copy_alloc(conn, lupine_jit_outputs_copy_size(*jit_state)) < 0 ||
       rpc_write(conn, &returned_size, sizeof(returned_size)) < 0 ||
       rpc_write(conn, cubin, returned_size) < 0 ||
-      lupine_write_jit_outputs(conn, jit_state) < 0 ||
+      rpc_write(conn, &jit_state->wall_time, sizeof(jit_state->wall_time)) <
+          0 ||
+      rpc_write(conn, &info_log_size, sizeof(info_log_size)) < 0 ||
+      rpc_write(conn, jit_state->info_log.data(), info_log_size) < 0 ||
+      rpc_write(conn, &error_log_size, sizeof(error_log_size)) < 0 ||
+      rpc_write(conn, jit_state->error_log.data(), error_log_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }

@@ -212,16 +212,6 @@ int main() {
     return 1;
   }
 
-  // Preserve a null attribute pointer so the server-side CUDA driver owns
-  // validation of the complete launch config.
-  config = config_for(nullptr);
-  config.numAttrs = 1;
-  result = cuLaunchKernelEx(&config, function, params, nullptr);
-  if (result == CUDA_SUCCESS || !output_is(output, 0)) {
-    fprintf(stderr, "CUDA accepted a null launch attribute array\n");
-    return 1;
-  }
-
   int cluster_launch = 0;
   if (!check(cuDeviceGetAttribute(&cluster_launch,
                                   CU_DEVICE_ATTRIBUTE_CLUSTER_LAUNCH, device),

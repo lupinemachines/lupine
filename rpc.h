@@ -162,9 +162,6 @@ struct rpc_jit_server_state {
   float wall_time = 0.0f;
   std::vector<char> info_log;
   std::vector<char> error_log;
-  bool capture_wall_time = false;
-  bool capture_info_log = false;
-  bool capture_error_log = false;
 };
 extern int rpc_read_jit_options(conn_t *conn,
                                 std::vector<CUjit_option> *options,
