@@ -499,13 +499,8 @@ lupine_function_attribute_cache() {
 
 static int lupine_read_function_attributes(conn_t *conn, lupine_route route,
                                            CUfunction function) {
-  uint32_t count = 0;
-  if (conn == nullptr || rpc_read_buffer(conn, &count, sizeof(count)) < 0 ||
-      count > 4096) {
-    return -1;
-  }
   int route_id = lupine_route_identity(route);
-  for (uint32_t i = 0; i < count; ++i) {
+  for (;;) {
     CUresult result = CUDA_ERROR_UNKNOWN;
     int attribute = 0;
     int value = 0;
@@ -513,6 +508,9 @@ static int lupine_read_function_attributes(conn_t *conn, lupine_route route,
         rpc_read_buffer(conn, &attribute, sizeof(attribute)) < 0 ||
         rpc_read_buffer(conn, &value, sizeof(value)) < 0) {
       return -1;
+    }
+    if (result == CUDA_ERROR_INVALID_VALUE) {
+      return 0;
     }
     if (result != CUDA_SUCCESS) {
       continue;
@@ -520,18 +518,12 @@ static int lupine_read_function_attributes(conn_t *conn, lupine_route route,
     lupine_function_attribute_cache().insert_or_assign(
         lupine_function_attribute_key{route_id, function, attribute}, value);
   }
-  return 0;
 }
 
 static int lupine_read_kernel_attributes(conn_t *conn, lupine_route route,
                                          CUkernel kernel, CUdevice device) {
-  uint32_t count = 0;
-  if (conn == nullptr || rpc_read_buffer(conn, &count, sizeof(count)) < 0 ||
-      count > 4096) {
-    return -1;
-  }
   int route_id = lupine_route_identity(route);
-  for (uint32_t i = 0; i < count; ++i) {
+  for (;;) {
     CUresult result = CUDA_ERROR_UNKNOWN;
     int attribute = 0;
     int value = 0;
@@ -539,6 +531,9 @@ static int lupine_read_kernel_attributes(conn_t *conn, lupine_route route,
         rpc_read_buffer(conn, &attribute, sizeof(attribute)) < 0 ||
         rpc_read_buffer(conn, &value, sizeof(value)) < 0) {
       return -1;
+    }
+    if (result == CUDA_ERROR_INVALID_VALUE) {
+      return 0;
     }
     if (result != CUDA_SUCCESS) {
       continue;
@@ -547,7 +542,6 @@ static int lupine_read_kernel_attributes(conn_t *conn, lupine_route route,
         lupine_kernel_attribute_key{route_id, kernel, attribute, device},
         value);
   }
-  return 0;
 }
 
 static libcuckoo::cuckoohash_map<lupine_param_info_key, lupine_param_info_value,

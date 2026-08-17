@@ -876,32 +876,6 @@ int rpc_read_jit_options(conn_t *conn, rpc_jit_server_state *state) {
   return 0;
 }
 
-int rpc_read_library_options(conn_t *conn,
-                             std::vector<CUlibraryOption> *options,
-                             std::vector<uintptr_t> *raw_values) {
-  if (conn == nullptr || options == nullptr || raw_values == nullptr) {
-    return -1;
-  }
-
-  unsigned int num_options = 0;
-  if (rpc_read(conn, &num_options, sizeof(num_options)) < 0) {
-    return -1;
-  }
-
-  options->resize(num_options);
-  raw_values->resize(num_options);
-  if (num_options != 0 && rpc_read(conn, options->data(),
-                                   num_options * sizeof(CUlibraryOption)) < 0) {
-    return -1;
-  }
-  if (num_options != 0 &&
-      rpc_read(conn, raw_values->data(),
-               num_options * sizeof(*raw_values->data())) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 static const rpc_jit_output_binding *
 rpc_find_jit_output_binding(const std::vector<rpc_jit_output_binding> &bindings,
                             CUjit_option option) {
