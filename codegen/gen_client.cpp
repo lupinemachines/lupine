@@ -4721,15 +4721,18 @@ CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   size_t numNodes_requested = (nodes != nullptr) ? *numNodes : 0;
-  uint8_t nodes_present = nodes != nullptr ? 1 : 0;
+  uint8_t nodes_null = nodes == nullptr ? 1 : 0;
   if (rpc_write_start_request(conn, RPC_cuGraphGetNodes) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numNodes_requested, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &nodes_present, sizeof(uint8_t)) < 0 ||
+      rpc_write(conn, &nodes_null, sizeof(uint8_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, numNodes, sizeof(size_t)) < 0 ||
-      (nodes != nullptr && *numNodes != 0 &&
-       rpc_read(conn, nodes, *numNodes * sizeof(CUgraphNode)) < 0) ||
+      (nodes != nullptr && numNodes_requested != 0 && *numNodes != 0 &&
+       rpc_read(
+           conn, nodes,
+           (*numNodes < numNodes_requested ? *numNodes : numNodes_requested) *
+               sizeof(CUgraphNode)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4748,15 +4751,20 @@ CUresult cuGraphGetRootNodes(CUgraph hGraph, CUgraphNode *rootNodes,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   size_t numRootNodes_requested = (rootNodes != nullptr) ? *numRootNodes : 0;
-  uint8_t rootNodes_present = rootNodes != nullptr ? 1 : 0;
+  uint8_t rootNodes_null = rootNodes == nullptr ? 1 : 0;
   if (rpc_write_start_request(conn, RPC_cuGraphGetRootNodes) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numRootNodes_requested, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &rootNodes_present, sizeof(uint8_t)) < 0 ||
+      rpc_write(conn, &rootNodes_null, sizeof(uint8_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, numRootNodes, sizeof(size_t)) < 0 ||
-      (rootNodes != nullptr && *numRootNodes != 0 &&
-       rpc_read(conn, rootNodes, *numRootNodes * sizeof(CUgraphNode)) < 0) ||
+      (rootNodes != nullptr && numRootNodes_requested != 0 &&
+       *numRootNodes != 0 &&
+       rpc_read(conn, rootNodes,
+                (*numRootNodes < numRootNodes_requested
+                     ? *numRootNodes
+                     : numRootNodes_requested) *
+                    sizeof(CUgraphNode)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

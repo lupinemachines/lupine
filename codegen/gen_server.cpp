@@ -6161,16 +6161,18 @@ int handle_cuGraphGetNodes(conn_t *conn) {
   size_t numNodes = 0;
   size_t numNodes_requested = 0;
   CUgraphNode *nodes = nullptr;
-  uint8_t nodes_present = 0;
+  uint8_t nodes_null = 0;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &numNodes_requested, sizeof(size_t)) < 0 ||
       ((numNodes = numNodes_requested), false) ||
-      rpc_read(conn, &nodes_present, sizeof(uint8_t)) < 0 || false)
+      rpc_read(conn, &nodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  if (nodes_present && numNodes_requested != 0) {
-    nodes = (CUgraphNode *)malloc(numNodes_requested * sizeof(CUgraphNode));
+  if (!nodes_null) {
+    nodes = (CUgraphNode *)malloc(
+        (numNodes_requested != 0 ? numNodes_requested : 1) *
+        sizeof(CUgraphNode));
     if (nodes == nullptr)
       goto ERROR_0;
   }
@@ -6184,8 +6186,11 @@ int handle_cuGraphGetNodes(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numNodes, sizeof(size_t)) < 0 ||
-      (nodes_present &&
-       rpc_write(conn, nodes, numNodes * sizeof(CUgraphNode)) < 0) ||
+      (!nodes_null &&
+       rpc_write(
+           conn, nodes,
+           (numNodes < numNodes_requested ? numNodes : numNodes_requested) *
+               sizeof(CUgraphNode)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -6202,17 +6207,18 @@ int handle_cuGraphGetRootNodes(conn_t *conn) {
   size_t numRootNodes = 0;
   size_t numRootNodes_requested = 0;
   CUgraphNode *rootNodes = nullptr;
-  uint8_t rootNodes_present = 0;
+  uint8_t rootNodes_null = 0;
   int request_id;
   CUresult lupine_intercept_result;
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &numRootNodes_requested, sizeof(size_t)) < 0 ||
       ((numRootNodes = numRootNodes_requested), false) ||
-      rpc_read(conn, &rootNodes_present, sizeof(uint8_t)) < 0 || false)
+      rpc_read(conn, &rootNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  if (rootNodes_present && numRootNodes_requested != 0) {
-    rootNodes =
-        (CUgraphNode *)malloc(numRootNodes_requested * sizeof(CUgraphNode));
+  if (!rootNodes_null) {
+    rootNodes = (CUgraphNode *)malloc(
+        (numRootNodes_requested != 0 ? numRootNodes_requested : 1) *
+        sizeof(CUgraphNode));
     if (rootNodes == nullptr)
       goto ERROR_0;
   }
@@ -6227,8 +6233,11 @@ int handle_cuGraphGetRootNodes(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numRootNodes, sizeof(size_t)) < 0 ||
-      (rootNodes_present &&
-       rpc_write(conn, rootNodes, numRootNodes * sizeof(CUgraphNode)) < 0) ||
+      (!rootNodes_null && rpc_write(conn, rootNodes,
+                                    (numRootNodes < numRootNodes_requested
+                                         ? numRootNodes
+                                         : numRootNodes_requested) *
+                                        sizeof(CUgraphNode)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

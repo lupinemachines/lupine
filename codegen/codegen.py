@@ -16,7 +16,7 @@ from ops import (
     NullableOperation,
     ArrayOperation,
     InOutCountOperation,
-    OptionalArrayOperation,
+    NullableArrayOperation,
     DeepStructOperation,
     NullTerminatedOperation,
     OpaqueTypeOperation,
@@ -399,13 +399,15 @@ def parse_annotation(
                 nullable = "NULLABLE" in args
                 deref = "DEREF" in args
 
-                # validate that only one of the arguments is present
+                # NULLABLE composes with LENGTH (an optional out-array
+                # sized by an in/out count); every other combination is
+                # mutually exclusive.
                 if (
                     sum([bool(length_arg), bool(size_arg), null_terminated, nullable])
                     > 1
-                ):
+                ) and not (nullable and length_arg and not size_arg and not null_terminated):
                     raise NotImplementedError(
-                        "Only one of LENGTH, SIZE, NULL_TERMINATED, or NULLABLE can be specified"
+                        "Only one of LENGTH, SIZE, NULL_TERMINATED, or NULLABLE can be specified (except NULLABLE LENGTH)"
                     )
 
                 if deref:
@@ -422,12 +424,16 @@ def parse_annotation(
                     length_param = next(
                         p for p in params if p.name == length_arg.split(":")[1]
                     )
-                    if "OPTIONAL" in args:
-                        # optional out-array sized by an in/out count param (the
-                        # cuGraphGetNodes query pattern); linked to its count in
-                        # the post-pass below.
+                    if nullable:
+                        # NULLABLE LENGTH: an optional out-array sized by an
+                        # in/out count param (the cuGraphGetNodes query
+                        # pattern); linked to its count in the post-pass below.
+                        if send or not recv:
+                            raise NotImplementedError(
+                                "NULLABLE LENGTH requires a RECV_ONLY out-array"
+                            )
                         operations.append(
-                            OptionalArrayOperation(
+                            NullableArrayOperation(
                                 parameter=param,
                                 ptr=param.type,
                                 count=length_param,
@@ -633,7 +639,9 @@ def parse_annotation(
     # InOutCountOperation. Several arrays may share one count (cuGraphGetEdges);
     # the first one is the anchor whose presence the client uses to decide
     # between a count-only query and a fill.
-    optional_ops = [op for op in operations if isinstance(op, OptionalArrayOperation)]
+    optional_ops = [
+        op for op in operations if isinstance(op, NullableArrayOperation)
+    ]
     if optional_ops:
         anchors: dict[str, str] = {}
         for op in optional_ops:
@@ -1165,7 +1173,7 @@ def validate_async_annotation(
             f"{name}: @async requires a CUresult return type, got {return_type}"
         )
     for operation in metadata.operations:
-        # OptionalArrayOperation is an out-parameter with no send/recv flags.
+        # NullableArrayOperation is an out-parameter with no send/recv flags.
         if getattr(operation, "recv", True):
             raise RuntimeError(
                 f"{name}: @async requires every parameter to be SEND_ONLY, "
@@ -1521,7 +1529,7 @@ def main():
                     f.write(operation.client_declaration())
                 if (
                     isinstance(operation, InOutCountOperation)
-                    or isinstance(operation, OptionalArrayOperation)
+                    or isinstance(operation, NullableArrayOperation)
                     or isinstance(operation, DeepStructOperation)
                 ):
                     f.write(operation.client_declaration())

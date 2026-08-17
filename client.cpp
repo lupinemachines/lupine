@@ -6418,6 +6418,7 @@ extern "C" CUresult cuGraphGetEdges_v2(CUgraph hGraph, CUgraphNode *from,
     return CUDA_ERROR_INVALID_VALUE;
   }
   size_t requested = (from == nullptr || to == nullptr) ? 0 : *numEdges;
+  uint8_t arrays_null = (from == nullptr || to == nullptr) ? 1 : 0;
   uint8_t want_edge = edgeData != nullptr ? 1 : 0;
   lupine_route route = lupine_route_for_graph(hGraph);
   using real_fn_t = CUresult (*)(CUgraph, CUgraphNode *, CUgraphNode *,
@@ -6434,20 +6435,32 @@ extern "C" CUresult cuGraphGetEdges_v2(CUgraph hGraph, CUgraphNode *from,
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       rpc_write(conn, &requested, sizeof(requested)) < 0 ||
       rpc_write(conn, &want_edge, sizeof(want_edge)) < 0 ||
+      rpc_write(conn, &arrays_null, sizeof(arrays_null)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &returned, sizeof(returned)) < 0 ||
-      (from != nullptr && to != nullptr && returned != 0 &&
-       rpc_read(conn, from, returned * sizeof(CUgraphNode)) < 0) ||
-      (from != nullptr && to != nullptr && returned != 0 &&
-       rpc_read(conn, to, returned * sizeof(CUgraphNode)) < 0) ||
+      // The server sends min(returned, requested) elements per non-null
+      // array and none for a count-only query, so the reads must clamp
+      // identically to stay framed.
+      (from != nullptr && to != nullptr && requested != 0 && returned != 0 &&
+       rpc_read(conn, from,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphNode)) < 0) ||
+      (from != nullptr && to != nullptr && requested != 0 && returned != 0 &&
+       rpc_read(conn, to,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphNode)) < 0) ||
       (edgeData != nullptr && from != nullptr && to != nullptr &&
-       returned != 0 &&
-       rpc_read(conn, edgeData, returned * sizeof(CUgraphEdgeData)) < 0) ||
+       requested != 0 && returned != 0 &&
+       rpc_read(conn, edgeData,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphEdgeData)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  *numEdges = returned;
+  *numEdges = (from == nullptr || to == nullptr)
+                  ? returned
+                  : (returned < requested ? returned : requested);
   return return_value;
 }
 extern "C" CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from,
@@ -6461,6 +6474,7 @@ extern "C" CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from,
     return CUDA_ERROR_INVALID_VALUE;
   }
   size_t requested = (from == nullptr || to == nullptr) ? 0 : *numEdges;
+  uint8_t arrays_null = (from == nullptr || to == nullptr) ? 1 : 0;
   uint8_t want_edge = 0;
   lupine_route route = lupine_route_for_graph(hGraph);
   using real_fn_t =
@@ -6477,17 +6491,27 @@ extern "C" CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from,
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       rpc_write(conn, &requested, sizeof(requested)) < 0 ||
       rpc_write(conn, &want_edge, sizeof(want_edge)) < 0 ||
+      rpc_write(conn, &arrays_null, sizeof(arrays_null)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &returned, sizeof(returned)) < 0 ||
-      (from != nullptr && to != nullptr && returned != 0 &&
-       rpc_read(conn, from, returned * sizeof(CUgraphNode)) < 0) ||
-      (from != nullptr && to != nullptr && returned != 0 &&
-       rpc_read(conn, to, returned * sizeof(CUgraphNode)) < 0) ||
+      // The server sends min(returned, requested) elements per non-null
+      // array and none for a count-only query, so the reads must clamp
+      // identically to stay framed.
+      (from != nullptr && to != nullptr && requested != 0 && returned != 0 &&
+       rpc_read(conn, from,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphNode)) < 0) ||
+      (from != nullptr && to != nullptr && requested != 0 && returned != 0 &&
+       rpc_read(conn, to,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphNode)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  *numEdges = returned;
+  *numEdges = (from == nullptr || to == nullptr)
+                  ? returned
+                  : (returned < requested ? returned : requested);
   return return_value;
 }
 #endif
@@ -6504,6 +6528,7 @@ static CUresult lupine_client_node_dep_query(int rpc_id, CUgraphNode hNode,
     return CUDA_ERROR_INVALID_VALUE;
   }
   size_t requested = nodes == nullptr ? 0 : *num;
+  uint8_t nodes_null = nodes == nullptr ? 1 : 0;
   uint8_t want_edge = edgeData != nullptr ? 1 : 0;
   lupine_route route = lupine_route_for_graph_node(hNode);
   CUresult return_value;
@@ -6532,17 +6557,27 @@ static CUresult lupine_client_node_dep_query(int rpc_id, CUgraphNode hNode,
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_write(conn, &requested, sizeof(requested)) < 0 ||
       rpc_write(conn, &want_edge, sizeof(want_edge)) < 0 ||
+      rpc_write(conn, &nodes_null, sizeof(nodes_null)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &returned, sizeof(returned)) < 0 ||
-      (nodes != nullptr && returned != 0 &&
-       rpc_read(conn, nodes, returned * sizeof(CUgraphNode)) < 0) ||
-      (edgeData != nullptr && nodes != nullptr && returned != 0 &&
-       rpc_read(conn, edgeData, returned * sizeof(CUgraphEdgeData)) < 0) ||
+      // The server sends min(returned, requested) elements per non-null
+      // array and none for a count-only query, so the reads must clamp
+      // identically to stay framed.
+      (nodes != nullptr && requested != 0 && returned != 0 &&
+       rpc_read(conn, nodes,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphNode)) < 0) ||
+      (edgeData != nullptr && nodes != nullptr && requested != 0 &&
+       returned != 0 &&
+       rpc_read(conn, edgeData,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphEdgeData)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  *num = returned;
+  *num = (nodes == nullptr) ? returned
+                            : (returned < requested ? returned : requested);
   return return_value;
 }
 
@@ -6587,6 +6622,7 @@ static CUresult lupine_client_node_dep_query(int rpc_id, CUgraphNode hNode,
     return CUDA_ERROR_INVALID_VALUE;
   }
   size_t requested = nodes == nullptr ? 0 : *num;
+  uint8_t nodes_null = nodes == nullptr ? 1 : 0;
   uint8_t want_edge = 0;
   lupine_route route = lupine_route_for_graph_node(hNode);
   CUresult return_value;
@@ -6613,15 +6649,22 @@ static CUresult lupine_client_node_dep_query(int rpc_id, CUgraphNode hNode,
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_write(conn, &requested, sizeof(requested)) < 0 ||
       rpc_write(conn, &want_edge, sizeof(want_edge)) < 0 ||
+      rpc_write(conn, &nodes_null, sizeof(nodes_null)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &returned, sizeof(returned)) < 0 ||
-      (nodes != nullptr && returned != 0 &&
-       rpc_read(conn, nodes, returned * sizeof(CUgraphNode)) < 0) ||
+      // The server sends min(returned, requested) elements when the array is
+      // non-null and none for a count-only query, so the read must clamp
+      // identically to stay framed.
+      (nodes != nullptr && requested != 0 && returned != 0 &&
+       rpc_read(conn, nodes,
+                (returned < requested ? returned : requested) *
+                    sizeof(CUgraphNode)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  *num = returned;
+  *num = (nodes == nullptr) ? returned
+                            : (returned < requested ? returned : requested);
   return return_value;
 }
 

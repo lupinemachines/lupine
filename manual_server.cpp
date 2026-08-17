@@ -3172,12 +3172,18 @@ static int lupine_handle_node_dependency_query(conn_t *conn, bool dependent) {
   CUgraphNode hNode = nullptr;
   size_t requested = 0;
   uint8_t want_edge = 0;
+  // The null byte is sent separately from `requested`: a null out-pointer is
+  // a count-only query, while a non-null pointer with zero capacity must
+  // still reach the driver non-null (it reports INVALID_VALUE, not the
+  // count).
+  uint8_t nodes_null = 1;
   size_t count = 0;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_read(conn, &requested, sizeof(requested)) < 0 ||
-      rpc_read(conn, &want_edge, sizeof(want_edge)) < 0) {
+      rpc_read(conn, &want_edge, sizeof(want_edge)) < 0 ||
+      rpc_read(conn, &nodes_null, sizeof(nodes_null)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -3193,13 +3199,13 @@ static int lupine_handle_node_dependency_query(conn_t *conn, bool dependent) {
     return dependent ? cuGraphNodeGetDependentNodes_v2(hNode, out, edge, n)
                      : cuGraphNodeGetDependencies_v2(hNode, out, edge, n);
   };
-  if (requested == 0) {
+  if (nodes_null) {
     result = call(nullptr, nullptr, &count);
   } else {
     count = requested;
-    nodes.resize(count);
+    nodes.resize(requested != 0 ? requested : 1);
     if (want_edge) {
-      edges.resize(count);
+      edges.resize(requested != 0 ? requested : 1);
     }
     result = call(nodes.data(), want_edge ? edges.data() : nullptr, &count);
   }
@@ -3208,25 +3214,27 @@ static int lupine_handle_node_dependency_query(conn_t *conn, bool dependent) {
     return dependent ? cuGraphNodeGetDependentNodes(hNode, out, n)
                      : cuGraphNodeGetDependencies(hNode, out, n);
   };
-  if (requested == 0) {
+  if (nodes_null) {
     result = call(nullptr, &count);
   } else {
     count = requested;
-    nodes.resize(count);
+    nodes.resize(requested != 0 ? requested : 1);
     result = call(nodes.data(), &count);
   }
 #endif
 
-  bool send_arrays = requested != 0 && count != 0;
+  // Never send more elements than the `requested`-sized buffers hold; the
+  // client reads min(count, requested) per array, so the sizes must match.
+  size_t sent = count < requested ? count : requested;
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
-      (send_arrays &&
-       rpc_write(conn, nodes.data(), count * sizeof(CUgraphNode)) < 0)) {
+      (sent != 0 &&
+       rpc_write(conn, nodes.data(), sent * sizeof(CUgraphNode)) < 0)) {
     return -1;
   }
 #if CUDA_VERSION >= 12030
-  if (send_arrays && want_edge &&
-      rpc_write(conn, edges.data(), count * sizeof(CUgraphEdgeData)) < 0) {
+  if (sent != 0 && want_edge &&
+      rpc_write(conn, edges.data(), sent * sizeof(CUgraphEdgeData)) < 0) {
     return -1;
   }
 #endif
@@ -3253,9 +3261,14 @@ int handle_manual_cuGraphGetEdges(conn_t *conn) {
   size_t count = 0;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
+  // The null byte is sent separately from `requested`: null from/to is a
+  // count-only query, while non-null pointers with zero capacity must still
+  // reach the driver non-null (it reports INVALID_VALUE, not the count).
+  uint8_t arrays_null = 1;
   if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
       rpc_read(conn, &requested, sizeof(requested)) < 0 ||
-      rpc_read(conn, &want_edge, sizeof(want_edge)) < 0) {
+      rpc_read(conn, &want_edge, sizeof(want_edge)) < 0 ||
+      rpc_read(conn, &arrays_null, sizeof(arrays_null)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -3267,41 +3280,43 @@ int handle_manual_cuGraphGetEdges(conn_t *conn) {
   std::vector<CUgraphNode> to;
 #if CUDA_VERSION >= 12030
   std::vector<CUgraphEdgeData> edges;
-  if (requested == 0) {
+  if (arrays_null) {
     result = cuGraphGetEdges_v2(hGraph, nullptr, nullptr, nullptr, &count);
   } else {
     count = requested;
-    from.resize(count);
-    to.resize(count);
+    from.resize(requested != 0 ? requested : 1);
+    to.resize(requested != 0 ? requested : 1);
     if (want_edge) {
-      edges.resize(count);
+      edges.resize(requested != 0 ? requested : 1);
     }
     result = cuGraphGetEdges_v2(hGraph, from.data(), to.data(),
                                 want_edge ? edges.data() : nullptr, &count);
   }
 #else
-  if (requested == 0) {
+  if (arrays_null) {
     result = cuGraphGetEdges(hGraph, nullptr, nullptr, &count);
   } else {
     count = requested;
-    from.resize(count);
-    to.resize(count);
+    from.resize(requested != 0 ? requested : 1);
+    to.resize(requested != 0 ? requested : 1);
     result = cuGraphGetEdges(hGraph, from.data(), to.data(), &count);
   }
 #endif
 
-  bool send_arrays = requested != 0 && count != 0;
+  // Never send more elements than the `requested`-sized buffers hold; the
+  // client reads min(count, requested) per array, so the sizes must match.
+  size_t sent = count < requested ? count : requested;
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
-      (send_arrays &&
-       rpc_write(conn, from.data(), count * sizeof(CUgraphNode)) < 0) ||
-      (send_arrays &&
-       rpc_write(conn, to.data(), count * sizeof(CUgraphNode)) < 0)) {
+      (sent != 0 &&
+       rpc_write(conn, from.data(), sent * sizeof(CUgraphNode)) < 0) ||
+      (sent != 0 &&
+       rpc_write(conn, to.data(), sent * sizeof(CUgraphNode)) < 0)) {
     return -1;
   }
 #if CUDA_VERSION >= 12030
-  if (send_arrays && want_edge &&
-      rpc_write(conn, edges.data(), count * sizeof(CUgraphEdgeData)) < 0) {
+  if (sent != 0 && want_edge &&
+      rpc_write(conn, edges.data(), sent * sizeof(CUgraphEdgeData)) < 0) {
     return -1;
   }
 #endif

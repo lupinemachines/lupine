@@ -4182,13 +4182,13 @@ CUresult cuGraphNodeGetType(CUgraphNode hNode, CUgraphNodeType *type);
 /**
  * @param hGraph SEND_ONLY
  * @param numNodes SEND_RECV
- * @param nodes RECV_ONLY LENGTH:numNodes OPTIONAL
+ * @param nodes RECV_ONLY NULLABLE LENGTH:numNodes
  */
 CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes);
 /**
  * @param hGraph SEND_ONLY
  * @param numRootNodes SEND_RECV
- * @param rootNodes RECV_ONLY LENGTH:numRootNodes OPTIONAL
+ * @param rootNodes RECV_ONLY NULLABLE LENGTH:numRootNodes
  */
 CUresult cuGraphGetRootNodes(CUgraph hGraph, CUgraphNode *rootNodes,
                              size_t *numRootNodes);

@@ -501,7 +501,7 @@ class ArrayOperation:
 class InOutCountOperation:
     """
     A ``size_t *`` count that is simultaneously an input capacity and an output
-    count for one or more :class:`OptionalArrayOperation` out-arrays -- the
+    count for one or more :class:`NullableArrayOperation` out-arrays -- the
     cuGraphGetNodes pattern. The client sends the requested capacity (0 when the
     anchor array is null, which is a count-only query); the server runs the API
     once with that capacity and returns the actual count.
@@ -557,12 +557,12 @@ class InOutCountOperation:
 
 
 @dataclass
-class OptionalArrayOperation:
+class NullableArrayOperation:
     """
-    An optional out-array sized by an in/out :class:`InOutCountOperation`. The
-    array may be null (the caller is querying the count, or does not want this
-    particular array). Several optional arrays can share one count, e.g.
-    cuGraphGetEdges' from/to/edgeData.
+    A ``NULLABLE LENGTH:<count>`` out-array sized by an in/out
+    :class:`InOutCountOperation`. The array may be null (the caller is querying
+    the count, or does not want this particular array). Several nullable arrays
+    can share one count, e.g. cuGraphGetEdges' from/to/edgeData.
     """
 
     parameter: Parameter
@@ -580,18 +580,18 @@ class OptionalArrayOperation:
     def server_declaration(self) -> str:
         return (
             f"    {self.element_type()} *{self.parameter.name} = nullptr;\n"
-            f"    uint8_t {self.parameter.name}_present = 0;\n"
+            f"    uint8_t {self.parameter.name}_null = 0;\n"
         )
 
     def client_declaration(self) -> str:
         return (
-            f"    uint8_t {self.parameter.name}_present = "
-            f"{self.parameter.name} != nullptr ? 1 : 0;\n"
+            f"    uint8_t {self.parameter.name}_null = "
+            f"{self.parameter.name} == nullptr ? 1 : 0;\n"
         )
 
     def client_rpc_write(self, f):
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}_present, sizeof(uint8_t)) < 0 ||\n"
+            f"        rpc_write(conn, &{self.parameter.name}_null, sizeof(uint8_t)) < 0 ||\n"
         )
 
     def server_rpc_read(self, f) -> Optional[str]:
@@ -599,13 +599,17 @@ class OptionalArrayOperation:
         name = self.parameter.name
         count = self.count.name
         f.write(
-            f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+            f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
         )
         f.write("        false)\n")
         f.write("        goto ERROR_0;\n")
-        f.write(f"    if ({name}_present && {count}_requested != 0) {{\n")
+        # A present pointer must reach CUDA non-null even at zero capacity:
+        # null selects count-query semantics, which can report a count larger
+        # than the zero-length storage the response would then be read from.
+        f.write(f"    if (!{name}_null) {{\n")
         f.write(
-            f"        {name} = ({elem} *)malloc({count}_requested * sizeof({elem}));\n"
+            f"        {name} = ({elem} *)malloc(\n"
+            f"            ({count}_requested != 0 ? {count}_requested : 1) * sizeof({elem}));\n"
         )
         f.write(f"        if ({name} == nullptr)\n")
         f.write("            goto ERROR_0;\n")
@@ -618,12 +622,18 @@ class OptionalArrayOperation:
         return self.parameter.name
 
     def server_rpc_write(self, f):
+        # Both sides clamp the element count to the requested capacity: only
+        # that many elements were allocated, and the clamp keeps the write and
+        # the client read sized identically even if the API reports a larger
+        # count.
         elem = self.element_type()
         name = self.parameter.name
         count = self.count.name
         f.write(
-            f"        ({name}_present && "
-            f"rpc_write(conn, {name}, {count} * sizeof({elem})) < 0) ||\n"
+            f"        (!{name}_null && "
+            f"rpc_write(conn, {name}, "
+            f"({count} < {count}_requested ? {count} : {count}_requested)"
+            f" * sizeof({elem})) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
@@ -631,8 +641,10 @@ class OptionalArrayOperation:
         name = self.parameter.name
         count = self.count.name
         f.write(
-            f"        ({name} != nullptr && *{count} != 0 && "
-            f"rpc_read(conn, {name}, *{count} * sizeof({elem})) < 0) ||\n"
+            f"        ({name} != nullptr && {count}_requested != 0 && *{count} != 0 && "
+            f"rpc_read(conn, {name}, "
+            f"(*{count} < {count}_requested ? *{count} : {count}_requested)"
+            f" * sizeof({elem})) < 0) ||\n"
         )
 
 

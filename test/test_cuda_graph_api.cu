@@ -148,6 +148,73 @@ int main() {
   CHECK(ndependents == 1 && dependents[0] == B,
         "cuGraphNodeGetDependentNodes(A) == {B}");
 
+  // ---- zero-capacity present pointers (issue #515): a non-null out-array
+  // with a requested count of 0 is array mode, not a count query. The driver
+  // rejects it with INVALID_VALUE, leaves the count 0, and writes nothing;
+  // the wire must not desync or serialize elements from unallocated storage.
+  {
+    const CUgraphNode sentinel = (CUgraphNode)0x1;
+    size_t zc = 0;
+    CUgraphNode buf[4] = {sentinel, sentinel, sentinel, sentinel};
+    CHECK(cuGraphGetNodes(graph, buf, &zc) == CUDA_ERROR_INVALID_VALUE &&
+              zc == 0 && buf[0] == sentinel,
+          "cuGraphGetNodes zero-capacity: INVALID_VALUE, count 0, untouched");
+    zc = 0;
+    CHECK(cuGraphGetRootNodes(graph, buf, &zc) == CUDA_ERROR_INVALID_VALUE &&
+              zc == 0 && buf[0] == sentinel,
+          "cuGraphGetRootNodes zero-capacity: INVALID_VALUE, count 0, "
+          "untouched");
+    zc = 0;
+    CUgraphNode fbuf[4] = {sentinel, sentinel, sentinel, sentinel};
+    CUgraphNode tbuf[4] = {sentinel, sentinel, sentinel, sentinel};
+#ifdef cuGraphGetEdges
+    CUresult ez = cuGraphGetEdges(graph, fbuf, tbuf, nullptr, &zc);
+#else
+    CUresult ez = cuGraphGetEdges(graph, fbuf, tbuf, &zc);
+#endif
+    CHECK(ez == CUDA_ERROR_INVALID_VALUE && zc == 0 && fbuf[0] == sentinel &&
+              tbuf[0] == sentinel,
+          "cuGraphGetEdges zero-capacity: INVALID_VALUE, count 0, untouched");
+    zc = 0;
+#ifdef cuGraphNodeGetDependencies
+    CUresult dz = cuGraphNodeGetDependencies(D, buf, nullptr, &zc);
+#else
+    CUresult dz = cuGraphNodeGetDependencies(D, buf, &zc);
+#endif
+    CHECK(dz == CUDA_ERROR_INVALID_VALUE && zc == 0 && buf[0] == sentinel,
+          "cuGraphNodeGetDependencies zero-capacity: INVALID_VALUE, count 0, "
+          "untouched");
+    zc = 0;
+#ifdef cuGraphNodeGetDependentNodes
+    CUresult pz = cuGraphNodeGetDependentNodes(A, buf, nullptr, &zc);
+#else
+    CUresult pz = cuGraphNodeGetDependentNodes(A, buf, &zc);
+#endif
+    CHECK(pz == CUDA_ERROR_INVALID_VALUE && zc == 0 && buf[0] == sentinel,
+          "cuGraphNodeGetDependentNodes zero-capacity: INVALID_VALUE, count "
+          "0, untouched");
+
+    // Partial capacity truncates: 2 of the 4 nodes/edges come back and the
+    // entries past the capacity stay untouched.
+    size_t pc = 2;
+    CUgraphNode pbuf[4] = {sentinel, sentinel, sentinel, sentinel};
+    CHECK(cuGraphGetNodes(graph, pbuf, &pc) == CUDA_SUCCESS && pc == 2 &&
+              pbuf[0] != sentinel && pbuf[1] != sentinel &&
+              pbuf[2] == sentinel,
+          "cuGraphGetNodes partial capacity: 2 filled, rest untouched");
+    pc = 2;
+    CUgraphNode pf[4] = {sentinel, sentinel, sentinel, sentinel};
+    CUgraphNode pt[4] = {sentinel, sentinel, sentinel, sentinel};
+#ifdef cuGraphGetEdges
+    CUresult ep = cuGraphGetEdges(graph, pf, pt, nullptr, &pc);
+#else
+    CUresult ep = cuGraphGetEdges(graph, pf, pt, &pc);
+#endif
+    CHECK(ep == CUDA_SUCCESS && pc == 2 && pf[0] != sentinel &&
+              pt[0] != sentinel && pf[2] == sentinel && pt[2] == sentinel,
+          "cuGraphGetEdges partial capacity: 2 filled, rest untouched");
+  }
+
   // ---- host-node params: GetParams unwraps the trampoline to the original
   // fn/userData; SetParams updates them; the callback fires on launch ----
   CUDA_HOST_NODE_PARAMS got = {};
