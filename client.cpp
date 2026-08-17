@@ -136,12 +136,10 @@ struct lupine_module_function_record {
   std::unordered_map<int, CUfunction> functions_by_route;
 };
 
-static CUresult lupine_read_func_param_layout(CUfunction function,
-                                              std::vector<size_t> *offsets,
-                                              std::vector<size_t> *sizes);
-static CUresult lupine_read_kernel_param_layout(CUkernel kernel,
-                                                std::vector<size_t> *offsets,
-                                                std::vector<size_t> *sizes);
+static CUresult lupine_read_func_param_sizes(CUfunction function,
+                                             std::vector<size_t> *sizes);
+static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
+                                               std::vector<size_t> *sizes);
 static CUresult lupine_warm_func_param_info(CUfunction function);
 static CUresult lupine_warm_kernel_param_info(CUkernel kernel);
 
@@ -4743,17 +4741,12 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   return return_value;
 }
 
-static CUresult lupine_read_func_param_layout(CUfunction function,
-                                              std::vector<size_t> *offsets,
-                                              std::vector<size_t> *sizes) {
-  if (offsets == nullptr || sizes == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  offsets->clear();
+static CUresult lupine_read_func_param_sizes(CUfunction function,
+                                             std::vector<size_t> *sizes) {
   sizes->clear();
   for (uint32_t i = 0;; ++i) {
-    size_t offset = 0;
-    size_t size = 0;
+    size_t offset;
+    size_t size;
     CUresult result = cuFuncGetParamInfo(function, i, &offset, &size);
     if (result == CUDA_ERROR_INVALID_VALUE) {
       lupine_param_layout_count_cache().insert_or_assign(
@@ -4764,22 +4757,16 @@ static CUresult lupine_read_func_param_layout(CUfunction function,
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    offsets->push_back(offset);
     sizes->push_back(size);
   }
 }
 
-static CUresult lupine_read_kernel_param_layout(CUkernel kernel,
-                                                std::vector<size_t> *offsets,
-                                                std::vector<size_t> *sizes) {
-  if (offsets == nullptr || sizes == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  offsets->clear();
+static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
+                                               std::vector<size_t> *sizes) {
   sizes->clear();
   for (uint32_t i = 0;; ++i) {
-    size_t offset = 0;
-    size_t size = 0;
+    size_t offset;
+    size_t size;
     CUresult result = cuKernelGetParamInfo(kernel, i, &offset, &size);
     if (result == CUDA_ERROR_INVALID_VALUE) {
       lupine_param_layout_count_cache().insert_or_assign(
@@ -4790,7 +4777,6 @@ static CUresult lupine_read_kernel_param_layout(CUkernel kernel,
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    offsets->push_back(offset);
     sizes->push_back(size);
   }
 }
@@ -4899,12 +4885,10 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                       blockDimZ, sharedMemBytes, hStream, kernelParams, extra);
   }
 
-  std::vector<size_t> param_offsets;
   std::vector<size_t> param_sizes;
-  status = kernel_handle
-               ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
-                                                 &param_offsets, &param_sizes)
-               : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
+  status = kernel_handle ? lupine_read_kernel_param_sizes(
+                               reinterpret_cast<CUkernel>(f), &param_sizes)
+                         : lupine_read_func_param_sizes(f, &param_sizes);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -4929,11 +4913,9 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     }
     route = lupine_route_for_function(f);
 
-    status =
-        kernel_handle
-            ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
-                                              &param_offsets, &param_sizes)
-            : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
+    status = kernel_handle ? lupine_read_kernel_param_sizes(
+                                 reinterpret_cast<CUkernel>(f), &param_sizes)
+                           : lupine_read_func_param_sizes(f, &param_sizes);
     if (status != CUDA_SUCCESS) {
       return status;
     }
@@ -4974,10 +4956,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_write(conn, param_offsets.data(),
-                param_offsets.size() * sizeof(*param_offsets.data())) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
       rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0 ||
@@ -5022,12 +5001,10 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
                            : real(config, f, kernelParams, extra);
   }
 
-  std::vector<size_t> param_offsets;
   std::vector<size_t> param_sizes;
-  status = kernel_handle
-               ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
-                                                 &param_offsets, &param_sizes)
-               : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
+  status = kernel_handle ? lupine_read_kernel_param_sizes(
+                               reinterpret_cast<CUkernel>(f), &param_sizes)
+                         : lupine_read_func_param_sizes(f, &param_sizes);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -5052,11 +5029,9 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     }
     route = lupine_route_for_function(f);
 
-    status =
-        kernel_handle
-            ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
-                                              &param_offsets, &param_sizes)
-            : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
+    status = kernel_handle ? lupine_read_kernel_param_sizes(
+                                 reinterpret_cast<CUkernel>(f), &param_sizes)
+                           : lupine_read_func_param_sizes(f, &param_sizes);
     if (status != CUDA_SUCCESS) {
       return status;
     }
@@ -5095,10 +5070,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write(conn, config->attrs,
                 config->numAttrs * sizeof(*config->attrs)) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
-      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_write(conn, param_offsets.data(),
-                param_offsets.size() * sizeof(*param_offsets.data())) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
       rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0) {
@@ -5148,13 +5120,11 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
                       blockDimZ, sharedMemBytes, hStream, kernelParams);
   }
 
-  std::vector<size_t> param_offsets;
   std::vector<size_t> param_sizes;
-  CUresult status =
-      kernel_handle
-          ? lupine_read_kernel_param_layout(reinterpret_cast<CUkernel>(f),
-                                            &param_offsets, &param_sizes)
-          : lupine_read_func_param_layout(f, &param_offsets, &param_sizes);
+  CUresult status = kernel_handle
+                        ? lupine_read_kernel_param_sizes(
+                              reinterpret_cast<CUkernel>(f), &param_sizes)
+                        : lupine_read_func_param_sizes(f, &param_sizes);
   if (status != CUDA_SUCCESS) {
     return status;
   }
@@ -5188,10 +5158,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write(conn, &kernel_handle, sizeof(kernel_handle)) < 0 ||
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
-      rpc_write(conn, param_offsets.data(),
-                param_offsets.size() * sizeof(*param_offsets.data())) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
       rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0 ||
@@ -5926,8 +5893,7 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   for (size_t i = 0;; ++i) {
-    auto *offset = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+    size_t offset;
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *param_result = static_cast<CUresult *>(
@@ -5935,11 +5901,11 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
     *param_result = nodeParams->extra == nullptr ? CUDA_ERROR_INVALID_HANDLE
                                                  : CUDA_ERROR_NOT_SUPPORTED;
     if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-      *param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
+      *param_result = cuFuncGetParamInfo(nodeParams->func, i, &offset, size);
     }
 #if CUDA_VERSION >= 12000
     else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
+      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, &offset, size);
     }
 #endif
     if (*param_result != CUDA_SUCCESS) {
@@ -6013,8 +5979,7 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   for (size_t i = 0;; ++i) {
-    auto *offset = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+    size_t offset;
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *param_result = static_cast<CUresult *>(
@@ -6022,11 +5987,11 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
     *param_result = nodeParams->extra == nullptr ? CUDA_ERROR_INVALID_HANDLE
                                                  : CUDA_ERROR_NOT_SUPPORTED;
     if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-      *param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
+      *param_result = cuFuncGetParamInfo(nodeParams->func, i, &offset, size);
     }
 #if CUDA_VERSION >= 12000
     else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
+      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, &offset, size);
     }
 #endif
     if (*param_result != CUDA_SUCCESS) {
@@ -6145,8 +6110,7 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   for (size_t i = 0;; ++i) {
-    auto *offset = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+    size_t offset;
     auto *size = static_cast<size_t *>(
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *param_result = static_cast<CUresult *>(
@@ -6154,11 +6118,11 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
     *param_result = nodeParams->extra == nullptr ? CUDA_ERROR_INVALID_HANDLE
                                                  : CUDA_ERROR_NOT_SUPPORTED;
     if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-      *param_result = cuFuncGetParamInfo(nodeParams->func, i, offset, size);
+      *param_result = cuFuncGetParamInfo(nodeParams->func, i, &offset, size);
     }
 #if CUDA_VERSION >= 12000
     else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, offset, size);
+      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, &offset, size);
     }
 #endif
     if (*param_result != CUDA_SUCCESS) {
@@ -6375,8 +6339,7 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   }
   if (nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL) {
     for (size_t i = 0;; ++i) {
-      auto *offset = static_cast<size_t *>(
-          rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+      size_t offset;
       auto *size = static_cast<size_t *>(
           rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
       auto *param_result = static_cast<CUresult *>(
@@ -6387,13 +6350,13 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
       if (nodeParams->kernel.extra == nullptr &&
           nodeParams->kernel.func != nullptr) {
         *param_result =
-            cuFuncGetParamInfo(nodeParams->kernel.func, i, offset, size);
+            cuFuncGetParamInfo(nodeParams->kernel.func, i, &offset, size);
       }
 #if CUDA_VERSION >= 12000
       else if (nodeParams->kernel.extra == nullptr &&
                nodeParams->kernel.kern != nullptr) {
         *param_result =
-            cuKernelGetParamInfo(nodeParams->kernel.kern, i, offset, size);
+            cuKernelGetParamInfo(nodeParams->kernel.kern, i, &offset, size);
       }
 #endif
       if (*param_result != CUDA_SUCCESS) {

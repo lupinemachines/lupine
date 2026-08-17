@@ -2276,7 +2276,6 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
   unsigned int blockDimZ = 0;
   unsigned int sharedMemBytes = 0;
   CUstream hStream = nullptr;
-  bool kernel_handle = false;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
@@ -2288,30 +2287,15 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
       rpc_read(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
       rpc_read(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_read(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_read(conn, &kernel_handle, sizeof(kernel_handle)) < 0) {
+      rpc_read(conn, &hStream, sizeof(hStream)) < 0) {
     return -1;
   }
 
   result = CUDA_SUCCESS;
 
   void **params = nullptr;
-  CUresult param_result = CUDA_SUCCESS;
-#if CUDA_VERSION >= 12000
-  int read_result =
-      kernel_handle
-          ? rpc_read_kernel_launch_param_values(
-                conn, &params, reinterpret_cast<CUkernel>(f), &param_result)
-          : rpc_read_func_launch_param_values(conn, &params, f, &param_result);
-#else
-  int read_result =
-      rpc_read_func_launch_param_values(conn, &params, f, &param_result);
-#endif
-  if (read_result < 0) {
+  if (rpc_read_launch_param_values(conn, &params) < 0) {
     return -1;
-  }
-  if (result == CUDA_SUCCESS) {
-    result = param_result;
   }
   auto params_owner = lupine_own_kernel_param_values(params);
   request_id = rpc_read_end(conn);
@@ -2333,14 +2317,12 @@ int handle_manual_cuLaunchKernel(conn_t *conn) {
 int handle_manual_cuLaunchKernelEx(conn_t *conn) {
   CUlaunchConfig config = {};
   CUfunction f = nullptr;
-  bool kernel_handle = false;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   std::vector<CUlaunchAttribute> attributes;
   if (rpc_read_launch_config(conn, &config, &attributes) < 0 ||
-      rpc_read(conn, &f, sizeof(f)) < 0 ||
-      rpc_read(conn, &kernel_handle, sizeof(kernel_handle)) < 0) {
+      rpc_read(conn, &f, sizeof(f)) < 0) {
     return -1;
   }
 
@@ -2351,22 +2333,8 @@ int handle_manual_cuLaunchKernelEx(conn_t *conn) {
 #endif
 
   void **params = nullptr;
-  CUresult param_result = CUDA_SUCCESS;
-#if CUDA_VERSION >= 12000
-  int read_result =
-      kernel_handle
-          ? rpc_read_kernel_launch_param_values(
-                conn, &params, reinterpret_cast<CUkernel>(f), &param_result)
-          : rpc_read_func_launch_param_values(conn, &params, f, &param_result);
-#else
-  int read_result =
-      rpc_read_func_launch_param_values(conn, &params, f, &param_result);
-#endif
-  if (read_result < 0) {
+  if (rpc_read_launch_param_values(conn, &params) < 0) {
     return -1;
-  }
-  if (result == CUDA_SUCCESS) {
-    result = param_result;
   }
   auto params_owner = lupine_own_kernel_param_values(params);
   request_id = rpc_read_end(conn);
@@ -2406,7 +2374,6 @@ int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {
   unsigned int blockDimZ = 0;
   unsigned int sharedMemBytes = 0;
   CUstream hStream = nullptr;
-  bool kernel_handle = false;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
@@ -2418,24 +2385,13 @@ int handle_manual_cuLaunchCooperativeKernel(conn_t *conn) {
       rpc_read(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
       rpc_read(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_read(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_read(conn, &kernel_handle, sizeof(kernel_handle)) < 0) {
+      rpc_read(conn, &hStream, sizeof(hStream)) < 0) {
     return -1;
   }
 
   result = CUDA_SUCCESS;
   void **params = nullptr;
-  int read_result;
-#if CUDA_VERSION >= 12000
-  read_result =
-      kernel_handle
-          ? rpc_read_kernel_launch_param_values(
-                conn, &params, reinterpret_cast<CUkernel>(f), &result)
-          : rpc_read_func_launch_param_values(conn, &params, f, &result);
-#else
-  read_result = rpc_read_func_launch_param_values(conn, &params, f, &result);
-#endif
-  if (read_result < 0) {
+  if (rpc_read_launch_param_values(conn, &params) < 0) {
     return -1;
   }
   auto params_owner = lupine_own_kernel_param_values(params);
@@ -2531,9 +2487,10 @@ int handle_manual_cuGraphAddKernelNode(conn_t *conn) {
   if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_read_graph_dependencies(conn, &deps) < 0 ||
       rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
-      rpc_read_kernel_node_param_values(conn, &nodeParams, &result) < 0) {
+      rpc_read_param_values(conn, &nodeParams.kernelParams, &result) < 0) {
     return -1;
   }
+  nodeParams.extra = nullptr;
   auto params_owner = lupine_own_kernel_param_values(nodeParams.kernelParams);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -2581,19 +2538,19 @@ int handle_manual_cuGraphKernelNodeGetParams(conn_t *conn) {
   }
   if (result == CUDA_SUCCESS) {
     for (size_t i = 0;; ++i) {
-      auto *offset = static_cast<size_t *>(
-          rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
+      size_t offset;
       auto *size = static_cast<size_t *>(
           rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
       auto *param_result = static_cast<CUresult *>(
           rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
       *param_result = CUDA_ERROR_INVALID_HANDLE;
       if (node_params.func != nullptr) {
-        *param_result = cuFuncGetParamInfo(node_params.func, i, offset, size);
+        *param_result = cuFuncGetParamInfo(node_params.func, i, &offset, size);
       }
 #if CUDA_VERSION >= 12000
       else if (node_params.kern != nullptr) {
-        *param_result = cuKernelGetParamInfo(node_params.kern, i, offset, size);
+        *param_result =
+            cuKernelGetParamInfo(node_params.kern, i, &offset, size);
       }
 #endif
       if (*param_result != CUDA_SUCCESS) {
@@ -2617,9 +2574,10 @@ int handle_manual_cuGraphKernelNodeSetParams(conn_t *conn) {
 
   if (rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
-      rpc_read_kernel_node_param_values(conn, &nodeParams, &result) < 0) {
+      rpc_read_param_values(conn, &nodeParams.kernelParams, &result) < 0) {
     return -1;
   }
+  nodeParams.extra = nullptr;
   auto params_owner = lupine_own_kernel_param_values(nodeParams.kernelParams);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -2646,9 +2604,10 @@ int handle_manual_cuGraphExecKernelNodeSetParams(conn_t *conn) {
   if (rpc_read(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_read_kernel_node_params(conn, &nodeParams) < 0 ||
-      rpc_read_kernel_node_param_values(conn, &nodeParams, &result) < 0) {
+      rpc_read_param_values(conn, &nodeParams.kernelParams, &result) < 0) {
     return -1;
   }
+  nodeParams.extra = nullptr;
   auto params_owner = lupine_own_kernel_param_values(nodeParams.kernelParams);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -2841,29 +2800,11 @@ int handle_manual_cuGraphAddNode(conn_t *conn) {
     return -1;
   }
   if (nodeParams.type == CU_GRAPH_NODE_TYPE_KERNEL) {
-    int read_result = -1;
-    if (nodeParams.kernel.func != nullptr) {
-      read_result =
-          rpc_read_func_param_values(conn, &nodeParams.kernel.kernelParams,
-                                     nodeParams.kernel.func, &result);
-    }
-#if CUDA_VERSION >= 12000
-    else if (nodeParams.kernel.kern != nullptr) {
-      read_result =
-          rpc_read_kernel_param_values(conn, &nodeParams.kernel.kernelParams,
-                                       nodeParams.kernel.kern, &result);
-    }
-#endif
-    else {
-      read_result = rpc_read_func_param_values(
-          conn, &nodeParams.kernel.kernelParams, nullptr, &result);
-    }
-    if (read_result < 0) {
+    if (rpc_read_param_values(conn, &nodeParams.kernel.kernelParams, &result) <
+        0) {
       return -1;
     }
-    if (result == CUDA_SUCCESS) {
-      nodeParams.kernel.extra = nullptr;
-    }
+    nodeParams.kernel.extra = nullptr;
   }
   auto params_owner = lupine_own_kernel_param_values(
       nodeParams.type == CU_GRAPH_NODE_TYPE_KERNEL
