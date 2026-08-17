@@ -94,11 +94,14 @@ static constexpr size_t lupine_attribute_copy_size() {
 }
 
 struct lupine_jit_state {
-  std::vector<CUjit_option> options;
-  std::vector<void *> option_values;
+  unsigned int num_options = 0;
+  CUjit_option *options = nullptr;
+  void **option_values = nullptr;
   float wall_time = 0.0f;
-  std::vector<char> info_log;
-  std::vector<char> error_log;
+  size_t info_log_size = 0;
+  char *info_log = nullptr;
+  size_t error_log_size = 0;
+  char *error_log = nullptr;
 };
 
 // The CUDA linker requires output option buffers to remain valid for the
@@ -108,14 +111,7 @@ struct lupine_jit_state {
 // locked out until the response holding that buffer has been flushed.
 struct lupine_link_state {
   CUlinkState cuda_state = nullptr;
-  unsigned int num_options = 0;
-  CUjit_option *options = nullptr;
-  void **option_values = nullptr;
-  float wall_time = 0.0f;
-  size_t info_log_size = 0;
-  char *info_log = nullptr;
-  size_t error_log_size = 0;
-  char *error_log = nullptr;
+  lupine_jit_state jit;
   std::mutex mutex;
 };
 
@@ -1028,40 +1024,46 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
-  unsigned int num_jit_options = 0;
-  if (rpc_read(conn, &num_jit_options, sizeof(num_jit_options)) < 0) {
+  if (rpc_read(conn, &jit_state.num_options, sizeof(jit_state.num_options)) <
+      0) {
     return -1;
   }
-  jit_state.options.resize(num_jit_options);
-  jit_state.option_values.resize(num_jit_options);
-  if (rpc_read(conn, jit_state.options.data(),
-               jit_state.options.size() * sizeof(*jit_state.options.data())) <
-          0 ||
-      rpc_read(conn, jit_state.option_values.data(),
-               jit_state.option_values.size() *
-                   sizeof(*jit_state.option_values.data())) < 0) {
+  jit_state.options = static_cast<CUjit_option *>(
+      std::malloc(jit_state.num_options * sizeof(*jit_state.options)));
+  jit_state.option_values = static_cast<void **>(
+      std::malloc(jit_state.num_options * sizeof(*jit_state.option_values)));
+  if (rpc_read(conn, jit_state.options,
+               jit_state.num_options * sizeof(*jit_state.options)) < 0 ||
+      rpc_read(conn, jit_state.option_values,
+               jit_state.num_options * sizeof(*jit_state.option_values)) < 0) {
     return -1;
   }
-  size_t info_log_capacity = 0;
-  size_t error_log_capacity = 0;
-  for (size_t i = 0; i < jit_state.options.size(); ++i) {
+  for (unsigned int i = 0; i < jit_state.num_options; ++i) {
     if (jit_state.options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
-      info_log_capacity =
+      jit_state.info_log_size =
           reinterpret_cast<uintptr_t>(jit_state.option_values[i]);
     } else if (jit_state.options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
-      error_log_capacity =
+      jit_state.error_log_size =
           reinterpret_cast<uintptr_t>(jit_state.option_values[i]);
     }
   }
-  jit_state.info_log.resize(info_log_capacity);
-  jit_state.error_log.resize(error_log_capacity);
-  for (size_t i = 0; i < jit_state.options.size(); ++i) {
+  jit_state.info_log =
+      static_cast<char *>(std::malloc(jit_state.info_log_size));
+  jit_state.error_log =
+      static_cast<char *>(std::malloc(jit_state.error_log_size));
+  if (jit_state.info_log_size != 0) {
+    std::memset(jit_state.info_log, 0, jit_state.info_log_size);
+  }
+  if (jit_state.error_log_size != 0) {
+    std::memset(jit_state.error_log, 0, jit_state.error_log_size);
+  }
+  for (unsigned int i = 0; i < jit_state.num_options; ++i) {
     if (jit_state.options[i] == CU_JIT_WALL_TIME) {
       jit_state.option_values[i] = &jit_state.wall_time;
     } else if (jit_state.options[i] == CU_JIT_INFO_LOG_BUFFER) {
-      jit_state.option_values[i] = jit_state.info_log.data();
+      jit_state.option_values[i] = jit_state.info_log;
     } else if (jit_state.options[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      jit_state.option_values[i] = jit_state.error_log.data();
+      jit_state.option_values[i] = jit_state.error_log;
     }
   }
   unsigned int num_library_options = 0;
@@ -1100,13 +1102,13 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
         nullptr,
     };
     result = cuLibraryLoadData(
-        &library, &wrapper, jit_state.options.data(),
-        jit_state.option_values.data(), num_jit_options, library_options.data(),
+        &library, &wrapper, jit_state.options, jit_state.option_values,
+        jit_state.num_options, library_options.data(),
         library_option_values.data(), num_library_options);
   } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
     result = cuLibraryLoadData(
-        &library, image.data(), jit_state.options.data(),
-        jit_state.option_values.data(), num_jit_options, library_options.data(),
+        &library, image.data(), jit_state.options, jit_state.option_values,
+        jit_state.num_options, library_options.data(),
         library_option_values.data(), num_library_options);
   } else {
     result = CUDA_ERROR_NOT_SUPPORTED;
@@ -1115,18 +1117,26 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
-  size_t info_log_size = jit_state.info_log.size();
-  size_t error_log_size = jit_state.error_log.size();
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
       rpc_write(conn, &jit_state.wall_time, sizeof(jit_state.wall_time)) < 0 ||
-      rpc_write(conn, &info_log_size, sizeof(info_log_size)) < 0 ||
-      rpc_write(conn, jit_state.info_log.data(), info_log_size) < 0 ||
-      rpc_write(conn, &error_log_size, sizeof(error_log_size)) < 0 ||
-      rpc_write(conn, jit_state.error_log.data(), error_log_size) < 0 ||
+      rpc_write(conn, &jit_state.info_log_size,
+                sizeof(jit_state.info_log_size)) < 0 ||
+      rpc_write(conn, jit_state.info_log, jit_state.info_log_size) < 0 ||
+      rpc_write(conn, &jit_state.error_log_size,
+                sizeof(jit_state.error_log_size)) < 0 ||
+      rpc_write(conn, jit_state.error_log, jit_state.error_log_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    std::free(jit_state.options);
+    std::free(jit_state.option_values);
+    std::free(jit_state.info_log);
+    std::free(jit_state.error_log);
     return -1;
   }
+  std::free(jit_state.options);
+  std::free(jit_state.option_values);
+  std::free(jit_state.info_log);
+  std::free(jit_state.error_log);
   return 0;
 }
 
@@ -1731,62 +1741,65 @@ int handle_manual_cuLinkCreate_v2(conn_t *conn) {
   auto link_state = std::make_unique<lupine_link_state>();
   CUlinkState client_state = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &link_state->num_options,
-               sizeof(link_state->num_options)) < 0) {
+  if (rpc_read(conn, &link_state->jit.num_options,
+               sizeof(link_state->jit.num_options)) < 0) {
     return -1;
   }
-  link_state->options = static_cast<CUjit_option *>(
-      std::malloc(link_state->num_options * sizeof(*link_state->options)));
-  link_state->option_values = static_cast<void **>(std::malloc(
-      link_state->num_options * sizeof(*link_state->option_values)));
-  if (rpc_read(conn, link_state->options,
-               link_state->num_options * sizeof(*link_state->options)) < 0 ||
-      rpc_read(conn, link_state->option_values,
-               link_state->num_options * sizeof(*link_state->option_values)) <
-          0) {
+  link_state->jit.options = static_cast<CUjit_option *>(std::malloc(
+      link_state->jit.num_options * sizeof(*link_state->jit.options)));
+  link_state->jit.option_values = static_cast<void **>(std::malloc(
+      link_state->jit.num_options * sizeof(*link_state->jit.option_values)));
+  if (rpc_read(conn, link_state->jit.options,
+               link_state->jit.num_options * sizeof(*link_state->jit.options)) <
+          0 ||
+      rpc_read(conn, link_state->jit.option_values,
+               link_state->jit.num_options *
+                   sizeof(*link_state->jit.option_values)) < 0) {
     return -1;
   }
-  for (unsigned int i = 0; i < link_state->num_options; ++i) {
-    if (link_state->options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
-      link_state->info_log_size =
-          reinterpret_cast<uintptr_t>(link_state->option_values[i]);
-    } else if (link_state->options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
-      link_state->error_log_size =
-          reinterpret_cast<uintptr_t>(link_state->option_values[i]);
+  for (unsigned int i = 0; i < link_state->jit.num_options; ++i) {
+    if (link_state->jit.options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
+      link_state->jit.info_log_size =
+          reinterpret_cast<uintptr_t>(link_state->jit.option_values[i]);
+    } else if (link_state->jit.options[i] ==
+               CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
+      link_state->jit.error_log_size =
+          reinterpret_cast<uintptr_t>(link_state->jit.option_values[i]);
     }
   }
-  link_state->info_log =
-      static_cast<char *>(std::malloc(link_state->info_log_size));
-  link_state->error_log =
-      static_cast<char *>(std::malloc(link_state->error_log_size));
-  if (link_state->info_log_size != 0) {
-    std::memset(link_state->info_log, 0, link_state->info_log_size);
+  link_state->jit.info_log =
+      static_cast<char *>(std::malloc(link_state->jit.info_log_size));
+  link_state->jit.error_log =
+      static_cast<char *>(std::malloc(link_state->jit.error_log_size));
+  if (link_state->jit.info_log_size != 0) {
+    std::memset(link_state->jit.info_log, 0, link_state->jit.info_log_size);
   }
-  if (link_state->error_log_size != 0) {
-    std::memset(link_state->error_log, 0, link_state->error_log_size);
+  if (link_state->jit.error_log_size != 0) {
+    std::memset(link_state->jit.error_log, 0, link_state->jit.error_log_size);
   }
-  for (unsigned int i = 0; i < link_state->num_options; ++i) {
-    if (link_state->options[i] == CU_JIT_WALL_TIME) {
-      link_state->option_values[i] = &link_state->wall_time;
-    } else if (link_state->options[i] == CU_JIT_INFO_LOG_BUFFER) {
-      link_state->option_values[i] = link_state->info_log;
-    } else if (link_state->options[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      link_state->option_values[i] = link_state->error_log;
+  for (unsigned int i = 0; i < link_state->jit.num_options; ++i) {
+    if (link_state->jit.options[i] == CU_JIT_WALL_TIME) {
+      link_state->jit.option_values[i] = &link_state->jit.wall_time;
+    } else if (link_state->jit.options[i] == CU_JIT_INFO_LOG_BUFFER) {
+      link_state->jit.option_values[i] = link_state->jit.info_log;
+    } else if (link_state->jit.options[i] == CU_JIT_ERROR_LOG_BUFFER) {
+      link_state->jit.option_values[i] = link_state->jit.error_log;
     }
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
-  result = cuLinkCreate_v2(link_state->num_options, link_state->options,
-                           link_state->option_values, &link_state->cuda_state);
+  result =
+      cuLinkCreate_v2(link_state->jit.num_options, link_state->jit.options,
+                      link_state->jit.option_values, &link_state->cuda_state);
   if (result == CUDA_SUCCESS) {
     client_state = lupine_link_state_to_handle(link_state.release());
   } else {
-    std::free(link_state->options);
-    std::free(link_state->option_values);
-    std::free(link_state->info_log);
-    std::free(link_state->error_log);
+    std::free(link_state->jit.options);
+    std::free(link_state->jit.option_values);
+    std::free(link_state->jit.info_log);
+    std::free(link_state->jit.error_log);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &client_state, sizeof(client_state)) < 0 ||
@@ -1814,41 +1827,47 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
     return -1;
   }
   std::vector<char> name(name_len == 0 ? 1 : name_len, '\0');
-  unsigned int num_options = 0;
   if ((name_len != 0 && rpc_read(conn, name.data(), name_len) < 0) ||
-      rpc_read(conn, &num_options, sizeof(num_options)) < 0) {
+      rpc_read(conn, &jit_state.num_options, sizeof(jit_state.num_options)) <
+          0) {
     return -1;
   }
-  jit_state.options.resize(num_options);
-  jit_state.option_values.resize(num_options);
-  if (rpc_read(conn, jit_state.options.data(),
-               jit_state.options.size() * sizeof(*jit_state.options.data())) <
-          0 ||
-      rpc_read(conn, jit_state.option_values.data(),
-               jit_state.option_values.size() *
-                   sizeof(*jit_state.option_values.data())) < 0) {
+  jit_state.options = static_cast<CUjit_option *>(
+      std::malloc(jit_state.num_options * sizeof(*jit_state.options)));
+  jit_state.option_values = static_cast<void **>(
+      std::malloc(jit_state.num_options * sizeof(*jit_state.option_values)));
+  if (rpc_read(conn, jit_state.options,
+               jit_state.num_options * sizeof(*jit_state.options)) < 0 ||
+      rpc_read(conn, jit_state.option_values,
+               jit_state.num_options * sizeof(*jit_state.option_values)) < 0) {
     return -1;
   }
-  size_t info_log_capacity = 0;
-  size_t error_log_capacity = 0;
-  for (size_t i = 0; i < jit_state.options.size(); ++i) {
+  for (unsigned int i = 0; i < jit_state.num_options; ++i) {
     if (jit_state.options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
-      info_log_capacity =
+      jit_state.info_log_size =
           reinterpret_cast<uintptr_t>(jit_state.option_values[i]);
     } else if (jit_state.options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
-      error_log_capacity =
+      jit_state.error_log_size =
           reinterpret_cast<uintptr_t>(jit_state.option_values[i]);
     }
   }
-  jit_state.info_log.resize(info_log_capacity);
-  jit_state.error_log.resize(error_log_capacity);
-  for (size_t i = 0; i < jit_state.options.size(); ++i) {
+  jit_state.info_log =
+      static_cast<char *>(std::malloc(jit_state.info_log_size));
+  jit_state.error_log =
+      static_cast<char *>(std::malloc(jit_state.error_log_size));
+  if (jit_state.info_log_size != 0) {
+    std::memset(jit_state.info_log, 0, jit_state.info_log_size);
+  }
+  if (jit_state.error_log_size != 0) {
+    std::memset(jit_state.error_log, 0, jit_state.error_log_size);
+  }
+  for (unsigned int i = 0; i < jit_state.num_options; ++i) {
     if (jit_state.options[i] == CU_JIT_WALL_TIME) {
       jit_state.option_values[i] = &jit_state.wall_time;
     } else if (jit_state.options[i] == CU_JIT_INFO_LOG_BUFFER) {
-      jit_state.option_values[i] = jit_state.info_log.data();
+      jit_state.option_values[i] = jit_state.info_log;
     } else if (jit_state.options[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      jit_state.option_values[i] = jit_state.error_log.data();
+      jit_state.option_values[i] = jit_state.error_log;
     }
   }
   int request_id = rpc_read_end(conn);
@@ -1859,20 +1878,28 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
   if (link_state != nullptr) {
     result = cuLinkAddData_v2(
         link_state->cuda_state, type, data.data(), data.size(),
-        name_len == 0 ? nullptr : name.data(), num_options,
-        jit_state.options.data(), jit_state.option_values.data());
+        name_len == 0 ? nullptr : name.data(), jit_state.num_options,
+        jit_state.options, jit_state.option_values);
   }
-  size_t info_log_size = jit_state.info_log.size();
-  size_t error_log_size = jit_state.error_log.size();
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &jit_state.wall_time, sizeof(jit_state.wall_time)) < 0 ||
-      rpc_write(conn, &info_log_size, sizeof(info_log_size)) < 0 ||
-      rpc_write(conn, jit_state.info_log.data(), info_log_size) < 0 ||
-      rpc_write(conn, &error_log_size, sizeof(error_log_size)) < 0 ||
-      rpc_write(conn, jit_state.error_log.data(), error_log_size) < 0 ||
+      rpc_write(conn, &jit_state.info_log_size,
+                sizeof(jit_state.info_log_size)) < 0 ||
+      rpc_write(conn, jit_state.info_log, jit_state.info_log_size) < 0 ||
+      rpc_write(conn, &jit_state.error_log_size,
+                sizeof(jit_state.error_log_size)) < 0 ||
+      rpc_write(conn, jit_state.error_log, jit_state.error_log_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    std::free(jit_state.options);
+    std::free(jit_state.option_values);
+    std::free(jit_state.info_log);
+    std::free(jit_state.error_log);
     return -1;
   }
+  std::free(jit_state.options);
+  std::free(jit_state.option_values);
+  std::free(jit_state.info_log);
+  std::free(jit_state.error_log);
   return 0;
 }
 
@@ -1904,40 +1931,46 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
       return -1;
     }
   }
-  unsigned int num_options = 0;
-  if (rpc_read(conn, &num_options, sizeof(num_options)) < 0) {
+  if (rpc_read(conn, &jit_state.num_options, sizeof(jit_state.num_options)) <
+      0) {
     return -1;
   }
-  jit_state.options.resize(num_options);
-  jit_state.option_values.resize(num_options);
-  if (rpc_read(conn, jit_state.options.data(),
-               jit_state.options.size() * sizeof(*jit_state.options.data())) <
-          0 ||
-      rpc_read(conn, jit_state.option_values.data(),
-               jit_state.option_values.size() *
-                   sizeof(*jit_state.option_values.data())) < 0) {
+  jit_state.options = static_cast<CUjit_option *>(
+      std::malloc(jit_state.num_options * sizeof(*jit_state.options)));
+  jit_state.option_values = static_cast<void **>(
+      std::malloc(jit_state.num_options * sizeof(*jit_state.option_values)));
+  if (rpc_read(conn, jit_state.options,
+               jit_state.num_options * sizeof(*jit_state.options)) < 0 ||
+      rpc_read(conn, jit_state.option_values,
+               jit_state.num_options * sizeof(*jit_state.option_values)) < 0) {
     return -1;
   }
-  size_t info_log_capacity = 0;
-  size_t error_log_capacity = 0;
-  for (size_t i = 0; i < jit_state.options.size(); ++i) {
+  for (unsigned int i = 0; i < jit_state.num_options; ++i) {
     if (jit_state.options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
-      info_log_capacity =
+      jit_state.info_log_size =
           reinterpret_cast<uintptr_t>(jit_state.option_values[i]);
     } else if (jit_state.options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
-      error_log_capacity =
+      jit_state.error_log_size =
           reinterpret_cast<uintptr_t>(jit_state.option_values[i]);
     }
   }
-  jit_state.info_log.resize(info_log_capacity);
-  jit_state.error_log.resize(error_log_capacity);
-  for (size_t i = 0; i < jit_state.options.size(); ++i) {
+  jit_state.info_log =
+      static_cast<char *>(std::malloc(jit_state.info_log_size));
+  jit_state.error_log =
+      static_cast<char *>(std::malloc(jit_state.error_log_size));
+  if (jit_state.info_log_size != 0) {
+    std::memset(jit_state.info_log, 0, jit_state.info_log_size);
+  }
+  if (jit_state.error_log_size != 0) {
+    std::memset(jit_state.error_log, 0, jit_state.error_log_size);
+  }
+  for (unsigned int i = 0; i < jit_state.num_options; ++i) {
     if (jit_state.options[i] == CU_JIT_WALL_TIME) {
       jit_state.option_values[i] = &jit_state.wall_time;
     } else if (jit_state.options[i] == CU_JIT_INFO_LOG_BUFFER) {
-      jit_state.option_values[i] = jit_state.info_log.data();
+      jit_state.option_values[i] = jit_state.info_log;
     } else if (jit_state.options[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      jit_state.option_values[i] = jit_state.error_log.data();
+      jit_state.option_values[i] = jit_state.error_log;
     }
   }
   int request_id = rpc_read_end(conn);
@@ -1950,24 +1983,32 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
   } else if (!file_data.empty()) {
     result = cuLinkAddData_v2(
         link_state->cuda_state, type, file_data.data(), file_data.size(),
-        path_len == 0 ? nullptr : path.data(), num_options,
-        jit_state.options.data(), jit_state.option_values.data());
+        path_len == 0 ? nullptr : path.data(), jit_state.num_options,
+        jit_state.options, jit_state.option_values);
   } else {
     result = cuLinkAddFile_v2(
         link_state->cuda_state, type, path_len == 0 ? nullptr : path.data(),
-        num_options, jit_state.options.data(), jit_state.option_values.data());
+        jit_state.num_options, jit_state.options, jit_state.option_values);
   }
-  size_t info_log_size = jit_state.info_log.size();
-  size_t error_log_size = jit_state.error_log.size();
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &jit_state.wall_time, sizeof(jit_state.wall_time)) < 0 ||
-      rpc_write(conn, &info_log_size, sizeof(info_log_size)) < 0 ||
-      rpc_write(conn, jit_state.info_log.data(), info_log_size) < 0 ||
-      rpc_write(conn, &error_log_size, sizeof(error_log_size)) < 0 ||
-      rpc_write(conn, jit_state.error_log.data(), error_log_size) < 0 ||
+      rpc_write(conn, &jit_state.info_log_size,
+                sizeof(jit_state.info_log_size)) < 0 ||
+      rpc_write(conn, jit_state.info_log, jit_state.info_log_size) < 0 ||
+      rpc_write(conn, &jit_state.error_log_size,
+                sizeof(jit_state.error_log_size)) < 0 ||
+      rpc_write(conn, jit_state.error_log, jit_state.error_log_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    std::free(jit_state.options);
+    std::free(jit_state.option_values);
+    std::free(jit_state.info_log);
+    std::free(jit_state.error_log);
     return -1;
   }
+  std::free(jit_state.options);
+  std::free(jit_state.option_values);
+  std::free(jit_state.info_log);
+  std::free(jit_state.error_log);
   return 0;
 }
 
@@ -1996,11 +2037,11 @@ int handle_manual_cuLinkComplete(conn_t *conn) {
   if (link_state != nullptr) {
     lock = std::unique_lock<std::mutex>(link_state->mutex);
     result = cuLinkComplete(link_state->cuda_state, &cubin, &size);
-    wall_time = link_state->wall_time;
-    info_log_size = link_state->info_log_size;
-    info_log = link_state->info_log;
-    error_log_size = link_state->error_log_size;
-    error_log = link_state->error_log;
+    wall_time = link_state->jit.wall_time;
+    info_log_size = link_state->jit.info_log_size;
+    info_log = link_state->jit.info_log;
+    error_log_size = link_state->jit.error_log_size;
+    error_log = link_state->jit.error_log;
   }
   size_t returned_size = result == CUDA_SUCCESS ? size : 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2034,17 +2075,17 @@ int handle_manual_cuLinkDestroy(conn_t *conn) {
     std::lock_guard<std::mutex> lock(link_state->mutex);
     result = cuLinkDestroy(link_state->cuda_state);
     if (result == CUDA_SUCCESS) {
-      std::free(link_state->options);
-      std::free(link_state->option_values);
-      std::free(link_state->info_log);
-      std::free(link_state->error_log);
-      link_state->num_options = 0;
-      link_state->options = nullptr;
-      link_state->option_values = nullptr;
-      link_state->info_log_size = 0;
-      link_state->info_log = nullptr;
-      link_state->error_log_size = 0;
-      link_state->error_log = nullptr;
+      std::free(link_state->jit.options);
+      std::free(link_state->jit.option_values);
+      std::free(link_state->jit.info_log);
+      std::free(link_state->jit.error_log);
+      link_state->jit.num_options = 0;
+      link_state->jit.options = nullptr;
+      link_state->jit.option_values = nullptr;
+      link_state->jit.info_log_size = 0;
+      link_state->jit.info_log = nullptr;
+      link_state->jit.error_log_size = 0;
+      link_state->jit.error_log = nullptr;
     }
   }
   // Retain the opaque handle wrapper until process exit so stale client
