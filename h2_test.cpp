@@ -1,3 +1,4 @@
+#include "codegen/gen_rpc_ids.h"
 #include "lupine_log.h"
 #include "rpc.h"
 
@@ -34,6 +35,10 @@ struct has_owned_member<T, std::void_t<decltype(std::declval<T>().owned)>>
 
 static_assert(!has_owned_member<rpc_write_entry>::value,
               "RPC write entries must not own individual iovecs");
+static_assert(sizeof(int) == 4, "RPC integer fields must remain 32-bit");
+static_assert(sizeof(uint64_t) == 8, "RPC lane fields must remain 64-bit");
+static_assert(RPC_cuInit == 1234315198, "cuInit RPC ID changed");
+static_assert(RPC_nvmlInit_v2 == 2103095296, "nvmlInit_v2 RPC ID changed");
 
 struct h2_pair {
   conn_t client = {};
@@ -207,6 +212,42 @@ void test_client_to_server() {
   write_all(&pair.client, {message});
   reader.join();
   require(received == message, "client-to-server payload mismatch");
+}
+
+void test_rpc_request_wire_prefix() {
+  h2_pair pair = make_pair();
+  int request_id = 0;
+  uint64_t lane_id = 0;
+  int operation = 0;
+  uint32_t flags = 0;
+  std::thread reader([&] {
+    require(rpc_http2_read(&pair.server, &request_id, sizeof(request_id)) ==
+                static_cast<int>(sizeof(request_id)),
+            "request id wire field changed");
+    require(rpc_http2_read(&pair.server, &lane_id, sizeof(lane_id)) ==
+                static_cast<int>(sizeof(lane_id)),
+            "lane id wire field changed");
+    require(rpc_http2_read(&pair.server, &operation, sizeof(operation)) ==
+                static_cast<int>(sizeof(operation)),
+            "operation wire field changed");
+    require(rpc_http2_read(&pair.server, &flags, sizeof(flags)) ==
+                static_cast<int>(sizeof(flags)),
+            "request payload wire field changed");
+  });
+
+  const uint32_t expected_flags = 0x12345678;
+  require(rpc_write_start_request(&pair.client, RPC_cuInit) == 0,
+          "request prefix start failed");
+  require(rpc_write(&pair.client, &expected_flags, sizeof(expected_flags)) == 0,
+          "request prefix payload failed");
+  int written_id = rpc_write_end(&pair.client);
+  reader.join();
+
+  require(written_id == 2 && request_id == written_id,
+          "request id prefix changed");
+  require(lane_id != 0, "lane id prefix missing");
+  require(operation == RPC_cuInit, "operation prefix changed");
+  require(flags == expected_flags, "request payload ordering changed");
 }
 
 void test_server_receives_session_id() {
@@ -1033,6 +1074,7 @@ int main() {
   test_rpc_lz4_payload_round_trip();
   test_response_wait_sends_transport_heartbeat();
   test_client_to_server();
+  test_rpc_request_wire_prefix();
   test_server_receives_session_id();
   test_server_to_client_after_request_headers();
   test_head_probe_cuda_version_metadata();

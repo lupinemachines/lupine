@@ -32,3 +32,8 @@ jobs:
 
       - name: Verify generated files are current
         run: git diff --exit-code -- codegen
+
+      - name: Verify backend-specific generated boundaries
+        run: |
+          uv run codegen/codegen.py --verify-backend cuda
+          uv run codegen/codegen.py --verify-backend nvml

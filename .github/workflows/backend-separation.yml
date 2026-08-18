@@ -1,0 +1,90 @@
+name: Backend Separation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-only:
+    name: Core only (no accelerator SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install CPU-only build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            libnghttp2-dev \
+            libssl-dev \
+            ninja-build
+
+      - name: Configure without CUDA or ROCm discovery
+        run: |
+          cmake -S . -B build/core-only -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_DISABLE_FIND_PACKAGE_CUDAToolkit=TRUE \
+            -DLUPINE_BUILD_CUDA=OFF \
+            -DLUPINE_BUILD_NVML=OFF \
+            -DLUPINE_BUILD_HIP=OFF \
+            -DLUPINE_BUILD_SERVER=OFF
+          ! grep -E '^(CUDAToolkit|CUDA_TOOLKIT|ROCM|ROCm)' \
+            build/core-only/CMakeCache.txt
+
+      - name: Build and test neutral components
+        run: |
+          cmake --build build/core-only --parallel
+          ctest --test-dir build/core-only --output-on-failure
+          test/check_neutral_build.sh build/core-only
+          test/check_rpc_ids.sh .
+
+  cuda-nvml:
+    name: CUDA + NVML boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build CUDA development environment
+        run: |
+          docker build \
+            -f Dockerfile \
+            --target builder \
+            --build-arg CUDA_VERSION=13.1.0 \
+            --build-arg UBUNTU_VERSION=24.04 \
+            -t lupine-backend-separation \
+            .
+
+      - name: Build, test, and inspect final shims
+        run: |
+          docker run --rm --entrypoint bash \
+            lupine-backend-separation -lc '
+              set -euo pipefail
+              cmake -S /opt/lupine -B /opt/lupine/build-backend-separation -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+                -DLUPINE_BUILD_CUDA=ON \
+                -DLUPINE_BUILD_NVML=ON \
+                -DLUPINE_BUILD_HIP=OFF \
+                -DLUPINE_BUILD_SERVER=ON
+              cmake --build /opt/lupine/build-backend-separation --parallel
+              ctest --test-dir /opt/lupine/build-backend-separation \
+                --output-on-failure
+              /opt/lupine/test/check_neutral_build.sh \
+                /opt/lupine/build-backend-separation
+              /opt/lupine/test/check_backend_abi.sh \
+                /opt/lupine/build-backend-separation
+            '

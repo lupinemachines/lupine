@@ -21,6 +21,9 @@ set(LUPINE_SANITIZE "" CACHE STRING
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT WIN32)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+endif()
 
 include(CTest)
 find_package(Threads REQUIRED)
@@ -358,6 +361,13 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(ipc_test PRIVATE lupine_ipc)
     lupine_apply_sanitizer(ipc_test)
 
+    add_test(NAME rpc_id_snapshot_test
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/check_rpc_ids.sh
+                     ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME neutral_build_test
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/check_neutral_build.sh
+                     ${CMAKE_CURRENT_BINARY_DIR})
+
     add_library(test_lupinecr_provider SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_checkpoint_provider.c)
     target_include_directories(test_lupinecr_provider PRIVATE
@@ -427,6 +437,20 @@ if(BUILD_TESTING AND NOT WIN32)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetMemoryErrorCounter && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetCudaComputeCapability")
+    endif()
+
+    if(TARGET lupine_cuda_client AND TARGET lupine_nvml_client)
+        add_executable(shim_isolation_test
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/shim_isolation_test.cpp)
+        target_link_libraries(shim_isolation_test PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(shim_isolation_test
+            lupine_cuda_client lupine_nvml_client)
+        add_test(NAME shim_isolation_test COMMAND shim_isolation_test
+            $<TARGET_FILE:lupine_cuda_client>
+            $<TARGET_FILE:lupine_nvml_client>)
+        add_test(NAME backend_abi_test
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test/check_backend_abi.sh
+                         ${CMAKE_CURRENT_BINARY_DIR})
     endif()
 endif()
 

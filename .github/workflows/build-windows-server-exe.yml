@@ -71,7 +71,11 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
-            "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+            "-DCUDAToolkit_ROOT=$env:CUDA_PATH" `
+            -DLUPINE_BUILD_CUDA=ON `
+            -DLUPINE_BUILD_NVML=ON `
+            -DLUPINE_BUILD_HIP=OFF `
+            -DLUPINE_BUILD_SERVER=ON
 
       - name: Build
         run: cmake --build build/windows-server --config Release --target lupine_driver_server --parallel
