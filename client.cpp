@@ -813,8 +813,6 @@ extern "C" void *lupine_real_cuda_symbol(const char *name) {
   return lupine_real_dlsym(handle, name);
 }
 
-static bool lupine_is_local_address(const void *ptr);
-
 // Client-answered entry points must fail with NOT_INITIALIZED until cuInit;
 // forwarded ones get the server's own state.
 static std::atomic<bool> lupine_cuda_initialized{false};
@@ -5300,20 +5298,6 @@ extern "C" CUresult cuMemcpyDtoHAsync(void *dstHost, CUdeviceptr srcDevice,
   return cuMemcpyDtoHAsync_v2(dstHost, srcDevice, ByteCount, hStream);
 }
 
-static bool lupine_is_local_address(const void *ptr) {
-  if (ptr == nullptr) {
-    return false;
-  }
-  long page_size = sysconf(_SC_PAGESIZE);
-  if (page_size <= 0) {
-    return false;
-  }
-  uintptr_t page = reinterpret_cast<uintptr_t>(ptr) &
-                   ~(static_cast<uintptr_t>(page_size) - 1);
-  unsigned char vec = 0;
-  return mincore(reinterpret_cast<void *>(page), page_size, &vec) == 0;
-}
-
 static size_t lupine_memcpy3d_host_span(const CUDA_MEMCPY3D &copy,
                                         bool source) {
   size_t x = source ? copy.srcXInBytes : copy.dstXInBytes;
@@ -5585,52 +5569,6 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
 #endif
 extern "C" CUresult cuMemcpy3D(const CUDA_MEMCPY3D *pCopy) {
   return cuMemcpy3D_v2(pCopy);
-}
-
-extern "C" CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src,
-                                  size_t ByteCount, CUstream hStream) {
-  bool dst_is_host = lupine_is_local_address(reinterpret_cast<void *>(dst));
-  bool src_is_host = lupine_is_local_address(reinterpret_cast<void *>(src));
-
-  if (dst_is_host && !src_is_host) {
-    return cuMemcpyDtoHAsync_v2(reinterpret_cast<void *>(dst), src, ByteCount,
-                                hStream);
-  }
-  if (!dst_is_host && src_is_host) {
-    return cuMemcpyHtoDAsync_v2(dst, reinterpret_cast<const void *>(src),
-                                ByteCount, hStream);
-  }
-  if (dst_is_host && src_is_host) {
-    memcpy(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
-           ByteCount);
-    return CUDA_SUCCESS;
-  }
-
-  conn_t *conn = lupine_rpc_conn_for_deviceptr(dst);
-  conn_t *src_conn = lupine_rpc_conn_for_deviceptr(src);
-  if (conn != src_conn) {
-    return lupine_cuMemcpyDtoD_via_client(dst, src, ByteCount, hStream, true);
-  }
-  CUresult return_value;
-  if (rpc_write_start_request(conn, RPC_cuMemcpyAsync) < 0 ||
-      rpc_write(conn, &dst, sizeof(dst)) < 0 ||
-      rpc_write(conn, &src, sizeof(src)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
-#ifdef cuMemcpyAsync_ptsz
-#undef cuMemcpyAsync_ptsz
-#endif
-extern "C" CUresult cuMemcpyAsync_ptsz(CUdeviceptr dst, CUdeviceptr src,
-                                       size_t ByteCount, CUstream hStream) {
-  return cuMemcpyAsync(dst, src, ByteCount, hStream);
 }
 
 static CUresult

@@ -30,10 +30,14 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                          size_t ByteCount);
 CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
-extern "C" CUresult
-lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
-                               size_t ByteCount, CUstream stream,
-                               bool async_copy);
+CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
+                         size_t ByteCount);
+CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
+                              size_t ByteCount, CUstream hStream);
+CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
+                              size_t ByteCount, CUstream hStream);
+CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
+                              size_t ByteCount, CUstream hStream);
 
 #ifdef CU_MEM_LOCATION_TYPE_HOST
 static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
@@ -868,7 +872,7 @@ static void lupine_mark_mapped_device_dirty(void *host) {
   }
 }
 
-static bool lupine_is_client_host_address(CUdeviceptr ptr) {
+static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
   if (ptr == 0) {
     return false;
   }
@@ -882,61 +886,58 @@ static bool lupine_is_client_host_address(CUdeviceptr ptr) {
   return mincore(reinterpret_cast<void *>(page), page_size, &residency) == 0;
 }
 
+static bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
+  if (lupine_host_ptr_is_tracked(ptr)) {
+    return true;
+  }
+  if (lupine_deviceptr_is_tracked(ptr)) {
+    return false;
+  }
+  return lupine_is_client_mapped_address(ptr);
+}
+
+enum class lupine_copy_direction {
+  host_to_host,
+  host_to_device,
+  device_to_host,
+  device_to_device,
+};
+
+static lupine_copy_direction lupine_infer_copy_direction(CUdeviceptr dst,
+                                                         CUdeviceptr src) {
+  const bool dst_is_host = lupine_copy_pointer_is_host(dst);
+  const bool src_is_host = lupine_copy_pointer_is_host(src);
+  if (dst_is_host && src_is_host) {
+    return lupine_copy_direction::host_to_host;
+  }
+  if (src_is_host) {
+    return lupine_copy_direction::host_to_device;
+  }
+  if (dst_is_host) {
+    return lupine_copy_direction::device_to_host;
+  }
+  return lupine_copy_direction::device_to_device;
+}
+
 extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
                              size_t ByteCount) {
   if (ByteCount == 0) {
     return CUDA_SUCCESS;
   }
 
-  CUdeviceptr dst_rpc = dst;
-  CUdeviceptr src_rpc = src;
-  bool dst_host_alias =
-      lupine_translate_client_host_ptr_to_server(dst, &dst_rpc);
-  bool src_host_alias =
-      lupine_translate_client_host_ptr_to_server(src, &src_rpc);
-  bool dst_device = lupine_deviceptr_is_tracked(dst_rpc);
-  bool src_device = lupine_deviceptr_is_tracked(src_rpc);
-  bool dst_is_host =
-      dst_host_alias || (!dst_device && lupine_is_client_host_address(dst));
-  bool src_is_host =
-      src_host_alias || (!src_device && lupine_is_client_host_address(src));
-
-  if (dst_is_host && src_is_host) {
+  switch (lupine_infer_copy_direction(dst, src)) {
+  case lupine_copy_direction::host_to_host:
     memmove(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
             ByteCount);
     return CUDA_SUCCESS;
+  case lupine_copy_direction::host_to_device:
+    return cuMemcpyHtoD_v2(dst, reinterpret_cast<const void *>(src), ByteCount);
+  case lupine_copy_direction::device_to_host:
+    return cuMemcpyDtoH_v2(reinterpret_cast<void *>(dst), src, ByteCount);
+  case lupine_copy_direction::device_to_device:
+    return cuMemcpyDtoD_v2(dst, src, ByteCount);
   }
-  if (src_is_host) {
-    return cuMemcpyHtoD_v2(dst_rpc, reinterpret_cast<const void *>(src),
-                           ByteCount);
-  }
-  if (dst_is_host) {
-    return cuMemcpyDtoH_v2(reinterpret_cast<void *>(dst), src_rpc, ByteCount);
-  }
-
-  lupine_route route = lupine_route_for_deviceptr(dst_rpc);
-  if (!lupine_deviceptrs_share_route(dst_rpc, src_rpc)) {
-    return lupine_cuMemcpyDtoD_via_client(dst_rpc, src_rpc, ByteCount, nullptr,
-                                          false);
-  }
-
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  using real_fn_t = CUresult (*)(CUdeviceptr, CUdeviceptr, size_t);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuMemcpy", &result, dst, src, ByteCount)) {
-    return result;
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuMemcpy) < 0 ||
-      rpc_write(conn, &dst_rpc, sizeof(dst_rpc)) < 0 ||
-      rpc_write(conn, &src_rpc, sizeof(src_rpc)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return result;
+  return CUDA_ERROR_INVALID_VALUE;
 }
 
 #ifdef cuMemcpy_ptds
@@ -945,6 +946,33 @@ extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
 extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
                                    size_t ByteCount) {
   return cuMemcpy(dst, src, ByteCount);
+}
+
+extern "C" CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src,
+                                  size_t ByteCount, CUstream hStream) {
+  switch (lupine_infer_copy_direction(dst, src)) {
+  case lupine_copy_direction::host_to_host:
+    memcpy(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
+           ByteCount);
+    return CUDA_SUCCESS;
+  case lupine_copy_direction::host_to_device:
+    return cuMemcpyHtoDAsync_v2(dst, reinterpret_cast<const void *>(src),
+                                ByteCount, hStream);
+  case lupine_copy_direction::device_to_host:
+    return cuMemcpyDtoHAsync_v2(reinterpret_cast<void *>(dst), src, ByteCount,
+                                hStream);
+  case lupine_copy_direction::device_to_device:
+    return cuMemcpyDtoDAsync_v2(dst, src, ByteCount, hStream);
+  }
+  return CUDA_ERROR_INVALID_VALUE;
+}
+
+#ifdef cuMemcpyAsync_ptsz
+#undef cuMemcpyAsync_ptsz
+#endif
+extern "C" CUresult cuMemcpyAsync_ptsz(CUdeviceptr dst, CUdeviceptr src,
+                                       size_t ByteCount, CUstream hStream) {
+  return cuMemcpyAsync(dst, src, ByteCount, hStream);
 }
 
 CUresult lupine_sync_mapped_host_to_device_for_launch(
