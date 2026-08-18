@@ -40,6 +40,7 @@
 #ifndef _WIN32
 static volatile sig_atomic_t lupine_parent_termination_requested = 0;
 static volatile sig_atomic_t lupine_parent_child_exited = 0;
+static volatile sig_atomic_t lupine_child_connection_fd = -1;
 
 static void lupine_parent_sigterm_handler(int) {
   lupine_parent_termination_requested = 1;
@@ -47,6 +48,14 @@ static void lupine_parent_sigterm_handler(int) {
 
 static void lupine_parent_sigchld_handler(int) {
   lupine_parent_child_exited = 1;
+}
+
+static void lupine_child_sigterm_handler(int) {
+  int saved_errno = errno;
+  if (lupine_child_connection_fd >= 0) {
+    (void)shutdown(static_cast<int>(lupine_child_connection_fd), SHUT_RDWR);
+  }
+  errno = saved_errno;
 }
 
 static bool lupine_install_parent_signal_handlers() {
@@ -60,6 +69,14 @@ static bool lupine_install_parent_signal_handlers() {
 
   return sigaction(SIGTERM, &term_action, nullptr) == 0 &&
          sigaction(SIGCHLD, &child_action, nullptr) == 0;
+}
+
+static bool lupine_install_child_signal_handler(lupine_socket_t connection) {
+  struct sigaction action = {};
+  action.sa_handler = lupine_child_sigterm_handler;
+  sigemptyset(&action.sa_mask);
+  lupine_child_connection_fd = connection;
+  return sigaction(SIGTERM, &action, nullptr) == 0;
 }
 
 static void
@@ -129,6 +146,12 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
   case rpc_backend::nvml:
 #ifdef LUPINE_BUILD_NVML_BACKEND
     backend_name = "NVML";
+    result = handler.handler(conn);
+#endif
+    break;
+  case rpc_backend::hip:
+#ifdef LUPINE_BUILD_HIP_BACKEND
+    backend_name = "HIP";
     result = handler.handler(conn);
 #endif
     break;
@@ -537,12 +560,15 @@ int main() {
       close(broker_pair[0]);
       lupine_ipc_set_broker_fd(broker_pair[1]);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
-      if (!lupine_server_checkpoint_child_start(connfd)) {
+      bool child_started = lupine_server_checkpoint_child_start(connfd);
+#else
+      bool child_started = lupine_install_child_signal_handler(connfd);
+#endif
+      if (!child_started) {
         LUPINE_LOG_ERROR("Failed to initialize graceful child shutdown.");
         lupine_socket_close(connfd);
         exit(EXIT_FAILURE);
       }
-#endif
       (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
       int checkpoint_result = client_handler(connfd);
       exit(checkpoint_result == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
