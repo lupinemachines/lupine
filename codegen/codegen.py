@@ -200,33 +200,49 @@ PRIVATE_RPC_FUNCTIONS = [
 REGISTRY_CPP_TEMPLATE = Template(
     r'''#include "rpc_server.h"
 
-#include "copy_pipeline.h"
-#include "cuda_server.h"
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+#include <cuda.h>
+#endif
 #include "gen_rpc_ids.h"
-#include "nvml_server.h"
 
 // clang-format off
-#define LUPINE_RPC_HANDLERS(HANDLER) \
-$registry_entries
+#define LUPINE_CUDA_RPC_HANDLERS(HANDLER) \
+$cuda_registry_entries
+#define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
+$nvml_registry_entries
 // clang-format on
 
 #define LUPINE_DECLARE_HANDLER(operation, handler, backend)                    \
   int handler(conn_t *conn);
-LUPINE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$cuda_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_NVML_BACKEND
+LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$nvml_guarded_declarations
+#endif
 #undef LUPINE_DECLARE_HANDLER
 
 const rpc_handler_registry &lupine_rpc_handlers() {
 #define LUPINE_REGISTER_HANDLER(operation, handler, backend)                    \
   {operation, {handler, backend}},
   static const rpc_handler_registry handlers = {
-      LUPINE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$guarded_handlers
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+      LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$cuda_guarded_handlers
+#endif
+#ifdef LUPINE_BUILD_NVML_BACKEND
+      LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$nvml_guarded_handlers
+#endif
   };
 #undef LUPINE_REGISTER_HANDLER
   return handlers;
 }
 
-#undef LUPINE_RPC_HANDLERS
+#undef LUPINE_CUDA_RPC_HANDLERS
+#undef LUPINE_NVML_RPC_HANDLERS
 '''
 )
 
@@ -1980,27 +1996,39 @@ def main():
             f"{binding.backend_symbol})"
         )
 
-    registry_entries = [
-        "  " + registry_entry(binding, "HANDLER")
-        for binding in bindings
-        if binding.guard is None
-    ]
-
-    guarded_handlers = []
+    registry_entries = {backend: [] for backend in SERVER_BACKENDS}
+    guarded_handlers = {backend: [] for backend in SERVER_BACKENDS}
+    guarded_declarations = {backend: [] for backend in SERVER_BACKENDS}
     for binding in bindings:
         if binding.guard is None:
-            continue
-        guarded_handlers.append(
-            f"#if {binding.guard}\n"
-            f"      {registry_entry(binding, 'LUPINE_REGISTER_HANDLER')}\n"
-            f'#endif'
-        )
+            registry_entries[binding.backend].append(
+                "  " + registry_entry(binding, "HANDLER")
+            )
+        else:
+            guarded_declarations[binding.backend].append(
+                f"#if {binding.guard}\n"
+                f"{registry_entry(binding, 'LUPINE_DECLARE_HANDLER')}\n"
+                f'#endif'
+            )
+            guarded_handlers[binding.backend].append(
+                f"#if {binding.guard}\n"
+                f"      {registry_entry(binding, 'LUPINE_REGISTER_HANDLER')}\n"
+                f'#endif'
+            )
 
     with open("registry.cpp", "w") as f:
         f.write(
             REGISTRY_CPP_TEMPLATE.substitute(
-                registry_entries=" \\\n".join(registry_entries),
-                guarded_handlers="\n".join(guarded_handlers),
+                cuda_registry_entries=" \\\n".join(registry_entries["CUDA"]),
+                nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
+                cuda_guarded_declarations="\n".join(
+                    guarded_declarations["CUDA"]
+                ),
+                nvml_guarded_declarations="\n".join(
+                    guarded_declarations["NVML"]
+                ),
+                cuda_guarded_handlers="\n".join(guarded_handlers["CUDA"]),
+                nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
             )
         )
 

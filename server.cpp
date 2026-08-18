@@ -23,12 +23,15 @@
 #include <vector>
 #endif
 
-#include "copy_pipeline.h"
 #include "ipc.h"
 #include "lupine_log.h"
 #include "rpc.h"
 #include "rpc_server.h"
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+#include "checkpoint.h"
+#include "copy_pipeline.h"
 #include "server_checkpoint.h"
+#endif
 
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
@@ -99,29 +102,94 @@ struct lupine_lane {
   std::thread worker;
 };
 
+int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
+                        int op) {
+  LUPINE_TRACE_LOG("LUPINE server handling op " << op);
+  auto it = handlers.find(op);
+  if (it == handlers.end()) {
+    LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
+    return -1;
+  }
+
+  const rpc_handler &handler = it->second;
+  const char *backend_name = nullptr;
+  int result = -1;
+  switch (handler.backend) {
+  case rpc_backend::cuda:
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  {
+    backend_name = "CUDA";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
+  case rpc_backend::nvml:
+#ifdef LUPINE_BUILD_NVML_BACKEND
+    backend_name = "NVML";
+    result = handler.handler(conn);
+#endif
+    break;
+  }
+
+  if (result >= 0) {
+    return 0;
+  }
+  if (backend_name == nullptr) {
+    LUPINE_LOG_ERROR("RPC op " << op << " belongs to a disabled backend.");
+  } else {
+    LUPINE_LOG_ERROR("Error handling " << backend_name << " request for op "
+                                       << op << ".");
+  }
+  return -1;
+}
+
 int client_handler(lupine_socket_t connfd) {
   const rpc_handler_registry &handlers = lupine_rpc_handlers();
   conn_t conn = {};
   if (rpc_conn_init(&conn, connfd, 1) < 0) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
+#ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();
+#else
+    return 0;
+#endif
   }
 
-  int http2_init_result = rpc_http2_server_init(&conn);
+  const rpc_http2_server_metadata metadata = {
+#ifdef LUPINE_BACKEND_VERSION
+      LUPINE_BACKEND_VERSION,
+#else
+      nullptr,
+#endif
+  };
+  int http2_init_result = rpc_http2_server_init_with_metadata(&conn, &metadata);
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");
     rpc_conn_destroy(&conn);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();
+#else
+    return 0;
+#endif
   }
   if (http2_init_result != 0) {
     rpc_conn_destroy(&conn);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();
+#else
+    return 0;
+#endif
   }
+#ifdef LUPINE_BUILD_CUDA_BACKEND
   if (!lupine_server_initialize_connection(&conn)) {
     LUPINE_LOG_ERROR("Error initializing per-connection CUDA state.");
     rpc_conn_destroy(&conn);
     return lupine_server_checkpoint_child_finish();
   }
+#endif
 
   LUPINE_LOG_DEBUG("Client connected.");
 
@@ -169,12 +237,14 @@ int client_handler(lupine_socket_t connfd) {
     int op = conn.read_op;
 
     if (!connection_ready) {
+#ifdef LUPINE_BUILD_CUDA_BACKEND
       if (!lupine_server_checkpoint_connection_ready(
               rpc_http2_session_id(&conn))) {
         pthread_mutex_unlock(&conn.read_mutex);
         LUPINE_LOG_ERROR("Failed to restore connection checkpoint.");
         break;
       }
+#endif
       connection_ready = true;
     }
 
@@ -266,9 +336,12 @@ int client_handler(lupine_socket_t connfd) {
     conn.rpc_thread = 0;
   }
 
-  // Finish checkpointing before releasing per-connection resources.
-  int checkpoint_result = lupine_server_checkpoint_child_finish();
+  int checkpoint_result = 0;
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  // Finish checkpointing before releasing per-connection CUDA resources.
+  checkpoint_result = lupine_server_checkpoint_child_finish();
   lupine_server_cleanup_connection(&conn);
+#endif
   rpc_conn_destroy(&conn);
   return checkpoint_result;
 }
@@ -463,11 +536,13 @@ int main() {
       }
       close(broker_pair[0]);
       lupine_ipc_set_broker_fd(broker_pair[1]);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
       if (!lupine_server_checkpoint_child_start(connfd)) {
         LUPINE_LOG_ERROR("Failed to initialize graceful child shutdown.");
         lupine_socket_close(connfd);
         exit(EXIT_FAILURE);
       }
+#endif
       (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
       int checkpoint_result = client_handler(connfd);
       exit(checkpoint_result == 0 ? EXIT_SUCCESS : EXIT_FAILURE);

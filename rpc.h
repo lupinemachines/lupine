@@ -141,6 +141,9 @@ extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
 extern int rpc_http2_client_init(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
+struct rpc_http2_server_metadata {
+  const char *backend_version;
+};
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or
@@ -149,6 +152,9 @@ extern const char *rpc_http2_client_probe(conn_t *conn);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
 extern int rpc_http2_server_init(conn_t *conn);
+extern int
+rpc_http2_server_init_with_metadata(conn_t *conn,
+                                    const rpc_http2_server_metadata *metadata);
 extern int rpc_http2_compress_lz4(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.

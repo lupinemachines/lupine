@@ -551,7 +551,7 @@ jobs:
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
               cmake --build "$LUPINE_BUILD_DIR" --parallel \
-                --target lupine_cuda_client lupine_nvml lupine_driver_server
+                --target lupine_cuda_client lupine_nvml_client lupine_driver_server
               ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
               ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 

@@ -1,12 +1,12 @@
 #include "rpc_server.h"
 
-#include "copy_pipeline.h"
-#include "cuda_server.h"
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+#include <cuda.h>
+#endif
 #include "gen_rpc_ids.h"
-#include "nvml_server.h"
 
 // clang-format off
-#define LUPINE_RPC_HANDLERS(HANDLER) \
+#define LUPINE_CUDA_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_cuGetErrorString, handle_cuGetErrorString, rpc_backend::cuda) \
   HANDLER(RPC_cuGetErrorName, handle_cuGetErrorName, rpc_backend::cuda) \
   HANDLER(RPC_cuDevicePrimaryCtxRetain, handle_cuDevicePrimaryCtxRetain, rpc_backend::cuda) \
@@ -99,12 +99,6 @@
   HANDLER(LUPINE_RPC_cuStreamGetCaptureInfo_v3, handle_cuStreamGetCaptureInfo, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineManagedHostFlush, handle_lupineManagedHostFlush, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineDeviceSnapshot, handle_lupineDeviceSnapshot, rpc_backend::cuda) \
-  HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
-  HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
-  HANDLER(RPC_nvmlDeviceGetGraphicsRunningProcesses, handle_nvmlDeviceGetGraphicsRunningProcesses, rpc_backend::nvml) \
-  HANDLER(RPC_nvmlDeviceGetGraphicsRunningProcesses_v2, handle_nvmlDeviceGetGraphicsRunningProcesses_v2, rpc_backend::nvml) \
-  HANDLER(RPC_nvmlDeviceGetMPSComputeRunningProcesses, handle_nvmlDeviceGetMPSComputeRunningProcesses, rpc_backend::nvml) \
-  HANDLER(RPC_nvmlDeviceGetMPSComputeRunningProcesses_v2, handle_nvmlDeviceGetMPSComputeRunningProcesses_v2, rpc_backend::nvml) \
   HANDLER(RPC_cuInit, handle_cuInit, rpc_backend::cuda) \
   HANDLER(RPC_cuDriverGetVersion, handle_cuDriverGetVersion, rpc_backend::cuda) \
   HANDLER(RPC_cuDeviceGet, handle_cuDeviceGet, rpc_backend::cuda) \
@@ -380,7 +374,14 @@
   HANDLER(RPC_cuGraphicsResourceGetMappedPointer_v2, handle_cuGraphicsResourceGetMappedPointer_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphicsResourceSetMapFlags_v2, handle_cuGraphicsResourceSetMapFlags_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphicsMapResources, handle_cuGraphicsMapResources, rpc_backend::cuda) \
-  HANDLER(RPC_cuGraphicsUnmapResources, handle_cuGraphicsUnmapResources, rpc_backend::cuda) \
+  HANDLER(RPC_cuGraphicsUnmapResources, handle_cuGraphicsUnmapResources, rpc_backend::cuda)
+#define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetGraphicsRunningProcesses, handle_nvmlDeviceGetGraphicsRunningProcesses, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetGraphicsRunningProcesses_v2, handle_nvmlDeviceGetGraphicsRunningProcesses_v2, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetMPSComputeRunningProcesses, handle_nvmlDeviceGetMPSComputeRunningProcesses, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetMPSComputeRunningProcesses_v2, handle_nvmlDeviceGetMPSComputeRunningProcesses_v2, rpc_backend::nvml) \
   HANDLER(RPC_nvmlInit_v2, handle_nvmlInit_v2, rpc_backend::nvml) \
   HANDLER(RPC_nvmlInitWithFlags, handle_nvmlInitWithFlags, rpc_backend::nvml) \
   HANDLER(RPC_nvmlShutdown, handle_nvmlShutdown, rpc_backend::nvml) \
@@ -442,22 +443,39 @@
 
 #define LUPINE_DECLARE_HANDLER(operation, handler, backend)                    \
   int handler(conn_t *conn);
-LUPINE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUDA_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
+                       handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
+#endif
+#endif
+#ifdef LUPINE_BUILD_NVML_BACKEND
+LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+
+#endif
 #undef LUPINE_DECLARE_HANDLER
 
 const rpc_handler_registry &lupine_rpc_handlers() {
 #define LUPINE_REGISTER_HANDLER(operation, handler, backend)                   \
   {operation, {handler, backend}},
   static const rpc_handler_registry handlers = {
-      LUPINE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+      LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 #if CUDA_VERSION >= 12000
           LUPINE_REGISTER_HANDLER(RPC_cuTensorMapEncodeTiled,
                                   handle_cuTensorMapEncodeTiled,
                                   rpc_backend::cuda)
+#endif
+#endif
+#ifdef LUPINE_BUILD_NVML_BACKEND
+              LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+
 #endif
   };
 #undef LUPINE_REGISTER_HANDLER
   return handlers;
 }
 
-#undef LUPINE_RPC_HANDLERS
+#undef LUPINE_CUDA_RPC_HANDLERS
+#undef LUPINE_NVML_RPC_HANDLERS

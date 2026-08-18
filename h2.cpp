@@ -75,6 +75,7 @@ struct h2_transport {
   std::string request_method;
   std::string request_path;
   std::string peer_cuda_version;
+  std::string server_version;
   std::string session_id;
 };
 
@@ -429,11 +430,6 @@ constexpr char kLupineCompressHeader[] = "x-lupine-compress";
 constexpr char kLupineCompressLz4[] = "lz4";
 constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
-#ifdef LUPINE_CUDA_VERSION
-constexpr char kLupineCudaVersion[] = LUPINE_CUDA_VERSION;
-#else
-constexpr char kLupineCudaVersion[] = "";
-#endif
 
 bool lupine_h2_debug_enabled() {
   const char *debug = getenv("LUPINE_DEBUG");
@@ -445,8 +441,9 @@ bool lupine_h2_debug_enabled() {
 
 int h2_submit_server_response(h2_transport *transport, bool end_stream) {
   std::vector<nghttp2_nv> headers = {h2_nv(":status", "200")};
-  if (kLupineCudaVersion[0] != '\0') {
-    headers.push_back(h2_nv(kLupineCudaVersionHeader, kLupineCudaVersion));
+  if (!transport->server_version.empty()) {
+    headers.push_back(
+        h2_nv(kLupineCudaVersionHeader, transport->server_version.c_str()));
   }
   uint8_t flags = end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
   if (nghttp2_submit_headers(transport->session, flags, transport->stream_id,
@@ -681,11 +678,15 @@ int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
   return result;
 }
 
-int h2_init_direct(conn_t *conn, bool server, bool probe) {
+int h2_init_direct(conn_t *conn, bool server, bool probe,
+                   const rpc_http2_server_metadata *metadata = nullptr) {
   auto *transport = new h2_transport();
   transport->netfd = conn->connfd;
   transport->tls = conn->tls_session;
   transport->server = server;
+  if (metadata != nullptr && metadata->backend_version != nullptr) {
+    transport->server_version = metadata->backend_version;
+  }
 
   nghttp2_session_callbacks *callbacks = nullptr;
   if (nghttp2_session_callbacks_new(&callbacks) != 0) {
@@ -738,9 +739,9 @@ int h2_init_direct(conn_t *conn, bool server, bool probe) {
   };
   if (nghttp2_submit_settings(transport->session, NGHTTP2_FLAG_NONE, settings,
                               2) != 0 ||
-      nghttp2_session_set_local_window_size(transport->session,
-                                            NGHTTP2_FLAG_NONE, 0,
-                                            static_cast<int32_t>(window)) != 0) {
+      nghttp2_session_set_local_window_size(
+          transport->session, NGHTTP2_FLAG_NONE, 0,
+          static_cast<int32_t>(window)) != 0) {
     nghttp2_session_del(transport->session);
     delete transport;
     return -1;
@@ -1014,7 +1015,12 @@ const char *rpc_http2_client_probe(conn_t *conn) {
 }
 
 int rpc_http2_server_init(conn_t *conn) {
-  if (h2_init_direct(conn, true, false) < 0) {
+  return rpc_http2_server_init_with_metadata(conn, nullptr);
+}
+
+int rpc_http2_server_init_with_metadata(
+    conn_t *conn, const rpc_http2_server_metadata *metadata) {
+  if (h2_init_direct(conn, true, false, metadata) < 0) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
