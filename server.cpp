@@ -293,6 +293,10 @@ lupine_manual_handlers() {
        {handle_manual_cuStreamSynchronize, "cuStreamSynchronize"}},
       {RPC_cuEventSynchronize,
        {handle_manual_cuEventSynchronize, "cuEventSynchronize"}},
+#if CUDA_VERSION >= 12000
+      {RPC_cuTensorMapEncodeTiled,
+       {handle_manual_cuTensorMapEncodeTiled, "cuTensorMapEncodeTiled"}},
+#endif
   };
   return handlers;
 }

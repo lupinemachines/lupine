@@ -56,3 +56,4 @@ int handle_nvmlDeviceGetVirtualizationMode(conn_t *conn);
 int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn);
 int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn);
 int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn);
+int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn);

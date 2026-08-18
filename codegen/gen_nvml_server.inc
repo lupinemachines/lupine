@@ -1693,3 +1693,35 @@ int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn) {
+  nvmlDevice_t device;
+  int major;
+  major = {};
+  int minor;
+  minor = {};
+  int request_id;
+  nvmlReturn_t return_value;
+  using fn_t = nvmlReturn_t (*)(nvmlDevice_t, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = nvml_symbol<fn_t>("nvmlDeviceGetCudaComputeCapability");
+  return_value =
+      fn == nullptr ? function_not_found() : fn(device, &major, &minor);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &major, sizeof(int)) < 0 ||
+      rpc_write(conn, &minor, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}

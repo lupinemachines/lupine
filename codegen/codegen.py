@@ -174,6 +174,7 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceIsMigDeviceHandle",
     "nvmlDeviceGetNvLinkRemoteDeviceType",
     "nvmlDeviceGetNvLinkRemotePciInfo_v2",
+    "nvmlDeviceGetCudaComputeCapability",
 ]
 
 NVML_MANUAL_SERVER_FUNCTIONS = {

@@ -4510,3 +4510,66 @@ int handle_manual_cuGetErrorName(conn_t *conn) {
 int handle_manual_cuGetErrorString(conn_t *conn) {
   return lupine_handle_error_string(conn, cuGetErrorString);
 }
+
+#if CUDA_VERSION >= 12000
+int handle_manual_cuTensorMapEncodeTiled(conn_t *conn) {
+  CUtensorMapDataType tensor_data_type;
+  cuuint32_t tensor_rank = 0;
+  void *global_address = nullptr;
+  std::array<cuuint64_t, 5> global_dim{};
+  std::array<cuuint64_t, 4> global_strides{};
+  std::array<cuuint32_t, 5> box_dim{};
+  std::array<cuuint32_t, 5> element_strides{};
+
+  if (rpc_read(conn, &tensor_data_type, sizeof(tensor_data_type)) < 0 ||
+      rpc_read(conn, &tensor_rank, sizeof(tensor_rank)) < 0 ||
+      rpc_read(conn, &global_address, sizeof(global_address)) < 0) {
+    return -1;
+  }
+
+  if (tensor_rank == 0 || tensor_rank > global_dim.size()) {
+    return -1;
+  }
+
+  const size_t rank_bytes_u64 = tensor_rank * sizeof(cuuint64_t);
+  const size_t stride_bytes = (tensor_rank - 1) * sizeof(cuuint64_t);
+  const size_t rank_bytes_u32 = tensor_rank * sizeof(cuuint32_t);
+  if (rpc_read(conn, global_dim.data(), rank_bytes_u64) < 0 ||
+      (stride_bytes != 0 &&
+       rpc_read(conn, global_strides.data(), stride_bytes) < 0) ||
+      rpc_read(conn, box_dim.data(), rank_bytes_u32) < 0 ||
+      rpc_read(conn, element_strides.data(), rank_bytes_u32) < 0) {
+    return -1;
+  }
+
+  CUtensorMapInterleave interleave;
+  CUtensorMapSwizzle swizzle;
+  CUtensorMapL2promotion l2_promotion;
+  CUtensorMapFloatOOBfill oob_fill;
+  if (rpc_read(conn, &interleave, sizeof(interleave)) < 0 ||
+      rpc_read(conn, &swizzle, sizeof(swizzle)) < 0 ||
+      rpc_read(conn, &l2_promotion, sizeof(l2_promotion)) < 0 ||
+      rpc_read(conn, &oob_fill, sizeof(oob_fill)) < 0) {
+    return -1;
+  }
+
+  const int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUtensorMap tensor_map{};
+  CUresult result = cuTensorMapEncodeTiled(
+      &tensor_map, tensor_data_type, tensor_rank, global_address,
+      global_dim.data(),
+      stride_bytes == 0 ? nullptr : global_strides.data(), box_dim.data(),
+      element_strides.data(), interleave, swizzle, l2_promotion, oob_fill);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &tensor_map, sizeof(tensor_map)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif

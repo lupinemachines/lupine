@@ -342,6 +342,7 @@
 #define RPC_cuSurfObjectCreate 1855246974
 #define RPC_cuSurfObjectDestroy 1635365862
 #define RPC_cuSurfObjectGetResourceDesc 1009289841
+#define RPC_cuTensorMapEncodeTiled 1386204641
 #define RPC_cuDeviceCanAccessPeer 1419231701
 #define RPC_cuCtxEnablePeerAccess 1737933368
 #define RPC_cuCtxDisablePeerAccess 1900602041
@@ -380,7 +381,6 @@
 #define RPC_cuStreamGetCaptureInfo_v2 501626002
 #define RPC_cuStreamUpdateCaptureDependencies_v2 434730116
 #define RPC_cuTensorMapEncodeIm2col 1203430832
-#define RPC_cuTensorMapEncodeTiled 1386204641
 #define RPC_cuTensorMapReplaceAddress 1209139891
 #define RPC_cuUserObjectCreate 1748907400
 #define RPC_nvmlInit_v2 2103095296
@@ -445,6 +445,7 @@
 #define RPC_nvmlDeviceIsMigDeviceHandle 1693389219
 #define RPC_nvmlDeviceGetNvLinkRemoteDeviceType 65527014
 #define RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2 1998574024
+#define RPC_nvmlDeviceGetCudaComputeCapability 1264755594
 
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphAddNode_v2 1958016248

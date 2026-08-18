@@ -4736,10 +4736,11 @@ CUresult cuSurfObjectDestroy(CUsurfObject surfObject);
 CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
                                      CUsurfObject surfObject);
 /**
+ * @disabled both
  * @param tensorMap SEND_RECV
  * @param tensorDataType SEND_ONLY
  * @param tensorRank SEND_ONLY
- * @param globalAddress SEND_RECV
+ * @param globalAddress SEND_ONLY
  * @param globalDim SEND_RECV
  * @param globalStrides SEND_RECV
  * @param boxDim SEND_RECV
