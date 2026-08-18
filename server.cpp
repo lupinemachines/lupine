@@ -30,6 +30,7 @@
 #include "ipc.h"
 #include "lupine_log.h"
 #include "manual_server.h"
+#include "monitoring.h"
 #include "rpc.h"
 #include "server_checkpoint.h"
 
@@ -77,6 +78,7 @@ lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
     if (child <= 0) {
       break;
     }
+    lupine_monitoring_note_process_exit(child);
     children.erase(child);
   }
   lupine_parent_child_exited = 0;
@@ -100,6 +102,10 @@ struct lupine_manual_handler {
 static const std::unordered_map<int, lupine_manual_handler> &
 lupine_manual_handlers() {
   static const std::unordered_map<int, lupine_manual_handler> handlers = {
+#ifndef _WIN32
+      {LUPINE_RPC_CLIENT_METADATA,
+       {handle_lupine_client_metadata, "client metadata"}},
+#endif
       {RPC_cuGetErrorName, {handle_manual_cuGetErrorName, "cuGetErrorName"}},
       {RPC_cuGetErrorString,
        {handle_manual_cuGetErrorString, "cuGetErrorString"}},
@@ -358,9 +364,12 @@ int client_handler(lupine_socket_t connfd) {
   conn.connfd = connfd;
   conn.request_id = 1;
   conn.local_request_parity = conn.request_id & 1;
+  conn.logical_index = -1;
+  conn.monitor_slot = lupine_monitoring_register_child();
   if (!lupine_initialize_rpc_synchronization(&conn)) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
     lupine_socket_close(connfd);
+    lupine_monitoring_unregister_child(conn.monitor_slot);
     return lupine_server_checkpoint_child_finish();
   }
 
@@ -368,15 +377,18 @@ int client_handler(lupine_socket_t connfd) {
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");
     rpc_conn_destroy(&conn);
+    lupine_monitoring_unregister_child(conn.monitor_slot);
     return lupine_server_checkpoint_child_finish();
   }
   if (http2_init_result != 0) {
     rpc_conn_destroy(&conn);
+    lupine_monitoring_unregister_child(conn.monitor_slot);
     return lupine_server_checkpoint_child_finish();
   }
   if (!lupine_server_initialize_connection(&conn)) {
     LUPINE_LOG_ERROR("Error initializing per-connection staging state.");
     rpc_conn_destroy(&conn);
+    lupine_monitoring_unregister_child(conn.monitor_slot);
     return lupine_server_checkpoint_child_finish();
   }
 
@@ -531,6 +543,7 @@ int client_handler(lupine_socket_t connfd) {
   int checkpoint_result = lupine_server_checkpoint_child_finish();
   lupine_server_cleanup_connection(&conn);
   rpc_conn_destroy(&conn);
+  lupine_monitoring_unregister_child(conn.monitor_slot);
   return checkpoint_result;
 }
 
@@ -588,9 +601,15 @@ int main() {
 
   LUPINE_LOG_DEBUG("Server listening on port " << port << "...");
 
+  if (lupine_monitoring_start(sockfd) < 0) {
+    lupine_socket_close(sockfd);
+    exit(EXIT_FAILURE);
+  }
+
 #ifndef _WIN32
   if (!lupine_install_parent_signal_handlers()) {
     LUPINE_LOG_ERROR("Failed to install server signal handlers.");
+    lupine_monitoring_stop();
     lupine_socket_close(sockfd);
     exit(EXIT_FAILURE);
   }
@@ -760,6 +779,7 @@ int main() {
     int status = 0;
     pid_t child = waitpid(-1, &status, 0);
     if (child > 0) {
+      lupine_monitoring_note_process_exit(child);
       connection_children.erase(child);
       if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
         shutdown_result = EXIT_FAILURE;
@@ -776,8 +796,10 @@ int main() {
     shutdown_result = EXIT_FAILURE;
     break;
   }
+  lupine_monitoring_stop();
   return shutdown_result;
 #else
+  lupine_monitoring_stop();
   return 0;
 #endif
 }

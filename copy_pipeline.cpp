@@ -4,6 +4,7 @@
 
 #include "codegen/gen_api.h"
 #include "copy_pipeline.h"
+#include "monitoring.h"
 #include "rpc.h"
 
 #ifdef LUPINE_RPC_CLIENT
@@ -1106,7 +1107,9 @@ int handle_manual_cuCtxCreate_v2(conn_t *conn) {
 
   CUcontext context = nullptr;
   lupine_server_begin_lifecycle_transaction(conn);
+  lupine_monitoring_begin_context_create(conn, device);
   CUresult result = cuCtxCreate_v2(&context, flags, device);
+  lupine_monitoring_end_context_create(conn, result == CUDA_SUCCESS);
   lupine_server_note_created_context(conn, context, result);
   lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1129,7 +1132,9 @@ int handle_manual_cuDevicePrimaryCtxRetain(conn_t *conn) {
 
   CUcontext context = nullptr;
   lupine_server_begin_lifecycle_transaction(conn);
+  lupine_monitoring_begin_context_create(conn, device);
   CUresult result = cuDevicePrimaryCtxRetain(&context, device);
+  lupine_monitoring_end_context_create(conn, result == CUDA_SUCCESS);
   lupine_server_note_primary_context(conn, device, context, result);
   lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||

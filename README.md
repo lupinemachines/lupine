@@ -84,6 +84,52 @@ Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
 so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
 as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
 
+## Prometheus metrics
+
+Set `LUPINE_METRICS_PORT` on the GPU server to enable `/metrics`. The endpoint
+is disabled by default. `LUPINE_METRICS_BIND` defaults to `0.0.0.0`, and
+`LUPINE_METRICS_INTERVAL_MS` defaults to 1000 with an allowed range of 100 to
+60000 milliseconds.
+
+```bash
+docker run --rm --gpus all \
+  -e LUPINE_METRICS_PORT=9400 \
+  -p 14833:14833 -p 9400:9400 \
+  ghcr.io/lupinemachines/lupine-server:cuda-13.1.0-ubuntu24.04
+
+curl http://<server>:9400/metrics
+```
+
+The server exports physical-device memory and SM utilization, per-client
+memory and SM utilization, optional workload aggregation, and active
+server-process to client-process mappings. Utilization values use the NVML
+0-to-100 percentage scale. Per-process memory is the total reported by NVML;
+NVML does not split it into allocator, context, and module categories.
+
+Each client automatically sends an identity derived from its boot ID, PID
+namespace, PID, process start time, hostname, and executable name. The server
+resolves the host PID of its GPU-owning connection child by comparing NVML
+process sets around the first context-creating call. It leaves the PID
+unresolved if the change is not unique.
+
+Set `LUPINE_WORKLOAD_ID` to aggregate multiple client processes into one
+workload series. `LUPINE_CLIENT_NAME` overrides the displayed executable name,
+and `LUPINE_VDEVICE_INDEX` adds an opaque virtual-device label. Set
+`LUPINE_CLIENT_METADATA=0` only when connecting a new client to an older server
+without the metadata RPC.
+
+The main metric families are:
+
+- `lupine_client_device_utilization_percent`
+- `lupine_client_device_memory_used_bytes`
+- `lupine_workload_device_utilization_percent`
+- `lupine_workload_device_memory_used_bytes`
+- `lupine_host_gpu_utilization_percent`
+- `lupine_host_gpu_memory_used_bytes`
+- `lupine_server_connection_info`
+- `lupine_monitor_host_pid_discovery_failures_total`
+- `lupine_monitor_host_pid_discovery_ambiguities_total`
+
 ## Graceful Server Checkpoints
 
 On Linux, `SIGTERM` stops the server from accepting connections, asks every
