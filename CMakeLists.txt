@@ -79,6 +79,7 @@ if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CUDA_CLIENT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
@@ -108,6 +109,7 @@ set(SERVER_SOURCES
 )
 
 set(NVML_CLIENT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
@@ -118,6 +120,7 @@ set(CUDA_CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
@@ -220,6 +223,19 @@ else()
     add_test(NAME h2_unknown_cuda_version_test COMMAND h2_unknown_cuda_version_test)
     lupine_scaled_timeout(h2u_timeout 10)
     set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT ${h2u_timeout})
+
+    add_executable(client_transport_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/client_transport_test.cpp
+    )
+    target_link_libraries(client_transport_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
+    lupine_apply_sanitizer(client_transport_test)
+    add_test(NAME client_transport_test COMMAND client_transport_test)
+    lupine_scaled_timeout(transport_timeout 10)
+    set_tests_properties(client_transport_test PROPERTIES TIMEOUT ${transport_timeout})
 
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
