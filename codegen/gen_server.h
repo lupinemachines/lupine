@@ -1,10 +1,13 @@
 #ifndef GEN_SERVER_H
 #define GEN_SERVER_H
 
-#include "rpc.h"
+#include "rpc_server.h"
 
-typedef int (*RequestHandler)(conn_t *conn);
+#include <stddef.h>
 
-RequestHandler get_handler(const int op);
+rpc_handler get_cuda_handler(int op);
+const int *get_cuda_handler_operations(size_t *count);
+rpc_handler get_nvml_handler(int op);
+const int *get_nvml_handler_operations(size_t *count);
 
 #endif

@@ -113,6 +113,9 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/server_backends.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cuda_server_registry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cuda_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp
@@ -151,6 +154,7 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.h
 )
 
@@ -253,6 +257,16 @@ else()
     add_test(NAME h2_unknown_cuda_version_test COMMAND h2_unknown_cuda_version_test)
     lupine_scaled_timeout(h2u_timeout 10)
     set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT ${h2u_timeout})
+
+    add_executable(rpc_server_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server_test.cpp
+    )
+    target_link_libraries(rpc_server_test PRIVATE pthread)
+    lupine_apply_sanitizer(rpc_server_test)
+    add_test(NAME rpc_server_test COMMAND rpc_server_test)
+    lupine_scaled_timeout(rpc_server_timeout 10)
+    set_tests_properties(rpc_server_test PROPERTIES TIMEOUT ${rpc_server_timeout})
 
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
