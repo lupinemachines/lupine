@@ -29,7 +29,7 @@
 #include "copy_pipeline.h"
 #include "ipc.h"
 #include "lupine_log.h"
-#include "manual_server.h"
+#include "cuda_server.h"
 #include "rpc.h"
 #include "server_checkpoint.h"
 
@@ -98,16 +98,16 @@ static void lupine_log_manual_handler_error(const char *name) {
   LUPINE_LOG_ERROR("Error handling manual " << name << " request.");
 }
 
-struct lupine_manual_handler {
+struct lupine_cuda_custom_handler {
   RequestHandler handler;
   const char *name;
 };
 
-// Manual handlers are looked up before the auto-generated handlers from
-// get_handler(), so entries here take precedence for overlapping ops.
-static const std::unordered_map<int, lupine_manual_handler> &
-lupine_manual_handlers() {
-  static const std::unordered_map<int, lupine_manual_handler> handlers = {
+// Custom CUDA handlers are looked up before the auto-generated handlers from
+// get_handler(), so entries here take precedence for overlapping operations.
+static const std::unordered_map<int, lupine_cuda_custom_handler> &
+lupine_cuda_custom_handlers() {
+  static const std::unordered_map<int, lupine_cuda_custom_handler> handlers = {
       {RPC_cuGetErrorName, {handle_manual_cuGetErrorName, "cuGetErrorName"}},
       {RPC_cuGetErrorString,
        {handle_manual_cuGetErrorString, "cuGetErrorString"}},
@@ -312,11 +312,11 @@ lupine_manual_handlers() {
 static int lupine_handle_rpc_request(conn_t *conn, int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
 
-  const auto &manual_handlers = lupine_manual_handlers();
-  auto manual = manual_handlers.find(op);
-  if (manual != manual_handlers.end()) {
-    if (manual->second.handler(conn) < 0) {
-      lupine_log_manual_handler_error(manual->second.name);
+  const auto &custom_handlers = lupine_cuda_custom_handlers();
+  auto custom = custom_handlers.find(op);
+  if (custom != custom_handlers.end()) {
+    if (custom->second.handler(conn) < 0) {
+      lupine_log_manual_handler_error(custom->second.name);
       return -1;
     }
     return 0;

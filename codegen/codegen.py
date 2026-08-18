@@ -1293,7 +1293,7 @@ def main():
                 continue
             f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
 
-    with open("gen_client.cpp", "w") as f:
+    with open("gen_cuda_client.cpp", "w") as f:
         f.write(
             "#include <cuda.h>\n"
             "\n"
@@ -1846,7 +1846,7 @@ def main():
         [
             "clang-format",
             "-i",
-            "gen_client.cpp",
+            "gen_cuda_client.cpp",
             "gen_nvml_client.inc",
             "gen_nvml_server.h",
             "gen_nvml_server.inc",

@@ -1,5 +1,5 @@
-#ifndef LUPINE_MANUAL_SERVER_H
-#define LUPINE_MANUAL_SERVER_H
+#ifndef LUPINE_CUDA_SERVER_H
+#define LUPINE_CUDA_SERVER_H
 
 #include <cuda.h>
 

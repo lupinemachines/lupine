@@ -34,7 +34,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 
 FROM builder AS client-build
 
-RUN cmake --build /opt/lupine/build --parallel --target lupine_driver lupine_nvml
+RUN cmake --build /opt/lupine/build --parallel --target lupine_cuda_client lupine_nvml
 
 RUN test -e /opt/lupine/build/libcuda.so.1 \
     && test -e /opt/lupine/build/libnvidia-ml.so.1 \

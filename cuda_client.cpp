@@ -51,7 +51,7 @@
 #include "checkpoint.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
-#include "codegen/gen_client.h"
+#include "codegen/gen_cuda_client.h"
 #include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
@@ -6362,7 +6362,7 @@ extern "C" CUresult cuGraphAddNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 // ---------------------------------------------------------------------------
 // Client wrappers for the CUDA graph query and node-params APIs that the
 // @param annotation grammar cannot describe (see codegen/annotations.h and the
-// matching manual handlers in manual_server.cpp). cuGraphGetNodes and
+// matching custom handlers in cuda_server.cpp). cuGraphGetNodes and
 // cuGraphGetRootNodes are now generated from the OPTIONAL out-array grammar;
 // the remaining query fns are remapped to *_v2 by cuda.h so they stay manual.
 // ---------------------------------------------------------------------------

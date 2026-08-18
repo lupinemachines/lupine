@@ -45,7 +45,7 @@
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
-#include "manual_server.h"
+#include "cuda_server.h"
 #include "rpc.h"
 
 #ifdef _WIN32

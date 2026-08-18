@@ -78,19 +78,19 @@ if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
   target_compile_options(lupine_lz4 PRIVATE -O2)
 endif()
 
-set(CLIENT_SOURCES
+set(CUDA_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.cpp
 )
 
 set(SERVER_SOURCES
@@ -98,7 +98,7 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cuda_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
@@ -114,12 +114,12 @@ set(NVML_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp
 )
 
-set(CLIENT_HEADERS
+set(CUDA_CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
 )
@@ -128,7 +128,7 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_provider.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/lupine_platform.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cuda_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
@@ -136,23 +136,26 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.h
 )
 
-set(CLIENT_OUTPUT lupine_driver)
+set(CUDA_CLIENT_OUTPUT lupine_cuda_client)
 set(NVML_CLIENT_OUTPUT lupine_nvml)
 set(SERVER_OUTPUT lupine_driver_server)
 
 if (NOT WIN32)
-    add_library(${CLIENT_OUTPUT} SHARED ${CLIENT_SOURCES} ${CLIENT_HEADERS})
-    target_include_directories(${CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    target_compile_definitions(${CLIENT_OUTPUT} PRIVATE LUPINE_RPC_CLIENT)
-    if(OpenSSL_FOUND)
-      target_compile_definitions(${CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
-      target_link_libraries(${CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    endif()
-    target_link_libraries(${CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
-    target_link_options(${CLIENT_OUTPUT} PRIVATE
-        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/client.exports"
+    add_library(${CUDA_CLIENT_OUTPUT} SHARED
+        ${CUDA_CLIENT_SOURCES}
+        ${CUDA_CLIENT_HEADERS}
     )
-    set_target_properties(${CLIENT_OUTPUT} PROPERTIES
+    target_include_directories(${CUDA_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE LUPINE_RPC_CLIENT)
+    if(OpenSSL_FOUND)
+      target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
+      target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
+    target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
+    target_link_options(${CUDA_CLIENT_OUTPUT} PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports"
+    )
+    set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         OUTPUT_NAME cuda
         VERSION 1
@@ -314,7 +317,7 @@ if (NOT WIN32)
         $<$<COMPILE_LANGUAGE:CUDA>: --compiler-options=-fPIC,-g,-Wno-deprecated-declarations>
     )
 
-    target_compile_options(${CLIENT_OUTPUT} PRIVATE
+    target_compile_options(${CUDA_CLIENT_OUTPUT} PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
     )
 
@@ -322,7 +325,7 @@ if (NOT WIN32)
         $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
     )
 
-    message(STATUS "Building client output: ${CLIENT_OUTPUT}")
+    message(STATUS "Building CUDA client output: ${CUDA_CLIENT_OUTPUT}")
     message(STATUS "Client TLS (OpenSSL): ${OpenSSL_FOUND}")
     message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
 endif()
