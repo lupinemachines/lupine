@@ -52,7 +52,6 @@
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_cuda_client.h"
-#include "cuda_rpc.h"
 #include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
@@ -103,6 +102,57 @@ static void lupine_install_rpc_lifecycle_hooks() {
 }
 
 const char *DEFAULT_PORT = "14833";
+
+struct lupine_jit_output_binding {
+  CUjit_option option;
+  void *dst;
+  size_t size;
+};
+
+static const lupine_jit_output_binding *lupine_find_jit_output_binding(
+    const std::vector<lupine_jit_output_binding> &bindings,
+    CUjit_option option) {
+  for (const auto &binding : bindings) {
+    if (binding.option == option && binding.dst != nullptr) {
+      return &binding;
+    }
+  }
+  return nullptr;
+}
+
+static int lupine_read_jit_outputs(
+    conn_t *conn, const std::vector<lupine_jit_output_binding> &bindings) {
+  const auto *binding =
+      lupine_find_jit_output_binding(bindings, CU_JIT_WALL_TIME);
+  size_t direct_size =
+      binding == nullptr ? 0 : std::min(binding->size, sizeof(float));
+  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
+      rpc_drain(conn, sizeof(float) - direct_size) < 0) {
+    return -1;
+  }
+
+  size_t payload_size = 0;
+  if (rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+    return -1;
+  }
+  binding = lupine_find_jit_output_binding(bindings, CU_JIT_INFO_LOG_BUFFER);
+  direct_size = binding == nullptr ? 0 : std::min(binding->size, payload_size);
+  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
+      rpc_drain(conn, payload_size - direct_size) < 0) {
+    return -1;
+  }
+
+  if (rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
+    return -1;
+  }
+  binding = lupine_find_jit_output_binding(bindings, CU_JIT_ERROR_LOG_BUFFER);
+  direct_size = binding == nullptr ? 0 : std::min(binding->size, payload_size);
+  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
+      rpc_drain(conn, payload_size - direct_size) < 0) {
+    return -1;
+  }
+  return 0;
+}
 
 void *rpc_client_dispatch_thread(void *arg);
 
@@ -435,7 +485,7 @@ lupine_device_attribute_cache() {
 }
 
 struct lupine_device_snapshot_info {
-  char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
+  char name[256] = {};
   CUuuid uuid = {};
   uint64_t total_mem = 0;
 };
@@ -1446,7 +1496,7 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
         rpc_write(conn, &zero_options, sizeof(zero_options)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
-        rpc_read_jit_outputs(conn, {}) < 0 ||
+        lupine_read_jit_outputs(conn, {}) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
@@ -3727,7 +3777,7 @@ extern "C" CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
 }
 
 struct lupine_jit_client_state {
-  std::vector<rpc_jit_output_binding> bindings;
+  std::vector<lupine_jit_output_binding> bindings;
   std::vector<unsigned char> cubin;
 };
 
@@ -3757,11 +3807,11 @@ static size_t lupine_jit_option_size(unsigned int numOptions,
   return 0;
 }
 
-static std::vector<rpc_jit_output_binding>
+static std::vector<lupine_jit_output_binding>
 lupine_capture_jit_client_bindings(unsigned int numOptions,
                                    const CUjit_option *options,
                                    void *const *optionValues) {
-  std::vector<rpc_jit_output_binding> bindings;
+  std::vector<lupine_jit_output_binding> bindings;
   if (options == nullptr || optionValues == nullptr) {
     return bindings;
   }
@@ -3848,7 +3898,7 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
       rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read_jit_outputs(conn, bindings) < 0 ||
+      lupine_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3915,7 +3965,7 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
       rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read_jit_outputs(conn, bindings) < 0 ||
+      lupine_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     munmap(file_mapping, mapped_file_size);
@@ -3940,7 +3990,7 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t cubin_size = 0;
-  std::vector<rpc_jit_output_binding> bindings;
+  std::vector<lupine_jit_output_binding> bindings;
   if (rpc_write_start_request(conn, RPC_cuLinkComplete) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3964,7 +4014,7 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
     *sizeOut = jit_state.cubin.size();
   }
 
-  if (rpc_read_jit_outputs(conn, bindings) < 0 ||
+  if (lupine_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4743,7 +4793,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   }
   if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
-      rpc_read_jit_outputs(conn, bindings) < 0 ||
+      lupine_read_jit_outputs(conn, bindings) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

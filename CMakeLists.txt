@@ -85,7 +85,6 @@ set(CUDA_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/cuda_rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
@@ -121,7 +120,6 @@ set(CUDA_CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/cuda_rpc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
 )

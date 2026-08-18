@@ -15,7 +15,7 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
-#include "cuda_rpc.h"
+#include "rpc.h"
 
 // Completion is monotonic between records: once the server reports an event
 // complete for a given record, that stays true until the event is recorded
@@ -23,7 +23,7 @@
 // actually reaches the server, so a locally answered query is legal only while
 // no async copy is waiting to be drained. Other outstanding events may be
 // queried by a separate Lupine RPC to warm this cache.
-constexpr uint32_t kLupineEventQueryBatch = LUPINE_EVENT_QUERY_BATCH_MAX;
+constexpr uint32_t kLupineEventQueryBatch = 16;
 
 struct lupine_event_slot {
   CUevent event;

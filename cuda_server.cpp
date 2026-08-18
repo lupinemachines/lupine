@@ -41,12 +41,12 @@
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "copy_pipeline.h"
-#include "cuda_rpc.h"
 #include "cuda_server.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
+#include "rpc.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -3533,14 +3533,15 @@ int handle_manual_cuEventQuery(conn_t *conn) {
 }
 
 int handle_manual_lupineEventQueryBatch(conn_t *conn) {
+  constexpr uint32_t kEventQueryBatchMax = 16;
   uint32_t count = 0;
   if (rpc_read(conn, &count, sizeof(count)) < 0 || count == 0 ||
-      count > LUPINE_EVENT_QUERY_BATCH_MAX) {
+      count > kEventQueryBatchMax) {
     LUPINE_LOG_ERROR("cuEventQuery RPC failed while reading count: count="
                      << count);
     return -1;
   }
-  CUevent events[LUPINE_EVENT_QUERY_BATCH_MAX];
+  CUevent events[kEventQueryBatchMax];
   if (rpc_read(conn, events, count * sizeof(*events)) < 0) {
     LUPINE_LOG_ERROR("cuEventQuery RPC failed while reading events");
     return -1;
@@ -3551,7 +3552,7 @@ int handle_manual_lupineEventQueryBatch(conn_t *conn) {
     return -1;
   }
 
-  CUresult results[LUPINE_EVENT_QUERY_BATCH_MAX];
+  CUresult results[kEventQueryBatchMax];
   for (uint32_t i = 0; i < count; ++i) {
     results[i] = cuEventQuery(events[i]);
     if (results[i] != CUDA_SUCCESS && results[i] != CUDA_ERROR_NOT_READY) {
@@ -4041,7 +4042,7 @@ int handle_manual_lupineManagedHostFlush(conn_t *conn) {
 // to the per-call paths. Individual attributes the driver rejects are simply
 // absent from the pair list; that is expected, not an error.
 struct lupine_device_snapshot_record {
-  char name[LUPINE_DEVICE_SNAPSHOT_NAME_BYTES] = {};
+  char name[256] = {};
   CUuuid uuid = {};
   uint64_t total_mem = 0;
   uint32_t pair_count = 0;
