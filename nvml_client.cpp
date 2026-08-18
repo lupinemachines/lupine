@@ -24,6 +24,7 @@
 
 #include "codegen/gen_api.h"
 #include "lupine_log.h"
+#include "monitoring.h"
 #include "rpc.h"
 
 // CUDA <= 12.6 ships NVML API 12, which does not define the versioned
@@ -174,6 +175,8 @@ int open_connection() {
         c->connfd = sockfd;
         c->request_id = 0;
         c->local_request_parity = c->request_id & 1;
+        c->logical_index = nconns;
+        c->monitor_slot = -1;
         if (tls) {
 #ifdef LUPINE_TLS_OPENSSL
           static SSL_CTX *tls_ctx = []() {
@@ -222,6 +225,29 @@ int open_connection() {
           }
 #endif
           close(sockfd);
+          freeaddrinfo(res);
+          continue;
+        }
+        if (lupine_report_client_metadata(c, "nvml", nconns) < 0) {
+          rpc_close_transport_socket(c);
+          pthread_mutex_lock(&c->read_mutex);
+          pthread_cond_broadcast(&c->read_cond);
+          pthread_mutex_unlock(&c->read_mutex);
+          if (c->read_thread != 0) {
+            pthread_join(c->read_thread, nullptr);
+            c->read_thread = 0;
+          }
+          if (c->rpc_thread != 0) {
+            pthread_join(c->rpc_thread, nullptr);
+            c->rpc_thread = 0;
+          }
+#ifdef LUPINE_TLS_OPENSSL
+          if (c->tls_session != nullptr) {
+            SSL_free(static_cast<SSL *>(c->tls_session));
+            c->tls_session = nullptr;
+          }
+#endif
+          rpc_conn_destroy(c);
           freeaddrinfo(res);
           continue;
         }

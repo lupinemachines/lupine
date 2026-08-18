@@ -90,6 +90,7 @@ set(CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/monitor_client.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.cpp
 )
 
@@ -107,11 +108,16 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.cpp
 )
 
+if (NOT WIN32)
+    list(APPEND SERVER_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/monitor_server.cpp)
+endif()
+
 set(NVML_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/monitor_client.cpp
 )
 
 set(CLIENT_HEADERS
@@ -122,6 +128,7 @@ set(CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/monitoring.h
 )
 
 set(SERVER_HEADERS
@@ -131,6 +138,7 @@ set(SERVER_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/manual_server.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/monitoring.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.h

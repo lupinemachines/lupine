@@ -77,6 +77,7 @@ struct conn_t {
   size_t write_copy_offset;
   int local_request_parity;
   int logical_index;
+  int monitor_slot;
   int closed;
   void *http2;
   void *tls_session; // SSL* for https:// client connections; otherwise null.

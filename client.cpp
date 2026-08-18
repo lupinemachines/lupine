@@ -58,6 +58,7 @@
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "memcpy.h"
+#include "monitoring.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
@@ -681,6 +682,8 @@ static std::vector<lupine_server_endpoint> &lupine_server_endpoints() {
   return *endpoints;
 }
 
+static void lupine_join_connection_threads(conn_t *conn);
+
 static int lupine_connect_endpoint(conn_t *conn,
                                    const lupine_server_endpoint &endpoint,
                                    unsigned int logical_index) {
@@ -705,6 +708,7 @@ static int lupine_connect_endpoint(conn_t *conn,
   conn->closed = 0;
   conn->local_request_parity = conn->request_id & 1;
   conn->logical_index = static_cast<int>(logical_index);
+  conn->monitor_slot = -1;
   if (endpoint.tls) {
 #ifdef LUPINE_TLS_OPENSSL
     static SSL_CTX *tls_ctx = []() {
@@ -748,6 +752,22 @@ static int lupine_connect_endpoint(conn_t *conn,
       pthread_create(&conn->read_thread, NULL, rpc_client_dispatch_thread,
                      (void *)conn) != 0) {
     lupine_socket_close(sockfd);
+    return -1;
+  }
+  if (lupine_report_client_metadata(conn, "driver",
+                                    static_cast<int>(logical_index)) < 0) {
+    rpc_close_transport_socket(conn);
+    pthread_mutex_lock(&conn->read_mutex);
+    pthread_cond_broadcast(&conn->read_cond);
+    pthread_mutex_unlock(&conn->read_mutex);
+    lupine_join_connection_threads(conn);
+#ifdef LUPINE_TLS_OPENSSL
+    if (conn->tls_session != nullptr) {
+      SSL_free(static_cast<SSL *>(conn->tls_session));
+      conn->tls_session = nullptr;
+    }
+#endif
+    rpc_conn_destroy(conn);
     return -1;
   }
   rpc_http2_client_start_heartbeat(conn);
