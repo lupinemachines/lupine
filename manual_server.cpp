@@ -3521,20 +3521,29 @@ int handle_manual_lupineEventQueryBatch(conn_t *conn) {
   uint32_t count = 0;
   if (rpc_read(conn, &count, sizeof(count)) < 0 || count == 0 ||
       count > LUPINE_EVENT_QUERY_BATCH_MAX) {
+    LUPINE_LOG_ERROR("cuEventQuery RPC failed while reading count: count="
+                     << count);
     return -1;
   }
   CUevent events[LUPINE_EVENT_QUERY_BATCH_MAX];
   if (rpc_read(conn, events, count * sizeof(*events)) < 0) {
+    LUPINE_LOG_ERROR("cuEventQuery RPC failed while reading events");
     return -1;
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
+    LUPINE_LOG_ERROR("cuEventQuery RPC failed while finishing request");
     return -1;
   }
 
   CUresult results[LUPINE_EVENT_QUERY_BATCH_MAX];
   for (uint32_t i = 0; i < count; ++i) {
     results[i] = cuEventQuery(events[i]);
+    if (results[i] != CUDA_SUCCESS && results[i] != CUDA_ERROR_NOT_READY) {
+      LUPINE_LOG_ERROR("cuEventQuery failed on the server: result="
+                       << results[i] << " event=" << events[i]
+                       << " batch_index=" << i);
+    }
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||

@@ -3150,7 +3150,32 @@ extern "C" CUresult cuProfilerStop(void) {
 }
 
 CUresult cuStreamDestroy_v2(CUstream hStream);
-CUresult cuEventDestroy_v2(CUevent hEvent);
+extern "C" CUresult cuEventDestroy_v2(CUevent hEvent) {
+  std::unique_lock<std::shared_mutex> event_lifecycle_lock(
+      lupine_event_lifecycle_mutex());
+  lupine_route route = lupine_route_for_event(hEvent);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  using real_fn_t = CUresult (*)(CUevent);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuEventDestroy_v2", &result, hEvent)) {
+    if (result == CUDA_SUCCESS) {
+      lupine_forget_event_owner(hEvent);
+    }
+    return result;
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuEventDestroy_v2) < 0 ||
+      rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_forget_event_owner(hEvent);
+  }
+  return result;
+}
 CUresult cuEventElapsedTime_v2(float *pMilliseconds, CUevent hStart,
                                CUevent hEnd);
 CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags);
@@ -4161,6 +4186,8 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   if (conn == nullptr) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  std::shared_lock<std::shared_mutex> event_lifecycle_lock(
+      lupine_event_lifecycle_mutex());
   uint64_t recorded = 0;
   if (!lupine_event_query_needed(hEvent, &recorded)) {
     return lupine_sync_mapped_device_to_host();
@@ -8717,6 +8744,7 @@ lupine_manual_function_map() {
       {"cuProfilerStop", (void *)cuProfilerStop},
       {"cuStreamDestroy", (void *)cuStreamDestroy},
       {"cuEventDestroy", (void *)cuEventDestroy},
+      {"cuEventDestroy_v2", (void *)cuEventDestroy_v2},
       {"cuEventElapsedTime", (void *)cuEventElapsedTime},
       {"cuMemPoolSetAttribute", (void *)cuMemPoolSetAttribute},
       {"cuMemPoolGetAttribute", (void *)cuMemPoolGetAttribute},

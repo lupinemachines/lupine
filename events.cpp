@@ -19,6 +19,15 @@ void lupine_event_note_recorded(lupine_event_table *table, CUevent event) {
   *victim = {event, seq, 0};
 }
 
+void lupine_event_note_destroyed(lupine_event_table *table, CUevent event) {
+  std::lock_guard<std::mutex> lock(table->mutex);
+  for (auto &slot : table->slots) {
+    if (slot.event == event) {
+      slot = {};
+    }
+  }
+}
+
 bool lupine_event_query_needed(lupine_event_table *table, CUevent event,
                                uint64_t *recorded) {
   bool copies_pending = table->dtoh_issued.load(std::memory_order_relaxed) !=
@@ -94,8 +103,17 @@ static lupine_event_table &lupine_event_table_instance() {
   return table;
 }
 
+std::shared_mutex &lupine_event_lifecycle_mutex() {
+  static std::shared_mutex mutex;
+  return mutex;
+}
+
 void lupine_note_event_recorded(CUevent event) {
   lupine_event_note_recorded(&lupine_event_table_instance(), event);
+}
+
+void lupine_note_event_destroyed(CUevent event) {
+  lupine_event_note_destroyed(&lupine_event_table_instance(), event);
 }
 
 bool lupine_event_query_needed(CUevent event, uint64_t *recorded) {

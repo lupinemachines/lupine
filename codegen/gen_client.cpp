@@ -3044,24 +3044,6 @@ CUresult cuEventSynchronize(CUevent hEvent) {
   return return_value;
 }
 
-CUresult cuEventDestroy_v2(CUevent hEvent) {
-  lupine_route route = lupine_route_for_event(hEvent);
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(CUevent);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventDestroy_v2",
-                                                  &return_value, hEvent)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuEventDestroy_v2) < 0 ||
-      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuEventElapsedTime_v2(float *pMilliseconds, CUevent hStart,
                                CUevent hEnd) {
   lupine_route route = lupine_route_for_event(hStart);

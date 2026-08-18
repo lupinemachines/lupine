@@ -77,6 +77,14 @@ lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
     if (child <= 0) {
       break;
     }
+    if (WIFSIGNALED(status)) {
+      LUPINE_LOG_ERROR("Connection child "
+                       << child << " terminated by signal "
+                       << WTERMSIG(status));
+    } else if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
+      LUPINE_LOG_ERROR("Connection child "
+                       << child << " exited abnormally with status " << status);
+    }
     children.erase(child);
   }
   lupine_parent_child_exited = 0;

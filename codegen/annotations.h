@@ -3563,6 +3563,7 @@ CUresult cuEventQuery(CUevent hEvent);
  */
 CUresult cuEventSynchronize(CUevent hEvent);
 /**
+ * @disabled client
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */

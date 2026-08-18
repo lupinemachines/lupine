@@ -168,6 +168,26 @@ bool test_query_results_cache_only_successes() {
   return true;
 }
 
+bool test_destroyed_event_is_removed_from_prefetch() {
+  lupine_event_table table;
+  CUevent events[kLupineEventQueryBatch];
+  uint64_t recorded[kLupineEventQueryBatch];
+  CUevent primary = fake_event(0);
+  CUevent destroyed = fake_event(1);
+  lupine_event_note_recorded(&table, primary);
+  lupine_event_note_recorded(&table, destroyed);
+  lupine_event_note_destroyed(&table, destroyed);
+
+  uint32_t count = lupine_event_collect_query_prefetch(
+      &table, nullptr, kConnA, resolve_all_to_a, events, recorded);
+  if (count != 1 || events[0] != primary ||
+      batch_contains(events, count, destroyed)) {
+    std::cerr << "FAIL: destroyed event remained in the prefetch batch\n";
+    return false;
+  }
+  return true;
+}
+
 bool test_pending_dtoh_suppresses_local_answer() {
   lupine_event_table table;
   CUevent event = fake_event(0);
@@ -200,6 +220,7 @@ int main() {
       !test_eviction_is_oldest_recorded() ||
       !test_prefetch_batch_excludes_and_filters() ||
       !test_query_results_cache_only_successes() ||
+      !test_destroyed_event_is_removed_from_prefetch() ||
       !test_pending_dtoh_suppresses_local_answer()) {
     return 1;
   }

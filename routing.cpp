@@ -11,6 +11,7 @@
 #include "cache.h"
 #include "client_routing.h"
 #include "codegen/gen_api.h"
+#include "events.h"
 
 extern int rpc_open();
 extern int rpc_size();
@@ -614,6 +615,14 @@ extern "C" void lupine_forget_context_owner(CUcontext ctx) {
 extern "C" void lupine_forget_stream_owner(CUstream stream) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   lupine_owners<CUstream>().erase(stream);
+}
+
+extern "C" void lupine_forget_event_owner(CUevent event) {
+  {
+    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+    lupine_owners<CUevent>().erase(event);
+  }
+  lupine_note_event_destroyed(event);
 }
 
 template <typename Handle>
