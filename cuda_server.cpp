@@ -41,12 +41,12 @@
 #include "codegen/gen_api.h"
 #include "codegen/gen_server.h"
 #include "copy_pipeline.h"
+#include "cuda_rpc.h"
+#include "cuda_server.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
-#include "cuda_server.h"
-#include "rpc.h"
 
 #ifdef _WIN32
 #include <io.h>

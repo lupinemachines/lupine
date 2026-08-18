@@ -15,7 +15,7 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
-#include "rpc.h"
+#include "cuda_rpc.h"
 
 // Completion is monotonic between records: once the server reports an event
 // complete for a given record, that stays true until the event is recorded

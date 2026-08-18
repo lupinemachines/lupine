@@ -52,6 +52,7 @@
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_cuda_client.h"
+#include "cuda_rpc.h"
 #include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
@@ -84,6 +85,20 @@ void rpc_destroy_thread_lane(uint64_t lane_id) {
 
   for (int i = 0; i < count; ++i) {
     rpc_write_lane_termination(active_conns[i], lane_id);
+  }
+}
+
+static void lupine_rpc_connection_closed(conn_t *) {
+  lupine_invalidate_current_context_cache();
+}
+
+static pthread_once_t lupine_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
+
+static void lupine_install_rpc_lifecycle_hooks() {
+  const rpc_lifecycle_hooks hooks = {lupine_rpc_connection_closed,
+                                     rpc_destroy_thread_lane};
+  if (rpc_set_lifecycle_hooks(&hooks) < 0) {
+    LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
 }
 
@@ -8381,6 +8396,10 @@ close_connection:
 }
 
 int rpc_open() {
+  if (pthread_once(&lupine_rpc_lifecycle_once,
+                   lupine_install_rpc_lifecycle_hooks) != 0) {
+    return -1;
+  }
   if (pthread_mutex_lock(&conn_mutex) < 0)
     return -1;
 

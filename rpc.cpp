@@ -1,6 +1,7 @@
 #include "rpc.h"
 #include "lupine_log.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <cstdlib>
@@ -8,7 +9,6 @@
 #include <iostream>
 #include <string.h>
 #include <thread>
-#include <vector>
 
 #ifndef _WIN32
 #include <netdb.h>
@@ -230,18 +230,35 @@ int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
   return result;
 }
 
-#ifdef LUPINE_RPC_CLIENT
-extern void rpc_destroy_thread_lane(uint64_t lane_id);
-extern "C" void lupine_invalidate_current_context_cache();
-#else
-static void rpc_destroy_thread_lane(uint64_t lane_id) { (void)lane_id; }
-#endif
+namespace {
+
+using rpc_connection_closed_hook = void (*)(conn_t *);
+using rpc_thread_lane_destroyed_hook = void (*)(uint64_t);
+
+std::atomic<rpc_connection_closed_hook> connection_closed_hook{nullptr};
+std::atomic<rpc_thread_lane_destroyed_hook> thread_lane_destroyed_hook{nullptr};
+std::atomic_flag lifecycle_hooks_set = ATOMIC_FLAG_INIT;
+
+} // namespace
+
+int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks) {
+  if (hooks == nullptr ||
+      lifecycle_hooks_set.test_and_set(std::memory_order_acq_rel)) {
+    return -1;
+  }
+  connection_closed_hook.store(hooks->connection_closed,
+                               std::memory_order_release);
+  thread_lane_destroyed_hook.store(hooks->thread_lane_destroyed,
+                                   std::memory_order_release);
+  return 0;
+}
 
 static void rpc_mark_connection_closed(conn_t *conn) {
   conn->closed = 1;
-#ifdef LUPINE_RPC_CLIENT
-  lupine_invalidate_current_context_cache();
-#endif
+  auto hook = connection_closed_hook.load(std::memory_order_acquire);
+  if (hook != nullptr) {
+    hook(conn);
+  }
 }
 
 namespace {
@@ -250,7 +267,12 @@ struct rpc_thread_lane {
   uint64_t id = static_cast<uint64_t>(
       std::hash<std::thread::id>{}(std::this_thread::get_id()));
 
-  ~rpc_thread_lane() { rpc_destroy_thread_lane(id); }
+  ~rpc_thread_lane() {
+    auto hook = thread_lane_destroyed_hook.load(std::memory_order_acquire);
+    if (hook != nullptr) {
+      hook(id);
+    }
+  }
 };
 
 static thread_local rpc_thread_lane rpc_tls_lane;
@@ -560,7 +582,7 @@ int rpc_copy_alloc(conn_t *conn, const size_t size) {
   conn->write_copy_buffer = static_cast<unsigned char *>(malloc(size));
   if (conn->write_copy_buffer == nullptr) {
     // Continuing after request serialization runs out of memory would leave
-    // client-visible CUDA state ambiguous, so fail the process immediately.
+    // client-visible backend state ambiguous, so fail the process immediately.
     std::abort();
   }
   conn->write_copy_capacity = size;
@@ -602,50 +624,6 @@ int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
       return -1;
     }
     conn->write_queue[conn->write_queue_count++] = {iovecs[i], 0};
-  }
-  return 0;
-}
-
-static const rpc_jit_output_binding *
-rpc_find_jit_output_binding(const std::vector<rpc_jit_output_binding> &bindings,
-                            CUjit_option option) {
-  for (const auto &binding : bindings) {
-    if (binding.option == option && binding.dst != nullptr) {
-      return &binding;
-    }
-  }
-  return nullptr;
-}
-
-int rpc_read_jit_outputs(conn_t *conn,
-                         const std::vector<rpc_jit_output_binding> &bindings) {
-  const auto *binding = rpc_find_jit_output_binding(bindings, CU_JIT_WALL_TIME);
-  size_t direct_size =
-      binding == nullptr ? 0 : std::min(binding->size, sizeof(float));
-  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
-      rpc_drain(conn, sizeof(float) - direct_size) < 0) {
-    return -1;
-  }
-
-  size_t payload_size = 0;
-  if (rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
-    return -1;
-  }
-  binding = rpc_find_jit_output_binding(bindings, CU_JIT_INFO_LOG_BUFFER);
-  direct_size = binding == nullptr ? 0 : std::min(binding->size, payload_size);
-  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
-      rpc_drain(conn, payload_size - direct_size) < 0) {
-    return -1;
-  }
-
-  if (rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
-    return -1;
-  }
-  binding = rpc_find_jit_output_binding(bindings, CU_JIT_ERROR_LOG_BUFFER);
-  direct_size = binding == nullptr ? 0 : std::min(binding->size, payload_size);
-  if ((direct_size != 0 && rpc_read(conn, binding->dst, direct_size) < 0) ||
-      rpc_drain(conn, payload_size - direct_size) < 0) {
-    return -1;
   }
   return 0;
 }

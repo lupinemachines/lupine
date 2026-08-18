@@ -1,10 +1,8 @@
 #ifndef RPC_H
 #define RPC_H
 
-#include "cuda_compat.h"
 #include "lupine_platform.h"
 #include <stdint.h>
-#include <vector>
 
 // Uncompressed block size for the optional LZ4 payload framing. The framed
 // bytes are produced lazily, one block at a time, by the HTTP/2 transport
@@ -30,24 +28,9 @@ struct rpc_http2_read_stats {
 #define LUPINE_RPC_TERMINATE_LANE 0xFFFF
 
 // The server's HTTP/2 receive window, and with it the ceiling on the pinned
-// staging a client can hold there: fire-and-forget async HtoD payload bytes
+// staging a client can hold there: fire-and-forget device-bound payload bytes
 // stay uncredited until the staging buffer they landed in retires.
 #define LUPINE_FF_STAGING_WINDOW_BYTES (64ull * 1024 * 1024)
-
-// Events the explicit lupineEventQueryBatch cache-warming RPC may carry. Its
-// request is a count followed by that many handles, and its response is one
-// CUresult per handle in the same order.
-#define LUPINE_EVENT_QUERY_BATCH_MAX 16
-
-// Wire layout for LUPINE_RPC_lupineDeviceSnapshot. The response is all or
-// nothing: a non-success result carries no payload, otherwise every device
-// record holds a fixed-size name buffer, uuid, total memory, and a
-// count-prefixed list of (attribute, value) pairs.
-#define LUPINE_DEVICE_SNAPSHOT_NAME_BYTES 256
-
-// LUPINE_RPC_lupineLibrarySnapshot is a best-effort metadata side channel.
-// The request contains one CUlibrary. The response contains a CUresult and a
-// count-prefixed list of kernel names, handles, and parameter layouts.
 
 typedef struct conn_t conn_t;
 
@@ -66,8 +49,8 @@ struct conn_t {
   pthread_t rpc_thread;
   pthread_mutex_t read_mutex, write_mutex, call_mutex;
   pthread_cond_t read_cond;
-  // Explicitly managed so conn_t remains trivially destructible. libcudart can
-  // call back into the shim during process teardown, after C++ globals have
+  // Explicitly managed so conn_t remains trivially destructible. Client APIs
+  // can call back into a shim during process teardown, after C++ globals have
   // begun finalizing.
   rpc_write_entry *write_queue;
   int write_queue_count;
@@ -81,6 +64,15 @@ struct conn_t {
   void *http2;
   void *tls_session; // SSL* for https:// client connections; otherwise null.
 };
+
+// Backends install these hooks before opening connections. They let the
+// transport report lifecycle changes without depending on backend state.
+// Installation is process-local and succeeds at most once per RPC core.
+struct rpc_lifecycle_hooks {
+  void (*connection_closed)(conn_t *conn);
+  void (*thread_lane_destroyed)(uint64_t lane_id);
+};
+extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
 
 extern int rpc_dispatch(conn_t *conn, int parity);
 extern int rpc_read_start(conn_t *conn, int write_id);
@@ -131,22 +123,13 @@ extern void rpc_conn_destroy(conn_t *conn);
 // permanent failure.
 extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port);
 
-struct rpc_jit_output_binding {
-  CUjit_option option;
-  void *dst;
-  size_t size;
-};
-extern int
-rpc_read_jit_outputs(conn_t *conn,
-                     const std::vector<rpc_jit_output_binding> &bindings);
-
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
                             int entry_count);
 extern int rpc_http2_client_init(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
-// Sends HEAD / and returns the x-lupine-cuda-version response header, or
-// nullptr when the request fails or the server does not advertise a version.
+// Sends HEAD / and returns the backend-version response header, or nullptr
+// when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or
 // rpc_conn_destroy(); the probe connection must not be reused for RPC.
 extern const char *rpc_http2_client_probe(conn_t *conn);
@@ -161,7 +144,7 @@ extern int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats);
 
 // Keeps the client-to-server TCP path active while a synchronous RPC waits for
 // its response. The heartbeat is transport-only: it emits HTTP/2 PING frames
-// and does not add, combine, or otherwise change CUDA RPCs.
+// and does not add, combine, or otherwise change application RPCs.
 extern void rpc_http2_response_wait_begin(conn_t *conn);
 extern void rpc_http2_response_wait_end(conn_t *conn);
 
