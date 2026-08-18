@@ -8821,6 +8821,8 @@ lupine_manual_function_map() {
       {"cuDevicePrimaryCtxReset_v2", (void *)cuDevicePrimaryCtxReset_v2},
       {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
       {"cuMemcpyHtoD_v2", (void *)cuMemcpyHtoD_v2},
+      {"cuMemcpy", (void *)cuMemcpy},
+      {"cuMemcpy_ptds", (void *)cuMemcpy},
       {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
       {"cuMemcpyDtoH_v2", (void *)cuMemcpyDtoH_v2},
       {"cuMemcpyDtoA", (void *)cuMemcpyDtoA_v2},

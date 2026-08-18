@@ -2694,6 +2694,7 @@ CUresult cuMemHostRegister_v2(void *p, size_t bytesize, unsigned int Flags);
  */
 CUresult cuMemHostUnregister(void *p);
 /**
+ * @disabled client
  * @routingkey DEVICEPTR dst
  * @crossservercopy dst src ByteCount
  * @param dst SEND_ONLY
