@@ -100,6 +100,9 @@ MANUAL_REMAPPINGS = [
     ("cuMemFreeAsync_ptsz", "cuMemFreeAsync"),
     ("cuMemAllocAsync_ptsz", "cuMemAllocAsync"),
     ("cuMemAllocFromPoolAsync_ptsz", "cuMemAllocFromPoolAsync"),
+    ("cuGraphKernelNodeGetParams", "cuGraphKernelNodeGetParams_v2"),
+    ("cuGraphKernelNodeSetParams", "cuGraphKernelNodeSetParams_v2"),
+    ("cuGraphExecKernelNodeSetParams", "cuGraphExecKernelNodeSetParams_v2"),
 ]
 
 KERNEL_PARAM_LAYOUT_INVALIDATORS = {

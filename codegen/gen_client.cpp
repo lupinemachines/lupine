@@ -3764,6 +3764,50 @@ CUresult cuGraphCreate(CUgraph *phGraph, unsigned int flags) {
   return return_value;
 }
 
+CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
+                                       CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  lupine_route route = lupine_route_for_graph_node(hNode);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgraphNode, CUDA_KERNEL_NODE_PARAMS *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphKernelNodeGetParams_v2", &return_value, hNode,
+          nodeParams)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuGraphKernelNodeGetParams_v2) < 0 ||
+      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
+      rpc_write(conn, nodeParams, sizeof(CUDA_KERNEL_NODE_PARAMS)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, nodeParams, sizeof(CUDA_KERNEL_NODE_PARAMS)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult
+cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
+                              const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  lupine_route route = lupine_route_for_graph_node(hNode);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgraphNode, const CUDA_KERNEL_NODE_PARAMS *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphKernelNodeSetParams_v2", &return_value, hNode,
+          nodeParams)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetParams_v2) < 0 ||
+      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
+      rpc_write(conn, nodeParams, sizeof(const CUDA_KERNEL_NODE_PARAMS)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
 CUresult cuGraphMemcpyNodeGetParams(CUgraphNode hNode,
                                     CUDA_MEMCPY3D *nodeParams) {
   lupine_route route = lupine_route_for_graph_node(hNode);
@@ -4858,6 +4902,31 @@ CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags) {
       rpc_write(conn, flags, sizeof(cuuint64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, flags, sizeof(cuuint64_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult
+cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
+                                  const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  lupine_route route = lupine_route_for_graph_exec(hGraphExec);
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUgraphExec, CUgraphNode, const CUDA_KERNEL_NODE_PARAMS *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphExecKernelNodeSetParams_v2", &return_value, hGraphExec,
+          hNode, nodeParams)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuGraphExecKernelNodeSetParams_v2) <
+          0 ||
+      rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
+      rpc_write(conn, nodeParams, sizeof(const CUDA_KERNEL_NODE_PARAMS)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6784,6 +6853,33 @@ extern "C" CUresult cuMemAllocFromPoolAsync_ptsz(CUdeviceptr *dptr,
   return cuMemAllocFromPoolAsync(dptr, bytesize, pool, hStream);
 }
 
+#ifdef cuGraphKernelNodeGetParams
+#undef cuGraphKernelNodeGetParams
+#endif
+extern "C" CUresult
+cuGraphKernelNodeGetParams(CUgraphNode hNode,
+                           CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphKernelNodeGetParams_v2(hNode, nodeParams);
+}
+
+#ifdef cuGraphKernelNodeSetParams
+#undef cuGraphKernelNodeSetParams
+#endif
+extern "C" CUresult
+cuGraphKernelNodeSetParams(CUgraphNode hNode,
+                           const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphKernelNodeSetParams_v2(hNode, nodeParams);
+}
+
+#ifdef cuGraphExecKernelNodeSetParams
+#undef cuGraphExecKernelNodeSetParams
+#endif
+extern "C" CUresult
+cuGraphExecKernelNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
+                               const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphExecKernelNodeSetParams_v2(hGraphExec, hNode, nodeParams);
+}
+
 std::unordered_map<std::string, void *> functionMap = {
     {"cuInit", (void *)cuInit},
     {"cuDriverGetVersion", (void *)cuDriverGetVersion},
@@ -6985,6 +7081,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuParamSetTexRef", (void *)cuParamSetTexRef},
     {"cuFuncSetSharedMemConfig", (void *)cuFuncSetSharedMemConfig},
     {"cuGraphCreate", (void *)cuGraphCreate},
+    {"cuGraphKernelNodeGetParams_v2", (void *)cuGraphKernelNodeGetParams_v2},
+    {"cuGraphKernelNodeSetParams_v2", (void *)cuGraphKernelNodeSetParams_v2},
     {"cuGraphMemcpyNodeGetParams", (void *)cuGraphMemcpyNodeGetParams},
     {"cuGraphMemcpyNodeSetParams", (void *)cuGraphMemcpyNodeSetParams},
     {"cuGraphMemsetNodeGetParams", (void *)cuGraphMemsetNodeGetParams},
@@ -7029,6 +7127,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphInstantiateWithFlags", (void *)cuGraphInstantiateWithFlags},
     {"cuGraphInstantiateWithParams", (void *)cuGraphInstantiateWithParams},
     {"cuGraphExecGetFlags", (void *)cuGraphExecGetFlags},
+    {"cuGraphExecKernelNodeSetParams_v2",
+     (void *)cuGraphExecKernelNodeSetParams_v2},
     {"cuGraphExecMemcpyNodeSetParams", (void *)cuGraphExecMemcpyNodeSetParams},
     {"cuGraphExecMemsetNodeSetParams", (void *)cuGraphExecMemsetNodeSetParams},
     {"cuGraphExecChildGraphNodeSetParams",
@@ -7163,6 +7263,10 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemFreeAsync_ptsz", (void *)cuMemFreeAsync},
     {"cuMemAllocAsync_ptsz", (void *)cuMemAllocAsync},
     {"cuMemAllocFromPoolAsync_ptsz", (void *)cuMemAllocFromPoolAsync},
+    {"cuGraphKernelNodeGetParams", (void *)cuGraphKernelNodeGetParams_v2},
+    {"cuGraphKernelNodeSetParams", (void *)cuGraphKernelNodeSetParams_v2},
+    {"cuGraphExecKernelNodeSetParams",
+     (void *)cuGraphExecKernelNodeSetParams_v2},
 };
 
 void *get_function_pointer(const char *name) {

@@ -3853,14 +3853,12 @@ CUresult cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
                                  size_t numDependencies,
                                  const CUDA_KERNEL_NODE_PARAMS *nodeParams);
 /**
- * @disabled both - manual kernel parameter packing
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_RECV
  */
 CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
                                        CUDA_KERNEL_NODE_PARAMS *nodeParams);
 /**
- * @disabled both - manual kernel parameter packing
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
  */
@@ -4263,7 +4261,6 @@ cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
  */
 CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
 /**
- * @disabled both - manual kernel parameter packing
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
