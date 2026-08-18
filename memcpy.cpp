@@ -18,7 +18,7 @@
 #include <cuda.h>
 
 #include "client_routing.h"
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_log.h"
 #include "memcpy.h"

@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <cuda.h>
 
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 #include "copy_pipeline.h"
 #include "rpc.h"
 

@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <vector>
 
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 
 // CUDA <= 12.6 ships NVML API 12, which does not define the versioned
 // temperature struct. The host driver exports the symbol on newer drivers; this

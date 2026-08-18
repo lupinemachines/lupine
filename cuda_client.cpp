@@ -42,7 +42,7 @@
 #include "cache.h"
 #include "checkpoint.h"
 #include "client_routing.h"
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 #include "codegen/gen_cuda_client.h"
 #include "cuda_profiler_compat.h"
 #include "events.h"

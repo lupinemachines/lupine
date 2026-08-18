@@ -10,7 +10,7 @@
 
 #include "cache.h"
 #include "client_routing.h"
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 #include "events.h"
 
 extern int rpc_open();

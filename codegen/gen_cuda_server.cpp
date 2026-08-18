@@ -2,7 +2,7 @@
 #include <cuda.h>
 #include <iostream>
 
-#include "gen_api.h"
+#include "gen_rpc_ids.h"
 #include <cstring>
 #include <string>
 
@@ -11,8 +11,6 @@
 #include <cstdio>
 
 #include "rpc.h"
-
-#include "nvml_server.h"
 
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;

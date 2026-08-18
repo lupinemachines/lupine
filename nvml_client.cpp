@@ -14,7 +14,7 @@
 #include <thread>
 #include <vector>
 
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 #include "lupine_log.h"
 #include "rpc.h"
 #include "transport.h"

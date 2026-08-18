@@ -120,7 +120,7 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_server.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/registry.cpp
 )
 

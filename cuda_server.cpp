@@ -38,7 +38,7 @@
 #include "cuda_compat.h"
 
 #include "cache.h"
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 #include "copy_pipeline.h"
 #include "cuda_server.h"
 #include "ipc.h"

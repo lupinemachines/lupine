@@ -2,7 +2,7 @@
 
 #include "copy_pipeline.h"
 #include "cuda_server.h"
-#include "gen_api.h"
+#include "gen_rpc_ids.h"
 #include "nvml_server.h"
 
 // clang-format off
