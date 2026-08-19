@@ -8382,11 +8382,10 @@ close_connection:
 
 int rpc_open() {
   if (pthread_once(&lupine_rpc_lifecycle_once,
-                   lupine_install_rpc_lifecycle_hooks) != 0) {
+                   lupine_install_rpc_lifecycle_hooks) != 0 ||
+      pthread_mutex_lock(&conn_mutex) < 0) {
     return -1;
   }
-  if (pthread_mutex_lock(&conn_mutex) < 0)
-    return -1;
 
   if (nconns > 0) {
     if (pthread_mutex_unlock(&conn_mutex) < 0)
