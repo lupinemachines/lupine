@@ -3753,27 +3753,31 @@ lupine_jit_client_states() {
   return states;
 }
 
-static lupine_jit_outputs
-lupine_capture_jit_outputs(unsigned int numOptions, const CUjit_option *options,
-                           void *const *optionValues) {
-  lupine_jit_outputs outputs;
-  if (options == nullptr || optionValues == nullptr) {
-    return outputs;
+static int lupine_write_jit_options(conn_t *conn, unsigned int num_options,
+                                    const CUjit_option *options,
+                                    void *const *option_values,
+                                    lupine_jit_outputs *outputs) {
+  if (num_options != 0 && (options == nullptr || option_values == nullptr)) {
+    return -1;
   }
-  for (unsigned int i = 0; i < numOptions; ++i) {
-    void *value = optionValues[i];
-    if (options[i] == CU_JIT_WALL_TIME && outputs.wall_time == nullptr &&
+  for (unsigned int i = 0; i < num_options; ++i) {
+    void *value = option_values[i];
+    if (rpc_write(conn, &options[i], sizeof(options[i])) < 0 ||
+        rpc_write(conn, &option_values[i], sizeof(option_values[i])) < 0) {
+      return -1;
+    }
+    if (options[i] == CU_JIT_WALL_TIME && outputs->wall_time == nullptr &&
         value != nullptr) {
-      outputs.wall_time = value;
+      outputs->wall_time = value;
     } else if (options[i] == CU_JIT_INFO_LOG_BUFFER &&
-               outputs.info_log == nullptr && value != nullptr) {
-      outputs.info_log = value;
+               outputs->info_log == nullptr && value != nullptr) {
+      outputs->info_log = value;
     } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER &&
-               outputs.error_log == nullptr && value != nullptr) {
-      outputs.error_log = value;
+               outputs->error_log == nullptr && value != nullptr) {
+      outputs->error_log = value;
     }
   }
-  return outputs;
+  return 0;
 }
 
 extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
@@ -3792,10 +3796,11 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
+  lupine_jit_outputs outputs;
   if (rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
-      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      lupine_write_jit_options(conn, numOptions, options, optionValues,
+                               &outputs) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, stateOut, sizeof(*stateOut)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3804,8 +3809,7 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   }
   if (return_value == CUDA_SUCCESS) {
     std::lock_guard<std::mutex> lock(lupine_jit_client_mutex());
-    lupine_jit_client_states()[*stateOut].outputs =
-        lupine_capture_jit_outputs(numOptions, options, optionValues);
+    lupine_jit_client_states()[*stateOut].outputs = outputs;
   }
   return return_value;
 }
@@ -3828,7 +3832,7 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
-  auto outputs = lupine_capture_jit_outputs(numOptions, options, optionValues);
+  lupine_jit_outputs outputs;
   size_t jit_output_length = 0;
   if (rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
@@ -3838,8 +3842,8 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, &name_len, sizeof(name_len)) < 0 ||
       rpc_write(conn, name, name_len) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
-      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      lupine_write_jit_options(conn, numOptions, options, optionValues,
+                               &outputs) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
       rpc_read(conn, outputs.wall_time, jit_output_length) < 0 ||
@@ -3875,7 +3879,7 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   size_t mapped_file_size = 0;
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
-  auto outputs = lupine_capture_jit_outputs(numOptions, options, optionValues);
+  lupine_jit_outputs outputs;
   size_t jit_output_length = 0;
   int file_fd = open(path, O_RDONLY);
   if (file_fd < 0) {
@@ -3910,8 +3914,8 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
       rpc_write(conn, file_payload, mapped_file_size) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
-      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      lupine_write_jit_options(conn, numOptions, options, optionValues,
+                               &outputs) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
       rpc_read(conn, outputs.wall_time, jit_output_length) < 0 ||
@@ -4717,8 +4721,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
                                   libraryOptionValues, numLibraryOptions);
   }
 
-  auto outputs =
-      lupine_capture_jit_outputs(numJitOptions, jitOptions, jitOptionsValues);
+  lupine_jit_outputs outputs;
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t image_size = image_bytes.size();
@@ -4731,9 +4734,8 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
       rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
-      rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
-      rpc_write(conn, jitOptionsValues,
-                numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
+      lupine_write_jit_options(conn, numJitOptions, jitOptions,
+                               jitOptionsValues, &outputs) < 0 ||
       rpc_write(conn, &numLibraryOptions, sizeof(numLibraryOptions)) < 0 ||
       rpc_write(conn, libraryOptions,
                 numLibraryOptions * sizeof(*libraryOptions)) < 0) {

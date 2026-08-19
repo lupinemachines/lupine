@@ -107,11 +107,23 @@ struct lupine_jit_state {
   size_t error_log_length = 0;
 };
 
-static void lupine_prepare_jit_outputs(lupine_jit_state *jit) {
+static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
   bool wall_time_output = false;
   bool info_log_output = false;
   bool error_log_output = false;
+  if (rpc_read(conn, &jit->num_options, sizeof(jit->num_options)) < 0) {
+    return -1;
+  }
+  jit->options = static_cast<CUjit_option *>(
+      std::malloc(jit->num_options * sizeof(*jit->options)));
+  jit->option_values = static_cast<void **>(
+      std::malloc(jit->num_options * sizeof(*jit->option_values)));
   for (unsigned int i = 0; i < jit->num_options; ++i) {
+    if (rpc_read(conn, &jit->options[i], sizeof(jit->options[i])) < 0 ||
+        rpc_read(conn, &jit->option_values[i],
+                 sizeof(jit->option_values[i])) < 0) {
+      return -1;
+    }
     if (jit->options[i] == CU_JIT_WALL_TIME) {
       wall_time_output |= jit->option_values[i] != nullptr;
     } else if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER) {
@@ -149,6 +161,7 @@ static void lupine_prepare_jit_outputs(lupine_jit_state *jit) {
       jit->option_values[i] = output_requested ? jit->error_log : nullptr;
     }
   }
+  return 0;
 }
 
 static int lupine_write_jit_outputs(conn_t *conn, lupine_jit_state *jit) {
@@ -1099,21 +1112,9 @@ int handle_manual_cuLibraryLoadData(conn_t *conn) {
   if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
     return -1;
   }
-  if (rpc_read(conn, &jit_state.num_options, sizeof(jit_state.num_options)) <
-      0) {
+  if (lupine_read_jit_options(conn, &jit_state) < 0) {
     return -1;
   }
-  jit_state.options = static_cast<CUjit_option *>(
-      std::malloc(jit_state.num_options * sizeof(*jit_state.options)));
-  jit_state.option_values = static_cast<void **>(
-      std::malloc(jit_state.num_options * sizeof(*jit_state.option_values)));
-  if (rpc_read(conn, jit_state.options,
-               jit_state.num_options * sizeof(*jit_state.options)) < 0 ||
-      rpc_read(conn, jit_state.option_values,
-               jit_state.num_options * sizeof(*jit_state.option_values)) < 0) {
-    return -1;
-  }
-  lupine_prepare_jit_outputs(&jit_state);
   unsigned int num_library_options = 0;
   if (rpc_read(conn, &num_library_options, sizeof(num_library_options)) < 0) {
     return -1;
@@ -1792,23 +1793,9 @@ int handle_manual_cuLinkCreate_v2(conn_t *conn) {
   auto link_state = std::make_unique<lupine_link_state>();
   CUlinkState client_state = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &link_state->jit.num_options,
-               sizeof(link_state->jit.num_options)) < 0) {
+  if (lupine_read_jit_options(conn, &link_state->jit) < 0) {
     return -1;
   }
-  link_state->jit.options = static_cast<CUjit_option *>(std::malloc(
-      link_state->jit.num_options * sizeof(*link_state->jit.options)));
-  link_state->jit.option_values = static_cast<void **>(std::malloc(
-      link_state->jit.num_options * sizeof(*link_state->jit.option_values)));
-  if (rpc_read(conn, link_state->jit.options,
-               link_state->jit.num_options * sizeof(*link_state->jit.options)) <
-          0 ||
-      rpc_read(conn, link_state->jit.option_values,
-               link_state->jit.num_options *
-                   sizeof(*link_state->jit.option_values)) < 0) {
-    return -1;
-  }
-  lupine_prepare_jit_outputs(&link_state->jit);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
@@ -1851,21 +1838,9 @@ int handle_manual_cuLinkAddData_v2(conn_t *conn) {
   }
   std::vector<char> name(name_len == 0 ? 1 : name_len, '\0');
   if ((name_len != 0 && rpc_read(conn, name.data(), name_len) < 0) ||
-      rpc_read(conn, &jit_state.num_options, sizeof(jit_state.num_options)) <
-          0) {
+      lupine_read_jit_options(conn, &jit_state) < 0) {
     return -1;
   }
-  jit_state.options = static_cast<CUjit_option *>(
-      std::malloc(jit_state.num_options * sizeof(*jit_state.options)));
-  jit_state.option_values = static_cast<void **>(
-      std::malloc(jit_state.num_options * sizeof(*jit_state.option_values)));
-  if (rpc_read(conn, jit_state.options,
-               jit_state.num_options * sizeof(*jit_state.options)) < 0 ||
-      rpc_read(conn, jit_state.option_values,
-               jit_state.num_options * sizeof(*jit_state.option_values)) < 0) {
-    return -1;
-  }
-  lupine_prepare_jit_outputs(&jit_state);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
@@ -1921,21 +1896,9 @@ int handle_manual_cuLinkAddFile_v2(conn_t *conn) {
       return -1;
     }
   }
-  if (rpc_read(conn, &jit_state.num_options, sizeof(jit_state.num_options)) <
-      0) {
+  if (lupine_read_jit_options(conn, &jit_state) < 0) {
     return -1;
   }
-  jit_state.options = static_cast<CUjit_option *>(
-      std::malloc(jit_state.num_options * sizeof(*jit_state.options)));
-  jit_state.option_values = static_cast<void **>(
-      std::malloc(jit_state.num_options * sizeof(*jit_state.option_values)));
-  if (rpc_read(conn, jit_state.options,
-               jit_state.num_options * sizeof(*jit_state.options)) < 0 ||
-      rpc_read(conn, jit_state.option_values,
-               jit_state.num_options * sizeof(*jit_state.option_values)) < 0) {
-    return -1;
-  }
-  lupine_prepare_jit_outputs(&jit_state);
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
