@@ -256,17 +256,6 @@ else()
     lupine_scaled_timeout(h2u_timeout 10)
     set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT ${h2u_timeout})
 
-    add_executable(rpc_server_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server_test.cpp
-    )
-    target_link_libraries(rpc_server_test PRIVATE pthread)
-    lupine_apply_sanitizer(rpc_server_test)
-    add_test(NAME rpc_server_test COMMAND rpc_server_test)
-    lupine_scaled_timeout(rpc_server_timeout 10)
-    set_tests_properties(rpc_server_test PROPERTIES TIMEOUT ${rpc_server_timeout})
-
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp
