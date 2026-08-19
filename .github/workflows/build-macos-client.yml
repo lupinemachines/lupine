@@ -15,6 +15,8 @@ permissions:
 env:
   CUDA_HEADER_PACKAGE: nvidia-cuda-runtime-cu12
   CUDA_HEADER_VERSION: 12.9.79
+  NVML_HEADER_PACKAGE: nvidia-nvml-dev-cu12
+  NVML_HEADER_VERSION: 12.9.79
 
 jobs:
   build:
@@ -49,11 +51,16 @@ jobs:
             --python-version 3 \
             --abi none \
             --no-deps \
-            "${CUDA_HEADER_PACKAGE}==${CUDA_HEADER_VERSION}"
+            "${CUDA_HEADER_PACKAGE}==${CUDA_HEADER_VERSION}" \
+            "${NVML_HEADER_PACKAGE}==${NVML_HEADER_VERSION}"
           python3 -m zipfile -e \
             "cuda-wheel/nvidia_cuda_runtime_cu12-${CUDA_HEADER_VERSION}-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" \
             cuda-sdk
+          python3 -m zipfile -e \
+            "cuda-wheel/nvidia_nvml_dev_cu12-${NVML_HEADER_VERSION}-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" \
+            nvml-sdk
           test -f cuda-sdk/nvidia/cuda_runtime/include/cuda.h
+          test -f nvml-sdk/nvidia/nvml_dev/include/nvml.h
 
       - name: Configure client-only build
         run: |
@@ -62,31 +69,43 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DCMAKE_PREFIX_PATH="$(brew --prefix libnghttp2);$(brew --prefix openssl@3)" \
-            -DLUPINE_BUILD_SERVER=OFF \
-            -DLUPINE_BUILD_NVML_CLIENT=OFF \
-            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cuda_runtime/include"
+            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cuda_runtime/include" \
+            -DLUPINE_NVML_INCLUDE_DIR="$PWD/nvml-sdk/nvidia/nvml_dev/include"
 
-      - name: Build CUDA client dylib
-        run: cmake --build build --parallel --target lupine_cuda_client
+      - name: Build client dylibs
+        run: >
+          cmake --build build --parallel
+          --target lupine_cuda_client lupine_nvml
 
       - name: Verify dylib
         run: |
           set -euo pipefail
           test -f build/libcuda.dylib
+          test -f build/libnvidia-ml.dylib
           test "$(lipo -archs build/libcuda.dylib)" = "${{ matrix.arch }}"
-          nm -gjU build/libcuda.dylib | grep -qx '_cuInit'
-          nm -gjU build/libcuda.dylib | grep -qx '_cuGetProcAddress'
-          if otool -L build/libcuda.dylib | tail -n +2 | grep -Eq 'libcuda|libcudart'; then
-            echo 'The client dylib unexpectedly links a CUDA library' >&2
+          test "$(lipo -archs build/libnvidia-ml.dylib)" = "${{ matrix.arch }}"
+          nm -gjU build/libcuda.dylib > build/libcuda.exports
+          nm -gjU build/libnvidia-ml.dylib > build/libnvidia-ml.exports
+          grep -qx '_cuInit' build/libcuda.exports
+          grep -qx '_cuGetProcAddress' build/libcuda.exports
+          grep -qx '_nvmlInit_v2' build/libnvidia-ml.exports
+          otool -L build/libcuda.dylib > build/libcuda.dependencies
+          otool -L build/libnvidia-ml.dylib > build/libnvidia-ml.dependencies
+          if awk 'FNR > 1' build/*.dependencies | grep -E 'libcuda|libcudart|libnvidia-ml'; then
+            echo 'A client dylib unexpectedly links an NVIDIA library' >&2
             exit 1
           fi
-          DYLIB_PATH="$PWD/build/libcuda.dylib" python3 - <<'PY'
+          CUDA_DYLIB_PATH="$PWD/build/libcuda.dylib" \
+          NVML_DYLIB_PATH="$PWD/build/libnvidia-ml.dylib" \
+          python3 - <<'PY'
           import ctypes
           import os
 
-          client = ctypes.CDLL(os.environ["DYLIB_PATH"])
-          assert client.cuInit
-          assert client.cuGetProcAddress
+          cuda = ctypes.CDLL(os.environ["CUDA_DYLIB_PATH"])
+          nvml = ctypes.CDLL(os.environ["NVML_DYLIB_PATH"])
+          assert cuda.cuInit
+          assert cuda.cuGetProcAddress
+          assert nvml.nvmlInit_v2
           PY
 
       - name: Collect client artifact
@@ -96,7 +115,8 @@ jobs:
           out="artifacts/${asset}"
           mkdir -p "$out"
           cp build/libcuda.dylib "$out/libcuda.dylib"
-          (cd "$out" && shasum -a 256 libcuda.dylib > SHA256SUMS)
+          cp build/libnvidia-ml.dylib "$out/libnvidia-ml.dylib"
+          (cd "$out" && shasum -a 256 libcuda.dylib libnvidia-ml.dylib > SHA256SUMS)
           (cd "$out" && zip -r "../${asset}.zip" .)
 
       - name: Upload client artifact
