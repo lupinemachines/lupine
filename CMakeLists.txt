@@ -2,10 +2,6 @@ cmake_minimum_required(VERSION 3.18)
 
 project(LupineProject LANGUAGES C CXX)
 
-if(WIN32)
-  add_compile_definitions(_CRT_DECLARE_NONSTDC_NAMES=0)
-endif()
-
 if(APPLE)
   set(LUPINE_BUILD_SERVER_DEFAULT OFF)
 else()
@@ -182,6 +178,10 @@ set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 if(WIN32)
+  target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE
+      LUPINE_WINDOWS_POSIX_SHIMS
+      _CRT_DECLARE_NONSTDC_NAMES=0
+  )
   target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE ws2_32)
   set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
       OUTPUT_NAME nvcuda
@@ -213,6 +213,10 @@ set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 if(WIN32)
+  target_compile_definitions(${NVML_CLIENT_OUTPUT} PRIVATE
+      LUPINE_WINDOWS_POSIX_SHIMS
+      _CRT_DECLARE_NONSTDC_NAMES=0
+  )
   target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE ws2_32)
   set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
       OUTPUT_NAME nvml

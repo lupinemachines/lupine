@@ -116,7 +116,6 @@ struct Elf64_Sym {
 #include <vector>
 
 using ssize_t = SSIZE_T;
-using off_t = __int64;
 using socklen_t = int;
 using lupine_socket_t = SOCKET;
 
@@ -224,6 +223,8 @@ inline int pthread_once(pthread_once_t *once, void (*init)()) {
 inline DWORD lupine_thread_id() { return GetCurrentThreadId(); }
 inline DWORD lupine_process_id() { return GetCurrentProcessId(); }
 
+#ifdef LUPINE_WINDOWS_POSIX_SHIMS
+using off_t = __int64;
 using lupine_file_stat = struct _stat64;
 
 inline int open(const char *path, int flags) { return _open(path, flags); }
@@ -263,6 +264,7 @@ inline char *strsep(char **string, const char *delimiters) {
 #endif
 #ifndef O_BINARY
 #define O_BINARY _O_BINARY
+#endif
 #endif
 
 // Minimal POSIX virtual-memory compatibility for the client shim. Anonymous
