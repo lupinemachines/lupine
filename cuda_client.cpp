@@ -43,7 +43,6 @@
 #include "cache.h"
 #include "checkpoint.h"
 #include "client_routing.h"
-#include "client_transport.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_cuda_client.h"
 #include "events.h"
@@ -54,6 +53,7 @@
 #include "memcpy.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
+#include "transport.h"
 
 void *rpc_client_dispatch_thread(void *arg);
 

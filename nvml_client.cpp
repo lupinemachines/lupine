@@ -14,10 +14,10 @@
 #include <thread>
 #include <vector>
 
-#include "client_transport.h"
 #include "codegen/gen_api.h"
 #include "lupine_log.h"
 #include "rpc.h"
+#include "transport.h"
 
 // CUDA <= 12.6 ships NVML API 12, which does not define the versioned
 // temperature struct. Keep the wrapper ABI-compatible with newer nvidia-smi.

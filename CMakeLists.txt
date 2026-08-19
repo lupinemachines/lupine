@@ -79,7 +79,7 @@ if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CUDA_CLIENT_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/transport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
@@ -109,7 +109,7 @@ set(SERVER_SOURCES
 )
 
 set(NVML_CLIENT_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/transport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
@@ -120,7 +120,7 @@ set(CUDA_CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/transport.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h

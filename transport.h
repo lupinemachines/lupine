@@ -1,5 +1,5 @@
-#ifndef LUPINE_CLIENT_TRANSPORT_H
-#define LUPINE_CLIENT_TRANSPORT_H
+#ifndef LUPINE_TRANSPORT_H
+#define LUPINE_TRANSPORT_H
 
 #include "rpc.h"
 
