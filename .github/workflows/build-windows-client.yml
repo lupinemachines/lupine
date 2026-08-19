@@ -10,58 +10,94 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
   build:
-    name: Windows client / x86_64
-    runs-on: windows-2022
-    timeout-minutes: 90
-
-    env:
-      CUDA_VERSION: 13.1.0
-      VCPKG_TARGET_TRIPLET: x64-windows-static
+    name: Windows client / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025-vs2026
+            arch: x86_64
+            cmake_arch: x64
+            vcpkg_triplet: x64-windows-static
+          - runner: windows-11-vs2026-arm
+            arch: arm64
+            cmake_arch: ARM64
+            vcpkg_triplet: arm64-windows-static
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install CUDA headers
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: ${{ env.CUDA_VERSION }}
-          method: network
-          sub-packages: '["cudart", "nvml_dev"]'
-
-      - name: Set up vcpkg
+      - name: Download CUDA headers
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $vcpkgRoot = Join-Path $env:RUNNER_TEMP 'vcpkg'
-          git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgRoot
-          & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
-          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force -Path cuda-wheel, cuda-sdk | Out-Null
+          python -m pip download `
+            --dest cuda-wheel `
+            --only-binary=:all: `
+            --platform manylinux2014_x86_64 `
+            --implementation py `
+            --python-version 3 `
+            --abi none `
+            --no-deps `
+            nvidia-cuda-runtime `
+            nvidia-nvml-dev
+          $cudaWheel = Get-ChildItem 'cuda-wheel/nvidia_cuda_runtime-*.whl' |
+            Select-Object -First 1
+          $nvmlWheel = Get-ChildItem 'cuda-wheel/nvidia_nvml_dev-*.whl' |
+            Select-Object -First 1
+          if ($null -eq $cudaWheel -or $null -eq $nvmlWheel) {
+            throw 'CUDA or NVML header wheel was not downloaded'
+          }
+          $cudaVersion = $cudaWheel.Name -replace '^nvidia_cuda_runtime-([^-]+)-.*$', '$1'
+          $nvmlVersion = $nvmlWheel.Name -replace '^nvidia_nvml_dev-([^-]+)-.*$', '$1'
+          python -m zipfile -e $cudaWheel.FullName cuda-sdk
+          python -m zipfile -e $nvmlWheel.FullName cuda-sdk
+          $cudaHeader = Get-ChildItem 'cuda-sdk/nvidia' -Recurse -Filter cuda.h |
+            Select-Object -First 1
+          $nvmlHeader = Get-ChildItem 'cuda-sdk/nvidia' -Recurse -Filter nvml.h |
+            Select-Object -First 1
+          if ($null -eq $cudaHeader -or $null -eq $nvmlHeader) {
+            throw 'CUDA or NVML headers were not found in the downloaded wheels'
+          }
+          New-Item -ItemType Directory -Force -Path cuda-sdk/include | Out-Null
+          Copy-Item (Join-Path $cudaHeader.DirectoryName '*') cuda-sdk/include -Recurse -Force
+          Copy-Item (Join-Path $nvmlHeader.DirectoryName '*') cuda-sdk/include -Recurse -Force
+          $cudaVersion | Set-Content cuda-sdk/CUDA_HEADER_VERSION
+          $nvmlVersion | Set-Content cuda-sdk/NVML_HEADER_VERSION
 
       - name: Install build dependencies
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:VCPKG_ROOT\vcpkg.exe" install `
-            "nghttp2:$env:VCPKG_TARGET_TRIPLET" `
-            "openssl:$env:VCPKG_TARGET_TRIPLET"
+          if (-not (Test-Path "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe")) {
+            throw 'The runner vcpkg installation was not found'
+          }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+            "nghttp2:${{ matrix.vcpkg_triplet }}" `
+            "openssl:${{ matrix.vcpkg_triplet }}"
 
-      - name: Configure client build
+      - name: Configure client-only build
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           cmake -S . -B build/windows-client `
-            -G "Visual Studio 17 2022" `
-            -A x64 `
+            -G "Visual Studio 18 2026" `
+            -A '${{ matrix.cmake_arch }}' `
+            -DLUPINE_BUILD_SERVER=OFF `
             -DCMAKE_BUILD_TYPE=Release `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
-            "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+            "-DCMAKE_PREFIX_PATH=$PWD/cuda-sdk" `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }}" `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
 
       - name: Build client DLLs
         run: >
@@ -74,7 +110,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vsInstall = & $vswhere -latest -property installationPath
-          $dumpbin = Get-ChildItem "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+          $targetArch = '${{ matrix.cmake_arch }}'.ToLowerInvariant()
+          $dumpbin = Get-ChildItem "$vsInstall\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.Directory.Name -eq $targetArch } |
             Sort-Object FullName -Descending |
             Select-Object -First 1
           if ($null -eq $dumpbin) {
@@ -93,28 +131,90 @@ jobs:
             }
           }
 
-      - name: Collect client artifact
+      - name: Stage thin DLLs
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $asset = "lupine-client-cuda-$env:CUDA_VERSION-windows-x86_64"
-          $out = "artifacts/$asset"
-          $archive = "artifacts/$asset.zip"
+          $out = 'thin/${{ matrix.arch }}'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           Copy-Item 'build/windows-client/Release/nvcuda.dll' "$out/nvcuda.dll"
           Copy-Item 'build/windows-client/Release/nvml.dll' "$out/nvml.dll"
-          $env:CUDA_VERSION | Set-Content "$out/CUDA_HEADER_VERSION"
-          $env:CUDA_VERSION | Set-Content "$out/NVML_HEADER_VERSION"
-          Get-FileHash "$out/nvcuda.dll", "$out/nvml.dll" -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" } |
-            Set-Content "$out/SHA256SUMS"
-          Compress-Archive -Path "$out/*" -DestinationPath $archive -Force
+          Copy-Item cuda-sdk/CUDA_HEADER_VERSION "$out/CUDA_HEADER_VERSION"
+          Copy-Item cuda-sdk/NVML_HEADER_VERSION "$out/NVML_HEADER_VERSION"
 
-      - name: Upload Windows client artifact
+      - name: Upload thin DLLs
         uses: actions/upload-artifact@v7
         with:
-          name: lupine-client-cuda-${{ env.CUDA_VERSION }}-windows-x86_64
-          path: artifacts/lupine-client-cuda-${{ env.CUDA_VERSION }}-windows-x86_64.zip
+          name: lupine-windows-thin-${{ matrix.arch }}
+          path: thin/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    name: Windows unified client package
+    needs: build
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 10
+
+    steps:
+      - name: Download x86_64 DLLs
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-windows-thin-x86_64
+          path: thin/x86_64
+
+      - name: Download arm64 DLLs
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-windows-thin-arm64
+          path: thin/arm64
+
+      - name: Resolve header versions
+        id: versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cudaVersion = Get-Content thin/x86_64/CUDA_HEADER_VERSION
+          $nvmlVersion = Get-Content thin/x86_64/NVML_HEADER_VERSION
+          if ($cudaVersion -ne (Get-Content thin/arm64/CUDA_HEADER_VERSION)) {
+            throw 'CUDA header versions do not match'
+          }
+          if ($nvmlVersion -ne (Get-Content thin/arm64/NVML_HEADER_VERSION)) {
+            throw 'NVML header versions do not match'
+          }
+          "cuda=$cudaVersion" | Out-File $env:GITHUB_OUTPUT -Append
+          "nvml=$nvmlVersion" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Collect unified Windows client artifact
+        shell: pwsh
+        env:
+          CUDA_HEADER_VERSION: ${{ steps.versions.outputs.cuda }}
+          NVML_HEADER_VERSION: ${{ steps.versions.outputs.nvml }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $asset = "lupine-client-cuda-$env:CUDA_HEADER_VERSION-windows-unified"
+          $out = "artifacts/$asset"
+          New-Item -ItemType Directory -Force -Path "$out/x86_64", "$out/arm64" | Out-Null
+          Copy-Item thin/x86_64/nvcuda.dll, thin/x86_64/nvml.dll "$out/x86_64"
+          Copy-Item thin/arm64/nvcuda.dll, thin/arm64/nvml.dll "$out/arm64"
+          $env:CUDA_HEADER_VERSION | Set-Content "$out/CUDA_HEADER_VERSION"
+          $env:NVML_HEADER_VERSION | Set-Content "$out/NVML_HEADER_VERSION"
+          $outPath = (Resolve-Path $out).Path
+          Get-ChildItem $out -Recurse -Filter '*.dll' |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              $relative = [IO.Path]::GetRelativePath($outPath, $_.FullName).Replace('\', '/')
+              "$hash  $relative"
+            } |
+            Set-Content "$out/SHA256SUMS"
+          Compress-Archive -Path "$out/*" -DestinationPath "artifacts/$asset.zip" -Force
+
+      - name: Upload unified Windows client artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-cuda-${{ steps.versions.outputs.cuda }}-windows-unified
+          path: artifacts/lupine-client-cuda-${{ steps.versions.outputs.cuda }}-windows-unified.zip
           if-no-files-found: error
 
       - name: Upload release asset
@@ -122,10 +222,11 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          CUDA_HEADER_VERSION: ${{ steps.versions.outputs.cuda }}
         run: |
           $ErrorActionPreference = 'Stop'
           gh release upload `
             '${{ github.event.release.tag_name }}' `
-            "artifacts/lupine-client-cuda-$env:CUDA_VERSION-windows-x86_64.zip" `
+            "artifacts/lupine-client-cuda-$env:CUDA_HEADER_VERSION-windows-unified.zip" `
             --repo '${{ github.repository }}' `
             --clobber

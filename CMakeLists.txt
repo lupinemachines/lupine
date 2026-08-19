@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.18)
 
 project(LupineProject LANGUAGES C CXX)
 
+if(APPLE)
+  set(LUPINE_BUILD_SERVER_DEFAULT OFF)
+else()
+  set(LUPINE_BUILD_SERVER_DEFAULT ON)
+endif()
+option(LUPINE_BUILD_SERVER "Build the CUDA driver server"
+       ${LUPINE_BUILD_SERVER_DEFAULT})
+
 # Sanitizers are applied only to the CPU-only *_test executables (transport,
 # decoder, ipc, checkpoint), never the nvcc-compiled driver/server. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -28,13 +36,13 @@ function(lupine_scaled_timeout out base)
     set(${out} ${scaled} PARENT_SCOPE)
 endfunction()
 
-if (NOT WIN32 AND NOT APPLE)
+if (LUPINE_BUILD_SERVER AND NOT WIN32 AND NOT APPLE)
     enable_language(CUDA)
 endif()
 
 set(MIN_CUDA_VERSION 11.0)
 
-if(APPLE)
+if(NOT LUPINE_BUILD_SERVER)
   find_path(LUPINE_CUDA_HEADER_DIR cuda.h REQUIRED)
   find_path(LUPINE_NVML_HEADER_DIR nvml.h REQUIRED)
   set(CUDAToolkit_INCLUDE_DIRS
@@ -45,7 +53,7 @@ if(APPLE)
   string(REGEX REPLACE ".*CUDA_VERSION +([0-9]+).*" "\\1"
          LUPINE_CUDA_HEADER_VERSION "${LUPINE_CUDA_VERSION_LINE}")
   message(STATUS
-      "Using macOS CUDA API headers version: ${LUPINE_CUDA_HEADER_VERSION}")
+      "Using client CUDA API headers version: ${LUPINE_CUDA_HEADER_VERSION}")
 else()
   find_package(CUDAToolkit REQUIRED)
 
@@ -67,7 +75,7 @@ find_package(OpenSSL QUIET)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-if (NOT WIN32 AND NOT APPLE)
+if (LUPINE_BUILD_SERVER AND NOT WIN32 AND NOT APPLE)
     set(CMAKE_CUDA_STANDARD 14)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     set(CMAKE_CUDA_EXTENSIONS OFF)
@@ -221,7 +229,7 @@ else()
   endif()
 endif()
 
-if(NOT APPLE)
+if(LUPINE_BUILD_SERVER)
 add_executable(${SERVER_OUTPUT} ${SERVER_SOURCES} ${SERVER_HEADERS})
 target_include_directories(${SERVER_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 target_compile_definitions(${SERVER_OUTPUT} PRIVATE
@@ -357,7 +365,7 @@ else()
 endif()
 endif()
 
-if (NOT WIN32 AND NOT APPLE)
+if (LUPINE_BUILD_SERVER AND NOT WIN32 AND NOT APPLE)
     target_compile_options(${SERVER_OUTPUT} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>: --compiler-options=-fPIC,-g,-Wno-deprecated-declarations>
     )
@@ -385,6 +393,6 @@ if(TARGET ${NVML_CLIENT_OUTPUT})
     message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
 endif()
 
-if(NOT APPLE)
+if(LUPINE_BUILD_SERVER)
   message(STATUS "Building server output: ${SERVER_OUTPUT}")
 endif()
