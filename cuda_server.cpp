@@ -97,17 +97,12 @@ struct lupine_jit_state {
   unsigned int num_options = 0;
   CUjit_option *options = nullptr;
   void **option_values = nullptr;
+  std::vector<size_t> output_lengths;
   float wall_time = 0.0f;
-  size_t wall_time_output_index = SIZE_MAX;
-  size_t wall_time_length = 0;
   size_t info_log_size = 0;
   char *info_log = nullptr;
-  size_t info_log_output_index = SIZE_MAX;
-  size_t info_log_length = 0;
   size_t error_log_size = 0;
   char *error_log = nullptr;
-  size_t error_log_output_index = SIZE_MAX;
-  size_t error_log_length = 0;
 };
 
 static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
@@ -118,82 +113,70 @@ static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
       std::malloc(jit->num_options * sizeof(*jit->options)));
   jit->option_values = static_cast<void **>(
       std::malloc(jit->num_options * sizeof(*jit->option_values)));
+  jit->output_lengths.resize(jit->num_options);
   if (rpc_read(conn, jit->options,
                jit->num_options * sizeof(*jit->options)) < 0 ||
       rpc_read(conn, jit->option_values,
                jit->num_options * sizeof(*jit->option_values)) < 0) {
     return -1;
   }
+  void **info_log_output = nullptr;
+  void **error_log_output = nullptr;
   for (unsigned int i = 0; i < jit->num_options; ++i) {
     if (jit->options[i] == CU_JIT_WALL_TIME &&
         jit->option_values[i] != nullptr) {
-      jit->wall_time_output_index = i;
       jit->option_values[i] = &jit->wall_time;
+      jit->output_lengths[i] = sizeof(jit->wall_time);
     } else if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER &&
                jit->option_values[i] != nullptr) {
-      jit->info_log_output_index = i;
+      info_log_output = &jit->option_values[i];
     } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER &&
                jit->option_values[i] != nullptr) {
-      jit->error_log_output_index = i;
+      error_log_output = &jit->option_values[i];
     } else if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
       jit->info_log_size = reinterpret_cast<uintptr_t>(jit->option_values[i]);
     } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
       jit->error_log_size = reinterpret_cast<uintptr_t>(jit->option_values[i]);
     }
   }
-  if (jit->wall_time_output_index != SIZE_MAX) {
-    jit->wall_time_length = sizeof(jit->wall_time);
-  }
-  if (jit->info_log_output_index != SIZE_MAX) {
+  if (info_log_output != nullptr) {
     jit->info_log = static_cast<char *>(std::malloc(jit->info_log_size));
     if (jit->info_log_size != 0) {
       std::memset(jit->info_log, 0, jit->info_log_size);
     }
-    jit->option_values[jit->info_log_output_index] = jit->info_log;
+    *info_log_output = jit->info_log;
   }
-  if (jit->error_log_output_index != SIZE_MAX) {
+  if (error_log_output != nullptr) {
     jit->error_log = static_cast<char *>(std::malloc(jit->error_log_size));
     if (jit->error_log_size != 0) {
       std::memset(jit->error_log, 0, jit->error_log_size);
     }
-    jit->option_values[jit->error_log_output_index] = jit->error_log;
+    *error_log_output = jit->error_log;
   }
   return 0;
 }
 
 static int lupine_write_jit_outputs(conn_t *conn, lupine_jit_state *jit) {
-  if (jit->info_log != nullptr) {
-    const auto *end = static_cast<const char *>(
-        std::memchr(jit->info_log, '\0', jit->info_log_size));
-    jit->info_log_length =
-        end == nullptr ? jit->info_log_size : end - jit->info_log;
-  }
-  if (jit->error_log != nullptr) {
-    const auto *end = static_cast<const char *>(
-        std::memchr(jit->error_log, '\0', jit->error_log_size));
-    jit->error_log_length =
-        end == nullptr ? jit->error_log_size : end - jit->error_log;
-  }
-
   for (unsigned int i = 0; i < jit->num_options; ++i) {
-    if (i == jit->wall_time_output_index) {
-      if (rpc_write(conn, &jit->wall_time_length,
-                    sizeof(jit->wall_time_length)) < 0 ||
-          rpc_write(conn, &jit->wall_time, jit->wall_time_length) < 0) {
-        return -1;
-      }
-    } else if (i == jit->info_log_output_index) {
-      if (rpc_write(conn, &jit->info_log_length,
-                    sizeof(jit->info_log_length)) < 0 ||
-          rpc_write(conn, jit->info_log, jit->info_log_length) < 0) {
-        return -1;
-      }
-    } else if (i == jit->error_log_output_index) {
-      if (rpc_write(conn, &jit->error_log_length,
-                    sizeof(jit->error_log_length)) < 0 ||
-          rpc_write(conn, jit->error_log, jit->error_log_length) < 0) {
-        return -1;
-      }
+    char *output = nullptr;
+    size_t output_size = 0;
+    if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER) {
+      output = jit->info_log;
+      output_size = jit->info_log_size;
+    } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER) {
+      output = jit->error_log;
+      output_size = jit->error_log_size;
+    }
+    if (output != nullptr && output_size != 0) {
+      const auto *end =
+          static_cast<const char *>(std::memchr(output, '\0', output_size));
+      jit->output_lengths[i] =
+          end == nullptr ? output_size : end - output;
+    }
+    if (rpc_write(conn, &jit->output_lengths[i],
+                  sizeof(jit->output_lengths[i])) < 0 ||
+        rpc_write(conn, jit->option_values[i], jit->output_lengths[i]) < 0) {
+      return -1;
     }
   }
   return 0;
