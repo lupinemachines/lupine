@@ -103,45 +103,21 @@ static void lupine_install_rpc_lifecycle_hooks() {
 
 const char *DEFAULT_PORT = "14833";
 
-struct lupine_jit_output {
-  void *dst;
-  size_t size;
-};
-
 struct lupine_jit_outputs {
-  lupine_jit_output wall_time = {};
-  lupine_jit_output info_log = {};
-  lupine_jit_output error_log = {};
+  void *wall_time = nullptr;
+  void *info_log = nullptr;
+  void *error_log = nullptr;
 };
-
-static int lupine_read_jit_output(conn_t *conn, const lupine_jit_output &output,
-                                  size_t payload_size) {
-  const size_t direct_size =
-      output.dst == nullptr ? 0 : std::min(output.size, payload_size);
-  if (direct_size != 0 && rpc_read(conn, output.dst, direct_size) < 0) {
-    return -1;
-  }
-  return rpc_drain(conn, payload_size - direct_size);
-}
-
-static int lupine_read_sized_jit_output(conn_t *conn,
-                                        const lupine_jit_output &output) {
-  size_t payload_size = 0;
-  if (rpc_read(conn, &payload_size, sizeof(payload_size)) < 0) {
-    return -1;
-  }
-  return lupine_read_jit_output(conn, output, payload_size);
-}
 
 static int lupine_read_jit_outputs(conn_t *conn,
                                    const lupine_jit_outputs &outputs) {
-  if (lupine_read_jit_output(conn, outputs.wall_time, sizeof(float)) < 0) {
-    return -1;
-  }
-  if (lupine_read_sized_jit_output(conn, outputs.info_log) < 0) {
-    return -1;
-  }
-  if (lupine_read_sized_jit_output(conn, outputs.error_log) < 0) {
+  size_t length = 0;
+  if (rpc_read(conn, &length, sizeof(length)) < 0 ||
+      rpc_read(conn, outputs.wall_time, length) < 0 ||
+      rpc_read(conn, &length, sizeof(length)) < 0 ||
+      rpc_read(conn, outputs.info_log, length) < 0 ||
+      rpc_read(conn, &length, sizeof(length)) < 0 ||
+      rpc_read(conn, outputs.error_log, length) < 0) {
     return -1;
   }
   return 0;
@@ -3792,29 +3768,17 @@ lupine_capture_jit_outputs(unsigned int numOptions, const CUjit_option *options,
   if (options == nullptr || optionValues == nullptr) {
     return outputs;
   }
-  bool info_size_set = false;
-  bool error_size_set = false;
   for (unsigned int i = 0; i < numOptions; ++i) {
     void *value = optionValues[i];
-    if (options[i] == CU_JIT_WALL_TIME && outputs.wall_time.dst == nullptr &&
+    if (options[i] == CU_JIT_WALL_TIME && outputs.wall_time == nullptr &&
         value != nullptr) {
-      outputs.wall_time = {value, sizeof(float)};
+      outputs.wall_time = value;
     } else if (options[i] == CU_JIT_INFO_LOG_BUFFER &&
-               outputs.info_log.dst == nullptr && value != nullptr) {
-      outputs.info_log.dst = value;
+               outputs.info_log == nullptr && value != nullptr) {
+      outputs.info_log = value;
     } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER &&
-               outputs.error_log.dst == nullptr && value != nullptr) {
-      outputs.error_log.dst = value;
-    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES &&
-               !info_size_set) {
-      outputs.info_log.size =
-          static_cast<size_t>(reinterpret_cast<uintptr_t>(value));
-      info_size_set = true;
-    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES &&
-               !error_size_set) {
-      outputs.error_log.size =
-          static_cast<size_t>(reinterpret_cast<uintptr_t>(value));
-      error_size_set = true;
+               outputs.error_log == nullptr && value != nullptr) {
+      outputs.error_log = value;
     }
   }
   return outputs;
