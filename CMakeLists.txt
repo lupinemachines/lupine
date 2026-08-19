@@ -2,11 +2,6 @@ cmake_minimum_required(VERSION 3.18)
 
 project(LupineProject LANGUAGES C CXX)
 
-set(LUPINE_CUDA_INCLUDE_DIR "" CACHE PATH
-    "CUDA include directory for a macOS client build")
-set(LUPINE_NVML_INCLUDE_DIR "" CACHE PATH
-    "NVML include directory for a macOS client build")
-
 # Sanitizers are applied only to the CPU-only *_test executables (transport,
 # decoder, ipc, checkpoint), never the nvcc-compiled driver/server. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -40,18 +35,8 @@ endif()
 set(MIN_CUDA_VERSION 11.0)
 
 if(APPLE)
-  if(NOT LUPINE_CUDA_INCLUDE_DIR OR NOT LUPINE_NVML_INCLUDE_DIR)
-    message(FATAL_ERROR
-        "macOS client builds require LUPINE_CUDA_INCLUDE_DIR and LUPINE_NVML_INCLUDE_DIR")
-  endif()
-  find_path(LUPINE_CUDA_HEADER_DIR cuda.h
-      PATHS "${LUPINE_CUDA_INCLUDE_DIR}"
-      NO_DEFAULT_PATH
-      REQUIRED)
-  find_path(LUPINE_NVML_HEADER_DIR nvml.h
-      PATHS "${LUPINE_NVML_INCLUDE_DIR}"
-      NO_DEFAULT_PATH
-      REQUIRED)
+  find_path(LUPINE_CUDA_HEADER_DIR cuda.h REQUIRED)
+  find_path(LUPINE_NVML_HEADER_DIR nvml.h REQUIRED)
   set(CUDAToolkit_INCLUDE_DIRS
       "${LUPINE_CUDA_HEADER_DIR}"
       "${LUPINE_NVML_HEADER_DIR}")

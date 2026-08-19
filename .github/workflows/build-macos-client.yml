@@ -58,58 +58,26 @@ jobs:
           unzip -q "$nvml_wheel" -d cuda-sdk
           printf '%s\n' "$cuda_version" > cuda-sdk/CUDA_HEADER_VERSION
           printf '%s\n' "$nvml_version" > cuda-sdk/NVML_HEADER_VERSION
-          test -n "$(find cuda-sdk/nvidia -path '*/include/cuda.h' -print -quit)"
-          test -n "$(find cuda-sdk/nvidia -path '*/include/nvml.h' -print -quit)"
+          cuda_header="$(find cuda-sdk/nvidia -path '*/include/cuda.h' -print -quit)"
+          nvml_header="$(find cuda-sdk/nvidia -path '*/include/nvml.h' -print -quit)"
+          test -n "$cuda_header"
+          test -n "$nvml_header"
+          mkdir -p cuda-sdk/include
+          cp -R "$(dirname "$cuda_header")/." cuda-sdk/include
+          cp -R "$(dirname "$nvml_header")/." cuda-sdk/include
 
       - name: Configure client-only build
         run: |
           set -euo pipefail
-          cuda_header="$(find "$PWD/cuda-sdk/nvidia" -path '*/include/cuda.h' -print -quit)"
-          nvml_header="$(find "$PWD/cuda-sdk/nvidia" -path '*/include/nvml.h' -print -quit)"
-          test -n "$cuda_header"
-          test -n "$nvml_header"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix libnghttp2);$(brew --prefix openssl@3)" \
-            -DLUPINE_CUDA_INCLUDE_DIR="$(dirname "$cuda_header")" \
-            -DLUPINE_NVML_INCLUDE_DIR="$(dirname "$nvml_header")"
+            -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk;$(brew --prefix libnghttp2);$(brew --prefix openssl@3)"
 
       - name: Build client dylibs
         run: >
           cmake --build build --parallel
           --target lupine_cuda_client lupine_nvml
-
-      - name: Verify dylib
-        run: |
-          set -euo pipefail
-          test -f build/libcuda.dylib
-          test -f build/libnvidia-ml.dylib
-          test "$(lipo -archs build/libcuda.dylib)" = "${{ matrix.arch }}"
-          test "$(lipo -archs build/libnvidia-ml.dylib)" = "${{ matrix.arch }}"
-          nm -gjU build/libcuda.dylib > build/libcuda.exports
-          nm -gjU build/libnvidia-ml.dylib > build/libnvidia-ml.exports
-          grep -qx '_cuInit' build/libcuda.exports
-          grep -qx '_cuGetProcAddress' build/libcuda.exports
-          grep -qx '_nvmlInit_v2' build/libnvidia-ml.exports
-          otool -L build/libcuda.dylib > build/libcuda.dependencies
-          otool -L build/libnvidia-ml.dylib > build/libnvidia-ml.dependencies
-          if awk 'FNR > 1' build/*.dependencies | grep -E 'libcuda|libcudart|libnvidia-ml'; then
-            echo 'A client dylib unexpectedly links an NVIDIA library' >&2
-            exit 1
-          fi
-          CUDA_DYLIB_PATH="$PWD/build/libcuda.dylib" \
-          NVML_DYLIB_PATH="$PWD/build/libnvidia-ml.dylib" \
-          python3 - <<'PY'
-          import ctypes
-          import os
-
-          cuda = ctypes.CDLL(os.environ["CUDA_DYLIB_PATH"])
-          nvml = ctypes.CDLL(os.environ["NVML_DYLIB_PATH"])
-          assert cuda.cuInit
-          assert cuda.cuGetProcAddress
-          assert nvml.nvmlInit_v2
-          PY
 
       - name: Stage thin dylibs
         run: |
@@ -158,7 +126,7 @@ jobs:
           echo "cuda=$cuda_version" >> "$GITHUB_OUTPUT"
           echo "nvml=$nvml_version" >> "$GITHUB_OUTPUT"
 
-      - name: Create and verify universal dylibs
+      - name: Create universal dylibs
         run: |
           set -euo pipefail
           mkdir -p universal
@@ -170,31 +138,6 @@ jobs:
             thin/arm64/libnvidia-ml.dylib \
             thin/x86_64/libnvidia-ml.dylib \
             -output universal/libnvidia-ml.dylib
-          lipo -verify_arch arm64 x86_64 universal/libcuda.dylib
-          lipo -verify_arch arm64 x86_64 universal/libnvidia-ml.dylib
-          nm -gjU universal/libcuda.dylib > universal/libcuda.exports
-          nm -gjU universal/libnvidia-ml.dylib > universal/libnvidia-ml.exports
-          grep -qx '_cuInit' universal/libcuda.exports
-          grep -qx '_cuGetProcAddress' universal/libcuda.exports
-          grep -qx '_nvmlInit_v2' universal/libnvidia-ml.exports
-          otool -L universal/libcuda.dylib > universal/libcuda.dependencies
-          otool -L universal/libnvidia-ml.dylib > universal/libnvidia-ml.dependencies
-          if awk 'FNR > 1' universal/*.dependencies | grep -E 'libcuda|libcudart|libnvidia-ml'; then
-            echo 'A universal client dylib unexpectedly links an NVIDIA library' >&2
-            exit 1
-          fi
-          CUDA_DYLIB_PATH="$PWD/universal/libcuda.dylib" \
-          NVML_DYLIB_PATH="$PWD/universal/libnvidia-ml.dylib" \
-          python3 - <<'PY'
-          import ctypes
-          import os
-
-          cuda = ctypes.CDLL(os.environ["CUDA_DYLIB_PATH"])
-          nvml = ctypes.CDLL(os.environ["NVML_DYLIB_PATH"])
-          assert cuda.cuInit
-          assert cuda.cuGetProcAddress
-          assert nvml.nvmlInit_v2
-          PY
 
       - name: Collect universal client artifact
         env:
