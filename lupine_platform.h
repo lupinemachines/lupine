@@ -37,10 +37,14 @@ struct iovec {
 
 struct pthread_mutex_t {
   std::mutex mutex;
+
+  pthread_mutex_t &operator=(pthread_mutex_t &&) noexcept { return *this; }
 };
 
 struct pthread_cond_t {
   std::condition_variable_any cond;
+
+  pthread_cond_t &operator=(pthread_cond_t &&) noexcept { return *this; }
 };
 
 using pthread_t = std::thread *;
