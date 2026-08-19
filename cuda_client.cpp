@@ -1,42 +1,49 @@
 #include <algorithm>
-#include <arpa/inet.h>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <cuda.h>
-#include <dlfcn.h>
-#include <fcntl.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
 #include <mutex>
-#include <netdb.h>
-#include <netinet/tcp.h>
 #ifdef LUPINE_TLS_OPENSSL
 #include <openssl/ssl.h>
 #endif
-#include <pthread.h>
 #include <sstream>
 #include <stdio.h>
 #include <string.h>
 #include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "lupine_platform.h"
+
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <sys/stat.h>
+#else
+#include <arpa/inet.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
+#include <pthread.h>
 #include <strings.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <thread>
 #include <unistd.h>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #elif !defined(__GLIBC__)
-#error "Lupine CUDA client requires glibc or macOS"
+#error "Lupine CUDA client requires glibc, macOS, or Windows"
+#endif
 #endif
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
@@ -57,7 +64,6 @@
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
-#include "lupine_platform.h"
 #include "memcpy.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
@@ -103,6 +109,42 @@ static void lupine_install_rpc_lifecycle_hooks() {
 }
 
 const char *DEFAULT_PORT = "14833";
+
+static char *lupine_client_strdup(const char *value) {
+#ifdef _WIN32
+  return lupine_strdup(value);
+#else
+  return strdup(value);
+#endif
+}
+
+static char *lupine_client_strsep(char **string, const char *delimiters) {
+#ifdef _WIN32
+  return lupine_strsep(string, delimiters);
+#else
+  return strsep(string, delimiters);
+#endif
+}
+
+#ifdef _WIN32
+using lupine_file_stat = struct _stat64;
+static int lupine_open_readonly(const char *path) {
+  return _open(path, _O_RDONLY | _O_BINARY);
+}
+static int lupine_file_fstat(int fd, lupine_file_stat *status) {
+  return _fstat64(fd, status);
+}
+static int lupine_file_close(int fd) { return _close(fd); }
+#else
+using lupine_file_stat = struct stat;
+static int lupine_open_readonly(const char *path) {
+  return open(path, O_RDONLY);
+}
+static int lupine_file_fstat(int fd, lupine_file_stat *status) {
+  return fstat(fd, status);
+}
+static int lupine_file_close(int fd) { return close(fd); }
+#endif
 
 void *rpc_client_dispatch_thread(void *arg);
 
@@ -178,7 +220,15 @@ static bool lupine_symbol_looks_like_driver_api(const char *symbol) {
 
 using lupine_dlsym_fn = void *(*)(void *, const char *);
 
-#if defined(__GLIBC__)
+#if defined(_WIN32)
+static void *lupine_real_dlsym(void *handle, const char *name) {
+  if (handle == nullptr || name == nullptr) {
+    return nullptr;
+  }
+  return reinterpret_cast<void *>(
+      GetProcAddress(static_cast<HMODULE>(handle), name));
+}
+#elif defined(__GLIBC__)
 static const char *lupine_dlsym_glibc_version() {
 #if defined(__x86_64__)
   return "GLIBC_2.2.5";
@@ -789,8 +839,15 @@ static void lupine_join_connection_threads(conn_t *conn) {
 
 static bool lupine_env_enabled(const char *name) {
   const char *value = getenv(name);
-  return value != nullptr && strcmp(value, "0") != 0 &&
-         strcasecmp(value, "false") != 0 && strcasecmp(value, "no") != 0;
+  if (value == nullptr || strcmp(value, "0") == 0) {
+    return false;
+  }
+#ifdef _WIN32
+  return lupine_strcasecmp(value, "false") != 0 &&
+         lupine_strcasecmp(value, "no") != 0;
+#else
+  return strcasecmp(value, "false") != 0 && strcasecmp(value, "no") != 0;
+#endif
 }
 
 static void *lupine_local_libcuda_handle() {
@@ -801,6 +858,22 @@ static void *lupine_local_libcuda_handle() {
       return;
     }
     const char *override_path = getenv("LUPINE_REAL_LIBCUDA");
+#if defined(_WIN32)
+    if (override_path != nullptr && override_path[0] != '\0') {
+      handle = reinterpret_cast<void *>(LoadLibraryA(override_path));
+      if (handle != nullptr) {
+        return;
+      }
+    }
+    char system_directory[MAX_PATH + 1] = {};
+    UINT length = GetSystemDirectoryA(system_directory, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) {
+      return;
+    }
+    std::string path(system_directory, length);
+    path += "\\nvcuda.dll";
+    handle = reinterpret_cast<void *>(LoadLibraryA(path.c_str()));
+#else
     const char *paths[] = {
         override_path,
 #if !defined(__APPLE__)
@@ -820,6 +893,7 @@ static void *lupine_local_libcuda_handle() {
         return;
       }
     }
+#endif
   });
   return handle;
 }
@@ -1358,23 +1432,23 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   void *mapping = MAP_FAILED;
   size_t mapped_size = 0;
-  int fd = open(fname, O_RDONLY);
+  int fd = lupine_open_readonly(fname);
   if (fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
   }
   // FILE_NOT_FOUND is reserved for open() failing.
-  struct stat st = {};
-  if (fstat(fd, &st) < 0) {
-    close(fd);
+  lupine_file_stat st = {};
+  if (lupine_file_fstat(fd, &st) < 0) {
+    lupine_file_close(fd);
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
   if (st.st_size <= 0) {
-    close(fd);
+    lupine_file_close(fd);
     return CUDA_ERROR_INVALID_IMAGE;
   }
   mapped_size = static_cast<size_t>(st.st_size);
   mapping = mmap(nullptr, mapped_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  close(fd);
+  lupine_file_close(fd);
   if (mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -2843,7 +2917,14 @@ static void lupine_a64_emit_mov_imm64(uint32_t *out, unsigned reg,
 #endif
 
 static void *lupine_make_private_export_stub(int slot, const char *table_name) {
-#if defined(__x86_64__)
+#if defined(_WIN32)
+  (void)slot;
+  (void)table_name;
+  // NVIDIA's private export tables are undocumented and use a different
+  // calling convention on Windows. Public CUDA Driver API entry points remain
+  // fully available; return the standard unsupported stub for private slots.
+  return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+#elif defined(__x86_64__)
   constexpr size_t stub_size = 52;
   unsigned char *code = static_cast<unsigned char *>(
       mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -2959,7 +3040,7 @@ static const void *lupine_make_private_export_table(
   if (!table.empty()) {
     table[0] = reinterpret_cast<void *>(byte_size);
   }
-  char *stable_table_name = strdup(table_name);
+  char *stable_table_name = lupine_client_strdup(table_name);
   for (size_t i = 1; i < entries; ++i) {
     table[i] =
         lupine_make_private_export_stub(static_cast<int>(i), stable_table_name);
@@ -3852,24 +3933,24 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
   size_t jit_output_length = 0;
-  int file_fd = open(path, O_RDONLY);
+  int file_fd = lupine_open_readonly(path);
   if (file_fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
   }
   // FILE_NOT_FOUND is reserved for open() failing.
-  struct stat st = {};
-  if (fstat(file_fd, &st) < 0) {
-    close(file_fd);
+  lupine_file_stat st = {};
+  if (lupine_file_fstat(file_fd, &st) < 0) {
+    lupine_file_close(file_fd);
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
   if (st.st_size <= 0) {
-    close(file_fd);
+    lupine_file_close(file_fd);
     return CUDA_ERROR_INVALID_IMAGE;
   }
   mapped_file_size = static_cast<size_t>(st.st_size);
   file_mapping =
       mmap(nullptr, mapped_file_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
-  close(file_fd);
+  lupine_file_close(file_fd);
   if (file_mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -6817,7 +6898,21 @@ static bool lupine_is_writable_user_pointer(const void *ptr, size_t size) {
     return false;
   }
 
-#if defined(__APPLE__)
+#if defined(_WIN32)
+  MEMORY_BASIC_INFORMATION info = {};
+  if (VirtualQuery(ptr, &info, sizeof(info)) == 0 || info.State != MEM_COMMIT) {
+    return false;
+  }
+  uintptr_t region_start = reinterpret_cast<uintptr_t>(info.BaseAddress);
+  uintptr_t region_end = region_start + info.RegionSize;
+  DWORD protection = info.Protect & 0xff;
+  bool writable = protection == PAGE_READWRITE ||
+                  protection == PAGE_WRITECOPY ||
+                  protection == PAGE_EXECUTE_READWRITE ||
+                  protection == PAGE_EXECUTE_WRITECOPY;
+  return start >= region_start && end <= region_end && writable &&
+         (info.Protect & PAGE_GUARD) == 0;
+#elif defined(__APPLE__)
   mach_vm_address_t region = static_cast<mach_vm_address_t>(start);
   mach_vm_size_t region_size = 0;
   vm_region_basic_info_data_64_t info = {};
@@ -7723,11 +7818,19 @@ extern "C" CUresult lupine_integrity_check(unsigned int version,
   unsigned char state[66] = {};
   lupine_integrity_hash_pass(state, pass1_result, sizeof(pass1_result), 0x36);
 
+#ifdef _WIN32
+  uint32_t process_id = static_cast<uint32_t>(lupine_process_id());
+  uint32_t thread_id = static_cast<uint32_t>(lupine_thread_id());
+#else
+  uint32_t process_id = static_cast<uint32_t>(getpid());
+  uint32_t thread_id =
+      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pthread_self()));
+#endif
   lupine_integrity_pass3_input input = {
       static_cast<uint32_t>(driver_version),
       version,
-      static_cast<uint32_t>(getpid()),
-      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pthread_self())),
+      process_id,
+      thread_id,
       lupine_get_cudart_export_table(),
       lupine_get_integrity_check_table(),
       reinterpret_cast<const void *>(&lupine_integrity_check),
@@ -7971,14 +8074,14 @@ static void *lupine_make_missing_stub(const char *symbol) {
     return nullptr;
   }
 
-#if defined(__x86_64__) || defined(__aarch64__)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(_M_X64)
   static std::unordered_map<std::string, void *> stubs;
   auto existing = stubs.find(symbol);
   if (existing != stubs.end()) {
     return existing->second;
   }
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(_M_X64)
   constexpr size_t stub_size = 22;
 #else
   constexpr size_t stub_words = 9;
@@ -7991,9 +8094,19 @@ static void *lupine_make_missing_stub(const char *symbol) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
   }
 
-  char *stable_symbol = strdup(symbol);
+  char *stable_symbol = lupine_client_strdup(symbol);
   void *handler = reinterpret_cast<void *>(&lupine_missing_driver_api_called);
-#if defined(__x86_64__)
+#if defined(_WIN32)
+  // Microsoft x64 passes the first argument in rcx.
+  code[0] = 0x48;
+  code[1] = 0xb9;
+  memcpy(code + 2, &stable_symbol, sizeof(stable_symbol));
+  code[10] = 0x48;
+  code[11] = 0xb8;
+  memcpy(code + 12, &handler, sizeof(handler));
+  code[20] = 0xff;
+  code[21] = 0xe0;
+#elif defined(__x86_64__)
   code[0] = 0x48;
   code[1] = 0xbf;
   memcpy(code + 2, &stable_symbol, sizeof(stable_symbol));
@@ -8282,9 +8395,15 @@ static void lupine_rpc_shutdown() {
   }
 }
 
+#ifdef _WIN32
+static void lupine_rpc_destructor() { lupine_rpc_shutdown(); }
+static const int lupine_rpc_destructor_registration =
+    std::atexit(lupine_rpc_destructor);
+#else
 __attribute__((destructor)) static void lupine_rpc_destructor() {
   lupine_rpc_shutdown();
 }
+#endif
 
 void *rpc_client_dispatch_thread(void *arg) {
   conn_t *conn = (conn_t *)arg;
@@ -8427,10 +8546,10 @@ int rpc_open() {
 
   lupine_server_endpoints().clear();
 
-  char *server_ip = strdup(server_ips);
+  char *server_ip = lupine_client_strdup(server_ips);
   char *server_ip_cursor = server_ip;
   char *token;
-  while ((token = strsep(&server_ip_cursor, ","))) {
+  while ((token = lupine_client_strsep(&server_ip_cursor, ","))) {
     if (nconns >= static_cast<int>(sizeof(conns) / sizeof(*conns))) {
       LUPINE_LOG_ERROR("Too many LUPINE_SERVER entries; ignoring the rest");
       break;
@@ -8661,7 +8780,11 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                    << symbol << "' not found in cudaFunctionMap.");
 
   // fall back to the real loader before creating a local missing-symbol stub
+#if defined(_WIN32)
+  *pfn = lupine_real_cuda_symbol(symbol);
+#else
   *pfn = lupine_real_dlsym(RTLD_DEFAULT, symbol);
+#endif
   if (*pfn != nullptr) {
     if (symbolStatus != nullptr) {
       *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
@@ -8669,12 +8792,15 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
 
-#if defined(__APPLE__)
+#if defined(_WIN32)
+  void *libCudaHandle = lupine_local_libcuda_handle();
+#elif defined(__APPLE__)
   const char *libcuda_name = "libcuda.dylib";
+  void *libCudaHandle = dlopen(libcuda_name, RTLD_NOW | RTLD_GLOBAL);
 #else
   const char *libcuda_name = "libcuda.so";
-#endif
   void *libCudaHandle = dlopen(libcuda_name, RTLD_NOW | RTLD_GLOBAL);
+#endif
   if (!libCudaHandle) {
     if (lupine_stub_missing_enabled() &&
         lupine_symbol_looks_like_driver_api(symbol)) {

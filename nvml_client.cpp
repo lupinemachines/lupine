@@ -1,14 +1,16 @@
-#include <arpa/inet.h>
 #include <cuda.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
 #include <nvml.h>
 #ifdef LUPINE_TLS_OPENSSL
 #include <openssl/ssl.h>
 #endif
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -59,6 +61,22 @@ std::vector<lupine_nvml_remote_device> devices;
 std::vector<std::string> conn_labels;
 bool devices_ready = false;
 
+char *client_strdup(const char *value) {
+#ifdef _WIN32
+  return lupine_strdup(value);
+#else
+  return strdup(value);
+#endif
+}
+
+char *client_strsep(char **string, const char *delimiters) {
+#ifdef _WIN32
+  return lupine_strsep(string, delimiters);
+#else
+  return strsep(string, delimiters);
+#endif
+}
+
 // Real NVML reference counts init/shutdown; this shim connects lazily, so
 // without a counter it could never report UNINITIALIZED.
 std::atomic<int> init_refcount{0};
@@ -108,7 +126,7 @@ int open_connection() {
     return -1;
   }
 
-  char *servers = strdup(servers_env);
+  char *servers = client_strdup(servers_env);
   if (servers == nullptr) {
     pthread_mutex_unlock(&conn_mutex);
     return -1;
@@ -116,7 +134,7 @@ int open_connection() {
 
   char *cursor = servers;
   char *token = nullptr;
-  while ((token = strsep(&cursor, ",")) != nullptr) {
+  while ((token = client_strsep(&cursor, ",")) != nullptr) {
     if (token[0] == '\0') {
       continue;
     }
@@ -154,12 +172,13 @@ int open_connection() {
       continue;
     }
 
-    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sockfd >= 0) {
+    lupine_socket_t sockfd =
+        socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sockfd != LUPINE_INVALID_SOCKET) {
       lupine_socket_apply_transport_options(sockfd);
       if (connect(sockfd, res->ai_addr, res->ai_addrlen) == 0) {
         if (nconns >= static_cast<int>(sizeof(conns) / sizeof(*conns))) {
-          close(sockfd);
+          lupine_socket_close(sockfd);
           freeaddrinfo(res);
           break;
         }
@@ -187,13 +206,14 @@ int open_connection() {
           }();
           SSL *ssl = tls_ctx != nullptr ? SSL_new(tls_ctx) : nullptr;
           if (ssl == nullptr || SSL_set_tlsext_host_name(ssl, host) != 1 ||
-              SSL_set1_host(ssl, host) != 1 || SSL_set_fd(ssl, sockfd) != 1 ||
+              SSL_set1_host(ssl, host) != 1 ||
+              SSL_set_fd(ssl, static_cast<int>(sockfd)) != 1 ||
               SSL_connect(ssl) != 1) {
             if (ssl != nullptr) {
               SSL_free(ssl);
             }
             LUPINE_LOG_ERROR("TLS handshake with " << host << " failed");
-            close(sockfd);
+            lupine_socket_close(sockfd);
             freeaddrinfo(res);
             continue;
           }
@@ -203,7 +223,7 @@ int open_connection() {
                            << host << ":" << port
                            << " uses https:// but this client was built "
                               "without TLS support");
-          close(sockfd);
+          lupine_socket_close(sockfd);
           freeaddrinfo(res);
           continue;
 #endif
@@ -221,7 +241,7 @@ int open_connection() {
             c->tls_session = nullptr;
           }
 #endif
-          close(sockfd);
+          lupine_socket_close(sockfd);
           freeaddrinfo(res);
           continue;
         }
@@ -231,7 +251,7 @@ int open_connection() {
         freeaddrinfo(res);
         continue;
       }
-      close(sockfd);
+      lupine_socket_close(sockfd);
     }
     freeaddrinfo(res);
   }

@@ -1,0 +1,131 @@
+name: Build Windows Client
+
+on:
+  release:
+    types: [published]
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Windows client / x86_64
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    env:
+      CUDA_VERSION: 13.1.0
+      VCPKG_TARGET_TRIPLET: x64-windows-static
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install CUDA headers
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          sub-packages: '["cudart", "nvml_dev"]'
+
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgRoot
+          & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:VCPKG_ROOT\vcpkg.exe" install `
+            "nghttp2:$env:VCPKG_TARGET_TRIPLET" `
+            "openssl:$env:VCPKG_TARGET_TRIPLET"
+
+      - name: Configure client build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build/windows-client `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
+            "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+
+      - name: Build client DLLs
+        run: >
+          cmake --build build/windows-client --config Release --parallel
+          --target lupine_cuda_client lupine_nvml
+
+      - name: Verify exported APIs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $dumpbin) {
+            throw 'dumpbin.exe was not found'
+          }
+          $cudaExports = & $dumpbin.FullName /exports 'build/windows-client/Release/nvcuda.dll'
+          $nvmlExports = & $dumpbin.FullName /exports 'build/windows-client/Release/nvml.dll'
+          foreach ($symbol in @('cuInit', 'cuGetProcAddress', 'cuMemAlloc_v2')) {
+            if ($cudaExports -notmatch "\b$symbol\b") {
+              throw "nvcuda.dll does not export $symbol"
+            }
+          }
+          foreach ($symbol in @('nvmlInit_v2', 'nvmlDeviceGetCount_v2', 'nvmlShutdown')) {
+            if ($nvmlExports -notmatch "\b$symbol\b") {
+              throw "nvml.dll does not export $symbol"
+            }
+          }
+
+      - name: Collect client artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $asset = "lupine-client-cuda-$env:CUDA_VERSION-windows-x86_64"
+          $out = "artifacts/$asset"
+          $archive = "artifacts/$asset.zip"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item 'build/windows-client/Release/nvcuda.dll' "$out/nvcuda.dll"
+          Copy-Item 'build/windows-client/Release/nvml.dll' "$out/nvml.dll"
+          $env:CUDA_VERSION | Set-Content "$out/CUDA_HEADER_VERSION"
+          $env:CUDA_VERSION | Set-Content "$out/NVML_HEADER_VERSION"
+          Get-FileHash "$out/nvcuda.dll", "$out/nvml.dll" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content "$out/SHA256SUMS"
+          Compress-Archive -Path "$out/*" -DestinationPath $archive -Force
+
+      - name: Upload Windows client artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-cuda-${{ env.CUDA_VERSION }}-windows-x86_64
+          path: artifacts/lupine-client-cuda-${{ env.CUDA_VERSION }}-windows-x86_64.zip
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload `
+            '${{ github.event.release.tag_name }}' `
+            "artifacts/lupine-client-cuda-$env:CUDA_VERSION-windows-x86_64.zip" `
+            --repo '${{ github.repository }}' `
+            --clobber

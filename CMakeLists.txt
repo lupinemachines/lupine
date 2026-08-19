@@ -155,58 +155,70 @@ set(CUDA_CLIENT_OUTPUT lupine_cuda_client)
 set(NVML_CLIENT_OUTPUT lupine_nvml)
 set(SERVER_OUTPUT lupine_driver_server)
 
-if (NOT WIN32)
-    add_library(${CUDA_CLIENT_OUTPUT} SHARED
-        ${CUDA_CLIENT_SOURCES}
-        ${CUDA_CLIENT_HEADERS}
+add_library(${CUDA_CLIENT_OUTPUT} SHARED
+    ${CUDA_CLIENT_SOURCES}
+    ${CUDA_CLIENT_HEADERS}
+)
+target_include_directories(${CUDA_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE LUPINE_RPC_CLIENT)
+if(OpenSSL_FOUND)
+  target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
+  target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
+target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE ${NGHTTP2_LIBRARY} lupine_lz4)
+set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+if(WIN32)
+  target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE ws2_32)
+  set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
+      OUTPUT_NAME nvcuda
+      PREFIX ""
+      WINDOWS_EXPORT_ALL_SYMBOLS ON
+  )
+else()
+  set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES OUTPUT_NAME cuda)
+  if(NOT APPLE)
+    target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE stdc++)
+    target_link_options(${CUDA_CLIENT_OUTPUT} PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports"
     )
-    target_include_directories(${CUDA_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE LUPINE_RPC_CLIENT)
-    if(OpenSSL_FOUND)
-      target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
-      target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    endif()
-    target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE ${NGHTTP2_LIBRARY} lupine_lz4)
-    if(NOT APPLE)
-      target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE stdc++)
-      target_link_options(${CUDA_CLIENT_OUTPUT} PRIVATE
-          "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports"
-      )
-    endif()
     set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME cuda
-    )
-    if(NOT APPLE)
-      set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
         VERSION 1
         SOVERSION 1
-      )
-    endif()
-
-    add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
-    target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    if(OpenSSL_FOUND)
-      target_compile_definitions(${NVML_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
-      target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    endif()
-    target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE ${NGHTTP2_LIBRARY} lupine_lz4)
-    if(NOT APPLE)
-      target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++)
-      target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
-          "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
-      )
-    endif()
-    set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME nvidia-ml
     )
-    if(NOT APPLE)
-      set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
-          VERSION 1
-          SOVERSION 1
-      )
-    endif()
+  endif()
+endif()
+
+add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
+target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+if(OpenSSL_FOUND)
+  target_compile_definitions(${NVML_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
+  target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
+target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE ${NGHTTP2_LIBRARY} lupine_lz4)
+set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+if(WIN32)
+  target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE ws2_32)
+  set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
+      OUTPUT_NAME nvml
+      PREFIX ""
+      WINDOWS_EXPORT_ALL_SYMBOLS ON
+  )
+else()
+  set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES OUTPUT_NAME nvidia-ml)
+  if(NOT APPLE)
+    target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++)
+    target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
+    )
+    set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
+        VERSION 1
+        SOVERSION 1
+    )
+  endif()
 endif()
 
 if(NOT APPLE)
@@ -353,15 +365,23 @@ if (NOT WIN32 AND NOT APPLE)
 endif()
 
 if(TARGET ${CUDA_CLIENT_OUTPUT})
-    target_compile_options(${CUDA_CLIENT_OUTPUT} PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>)
+    if(MSVC)
+      target_compile_options(${CUDA_CLIENT_OUTPUT} PRIVATE /wd4996)
+    else()
+      target_compile_options(${CUDA_CLIENT_OUTPUT} PRIVATE
+          $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>)
+    endif()
     message(STATUS "Building CUDA client output: ${CUDA_CLIENT_OUTPUT}")
     message(STATUS "Client TLS (OpenSSL): ${OpenSSL_FOUND}")
 endif()
 
 if(TARGET ${NVML_CLIENT_OUTPUT})
-    target_compile_options(${NVML_CLIENT_OUTPUT} PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>)
+    if(MSVC)
+      target_compile_options(${NVML_CLIENT_OUTPUT} PRIVATE /wd4996)
+    else()
+      target_compile_options(${NVML_CLIENT_OUTPUT} PRIVATE
+          $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>)
+    endif()
     message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
 endif()
 
