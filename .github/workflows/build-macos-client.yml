@@ -13,9 +13,6 @@ permissions:
   actions: read
   contents: write
 
-env:
-  CUDA_MAJOR_VERSION: "13"
-
 jobs:
   build:
     name: macOS client / ${{ matrix.arch }}
@@ -41,7 +38,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cuda-wheel cuda-sdk
-          next_cuda_major=$((CUDA_MAJOR_VERSION + 1))
           python3 -m pip download \
             --dest cuda-wheel \
             --only-binary=:all: \
@@ -50,8 +46,8 @@ jobs:
             --python-version 3 \
             --abi none \
             --no-deps \
-            "nvidia-cuda-runtime>=${CUDA_MAJOR_VERSION},<${next_cuda_major}" \
-            "nvidia-nvml-dev>=${CUDA_MAJOR_VERSION},<${next_cuda_major}"
+            nvidia-cuda-runtime \
+            nvidia-nvml-dev
           cuda_wheel="$(find cuda-wheel -name 'nvidia_cuda_runtime-*.whl' -print -quit)"
           nvml_wheel="$(find cuda-wheel -name 'nvidia_nvml_dev-*.whl' -print -quit)"
           test -n "$cuda_wheel"
@@ -62,18 +58,22 @@ jobs:
           unzip -q "$nvml_wheel" -d cuda-sdk
           printf '%s\n' "$cuda_version" > cuda-sdk/CUDA_HEADER_VERSION
           printf '%s\n' "$nvml_version" > cuda-sdk/NVML_HEADER_VERSION
-          test -f cuda-sdk/nvidia/cu13/include/cuda.h
-          test -f cuda-sdk/nvidia/cu13/include/nvml.h
+          test -n "$(find cuda-sdk/nvidia -path '*/include/cuda.h' -print -quit)"
+          test -n "$(find cuda-sdk/nvidia -path '*/include/nvml.h' -print -quit)"
 
       - name: Configure client-only build
         run: |
           set -euo pipefail
+          cuda_header="$(find "$PWD/cuda-sdk/nvidia" -path '*/include/cuda.h' -print -quit)"
+          nvml_header="$(find "$PWD/cuda-sdk/nvidia" -path '*/include/nvml.h' -print -quit)"
+          test -n "$cuda_header"
+          test -n "$nvml_header"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DCMAKE_PREFIX_PATH="$(brew --prefix libnghttp2);$(brew --prefix openssl@3)" \
-            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include" \
-            -DLUPINE_NVML_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include"
+            -DLUPINE_CUDA_INCLUDE_DIR="$(dirname "$cuda_header")" \
+            -DLUPINE_NVML_INCLUDE_DIR="$(dirname "$nvml_header")"
 
       - name: Build client dylibs
         run: >
