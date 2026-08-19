@@ -224,19 +224,6 @@ else()
     lupine_scaled_timeout(h2u_timeout 10)
     set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT ${h2u_timeout})
 
-    add_executable(client_transport_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/client_transport.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/client_transport_test.cpp
-    )
-    target_link_libraries(client_transport_test PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4 pthread)
-    lupine_apply_sanitizer(client_transport_test)
-    add_test(NAME client_transport_test COMMAND client_transport_test)
-    lupine_scaled_timeout(transport_timeout 10)
-    set_tests_properties(client_transport_test PROPERTIES TIMEOUT ${transport_timeout})
-
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp

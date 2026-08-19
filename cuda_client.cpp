@@ -57,33 +57,23 @@
 
 void *rpc_client_dispatch_thread(void *arg);
 
-static void lupine_cuda_transport_dispatch(conn_t *conn, void *) {
-  (void)rpc_client_dispatch_thread(conn);
-}
-
-static void lupine_cuda_transport_connection_changed(conn_t *, void *) {
+static void lupine_cuda_transport_connection_changed(conn_t *) {
   lupine_invalidate_current_context_cache();
 }
 
-static void lupine_cuda_transport_connection_opened(
-    conn_t *, const lupine_client_endpoint *, void *) {
-  lupine_invalidate_current_context_cache();
-}
-
-static lupine_client_transport *lupine_cuda_transport() {
-  static auto *transport = [] {
+static const lupine_client_transport_config &lupine_cuda_transport_config() {
+  static const auto config = [] {
     lupine_client_transport_config config;
-    config.dial_policy = lupine_client_dial_policy::bounded_retry;
-    config.dispatch = lupine_cuda_transport_dispatch;
-    config.connection_opened = lupine_cuda_transport_connection_opened;
+    config.dispatch = rpc_client_dispatch_thread;
+    config.connection_opened = lupine_cuda_transport_connection_changed;
     config.connection_closed = lupine_cuda_transport_connection_changed;
-    return lupine_client_transport_create(&config);
+    return config;
   }();
-  return transport;
+  return config;
 }
 
 void rpc_destroy_thread_lane(uint64_t lane_id) {
-  lupine_client_transport_retire_lane(lupine_cuda_transport(), lane_id);
+  lupine_client_transport_retire_lane(lane_id);
 }
 
 static void lupine_rpc_connection_closed(conn_t *) {
@@ -8106,13 +8096,9 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
   return it == stubs.end() ? nullptr : it->second;
 }
 
-void rpc_close(conn_t *conn) {
-  lupine_client_transport_close_connection(lupine_cuda_transport(), conn);
-}
+void rpc_close(conn_t *conn) { lupine_client_transport_close_connection(conn); }
 
-static void lupine_rpc_shutdown() {
-  lupine_client_transport_close(lupine_cuda_transport());
-}
+static void lupine_rpc_shutdown() { lupine_client_transport_close(); }
 
 __attribute__((destructor)) static void lupine_rpc_destructor() {
   lupine_rpc_shutdown();
@@ -8242,20 +8228,17 @@ int rpc_open() {
                    lupine_install_rpc_lifecycle_hooks) != 0) {
     return -1;
   }
-  return lupine_client_transport_open(lupine_cuda_transport());
+  return lupine_client_transport_open(lupine_cuda_transport_config());
 }
 
 conn_t *rpc_client_get_connection(unsigned int index) {
   if (rpc_open() < 0) {
     return nullptr;
   }
-  return lupine_client_transport_connection(lupine_cuda_transport(), index);
+  return lupine_client_transport_connection(index);
 }
 
-int rpc_size() {
-  return static_cast<int>(
-      lupine_client_transport_size(lupine_cuda_transport()));
-}
+int rpc_size() { return static_cast<int>(lupine_client_transport_size()); }
 
 #if CUDA_VERSION >= 12000
 extern "C" CUresult cuTensorMapEncodeTiled(

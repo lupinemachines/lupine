@@ -343,36 +343,10 @@ struct lupine_lane {
   std::thread worker;
 };
 
-static bool lupine_initialize_rpc_synchronization(conn_t *conn) {
-  if (pthread_mutex_init(&conn->read_mutex, nullptr) != 0) {
-    return false;
-  }
-  if (pthread_mutex_init(&conn->write_mutex, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->read_mutex);
-    return false;
-  }
-  if (pthread_mutex_init(&conn->call_mutex, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->write_mutex);
-    pthread_mutex_destroy(&conn->read_mutex);
-    return false;
-  }
-  if (pthread_cond_init(&conn->read_cond, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->call_mutex);
-    pthread_mutex_destroy(&conn->write_mutex);
-    pthread_mutex_destroy(&conn->read_mutex);
-    return false;
-  }
-  return true;
-}
-
 int client_handler(lupine_socket_t connfd) {
   conn_t conn = {};
-  conn.connfd = connfd;
-  conn.request_id = 1;
-  conn.local_request_parity = conn.request_id & 1;
-  if (!lupine_initialize_rpc_synchronization(&conn)) {
+  if (rpc_conn_init(&conn, connfd, 1) < 0) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
-    lupine_socket_close(connfd);
     return lupine_server_checkpoint_child_finish();
   }
 

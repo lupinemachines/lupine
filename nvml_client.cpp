@@ -63,7 +63,8 @@ nvmlReturn_t rpc_error() {
   return nvml_initialized() ? NVML_ERROR_UNKNOWN : NVML_ERROR_UNINITIALIZED;
 }
 
-void nvml_transport_dispatch(conn_t *connection, void *) {
+void *nvml_transport_dispatch(void *argument) {
+  auto *connection = static_cast<conn_t *>(argument);
   while (!connection->closed) {
     int op = rpc_dispatch(connection, 1);
     if (op < 0 || connection->closed) {
@@ -73,22 +74,23 @@ void nvml_transport_dispatch(conn_t *connection, void *) {
       break;
     }
   }
+  return nullptr;
 }
 
-lupine_client_transport *nvml_transport() {
-  static auto *transport = [] {
+const lupine_client_transport_config &nvml_transport_config() {
+  static const auto config = [] {
     lupine_client_transport_config config;
     config.dial_policy = lupine_client_dial_policy::single_attempt;
     config.strict_endpoints = true;
     config.log_missing_server = true;
     config.dispatch = nvml_transport_dispatch;
-    return lupine_client_transport_create(&config);
+    return config;
   }();
-  return transport;
+  return config;
 }
 
 void nvml_retire_thread_lane(uint64_t lane_id) {
-  lupine_client_transport_retire_lane(nvml_transport(), lane_id);
+  lupine_client_transport_retire_lane(lane_id);
 }
 
 pthread_once_t nvml_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
@@ -105,18 +107,18 @@ int open_connection() {
                    nvml_install_rpc_lifecycle_hooks) != 0) {
     return -1;
   }
-  return lupine_client_transport_open(nvml_transport());
+  return lupine_client_transport_open(nvml_transport_config());
 }
 
 conn_t *connection(unsigned int index = 0) {
   if (!nvml_initialized() || open_connection() < 0) {
     return nullptr;
   }
-  return lupine_client_transport_connection(nvml_transport(), index);
+  return lupine_client_transport_connection(index);
 }
 
 void close_connections() {
-  lupine_client_transport_close(nvml_transport());
+  lupine_client_transport_close();
   devices_ready = false;
   devices.clear();
 }
@@ -184,10 +186,9 @@ nvmlReturn_t ensure_devices() {
   }
 
   devices.clear();
-  unsigned int connection_count =
-      lupine_client_transport_size(nvml_transport());
+  unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
-    conn_t *conn = lupine_client_transport_connection(nvml_transport(), i);
+    conn_t *conn = lupine_client_transport_connection(i);
     unsigned int count = 0;
     nvmlReturn_t result =
         call_uint_out_on(conn, RPC_nvmlDeviceGetCount_v2, &count);
@@ -204,7 +205,7 @@ nvmlReturn_t ensure_devices() {
         return result;
       }
       const lupine_client_endpoint *endpoint =
-          lupine_client_transport_endpoint(nvml_transport(), i);
+          lupine_client_transport_endpoint(i);
       devices.push_back(lupine_nvml_remote_device{
           i, ordinal, remote, endpoint == nullptr ? "" : endpoint->label});
     }
@@ -226,12 +227,10 @@ nvmlReturn_t lookup_device_on_all_connections(nvmlDevice_t *device,
   }
 
   nvmlReturn_t first_error = NVML_ERROR_NOT_FOUND;
-  unsigned int connection_count =
-      lupine_client_transport_size(nvml_transport());
+  unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
     nvmlDevice_t remote = nullptr;
-    result = lookup(lupine_client_transport_connection(nvml_transport(), i),
-                    &remote);
+    result = lookup(lupine_client_transport_connection(i), &remote);
     if (result != NVML_SUCCESS) {
       if (first_error == NVML_ERROR_NOT_FOUND &&
           result != NVML_ERROR_NOT_FOUND) {
@@ -429,12 +428,10 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
     return NVML_ERROR_UNKNOWN;
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
-  unsigned int connection_count =
-      lupine_client_transport_size(nvml_transport());
+  unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
     nvmlReturn_t result =
-        call_no_args_on(lupine_client_transport_connection(nvml_transport(), i),
-                        RPC_nvmlInit_v2);
+        call_no_args_on(lupine_client_transport_connection(i), RPC_nvmlInit_v2);
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }
@@ -453,10 +450,9 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
     return NVML_ERROR_UNKNOWN;
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
-  unsigned int connection_count =
-      lupine_client_transport_size(nvml_transport());
+  unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
-    conn_t *c = lupine_client_transport_connection(nvml_transport(), i);
+    conn_t *c = lupine_client_transport_connection(i);
     nvmlReturn_t result = rpc_error();
     if (rpc_write_start_request(c, RPC_nvmlInitWithFlags) < 0 ||
         rpc_write(c, &flags, sizeof(flags)) < 0 ||
@@ -486,17 +482,16 @@ extern "C" nvmlReturn_t nvmlShutdown(void) {
                                                 std::memory_order_acquire));
   bool last = previous == 1;
 
-  if (!lupine_client_transport_is_open(nvml_transport())) {
+  if (lupine_client_transport_size() == 0) {
     return NVML_SUCCESS;
   }
-  unsigned int count = lupine_client_transport_size(nvml_transport());
+  unsigned int count = lupine_client_transport_size();
 
   // The server refcounts too, so forward every shutdown, not just the last.
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (unsigned int i = 0; i < count; ++i) {
-    nvmlReturn_t result =
-        call_no_args_on(lupine_client_transport_connection(nvml_transport(), i),
-                        RPC_nvmlShutdown);
+    nvmlReturn_t result = call_no_args_on(lupine_client_transport_connection(i),
+                                          RPC_nvmlShutdown);
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }

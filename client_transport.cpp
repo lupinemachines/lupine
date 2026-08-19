@@ -5,9 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
-#include <cstring>
-#include <netdb.h>
-#include <sys/socket.h>
+#include <vector>
 
 #ifdef LUPINE_TLS_OPENSSL
 #include <openssl/ssl.h>
@@ -16,28 +14,22 @@
 namespace {
 
 constexpr unsigned int kTransportCapacity = 16;
+constexpr unsigned int kBoundedRetryCount = 5;
+constexpr const char *kDefaultPort = "14833";
 
-struct lupine_client_connection_slot {
-  conn_t conn = {};
-  struct lupine_client_transport *transport = nullptr;
-};
-
-} // namespace
-
-struct lupine_client_transport {
-  explicit lupine_client_transport(
-      const lupine_client_transport_config &transport_config)
-      : config(transport_config) {}
-
+struct client_transport_state {
   lupine_client_transport_config config;
   pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-  std::array<lupine_client_connection_slot, kTransportCapacity> slots = {};
+  std::array<conn_t, kTransportCapacity> connections = {};
   std::array<lupine_client_endpoint, kTransportCapacity> endpoints;
   unsigned int count = 0;
   bool shutting_down = false;
 };
 
-namespace {
+client_transport_state &transport() {
+  static auto *state = new client_transport_state;
+  return *state;
+}
 
 bool endpoint_has_invalid_scheme(const std::string &endpoint) {
   return endpoint.find("://") != std::string::npos ||
@@ -45,42 +37,48 @@ bool endpoint_has_invalid_scheme(const std::string &endpoint) {
          endpoint.compare(0, 6, "https:") == 0;
 }
 
-lupine_socket_t dial_once(const lupine_client_endpoint &endpoint) {
-  addrinfo hints = {};
-  hints.ai_family = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
-  addrinfo *addresses = nullptr;
-  if (getaddrinfo(endpoint.host.c_str(), endpoint.port.c_str(), &hints,
-                  &addresses) != 0 ||
-      addresses == nullptr) {
-    return LUPINE_INVALID_SOCKET;
-  }
-
-  lupine_socket_t socket_fd = socket(
-      addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
-  if (socket_fd != LUPINE_INVALID_SOCKET) {
-    lupine_socket_apply_transport_options(socket_fd);
-    if (connect(socket_fd, addresses->ai_addr,
-                static_cast<socklen_t>(addresses->ai_addrlen)) != 0) {
-      lupine_socket_close(socket_fd);
-      socket_fd = LUPINE_INVALID_SOCKET;
+int parse_endpoints(const char *servers, bool strict,
+                    std::vector<lupine_client_endpoint> *endpoints) {
+  endpoints->clear();
+  const std::string value(servers);
+  size_t begin = 0;
+  while (begin <= value.size()) {
+    size_t comma = value.find(',', begin);
+    std::string token = value.substr(begin, comma - begin);
+    begin = comma == std::string::npos ? value.size() + 1 : comma + 1;
+    if (strict && token.empty()) {
+      continue;
     }
-  }
-  freeaddrinfo(addresses);
-  return socket_fd;
-}
 
-lupine_socket_t dial_endpoint(lupine_client_transport *transport,
-                              const lupine_client_endpoint &endpoint) {
-  if (transport->config.dial != nullptr) {
-    return transport->config.dial(&endpoint, transport->config.dial_policy,
-                                  transport->config.user_data);
+    lupine_client_endpoint endpoint;
+    endpoint.port = kDefaultPort;
+    if (token.compare(0, 8, "https://") == 0) {
+      endpoint.tls = true;
+      endpoint.port = "443";
+      token.erase(0, 8);
+    } else if (token.compare(0, 7, "http://") == 0) {
+      token.erase(0, 7);
+    } else if (strict && endpoint_has_invalid_scheme(token)) {
+      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER URL scheme: " << token);
+      continue;
+    }
+
+    size_t colon = token.find(':');
+    endpoint.host = token.substr(0, colon);
+    if (colon != std::string::npos) {
+      endpoint.port = token.substr(colon + 1);
+    }
+    if (strict && (endpoint.host.empty() || endpoint.port.empty())) {
+      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER endpoint");
+      continue;
+    }
+    endpoint.label = endpoint.host;
+    if (endpoint.port != kDefaultPort) {
+      endpoint.label += ":" + endpoint.port;
+    }
+    endpoints->push_back(std::move(endpoint));
   }
-  if (transport->config.dial_policy ==
-      lupine_client_dial_policy::bounded_retry) {
-    return lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str());
-  }
-  return dial_once(endpoint);
+  return endpoints->empty() ? -1 : 0;
 }
 
 #ifdef LUPINE_TLS_OPENSSL
@@ -137,102 +135,55 @@ void free_tls(conn_t *conn) {
 #endif
 }
 
-void notify_connection_closed(lupine_client_transport *transport,
-                              conn_t *conn) {
-  if (transport->config.connection_closed != nullptr) {
-    transport->config.connection_closed(conn, transport->config.user_data);
-  }
-}
-
-void close_connection(lupine_client_transport *transport, conn_t *conn) {
-  if (conn == nullptr) {
-    return;
-  }
-  notify_connection_closed(transport, conn);
-  rpc_close_transport_socket(conn);
-  pthread_mutex_lock(&conn->read_mutex);
-  pthread_cond_broadcast(&conn->read_cond);
-  pthread_mutex_unlock(&conn->read_mutex);
-}
-
-void *dispatch_connection(void *argument) {
-  auto *slot = static_cast<lupine_client_connection_slot *>(argument);
-  lupine_client_transport *transport = slot->transport;
-  if (transport->config.dispatch != nullptr) {
-    transport->config.dispatch(&slot->conn, transport->config.user_data);
-  }
-  close_connection(transport, &slot->conn);
-  return nullptr;
-}
-
-void reset_failed_connection(conn_t *conn, bool read_mutex_initialized,
-                             bool write_mutex_initialized,
-                             bool call_mutex_initialized,
-                             bool read_cond_initialized) {
-  rpc_http2_destroy(conn);
+void reset_connection(conn_t *conn) {
   free_tls(conn);
-  rpc_close_transport_socket(conn);
-  rpc_write_queue_free(conn);
-  if (read_cond_initialized) {
-    pthread_cond_destroy(&conn->read_cond);
-  }
-  if (call_mutex_initialized) {
-    pthread_mutex_destroy(&conn->call_mutex);
-  }
-  if (write_mutex_initialized) {
-    pthread_mutex_destroy(&conn->write_mutex);
-  }
-  if (read_mutex_initialized) {
-    pthread_mutex_destroy(&conn->read_mutex);
-  }
+  rpc_conn_destroy(conn);
   *conn = {};
   conn->connfd = LUPINE_INVALID_SOCKET;
 }
 
-int connect_endpoint(lupine_client_transport *transport,
+void *dispatch_connection(void *argument) {
+  auto *conn = static_cast<conn_t *>(argument);
+  auto &state = transport();
+  if (state.config.dispatch != nullptr) {
+    state.config.dispatch(conn);
+  }
+  lupine_client_transport_close_connection(conn);
+  return nullptr;
+}
+
+int connect_endpoint(client_transport_state &state,
                      const lupine_client_endpoint &endpoint,
                      unsigned int index) {
-  lupine_client_connection_slot &slot = transport->slots[index];
-  conn_t *conn = &slot.conn;
+  conn_t *conn = &state.connections[index];
   *conn = {};
-  conn->connfd = dial_endpoint(transport, endpoint);
-  if (conn->connfd == LUPINE_INVALID_SOCKET) {
+  unsigned int retries =
+      state.config.dial_policy == lupine_client_dial_policy::bounded_retry
+          ? kBoundedRetryCount
+          : 0;
+  lupine_socket_t connfd =
+      lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), retries);
+  if (connfd == LUPINE_INVALID_SOCKET) {
     LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
                                       << endpoint.port << " failed");
     return -1;
   }
-  conn->local_request_parity = conn->request_id & 1;
+  if (rpc_conn_init(conn, connfd, 0) < 0) {
+    return -1;
+  }
   conn->logical_index = static_cast<int>(index);
-
-  bool read_mutex_initialized = false;
-  bool write_mutex_initialized = false;
-  bool call_mutex_initialized = false;
-  bool read_cond_initialized = false;
-  if (initialize_tls(conn, endpoint) < 0 ||
-      !(read_mutex_initialized =
-            pthread_mutex_init(&conn->read_mutex, nullptr) == 0) ||
-      !(write_mutex_initialized =
-            pthread_mutex_init(&conn->write_mutex, nullptr) == 0) ||
-      !(call_mutex_initialized =
-            pthread_mutex_init(&conn->call_mutex, nullptr) == 0) ||
-      !(read_cond_initialized =
-            pthread_cond_init(&conn->read_cond, nullptr) == 0) ||
-      rpc_http2_client_init(conn) < 0) {
-    reset_failed_connection(conn, read_mutex_initialized,
-                            write_mutex_initialized, call_mutex_initialized,
-                            read_cond_initialized);
+  if (initialize_tls(conn, endpoint) < 0 || rpc_http2_client_init(conn) < 0) {
+    reset_connection(conn);
     return -1;
   }
 
-  slot.transport = transport;
-  transport->endpoints[index] = endpoint;
-  if (transport->config.connection_opened != nullptr) {
-    transport->config.connection_opened(conn, &transport->endpoints[index],
-                                        transport->config.user_data);
+  state.endpoints[index] = endpoint;
+  if (state.config.connection_opened != nullptr) {
+    state.config.connection_opened(conn);
   }
-  if (pthread_create(&conn->read_thread, nullptr, dispatch_connection, &slot) !=
+  if (pthread_create(&conn->read_thread, nullptr, dispatch_connection, conn) !=
       0) {
-    reset_failed_connection(conn, true, true, true, true);
+    reset_connection(conn);
     return -1;
   }
   rpc_http2_client_start_heartbeat(conn);
@@ -241,140 +192,79 @@ int connect_endpoint(lupine_client_transport *transport,
 
 } // namespace
 
-int lupine_client_parse_endpoints(
-    const char *servers, const lupine_client_transport_config *config,
-    std::vector<lupine_client_endpoint> *endpoints) {
-  if (servers == nullptr || config == nullptr || endpoints == nullptr ||
-      config->default_port == nullptr || config->default_port[0] == '\0') {
-    return -1;
-  }
-  endpoints->clear();
-  const std::string value(servers);
-  size_t begin = 0;
-  while (begin <= value.size()) {
-    size_t comma = value.find(',', begin);
-    std::string token = value.substr(begin, comma - begin);
-    begin = comma == std::string::npos ? value.size() + 1 : comma + 1;
-    if (config->strict_endpoints && token.empty()) {
-      continue;
-    }
-
-    lupine_client_endpoint endpoint;
-    endpoint.port = config->default_port;
-    if (token.compare(0, 8, "https://") == 0) {
-      endpoint.tls = true;
-      endpoint.port = "443";
-      token.erase(0, 8);
-    } else if (token.compare(0, 7, "http://") == 0) {
-      token.erase(0, 7);
-    } else if (config->strict_endpoints && endpoint_has_invalid_scheme(token)) {
-      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER URL scheme: " << token);
-      continue;
-    }
-
-    size_t colon = token.find(':');
-    endpoint.host = token.substr(0, colon);
-    if (colon != std::string::npos) {
-      endpoint.port = token.substr(colon + 1);
-    }
-    if (config->strict_endpoints &&
-        (endpoint.host.empty() || endpoint.port.empty())) {
-      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER endpoint");
-      continue;
-    }
-    endpoint.label = endpoint.host;
-    if (endpoint.port != config->default_port) {
-      endpoint.label += ":" + endpoint.port;
-    }
-    endpoints->push_back(std::move(endpoint));
-  }
-  return endpoints->empty() ? -1 : 0;
-}
-
-lupine_client_transport *
-lupine_client_transport_create(const lupine_client_transport_config *config) {
-  if (config == nullptr || config->max_connections == 0 ||
-      config->default_port == nullptr) {
-    return nullptr;
-  }
-  return new lupine_client_transport(*config);
-}
-
-void lupine_client_transport_destroy(lupine_client_transport *transport) {
-  if (transport == nullptr) {
-    return;
-  }
-  lupine_client_transport_close(transport);
-  pthread_mutex_destroy(&transport->mutex);
-  delete transport;
-}
-
-int lupine_client_transport_open(lupine_client_transport *transport,
+int lupine_client_transport_open(const lupine_client_transport_config &config,
                                  const char *servers) {
-  if (transport == nullptr || pthread_mutex_lock(&transport->mutex) != 0) {
+  auto &state = transport();
+  if (pthread_mutex_lock(&state.mutex) != 0) {
     return -1;
   }
-  if (transport->count != 0) {
-    pthread_mutex_unlock(&transport->mutex);
+  if (state.count != 0) {
+    pthread_mutex_unlock(&state.mutex);
     return 0;
   }
   if (servers == nullptr) {
     servers = getenv("LUPINE_SERVER");
   }
   if (servers == nullptr) {
-    if (transport->config.log_missing_server) {
+    if (config.log_missing_server) {
       LUPINE_LOG_ERROR("LUPINE_SERVER environment variable not set");
     }
-    pthread_mutex_unlock(&transport->mutex);
+    pthread_mutex_unlock(&state.mutex);
     return -1;
   }
 
   std::vector<lupine_client_endpoint> endpoints;
-  if (lupine_client_parse_endpoints(servers, &transport->config, &endpoints) <
-      0) {
-    pthread_mutex_unlock(&transport->mutex);
+  if (parse_endpoints(servers, config.strict_endpoints, &endpoints) < 0) {
+    pthread_mutex_unlock(&state.mutex);
     return -1;
   }
-  unsigned int limit =
-      std::min(transport->config.max_connections, kTransportCapacity);
+  state.config = config;
   for (const auto &endpoint : endpoints) {
-    if (transport->count >= limit) {
+    if (state.count == kTransportCapacity) {
       LUPINE_LOG_ERROR("Too many LUPINE_SERVER entries; ignoring the rest");
       break;
     }
-    if (connect_endpoint(transport, endpoint, transport->count) == 0) {
-      ++transport->count;
+    if (connect_endpoint(state, endpoint, state.count) == 0) {
+      ++state.count;
     }
   }
-  int result = transport->count == 0 ? -1 : 0;
-  pthread_mutex_unlock(&transport->mutex);
+  int result = state.count == 0 ? -1 : 0;
+  pthread_mutex_unlock(&state.mutex);
   return result;
 }
 
-void lupine_client_transport_close_connection(
-    lupine_client_transport *transport, conn_t *conn) {
-  if (transport != nullptr && conn != nullptr) {
-    close_connection(transport, conn);
+void lupine_client_transport_close_connection(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
   }
+  auto &state = transport();
+  if (state.config.connection_closed != nullptr) {
+    state.config.connection_closed(conn);
+  }
+  rpc_close_transport_socket(conn);
+  pthread_mutex_lock(&conn->read_mutex);
+  pthread_cond_broadcast(&conn->read_cond);
+  pthread_mutex_unlock(&conn->read_mutex);
 }
 
-void lupine_client_transport_close(lupine_client_transport *transport) {
-  if (transport == nullptr || pthread_mutex_lock(&transport->mutex) != 0) {
+void lupine_client_transport_close() {
+  auto &state = transport();
+  if (pthread_mutex_lock(&state.mutex) != 0) {
     return;
   }
-  if (transport->shutting_down) {
-    pthread_mutex_unlock(&transport->mutex);
+  if (state.shutting_down) {
+    pthread_mutex_unlock(&state.mutex);
     return;
   }
-  transport->shutting_down = true;
-  unsigned int count = transport->count;
+  state.shutting_down = true;
+  unsigned int count = state.count;
   for (unsigned int i = 0; i < count; ++i) {
-    close_connection(transport, &transport->slots[i].conn);
+    lupine_client_transport_close_connection(&state.connections[i]);
   }
-  pthread_mutex_unlock(&transport->mutex);
+  pthread_mutex_unlock(&state.mutex);
 
   for (unsigned int i = 0; i < count; ++i) {
-    conn_t *conn = &transport->slots[i].conn;
+    conn_t *conn = &state.connections[i];
     if (conn->read_thread != 0) {
       pthread_join(conn->read_thread, nullptr);
       conn->read_thread = 0;
@@ -383,63 +273,45 @@ void lupine_client_transport_close(lupine_client_transport *transport) {
       pthread_join(conn->rpc_thread, nullptr);
       conn->rpc_thread = 0;
     }
-    free_tls(conn);
-    rpc_conn_destroy(conn);
-    *conn = {};
-    conn->connfd = LUPINE_INVALID_SOCKET;
-    transport->slots[i].transport = nullptr;
-    transport->endpoints[i] = {};
+    reset_connection(conn);
+    state.endpoints[i] = {};
   }
 
-  if (pthread_mutex_lock(&transport->mutex) == 0) {
-    transport->count = 0;
-    transport->shutting_down = false;
-    pthread_mutex_unlock(&transport->mutex);
+  if (pthread_mutex_lock(&state.mutex) == 0) {
+    state.count = 0;
+    state.shutting_down = false;
+    pthread_mutex_unlock(&state.mutex);
   }
 }
 
-unsigned int
-lupine_client_transport_size(const lupine_client_transport *transport) {
-  return transport == nullptr ? 0 : transport->count;
-}
+unsigned int lupine_client_transport_size() { return transport().count; }
 
-bool lupine_client_transport_is_open(const lupine_client_transport *transport) {
-  return lupine_client_transport_size(transport) != 0;
-}
-
-conn_t *lupine_client_transport_connection(lupine_client_transport *transport,
-                                           unsigned int index) {
-  if (transport == nullptr || index >= transport->count) {
-    return nullptr;
-  }
-  return &transport->slots[index].conn;
+conn_t *lupine_client_transport_connection(unsigned int index) {
+  auto &state = transport();
+  return index < state.count ? &state.connections[index] : nullptr;
 }
 
 const lupine_client_endpoint *
-lupine_client_transport_endpoint(const lupine_client_transport *transport,
-                                 unsigned int index) {
-  if (transport == nullptr || index >= transport->count) {
-    return nullptr;
-  }
-  return &transport->endpoints[index];
+lupine_client_transport_endpoint(unsigned int index) {
+  auto &state = transport();
+  return index < state.count ? &state.endpoints[index] : nullptr;
 }
 
-void lupine_client_transport_retire_lane(lupine_client_transport *transport,
-                                         uint64_t lane_id) {
-  if (transport == nullptr || pthread_mutex_lock(&transport->mutex) != 0) {
+void lupine_client_transport_retire_lane(uint64_t lane_id) {
+  auto &state = transport();
+  if (pthread_mutex_lock(&state.mutex) != 0) {
     return;
   }
   std::array<conn_t *, kTransportCapacity> active = {};
   unsigned int count = 0;
-  if (!transport->shutting_down) {
-    for (unsigned int i = 0; i < transport->count; ++i) {
-      conn_t *conn = &transport->slots[i].conn;
-      if (!conn->closed) {
-        active[count++] = conn;
+  if (!state.shutting_down) {
+    for (unsigned int i = 0; i < state.count; ++i) {
+      if (!state.connections[i].closed) {
+        active[count++] = &state.connections[i];
       }
     }
   }
-  pthread_mutex_unlock(&transport->mutex);
+  pthread_mutex_unlock(&state.mutex);
 
   for (unsigned int i = 0; i < count; ++i) {
     rpc_write_lane_termination(active[i], lane_id);
