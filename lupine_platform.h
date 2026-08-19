@@ -116,6 +116,7 @@ struct Elf64_Sym {
 #include <vector>
 
 using ssize_t = SSIZE_T;
+using off_t = __int64;
 using socklen_t = int;
 using lupine_socket_t = SOCKET;
 

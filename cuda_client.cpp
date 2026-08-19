@@ -1782,6 +1782,9 @@ static CUfunction lupine_resolve_host_function(CUfunction function) {
     }
   }
 
+#if defined(_WIN32)
+  return function;
+#else
   Dl_info info = {};
   if (dladdr(reinterpret_cast<void *>(function), &info) == 0) {
     return function;
@@ -1826,6 +1829,7 @@ static CUfunction lupine_resolve_host_function(CUfunction function) {
                                          << " loaded modules");
 
   return function;
+#endif
 }
 
 static CUfunction lupine_translate_private_function(CUfunction function) {
