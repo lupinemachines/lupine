@@ -2869,6 +2869,7 @@ CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy);
 /**
@@ -2956,12 +2957,14 @@ CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy, CUstream hStream);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
 /**
