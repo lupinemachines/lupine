@@ -6,25 +6,31 @@
 
 bool rpc_server_validate_backends(const rpc_backend *const *backends,
                                   size_t count) {
-  std::unordered_map<int, const char *> owners;
+  std::unordered_map<int, const rpc_backend *> owners;
   for (size_t i = 0; i < count; ++i) {
     const rpc_backend *backend = backends[i];
     if (backend == nullptr || backend->name == nullptr ||
-        backend->lookup == nullptr || backend->operations == nullptr) {
+        backend->registries == nullptr) {
       return false;
     }
-    size_t operation_count = 0;
-    const int *operations = backend->operations(&operation_count);
-    if (operation_count != 0 && operations == nullptr) {
+    size_t registry_count = 0;
+    const rpc_handler_registry *const *registries =
+        backend->registries(&registry_count);
+    if (registry_count != 0 && registries == nullptr) {
       return false;
     }
-    for (size_t j = 0; j < operation_count; ++j) {
-      auto inserted = owners.emplace(operations[j], backend->name);
-      if (!inserted.second) {
-        LUPINE_LOG_ERROR("Duplicate RPC op " << operations[j] << " in backends "
-                                             << inserted.first->second
-                                             << " and " << backend->name);
+    for (size_t j = 0; j < registry_count; ++j) {
+      if (registries[j] == nullptr) {
         return false;
+      }
+      for (const auto &entry : *registries[j]) {
+        auto inserted = owners.emplace(entry.first, backend);
+        if (!inserted.second && inserted.first->second != backend) {
+          LUPINE_LOG_ERROR("Duplicate RPC op " << entry.first << " in backends "
+                                               << inserted.first->second->name
+                                               << " and " << backend->name);
+          return false;
+        }
       }
     }
   }
@@ -36,23 +42,30 @@ int rpc_server_dispatch(const rpc_backend *const *backends, size_t count,
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
   for (size_t i = 0; i < count; ++i) {
     const rpc_backend *backend = backends[i];
-    rpc_handler handler = backend->lookup(op);
-    if (handler.handler == nullptr) {
-      continue;
-    }
-    int result = backend->dispatch != nullptr ? backend->dispatch(handler, conn)
-                                              : handler.handler(conn);
-    if (result < 0) {
-      if (handler.error_style == rpc_handler_error_style::manual) {
-        LUPINE_LOG_ERROR("Error handling manual " << handler.name
-                                                  << " request.");
-      } else {
-        LUPINE_LOG_ERROR("Error handling " << backend->name << " request "
-                                           << handler.name << ".");
+    size_t registry_count = 0;
+    const rpc_handler_registry *const *registries =
+        backend->registries(&registry_count);
+    for (size_t j = 0; j < registry_count; ++j) {
+      auto it = registries[j]->find(op);
+      if (it == registries[j]->end()) {
+        continue;
       }
-      return -1;
+      const rpc_handler &handler = it->second;
+      int result = backend->dispatch != nullptr
+                       ? backend->dispatch(handler, conn)
+                       : handler.handler(conn);
+      if (result < 0) {
+        if (handler.error_style == rpc_handler_error_style::manual) {
+          LUPINE_LOG_ERROR("Error handling manual " << handler.name
+                                                    << " request.");
+        } else {
+          LUPINE_LOG_ERROR("Error handling "
+                           << backend->name << " request for op " << op << ".");
+        }
+        return -1;
+      }
+      return 0;
     }
-    return 0;
   }
   LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
   return -1;

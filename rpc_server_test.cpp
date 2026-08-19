@@ -28,30 +28,16 @@ int handle_second(conn_t *) {
   return 0;
 }
 
-rpc_handler lookup_first(int op) {
-  return op == 10 ? rpc_handler{handle_first, "first"} : rpc_handler{};
-}
+const rpc_handler_registry first_handlers = {{10, {handle_first, "first"}}};
+const rpc_handler_registry second_handlers = {{20, {handle_second, "second"}}};
+const rpc_handler_registry duplicate_handlers = {
+    {10, {handle_second, "second"}}};
 
-rpc_handler lookup_second(int op) {
-  return op == 20 ? rpc_handler{handle_second, "second"} : rpc_handler{};
-}
-
-const int *first_operations(size_t *count) {
-  static const int operations[] = {10};
+template <const rpc_handler_registry *registry>
+const rpc_handler_registry *const *registries(size_t *count) {
+  static const rpc_handler_registry *const result[] = {registry};
   *count = 1;
-  return operations;
-}
-
-const int *second_operations(size_t *count) {
-  static const int operations[] = {20};
-  *count = 1;
-  return operations;
-}
-
-const int *duplicate_operations(size_t *count) {
-  static const int operations[] = {10};
-  *count = 1;
-  return operations;
+  return result;
 }
 
 bool start_first(lupine_socket_t) {
@@ -108,19 +94,24 @@ void close_first(conn_t *) { events.push_back("close:first"); }
 void close_second(conn_t *) { events.push_back("close:second"); }
 
 const rpc_backend first_backend = {
-    "first",    lookup_first, first_operations, start_first, finish_first,
-    open_first, ready_first,  dispatch_first,   close_first,
+    "first",        registries<&first_handlers>,
+    start_first,    finish_first,
+    open_first,     ready_first,
+    dispatch_first, close_first,
 };
 
 const rpc_backend second_backend = {
-    "second",    lookup_second, second_operations, start_second, finish_second,
-    open_second, ready_second,  dispatch_second,   close_second,
+    "second",        registries<&second_handlers>,
+    start_second,    finish_second,
+    open_second,     ready_second,
+    dispatch_second, close_second,
 };
 
 const rpc_backend duplicate_backend = {
-    "duplicate", lookup_second, duplicate_operations,
-    nullptr,     nullptr,       nullptr,
-    nullptr,     nullptr,       nullptr,
+    "duplicate", registries<&duplicate_handlers>,
+    nullptr,     nullptr,
+    nullptr,     nullptr,
+    nullptr,     nullptr,
 };
 
 void test_lookup_and_duplicates() {

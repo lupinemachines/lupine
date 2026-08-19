@@ -1820,59 +1820,28 @@ def main():
             f.write("    return -1;\n")
             f.write("}\n\n")
 
-        f.write("static const std::unordered_map<int, rpc_handler> cudaHandlers = {\n")
+        f.write("static const rpc_handler_registry cudaHandlers = {\n")
         for function, _, _, metadata in functions_with_annotations:
             if metadata.disabled_server:
                 continue
             else:
                 f.write(
-                    '    {{RPC_{name}, {{handle_{name}, "{name}"}}}},\n'.format(
+                    "    {{RPC_{name}, handle_{name}}},\n".format(
                         name=function.name.format()
                     )
                 )
         f.write("};\n\n")
-        f.write("static const int cudaHandlerOperations[] = {\n")
-        for function, _, _, metadata in functions_with_annotations:
-            if not metadata.disabled_server:
-                f.write("    RPC_{name},\n".format(name=function.name.format()))
-        f.write("};\n\n")
-
-        f.write("static const std::unordered_map<int, rpc_handler> nvmlHandlers = {\n")
+        f.write("static const rpc_handler_registry nvmlHandlers = {\n")
         for name in NVML_RPC_FUNCTIONS:
-            f.write(
-                '    {{RPC_{name}, {{handle_{name}, "{name}"}}}},\n'.format(
-                    name=name
-                )
-            )
+            f.write("    {{RPC_{name}, handle_{name}}},\n".format(name=name))
         f.write("};\n\n")
-        f.write("static const int nvmlHandlerOperations[] = {\n")
-        for name in NVML_RPC_FUNCTIONS:
-            f.write("    RPC_{name},\n".format(name=name))
-        f.write("};\n\n")
-
-        f.write("rpc_handler get_cuda_handler(const int op)\n")
+        f.write("const rpc_handler_registry &get_cuda_handlers()\n")
         f.write("{\n")
-        f.write("    auto it = cudaHandlers.find(op);\n")
-        f.write("    if (it == cudaHandlers.end())\n")
-        f.write("        return {};\n")
-        f.write("    return it->second;\n")
+        f.write("    return cudaHandlers;\n")
         f.write("}\n\n")
-        f.write("const int *get_cuda_handler_operations(size_t *count)\n")
+        f.write("const rpc_handler_registry &get_nvml_handlers()\n")
         f.write("{\n")
-        f.write("    *count = sizeof(cudaHandlerOperations) / sizeof(*cudaHandlerOperations);\n")
-        f.write("    return cudaHandlerOperations;\n")
-        f.write("}\n\n")
-        f.write("rpc_handler get_nvml_handler(const int op)\n")
-        f.write("{\n")
-        f.write("    auto it = nvmlHandlers.find(op);\n")
-        f.write("    if (it == nvmlHandlers.end())\n")
-        f.write("        return {};\n")
-        f.write("    return it->second;\n")
-        f.write("}\n\n")
-        f.write("const int *get_nvml_handler_operations(size_t *count)\n")
-        f.write("{\n")
-        f.write("    *count = sizeof(nvmlHandlerOperations) / sizeof(*nvmlHandlerOperations);\n")
-        f.write("    return nvmlHandlerOperations;\n")
+        f.write("    return nvmlHandlers;\n")
         f.write("}\n")
 
     subprocess.run(

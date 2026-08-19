@@ -4,6 +4,7 @@
 #include "rpc.h"
 
 #include <stddef.h>
+#include <unordered_map>
 
 typedef int (*RequestHandler)(conn_t *conn);
 
@@ -25,10 +26,11 @@ struct rpc_handler {
   rpc_handler_error_style error_style;
 };
 
+using rpc_handler_registry = std::unordered_map<int, rpc_handler>;
+
 struct rpc_backend {
   const char *name;
-  rpc_handler (*lookup)(int op);
-  const int *(*operations)(size_t *count);
+  const rpc_handler_registry *const *(*registries)(size_t *count);
   bool (*child_start)(lupine_socket_t connfd);
   int (*child_finish)();
   bool (*connection_open)(conn_t *conn);

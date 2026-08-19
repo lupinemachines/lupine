@@ -7,8 +7,7 @@
 
 #include <array>
 
-rpc_handler lupine_cuda_server_handler(int op);
-const int *lupine_cuda_server_operations(size_t *count);
+const rpc_handler_registry *const *lupine_cuda_server_registries(size_t *count);
 
 namespace {
 
@@ -25,10 +24,17 @@ bool cuda_connection_ready(conn_t *, const char *session_id) {
   return lupine_server_checkpoint_connection_ready(session_id);
 }
 
+const rpc_handler_registry *const *nvml_server_registries(size_t *count) {
+  static const std::array<const rpc_handler_registry *, 1> registries = {
+      &get_nvml_handlers(),
+  };
+  *count = registries.size();
+  return registries.data();
+}
+
 const rpc_backend cuda_backend = {
     "CUDA",
-    lupine_cuda_server_handler,
-    lupine_cuda_server_operations,
+    lupine_cuda_server_registries,
     lupine_server_checkpoint_child_start,
     lupine_server_checkpoint_child_finish,
     lupine_server_initialize_connection,
@@ -38,9 +44,8 @@ const rpc_backend cuda_backend = {
 };
 
 const rpc_backend nvml_backend = {
-    "NVML",  get_nvml_handler, get_nvml_handler_operations,
-    nullptr, nullptr,          nullptr,
-    nullptr, dispatch_direct,  nullptr,
+    "NVML",  nvml_server_registries, nullptr, nullptr, nullptr,
+    nullptr, dispatch_direct,        nullptr,
 };
 
 const std::array<const rpc_backend *, 2> compiled_backends = {

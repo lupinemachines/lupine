@@ -4,15 +4,12 @@
 #include "cuda_server.h"
 #include "rpc_server.h"
 
-#include <algorithm>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
+#include <array>
 
 // Custom CUDA handlers are looked up before generated CUDA handlers, so these
 // entries retain precedence for overlapping operations.
-static const std::unordered_map<int, rpc_handler> &cuda_custom_handlers() {
-  static const std::unordered_map<int, rpc_handler> handlers = {
+static const rpc_handler_registry &cuda_custom_handlers() {
+  static const rpc_handler_registry handlers = {
       {RPC_cuGetErrorName,
        {handle_manual_cuGetErrorName, "cuGetErrorName",
         rpc_handler_error_style::manual}},
@@ -303,24 +300,12 @@ static const std::unordered_map<int, rpc_handler> &cuda_custom_handlers() {
   return handlers;
 }
 
-rpc_handler lupine_cuda_server_handler(int op) {
-  const auto &custom = cuda_custom_handlers();
-  auto it = custom.find(op);
-  return it == custom.end() ? get_cuda_handler(op) : it->second;
-}
-
-const int *lupine_cuda_server_operations(size_t *count) {
-  static const std::vector<int> operations = [] {
-    size_t generated_count = 0;
-    const int *generated = get_cuda_handler_operations(&generated_count);
-    std::unordered_set<int> unique(generated, generated + generated_count);
-    for (const auto &entry : cuda_custom_handlers()) {
-      unique.insert(entry.first);
-    }
-    std::vector<int> result(unique.begin(), unique.end());
-    std::sort(result.begin(), result.end());
-    return result;
-  }();
-  *count = operations.size();
-  return operations.data();
+const rpc_handler_registry *const *
+lupine_cuda_server_registries(size_t *count) {
+  static const std::array<const rpc_handler_registry *, 2> registries = {
+      &cuda_custom_handlers(),
+      &get_cuda_handlers(),
+  };
+  *count = registries.size();
+  return registries.data();
 }
