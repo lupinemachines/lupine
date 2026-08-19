@@ -1,22 +1,18 @@
 #include "rpc_server.h"
 
+#include "checkpoint.h"
 #include "lupine_log.h"
 
-#include <unordered_set>
-
-bool rpc_server_validate(const rpc_handler_registry &handlers,
-                         const rpc_backend *const *backends, size_t count) {
-  std::unordered_set<const rpc_backend *> compiled_backends;
-  for (size_t i = 0; i < count; ++i) {
-    const rpc_backend *backend = backends[i];
-    if (backend == nullptr || backend->name == nullptr) {
+bool rpc_server_validate(const rpc_handler_registry &handlers) {
+  for (const auto &entry : handlers) {
+    if (entry.second.handler == nullptr) {
       return false;
     }
-    compiled_backends.insert(backend);
-  }
-  for (const auto &entry : handlers) {
-    if (entry.second.handler == nullptr ||
-        compiled_backends.count(entry.second.backend) == 0) {
+    switch (entry.second.backend) {
+    case rpc_backend::cuda:
+    case rpc_backend::nvml:
+      break;
+    default:
       return false;
     }
   }
@@ -32,79 +28,27 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
     return -1;
   }
   const rpc_handler &handler = it->second;
-  const rpc_backend &backend = *handler.backend;
-  int result = backend.dispatch != nullptr ? backend.dispatch(handler, conn)
-                                           : handler.handler(conn);
+  const char *backend_name;
+  int result;
+  switch (handler.backend) {
+  case rpc_backend::cuda: {
+    backend_name = "CUDA";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+  case rpc_backend::nvml:
+    backend_name = "NVML";
+    result = handler.handler(conn);
+    break;
+  default:
+    LUPINE_LOG_ERROR("Invalid RPC backend for op " << op << ".");
+    return -1;
+  }
   if (result >= 0) {
     return 0;
   }
-  LUPINE_LOG_ERROR("Error handling " << backend.name << " request for op "
-                                     << op << ".");
+  LUPINE_LOG_ERROR("Error handling " << backend_name << " request for op " << op
+                                     << ".");
   return -1;
-}
-
-bool rpc_server_child_start(const rpc_backend *const *backends, size_t count,
-                            lupine_socket_t connfd) {
-  for (size_t i = 0; i < count; ++i) {
-    if (backends[i]->child_start != nullptr &&
-        !backends[i]->child_start(connfd)) {
-      for (size_t j = i; j > 0; --j) {
-        if (backends[j - 1]->child_finish != nullptr) {
-          (void)backends[j - 1]->child_finish();
-        }
-      }
-      return false;
-    }
-  }
-  return true;
-}
-
-int rpc_server_child_finish(const rpc_backend *const *backends, size_t count) {
-  int result = 0;
-  for (size_t i = count; i > 0; --i) {
-    if (backends[i - 1]->child_finish != nullptr) {
-      int backend_result = backends[i - 1]->child_finish();
-      if (result == 0) {
-        result = backend_result;
-      }
-    }
-  }
-  return result;
-}
-
-bool rpc_server_connection_open(const rpc_backend *const *backends,
-                                size_t count, conn_t *conn) {
-  for (size_t i = 0; i < count; ++i) {
-    if (backends[i]->connection_open != nullptr &&
-        !backends[i]->connection_open(conn)) {
-      for (size_t j = i; j > 0; --j) {
-        if (backends[j - 1]->connection_close != nullptr) {
-          backends[j - 1]->connection_close(conn);
-        }
-      }
-      return false;
-    }
-  }
-  return true;
-}
-
-bool rpc_server_connection_ready(const rpc_backend *const *backends,
-                                 size_t count, conn_t *conn,
-                                 const char *session_id) {
-  for (size_t i = 0; i < count; ++i) {
-    if (backends[i]->connection_ready != nullptr &&
-        !backends[i]->connection_ready(conn, session_id)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-void rpc_server_connection_close(const rpc_backend *const *backends,
-                                 size_t count, conn_t *conn) {
-  for (size_t i = count; i > 0; --i) {
-    if (backends[i - 1]->connection_close != nullptr) {
-      backends[i - 1]->connection_close(conn);
-    }
-  }
 }

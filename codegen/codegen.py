@@ -216,7 +216,7 @@ LUPINE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
 const rpc_handler_registry &lupine_rpc_handlers() {
 #define LUPINE_REGISTER_HANDLER(operation, handler, backend)                    \
-  {operation, {handler, &backend}},
+  {operation, {handler, backend}},
   static const rpc_handler_registry handlers = {
       LUPINE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $guarded_handlers
@@ -243,8 +243,8 @@ class ServerBinding:
 
 
 SERVER_BACKENDS = {
-    "CUDA": "lupine_cuda_backend",
-    "NVML": "lupine_nvml_backend",
+    "CUDA": "rpc_backend::cuda",
+    "NVML": "rpc_backend::nvml",
 }
 
 

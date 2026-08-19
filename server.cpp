@@ -23,10 +23,12 @@
 #include <vector>
 #endif
 
+#include "copy_pipeline.h"
 #include "ipc.h"
 #include "lupine_log.h"
 #include "rpc.h"
 #include "rpc_server.h"
+#include "server_checkpoint.h"
 
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
@@ -98,29 +100,27 @@ struct lupine_lane {
 };
 
 int client_handler(lupine_socket_t connfd) {
-  size_t backend_count = 0;
-  const rpc_backend *const *backends = lupine_compiled_backends(&backend_count);
   const rpc_handler_registry &handlers = lupine_rpc_handlers();
   conn_t conn = {};
   if (rpc_conn_init(&conn, connfd, 1) < 0) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
-    return rpc_server_child_finish(backends, backend_count);
+    return lupine_server_checkpoint_child_finish();
   }
 
   int http2_init_result = rpc_http2_server_init(&conn);
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");
     rpc_conn_destroy(&conn);
-    return rpc_server_child_finish(backends, backend_count);
+    return lupine_server_checkpoint_child_finish();
   }
   if (http2_init_result != 0) {
     rpc_conn_destroy(&conn);
-    return rpc_server_child_finish(backends, backend_count);
+    return lupine_server_checkpoint_child_finish();
   }
-  if (!rpc_server_connection_open(backends, backend_count, &conn)) {
-    LUPINE_LOG_ERROR("Error initializing per-connection backend state.");
+  if (!lupine_server_initialize_connection(&conn)) {
+    LUPINE_LOG_ERROR("Error initializing per-connection CUDA state.");
     rpc_conn_destroy(&conn);
-    return rpc_server_child_finish(backends, backend_count);
+    return lupine_server_checkpoint_child_finish();
   }
 
   LUPINE_LOG_DEBUG("Client connected.");
@@ -169,8 +169,8 @@ int client_handler(lupine_socket_t connfd) {
     int op = conn.read_op;
 
     if (!connection_ready) {
-      if (!rpc_server_connection_ready(backends, backend_count, &conn,
-                                       rpc_http2_session_id(&conn))) {
+      if (!lupine_server_checkpoint_connection_ready(
+              rpc_http2_session_id(&conn))) {
         pthread_mutex_unlock(&conn.read_mutex);
         LUPINE_LOG_ERROR("Failed to restore connection checkpoint.");
         break;
@@ -266,18 +266,16 @@ int client_handler(lupine_socket_t connfd) {
     conn.rpc_thread = 0;
   }
 
-  // Finish backend persistence before releasing per-connection resources.
-  int checkpoint_result = rpc_server_child_finish(backends, backend_count);
-  rpc_server_connection_close(backends, backend_count, &conn);
+  // Finish checkpointing before releasing per-connection resources.
+  int checkpoint_result = lupine_server_checkpoint_child_finish();
+  lupine_server_cleanup_connection(&conn);
   rpc_conn_destroy(&conn);
   return checkpoint_result;
 }
 
 int main() {
-  size_t backend_count = 0;
-  const rpc_backend *const *backends = lupine_compiled_backends(&backend_count);
-  if (!rpc_server_validate(lupine_rpc_handlers(), backends, backend_count)) {
-    LUPINE_LOG_ERROR("Invalid compiled RPC backend registry.");
+  if (!rpc_server_validate(lupine_rpc_handlers())) {
+    LUPINE_LOG_ERROR("Invalid RPC handler registry.");
     return EXIT_FAILURE;
   }
   int port = DEFAULT_PORT;
@@ -465,7 +463,7 @@ int main() {
       }
       close(broker_pair[0]);
       lupine_ipc_set_broker_fd(broker_pair[1]);
-      if (!rpc_server_child_start(backends, backend_count, connfd)) {
+      if (!lupine_server_checkpoint_child_start(connfd)) {
         LUPINE_LOG_ERROR("Failed to initialize graceful child shutdown.");
         lupine_socket_close(connfd);
         exit(EXIT_FAILURE);

@@ -114,7 +114,6 @@ set(SERVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/server_backends.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cuda_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp
@@ -258,6 +257,7 @@ else()
     set_tests_properties(h2_unknown_cuda_version_test PROPERTIES TIMEOUT ${h2u_timeout})
 
     add_executable(rpc_server_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server_test.cpp
     )
