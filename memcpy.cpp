@@ -1,3 +1,5 @@
+#include "lupine_platform.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -23,7 +25,6 @@
 #include "codegen/gen_api.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_log.h"
-#include "lupine_platform.h"
 #include "memcpy.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 

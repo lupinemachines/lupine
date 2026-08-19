@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.18)
 
 project(LupineProject LANGUAGES C CXX)
 
+if(WIN32)
+  add_compile_definitions(_CRT_DECLARE_NONSTDC_NAMES=0)
+endif()
+
 if(APPLE)
   set(LUPINE_BUILD_SERVER_DEFAULT OFF)
 else()

@@ -89,6 +89,14 @@ struct Elf64_Sym {
 #define NOMINMAX
 #endif
 
+// clang-format off: Windows extension headers require winsock2.h first.
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mswsock.h>
+#include <mstcpip.h>
+#include <windows.h>
+// clang-format on
+
 #include <BaseTsd.h>
 #include <algorithm>
 #include <atomic>
@@ -98,19 +106,14 @@ struct Elf64_Sym {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <io.h>
 #include <mutex>
 #include <new>
+#include <sys/stat.h>
 #include <thread>
 #include <type_traits>
 #include <vector>
-// clang-format off: Windows extension headers require winsock2.h first.
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <mswsock.h>
-#include <mstcpip.h>
-#include <windows.h>
-// clang-format on
 
 using ssize_t = SSIZE_T;
 using socklen_t = int;
@@ -220,15 +223,23 @@ inline int pthread_once(pthread_once_t *once, void (*init)()) {
 inline DWORD lupine_thread_id() { return GetCurrentThreadId(); }
 inline DWORD lupine_process_id() { return GetCurrentProcessId(); }
 
-inline char *lupine_strdup(const char *value) {
-  return value == nullptr ? nullptr : _strdup(value);
-}
+using lupine_file_stat = struct _stat64;
 
-inline int lupine_strcasecmp(const char *first, const char *second) {
+inline int open(const char *path, int flags) { return _open(path, flags); }
+inline int open(const char *path, int flags, int mode) {
+  return _open(path, flags, mode);
+}
+inline int fstat(int fd, lupine_file_stat *status) {
+  return _fstat64(fd, status);
+}
+inline int close(int fd) { return _close(fd); }
+
+inline char *strdup(const char *value) { return _strdup(value); }
+inline int strcasecmp(const char *first, const char *second) {
   return _stricmp(first, second);
 }
 
-inline char *lupine_strsep(char **string, const char *delimiters) {
+inline char *strsep(char **string, const char *delimiters) {
   if (string == nullptr || *string == nullptr) {
     return nullptr;
   }
@@ -245,6 +256,13 @@ inline char *lupine_strsep(char **string, const char *delimiters) {
   *string = nullptr;
   return token;
 }
+
+#ifndef O_RDONLY
+#define O_RDONLY _O_RDONLY
+#endif
+#ifndef O_BINARY
+#define O_BINARY _O_BINARY
+#endif
 
 // Minimal POSIX virtual-memory compatibility for the client shim. Anonymous
 // mappings use VirtualAlloc; file mappings use CreateFileMapping. munmap
@@ -617,10 +635,16 @@ inline int lupine_fd_truncate(int fd, long length) {
 #include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
 using lupine_socket_t = int;
+using lupine_file_stat = struct stat;
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 
 #define LUPINE_INVALID_SOCKET (-1)
 #define LUPINE_STDOUT_FD STDOUT_FILENO

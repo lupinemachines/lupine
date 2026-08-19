@@ -1,3 +1,5 @@
+#include "lupine_platform.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -20,22 +22,15 @@
 #include <utility>
 #include <vector>
 
-#include "lupine_platform.h"
-
-#if defined(_WIN32)
-#include <fcntl.h>
-#include <sys/stat.h>
-#else
+#ifndef _WIN32
 #include <arpa/inet.h>
 #include <dlfcn.h>
-#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
 #include <strings.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #if defined(__APPLE__)
@@ -109,42 +104,6 @@ static void lupine_install_rpc_lifecycle_hooks() {
 }
 
 const char *DEFAULT_PORT = "14833";
-
-static char *lupine_client_strdup(const char *value) {
-#ifdef _WIN32
-  return lupine_strdup(value);
-#else
-  return strdup(value);
-#endif
-}
-
-static char *lupine_client_strsep(char **string, const char *delimiters) {
-#ifdef _WIN32
-  return lupine_strsep(string, delimiters);
-#else
-  return strsep(string, delimiters);
-#endif
-}
-
-#ifdef _WIN32
-using lupine_file_stat = struct _stat64;
-static int lupine_open_readonly(const char *path) {
-  return _open(path, _O_RDONLY | _O_BINARY);
-}
-static int lupine_file_fstat(int fd, lupine_file_stat *status) {
-  return _fstat64(fd, status);
-}
-static int lupine_file_close(int fd) { return _close(fd); }
-#else
-using lupine_file_stat = struct stat;
-static int lupine_open_readonly(const char *path) {
-  return open(path, O_RDONLY);
-}
-static int lupine_file_fstat(int fd, lupine_file_stat *status) {
-  return fstat(fd, status);
-}
-static int lupine_file_close(int fd) { return close(fd); }
-#endif
 
 void *rpc_client_dispatch_thread(void *arg);
 
@@ -842,12 +801,7 @@ static bool lupine_env_enabled(const char *name) {
   if (value == nullptr || strcmp(value, "0") == 0) {
     return false;
   }
-#ifdef _WIN32
-  return lupine_strcasecmp(value, "false") != 0 &&
-         lupine_strcasecmp(value, "no") != 0;
-#else
   return strcasecmp(value, "false") != 0 && strcasecmp(value, "no") != 0;
-#endif
 }
 
 static void *lupine_local_libcuda_handle() {
@@ -1432,23 +1386,23 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   void *mapping = MAP_FAILED;
   size_t mapped_size = 0;
-  int fd = lupine_open_readonly(fname);
+  int fd = open(fname, O_RDONLY | O_BINARY);
   if (fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
   }
   // FILE_NOT_FOUND is reserved for open() failing.
   lupine_file_stat st = {};
-  if (lupine_file_fstat(fd, &st) < 0) {
-    lupine_file_close(fd);
+  if (fstat(fd, &st) < 0) {
+    close(fd);
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
   if (st.st_size <= 0) {
-    lupine_file_close(fd);
+    close(fd);
     return CUDA_ERROR_INVALID_IMAGE;
   }
   mapped_size = static_cast<size_t>(st.st_size);
   mapping = mmap(nullptr, mapped_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  lupine_file_close(fd);
+  close(fd);
   if (mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -3040,7 +2994,7 @@ static const void *lupine_make_private_export_table(
   if (!table.empty()) {
     table[0] = reinterpret_cast<void *>(byte_size);
   }
-  char *stable_table_name = lupine_client_strdup(table_name);
+  char *stable_table_name = strdup(table_name);
   for (size_t i = 1; i < entries; ++i) {
     table[i] =
         lupine_make_private_export_stub(static_cast<int>(i), stable_table_name);
@@ -3933,24 +3887,24 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
   size_t jit_output_length = 0;
-  int file_fd = lupine_open_readonly(path);
+  int file_fd = open(path, O_RDONLY | O_BINARY);
   if (file_fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
   }
   // FILE_NOT_FOUND is reserved for open() failing.
   lupine_file_stat st = {};
-  if (lupine_file_fstat(file_fd, &st) < 0) {
-    lupine_file_close(file_fd);
+  if (fstat(file_fd, &st) < 0) {
+    close(file_fd);
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
   if (st.st_size <= 0) {
-    lupine_file_close(file_fd);
+    close(file_fd);
     return CUDA_ERROR_INVALID_IMAGE;
   }
   mapped_file_size = static_cast<size_t>(st.st_size);
   file_mapping =
       mmap(nullptr, mapped_file_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
-  lupine_file_close(file_fd);
+  close(file_fd);
   if (file_mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -8094,7 +8048,7 @@ static void *lupine_make_missing_stub(const char *symbol) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
   }
 
-  char *stable_symbol = lupine_client_strdup(symbol);
+  char *stable_symbol = strdup(symbol);
   void *handler = reinterpret_cast<void *>(&lupine_missing_driver_api_called);
 #if defined(_WIN32)
   // Microsoft x64 passes the first argument in rcx.
@@ -8546,10 +8500,10 @@ int rpc_open() {
 
   lupine_server_endpoints().clear();
 
-  char *server_ip = lupine_client_strdup(server_ips);
+  char *server_ip = strdup(server_ips);
   char *server_ip_cursor = server_ip;
   char *token;
-  while ((token = lupine_client_strsep(&server_ip_cursor, ","))) {
+  while ((token = strsep(&server_ip_cursor, ","))) {
     if (nconns >= static_cast<int>(sizeof(conns) / sizeof(*conns))) {
       LUPINE_LOG_ERROR("Too many LUPINE_SERVER entries; ignoring the rest");
       break;

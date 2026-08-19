@@ -1,3 +1,5 @@
+#include "lupine_platform.h"
+
 #include <cuda.h>
 #include <nvml.h>
 #ifdef LUPINE_TLS_OPENSSL
@@ -61,22 +63,6 @@ std::vector<lupine_nvml_remote_device> devices;
 std::vector<std::string> conn_labels;
 bool devices_ready = false;
 
-char *client_strdup(const char *value) {
-#ifdef _WIN32
-  return lupine_strdup(value);
-#else
-  return strdup(value);
-#endif
-}
-
-char *client_strsep(char **string, const char *delimiters) {
-#ifdef _WIN32
-  return lupine_strsep(string, delimiters);
-#else
-  return strsep(string, delimiters);
-#endif
-}
-
 // Real NVML reference counts init/shutdown; this shim connects lazily, so
 // without a counter it could never report UNINITIALIZED.
 std::atomic<int> init_refcount{0};
@@ -126,7 +112,7 @@ int open_connection() {
     return -1;
   }
 
-  char *servers = client_strdup(servers_env);
+  char *servers = strdup(servers_env);
   if (servers == nullptr) {
     pthread_mutex_unlock(&conn_mutex);
     return -1;
@@ -134,7 +120,7 @@ int open_connection() {
 
   char *cursor = servers;
   char *token = nullptr;
-  while ((token = client_strsep(&cursor, ",")) != nullptr) {
+  while ((token = strsep(&cursor, ",")) != nullptr) {
     if (token[0] == '\0') {
       continue;
     }
