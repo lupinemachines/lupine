@@ -7,6 +7,7 @@ from cxxheaderparser.preprocessor import make_gcc_preprocessor
 from cxxheaderparser.types import Type, Pointer, Parameter, Function, Array
 from typing import Optional, Union
 from dataclasses import dataclass
+from string import Template
 import io
 import os
 import glob
@@ -202,6 +203,214 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineLibrarySnapshot",
     "lupineManagedHostFlush",
 ]
+
+CUDA_MANUAL_SERVER_FUNCTIONS = [
+    "cuGetErrorName",
+    "cuGetErrorString",
+    "cuGetExportTableMetadata",
+    "cuPrivateGetModuleNode",
+    "cuModuleLoad",
+    "cuModuleLoadData",
+    "lupineFunctionParamLayoutSnapshot",
+    "lupineFunctionAttributeSnapshot",
+    "cuLibraryLoadData",
+    "lupineLibrarySnapshot",
+    "lupineLibraryAttributeSnapshot",
+    "cuCtxCreate_v2",
+    "cuDevicePrimaryCtxRetain",
+    "cuDevicePrimaryCtxRelease_v2",
+    "cuDevicePrimaryCtxReset_v2",
+    "cuCtxAttach",
+    "cuCtxDestroy_v2",
+    "cuCtxDetach",
+    "cuMemPoolSetAttribute",
+    "cuMemPoolGetAttribute",
+    "cuMemExportToShareableHandle",
+    "cuMemImportFromShareableHandle",
+    "cuMemPoolExportToShareableHandle",
+    "cuMemPoolImportFromShareableHandle",
+    "cuPointerGetAttribute",
+    "cuPointerSetAttribute",
+    "cuPointerGetAttributes",
+    "cuLinkCreate_v2",
+    "cuLinkAddData_v2",
+    "cuLinkAddFile_v2",
+    "cuLinkComplete",
+    "cuLinkDestroy",
+    "cuMemcpy3D_v2",
+    "cuMemcpy2D_v2",
+    "cuMemcpy2DUnaligned_v2",
+    "cuMemcpy2DAsync_v2",
+    "cuMemcpyDtoH_v2",
+    "cuMemcpyAtoH_v2",
+    "cuMemHostAlloc",
+    "cuMemHostGetFlags",
+    "cuDeviceGetGraphMemAttribute",
+    "cuDeviceSetGraphMemAttribute",
+    "cuLibraryGetModule",
+    "cuLibraryUnload",
+    "cuModuleGetGlobal_v2",
+    "cuOccupancyMaxPotentialBlockSize",
+    "cuOccupancyMaxPotentialBlockSizeWithFlags",
+    "cuLaunchKernel",
+    "cuLaunchKernelEx",
+    "cuLaunchCooperativeKernel",
+    "cuGraphAddKernelNode_v2",
+    "cuGraphKernelNodeGetParams_v2",
+    "cuGraphKernelNodeSetParams_v2",
+    "cuGraphAddMemcpyNode",
+    "cuGraphAddMemsetNode",
+    "cuGraphAddHostNode",
+    "cuGraphExecKernelNodeSetParams_v2",
+    "cuGraphConditionalHandleCreate",
+    "cuGraphAddNode_v2",
+    "cuGraphLaunch",
+    "cuGraphGetEdges_v2",
+    "cuGraphNodeGetDependencies_v2",
+    "cuGraphNodeGetDependentNodes_v2",
+    "cuMemPrefetchAsync",
+    "cuGraphHostNodeGetParams",
+    "cuGraphHostNodeSetParams",
+    "cuGraphExecHostNodeSetParams",
+    "cuLaunchHostFunc",
+    "cuStreamAddCallback",
+    "cuEventRecord",
+    "cuEventRecordWithFlags",
+    "cuEventQuery",
+    "lupineEventQueryBatch",
+    "cuStreamWaitEvent",
+    "cuStreamBeginCaptureToGraph",
+    "cuStreamUpdateCaptureDependencies_v2",
+    "cuStreamGetCaptureInfo_v3",
+    "cuStreamBeginCapture_v2",
+    "cuStreamEndCapture",
+    "cuGraphClone",
+    "cuGraphInstantiateWithFlags",
+    "cuGraphInstantiateWithParams",
+    "cuGraphExecDestroy",
+    "cuGraphDestroy",
+    "cuMemcpyHtoD_v2",
+    "cuMemcpyHtoDAsync_v2",
+    "lupineManagedHostFlush",
+    "lupineDeviceSnapshot",
+    "cuMemcpyDtoHAsync_v2",
+    "cuCtxSynchronize",
+    "cuStreamSynchronize",
+    "cuEventSynchronize",
+    "cuTensorMapEncodeTiled",
+]
+
+CUDA_MANUAL_SERVER_OVERRIDES = {
+    "cuGetExportTableMetadata": (
+        "handle_manual_cuGetExportTableMetadata",
+        "cuGetExportTable metadata",
+    ),
+    "cuPrivateGetModuleNode": (
+        "handle_manual_cuPrivateGetModuleNode",
+        "private module node",
+    ),
+    "cuOccupancyMaxPotentialBlockSize": (
+        "[](conn_t *conn) { return "
+        "handle_manual_cuOccupancyMaxPotentialBlockSize(conn, false); }",
+        "cuOccupancyMaxPotentialBlockSize",
+    ),
+    "cuOccupancyMaxPotentialBlockSizeWithFlags": (
+        "[](conn_t *conn) { return "
+        "handle_manual_cuOccupancyMaxPotentialBlockSize(conn, true); }",
+        "cuOccupancyMaxPotentialBlockSizeWithFlags",
+    ),
+    "cuGraphAddKernelNode_v2": (
+        "handle_manual_cuGraphAddKernelNode",
+        "cuGraphAddKernelNode",
+    ),
+    "cuGraphKernelNodeGetParams_v2": (
+        "handle_manual_cuGraphKernelNodeGetParams",
+        "cuGraphKernelNodeGetParams_v2",
+    ),
+    "cuGraphKernelNodeSetParams_v2": (
+        "handle_manual_cuGraphKernelNodeSetParams",
+        "cuGraphKernelNodeSetParams_v2",
+    ),
+    "cuGraphExecKernelNodeSetParams_v2": (
+        "handle_manual_cuGraphExecKernelNodeSetParams",
+        "cuGraphExecKernelNodeSetParams_v2",
+    ),
+    "cuGraphAddNode_v2": ("handle_manual_cuGraphAddNode", "cuGraphAddNode"),
+    "cuGraphGetEdges_v2": (
+        "handle_manual_cuGraphGetEdges",
+        "cuGraphGetEdges",
+    ),
+    "cuGraphNodeGetDependencies_v2": (
+        "handle_manual_cuGraphNodeGetDependencies",
+        "cuGraphNodeGetDependencies",
+    ),
+    "cuGraphNodeGetDependentNodes_v2": (
+        "handle_manual_cuGraphNodeGetDependentNodes",
+        "cuGraphNodeGetDependentNodes",
+    ),
+    "cuEventRecord": (
+        "[](conn_t *conn) { return handle_manual_cuEventRecord(conn, false); }",
+        "cuEventRecord",
+    ),
+    "cuEventRecordWithFlags": (
+        "[](conn_t *conn) { return handle_manual_cuEventRecord(conn, true); }",
+        "cuEventRecordWithFlags",
+    ),
+    "cuStreamUpdateCaptureDependencies_v2": (
+        "handle_manual_cuStreamUpdateCaptureDependencies",
+        "cuStreamUpdateCaptureDependencies",
+    ),
+    "cuStreamGetCaptureInfo_v3": (
+        "handle_manual_cuStreamGetCaptureInfo",
+        "cuStreamGetCaptureInfo",
+    ),
+    "cuStreamBeginCapture_v2": (
+        "handle_manual_cuStreamBeginCapture",
+        "cuStreamBeginCapture",
+    ),
+}
+
+CUDA_MANUAL_SERVER_GUARDS = {
+    "cuTensorMapEncodeTiled": "CUDA_VERSION >= 12000",
+}
+
+REGISTRY_CPP_TEMPLATE = Template(
+    r'''#include "rpc_server.h"
+
+#include "copy_pipeline.h"
+#include "cuda_server.h"
+#include "gen_api.h"
+#include "nvml_server.h"
+
+// clang-format off
+#define LUPINE_RPC_HANDLERS(GENERATED, MANUAL) \
+$registry_entries
+// clang-format on
+
+#define LUPINE_DECLARE_GENERATED(operation, handler, backend)                    \
+  int handler(conn_t *conn);
+#define LUPINE_DECLARE_MANUAL(operation, handler, backend, name)
+LUPINE_RPC_HANDLERS(LUPINE_DECLARE_GENERATED, LUPINE_DECLARE_MANUAL)
+#undef LUPINE_DECLARE_GENERATED
+#undef LUPINE_DECLARE_MANUAL
+
+const rpc_handler_registry &lupine_rpc_handlers() {
+#define LUPINE_REGISTER_GENERATED(operation, handler, backend)                  \
+  {operation, {handler, &backend}},
+#define LUPINE_REGISTER_MANUAL(operation, handler, backend, name)               \
+  {operation, {handler, &backend, name, rpc_handler_error_style::manual}},
+  static const rpc_handler_registry handlers = {
+      LUPINE_RPC_HANDLERS(LUPINE_REGISTER_GENERATED, LUPINE_REGISTER_MANUAL)
+$guarded_handlers
+  };
+#undef LUPINE_REGISTER_GENERATED
+#undef LUPINE_REGISTER_MANUAL
+  return handlers;
+}
+
+#undef LUPINE_RPC_HANDLERS
+'''
+)
 
 
 def rpc_id(name: str) -> int:
@@ -1715,11 +1924,8 @@ def main():
             "\n"
             "#include <cstring>\n"
             "#include <string>\n"
-            "#include <unordered_map>\n\n"
             '#include "gen_api.h"\n\n'
             '#include <vector>\n\n'
-            '#include <cstdio>\n\n'
-            '#include "gen_server.h"\n\n'
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
             '#include "nvml_server.h"\n\n'
@@ -1820,29 +2026,63 @@ def main():
             f.write("    return -1;\n")
             f.write("}\n\n")
 
-        f.write("static const rpc_handler_registry cudaHandlers = {\n")
-        for function, _, _, metadata in functions_with_annotations:
-            if metadata.disabled_server:
-                continue
-            else:
-                f.write(
-                    "    {{RPC_{name}, handle_{name}}},\n".format(
-                        name=function.name.format()
-                    )
-                )
-        f.write("};\n\n")
-        f.write("static const rpc_handler_registry nvmlHandlers = {\n")
-        for name in NVML_RPC_FUNCTIONS:
-            f.write("    {{RPC_{name}, handle_{name}}},\n".format(name=name))
-        f.write("};\n\n")
-        f.write("const rpc_handler_registry &get_cuda_handlers()\n")
-        f.write("{\n")
-        f.write("    return cudaHandlers;\n")
-        f.write("}\n\n")
-        f.write("const rpc_handler_registry &get_nvml_handlers()\n")
-        f.write("{\n")
-        f.write("    return nvmlHandlers;\n")
-        f.write("}\n")
+    manual_handlers = set(CUDA_MANUAL_SERVER_FUNCTIONS)
+    cuda_handlers = []
+    for function, _, _, metadata in functions_with_annotations:
+        name = function.name.format()
+        if not metadata.disabled_server and name not in manual_handlers:
+            cuda_handlers.append(name)
+
+    registered_names = CUDA_MANUAL_SERVER_FUNCTIONS + cuda_handlers + NVML_RPC_FUNCTIONS
+    operations_by_id = {}
+    for name in registered_names:
+        operation = rpc_id(name)
+        if operation in operations_by_id:
+            raise RuntimeError(
+                f"Duplicate RPC operation for {operations_by_id[operation]} and {name}"
+            )
+        operations_by_id[operation] = name
+
+    registry_entries = []
+    for name in CUDA_MANUAL_SERVER_FUNCTIONS:
+        if name in CUDA_MANUAL_SERVER_GUARDS:
+            continue
+        handler, display_name = CUDA_MANUAL_SERVER_OVERRIDES.get(
+            name, (f"handle_manual_{name}", name)
+        )
+        operation_prefix = "LUPINE_RPC_" if name in PRIVATE_RPC_FUNCTIONS else "RPC_"
+        registry_entries.append(
+            f'  MANUAL({operation_prefix}{name}, {handler}, lupine_cuda_backend, "{display_name}")'
+        )
+    registry_entries.extend(
+        f"  GENERATED(RPC_{name}, handle_{name}, lupine_cuda_backend)"
+        for name in cuda_handlers
+    )
+    registry_entries.extend(
+        f"  GENERATED(RPC_{name}, handle_{name}, lupine_nvml_backend)"
+        for name in NVML_RPC_FUNCTIONS
+    )
+
+    guarded_handlers = []
+    for name, guard in CUDA_MANUAL_SERVER_GUARDS.items():
+        handler, display_name = CUDA_MANUAL_SERVER_OVERRIDES.get(
+            name, (f"handle_manual_{name}", name)
+        )
+        operation_prefix = "LUPINE_RPC_" if name in PRIVATE_RPC_FUNCTIONS else "RPC_"
+        guarded_handlers.append(
+            f'#if {guard}\n'
+            f'      LUPINE_REGISTER_MANUAL({operation_prefix}{name}, {handler}, '
+            f'lupine_cuda_backend, "{display_name}")\n'
+            f'#endif'
+        )
+
+    with open("registry.cpp", "w") as f:
+        f.write(
+            REGISTRY_CPP_TEMPLATE.substitute(
+                registry_entries=" \\\n".join(registry_entries),
+                guarded_handlers="\n".join(guarded_handlers),
+            )
+        )
 
     subprocess.run(
         [
@@ -1853,6 +2093,7 @@ def main():
             "gen_nvml_server.h",
             "gen_nvml_server.inc",
             "gen_server.cpp",
+            "registry.cpp",
         ],
         check=True,
     )

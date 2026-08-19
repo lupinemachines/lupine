@@ -1,13 +1,10 @@
 #include "rpc_server.h"
 
 #include "checkpoint.h"
-#include "codegen/gen_server.h"
 #include "copy_pipeline.h"
 #include "server_checkpoint.h"
 
 #include <array>
-
-const rpc_handler_registry *const *lupine_cuda_server_registries(size_t *count);
 
 namespace {
 
@@ -24,17 +21,10 @@ bool cuda_connection_ready(conn_t *, const char *session_id) {
   return lupine_server_checkpoint_connection_ready(session_id);
 }
 
-const rpc_handler_registry *const *nvml_server_registries(size_t *count) {
-  static const std::array<const rpc_handler_registry *, 1> registries = {
-      &get_nvml_handlers(),
-  };
-  *count = registries.size();
-  return registries.data();
-}
+} // namespace
 
-const rpc_backend cuda_backend = {
+const rpc_backend lupine_cuda_backend = {
     "CUDA",
-    lupine_cuda_server_registries,
     lupine_server_checkpoint_child_start,
     lupine_server_checkpoint_child_finish,
     lupine_server_initialize_connection,
@@ -43,14 +33,15 @@ const rpc_backend cuda_backend = {
     lupine_server_cleanup_connection,
 };
 
-const rpc_backend nvml_backend = {
-    "NVML",  nvml_server_registries, nullptr, nullptr, nullptr,
-    nullptr, dispatch_direct,        nullptr,
+const rpc_backend lupine_nvml_backend = {
+    "NVML", nullptr, nullptr, nullptr, nullptr, dispatch_direct, nullptr,
 };
 
+namespace {
+
 const std::array<const rpc_backend *, 2> compiled_backends = {
-    &cuda_backend,
-    &nvml_backend,
+    &lupine_cuda_backend,
+    &lupine_nvml_backend,
 };
 
 } // namespace

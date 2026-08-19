@@ -28,18 +28,6 @@ int handle_second(conn_t *) {
   return 0;
 }
 
-const rpc_handler_registry first_handlers = {{10, {handle_first, "first"}}};
-const rpc_handler_registry second_handlers = {{20, {handle_second, "second"}}};
-const rpc_handler_registry duplicate_handlers = {
-    {10, {handle_second, "second"}}};
-
-template <const rpc_handler_registry *registry>
-const rpc_handler_registry *const *registries(size_t *count) {
-  static const rpc_handler_registry *const result[] = {registry};
-  *count = 1;
-  return result;
-}
-
 bool start_first(lupine_socket_t) {
   events.push_back("start:first");
   return true;
@@ -94,41 +82,41 @@ void close_first(conn_t *) { events.push_back("close:first"); }
 void close_second(conn_t *) { events.push_back("close:second"); }
 
 const rpc_backend first_backend = {
-    "first",        registries<&first_handlers>,
-    start_first,    finish_first,
-    open_first,     ready_first,
-    dispatch_first, close_first,
+    "first",     start_first,    finish_first, open_first,
+    ready_first, dispatch_first, close_first,
 };
 
 const rpc_backend second_backend = {
-    "second",        registries<&second_handlers>,
-    start_second,    finish_second,
-    open_second,     ready_second,
-    dispatch_second, close_second,
+    "second",     start_second,    finish_second, open_second,
+    ready_second, dispatch_second, close_second,
 };
 
-const rpc_backend duplicate_backend = {
-    "duplicate", registries<&duplicate_handlers>,
-    nullptr,     nullptr,
-    nullptr,     nullptr,
-    nullptr,     nullptr,
+const rpc_backend unknown_backend = {
+    "unknown", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
 
-void test_lookup_and_duplicates() {
-  const rpc_backend *valid[] = {&first_backend, &second_backend};
-  const rpc_backend *duplicate[] = {&first_backend, &duplicate_backend};
-  require(rpc_server_validate_backends(valid, 2),
-          "valid backend registry rejected");
-  require(!rpc_server_validate_backends(duplicate, 2),
-          "duplicate operation accepted");
+const rpc_handler_registry handlers = {
+    {10, {handle_first, &first_backend, "first"}},
+    {20, {handle_second, &second_backend, "second"}},
+};
+
+void test_registry_and_dispatch() {
+  const rpc_backend *backends[] = {&first_backend, &second_backend};
+  const rpc_handler_registry invalid_handlers = {
+      {30, {handle_first, &unknown_backend, "invalid"}},
+  };
+  require(rpc_server_validate(handlers, backends, 2),
+          "valid handler registry rejected");
+  require(!rpc_server_validate(invalid_handlers, backends, 2),
+          "unknown backend accepted");
   conn_t conn = {};
   events.clear();
-  require(rpc_server_dispatch(valid, 2, &conn, 20) == 0,
+  require(rpc_server_dispatch(handlers, &conn, 20) == 0,
           "second backend lookup failed");
   require(events ==
               std::vector<std::string>({"dispatch:second", "handle:second"}),
           "dispatch ordering changed");
-  require(rpc_server_dispatch(valid, 2, &conn, 30) < 0,
+  require(rpc_server_dispatch(handlers, &conn, 30) < 0,
           "unknown operation accepted");
 }
 
@@ -154,7 +142,7 @@ void test_lifecycle_ordering() {
 } // namespace
 
 int main() {
-  test_lookup_and_duplicates();
+  test_registry_and_dispatch();
   test_lifecycle_ordering();
   std::cout << "rpc_server_test: PASS" << std::endl;
   return 0;

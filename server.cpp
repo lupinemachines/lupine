@@ -73,9 +73,8 @@ lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
       break;
     }
     if (WIFSIGNALED(status)) {
-      LUPINE_LOG_ERROR("Connection child "
-                       << child << " terminated by signal "
-                       << WTERMSIG(status));
+      LUPINE_LOG_ERROR("Connection child " << child << " terminated by signal "
+                                           << WTERMSIG(status));
     } else if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
       LUPINE_LOG_ERROR("Connection child "
                        << child << " exited abnormally with status " << status);
@@ -101,6 +100,7 @@ struct lupine_lane {
 int client_handler(lupine_socket_t connfd) {
   size_t backend_count = 0;
   const rpc_backend *const *backends = lupine_compiled_backends(&backend_count);
+  const rpc_handler_registry &handlers = lupine_rpc_handlers();
   conn_t conn = {};
   if (rpc_conn_init(&conn, connfd, 1) < 0) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
@@ -188,7 +188,7 @@ int client_handler(lupine_socket_t connfd) {
       }
       lane = std::make_shared<lupine_lane>();
       lane->id = lane_id;
-      lane->worker = std::thread([&conn, lane, backends, backend_count]() {
+      lane->worker = std::thread([&conn, &handlers, lane]() {
         for (;;) {
           int op = 0;
           {
@@ -204,7 +204,7 @@ int client_handler(lupine_socket_t connfd) {
             rpc_read_end(&conn);
             return;
           }
-          if (rpc_server_dispatch(backends, backend_count, &conn, op) >= 0) {
+          if (rpc_server_dispatch(handlers, &conn, op) >= 0) {
             continue;
           }
           rpc_read_end(&conn);
@@ -276,7 +276,7 @@ int client_handler(lupine_socket_t connfd) {
 int main() {
   size_t backend_count = 0;
   const rpc_backend *const *backends = lupine_compiled_backends(&backend_count);
-  if (!rpc_server_validate_backends(backends, backend_count)) {
+  if (!rpc_server_validate(lupine_rpc_handlers(), backends, backend_count)) {
     LUPINE_LOG_ERROR("Invalid compiled RPC backend registry.");
     return EXIT_FAILURE;
   }
