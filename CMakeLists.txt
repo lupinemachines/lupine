@@ -2,6 +2,21 @@ cmake_minimum_required(VERSION 3.18)
 
 project(LupineProject LANGUAGES C CXX)
 
+set(LUPINE_BUILD_SERVER_DEFAULT ON)
+set(LUPINE_BUILD_NVML_CLIENT_DEFAULT ON)
+if(APPLE)
+  # NVIDIA does not ship a Darwin CUDA toolkit or driver, but the RPC client
+  # only needs the platform-independent CUDA headers.
+  set(LUPINE_BUILD_SERVER_DEFAULT OFF)
+  set(LUPINE_BUILD_NVML_CLIENT_DEFAULT OFF)
+endif()
+option(LUPINE_BUILD_SERVER "Build the CUDA driver server"
+       ${LUPINE_BUILD_SERVER_DEFAULT})
+option(LUPINE_BUILD_NVML_CLIENT "Build the NVML client shim"
+       ${LUPINE_BUILD_NVML_CLIENT_DEFAULT})
+set(LUPINE_CUDA_INCLUDE_DIR "" CACHE PATH
+    "CUDA include directory for a header-only client build")
+
 # Sanitizers are applied only to the CPU-only *_test executables (transport,
 # decoder, ipc, checkpoint), never the nvcc-compiled driver/server. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -28,32 +43,50 @@ function(lupine_scaled_timeout out base)
     set(${out} ${scaled} PARENT_SCOPE)
 endfunction()
 
-if (NOT WIN32)
+if (LUPINE_BUILD_SERVER AND NOT WIN32)
     enable_language(CUDA)
 endif()
 
 set(MIN_CUDA_VERSION 11.0)
 
-find_package(CUDAToolkit REQUIRED)
+if(LUPINE_CUDA_INCLUDE_DIR)
+  find_path(LUPINE_CUDA_HEADER_DIR cuda.h
+      PATHS "${LUPINE_CUDA_INCLUDE_DIR}"
+      NO_DEFAULT_PATH
+      REQUIRED)
+  set(CUDAToolkit_INCLUDE_DIRS "${LUPINE_CUDA_HEADER_DIR}")
+  if(LUPINE_BUILD_SERVER)
+    message(FATAL_ERROR
+        "LUPINE_CUDA_INCLUDE_DIR supports client-only builds; the server requires a full CUDA toolkit")
+  endif()
+  file(STRINGS "${LUPINE_CUDA_HEADER_DIR}/cuda.h" LUPINE_CUDA_VERSION_LINE
+       REGEX "^#define CUDA_VERSION +[0-9]+$")
+  string(REGEX REPLACE ".*CUDA_VERSION +([0-9]+).*" "\\1"
+         LUPINE_CUDA_HEADER_VERSION "${LUPINE_CUDA_VERSION_LINE}")
+  message(STATUS
+      "Using header-only CUDA API version: ${LUPINE_CUDA_HEADER_VERSION}")
+else()
+  find_package(CUDAToolkit REQUIRED)
+
+  if (NOT CUDAToolkit_VERSION)
+      message(FATAL_ERROR "CUDA Toolkit is required but not found.")
+  endif()
+
+  if (CUDAToolkit_VERSION VERSION_LESS MIN_CUDA_VERSION)
+      message(FATAL_ERROR "CUDA Toolkit version must be >= ${MIN_CUDA_VERSION}. Found: ${CUDAToolkit_VERSION}")
+  endif()
+
+  message(STATUS "Found CUDA Toolkit version: ${CUDAToolkit_VERSION}")
+endif()
 find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
 find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
 # The server stays plaintext (front it with a TLS proxy); only the client links OpenSSL.
 find_package(OpenSSL QUIET)
 
-if (NOT CUDAToolkit_VERSION)
-    message(FATAL_ERROR "CUDA Toolkit is required but not found.")
-endif()
-
-if (CUDAToolkit_VERSION VERSION_LESS MIN_CUDA_VERSION)
-    message(FATAL_ERROR "CUDA Toolkit version must be >= ${MIN_CUDA_VERSION}. Found: ${CUDAToolkit_VERSION}")
-endif()
-
-message(STATUS "Found CUDA Toolkit version: ${CUDAToolkit_VERSION}")
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-if (NOT WIN32)
+if (LUPINE_BUILD_SERVER AND NOT WIN32)
     set(CMAKE_CUDA_STANDARD 14)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     set(CMAKE_CUDA_EXTENSIONS OFF)
@@ -119,9 +152,11 @@ set(CUDA_CLIENT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.h
     ${CMAKE_CURRENT_SOURCE_DIR}/client_routing.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/lupine_elf.h
     ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.h
     ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cuda_profiler_compat.h
 )
 
 set(SERVER_HEADERS
@@ -151,35 +186,48 @@ if (NOT WIN32)
       target_compile_definitions(${CUDA_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
       target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     endif()
-    target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
-    target_link_options(${CUDA_CLIENT_OUTPUT} PRIVATE
-        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports"
-    )
+    target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE ${NGHTTP2_LIBRARY} lupine_lz4)
+    if(NOT APPLE)
+      target_link_libraries(${CUDA_CLIENT_OUTPUT} PRIVATE stdc++)
+      target_link_options(${CUDA_CLIENT_OUTPUT} PRIVATE
+          "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports"
+      )
+    endif()
     set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         OUTPUT_NAME cuda
+    )
+    if(NOT APPLE)
+      set_target_properties(${CUDA_CLIENT_OUTPUT} PROPERTIES
         VERSION 1
         SOVERSION 1
-    )
-
-    add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
-    target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    if(OpenSSL_FOUND)
-      target_compile_definitions(${NVML_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
-      target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+      )
     endif()
-    target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++ ${NGHTTP2_LIBRARY} lupine_lz4)
-    target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
-        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
-    )
-    set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME nvidia-ml
-        VERSION 1
-        SOVERSION 1
-    )
+
+    if(LUPINE_BUILD_NVML_CLIENT)
+      add_library(${NVML_CLIENT_OUTPUT} SHARED ${NVML_CLIENT_SOURCES})
+      target_include_directories(${NVML_CLIENT_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+      if(OpenSSL_FOUND)
+        target_compile_definitions(${NVML_CLIENT_OUTPUT} PRIVATE LUPINE_TLS_OPENSSL)
+        target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+      endif()
+      target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE ${NGHTTP2_LIBRARY} lupine_lz4)
+      if(NOT APPLE)
+        target_link_libraries(${NVML_CLIENT_OUTPUT} PRIVATE stdc++)
+        target_link_options(${NVML_CLIENT_OUTPUT} PRIVATE
+            "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports"
+        )
+      endif()
+      set_target_properties(${NVML_CLIENT_OUTPUT} PROPERTIES
+          POSITION_INDEPENDENT_CODE ON
+          OUTPUT_NAME nvidia-ml
+          VERSION 1
+          SOVERSION 1
+      )
+    endif()
 endif()
 
+if(LUPINE_BUILD_SERVER)
 add_executable(${SERVER_OUTPUT} ${SERVER_SOURCES} ${SERVER_HEADERS})
 target_include_directories(${SERVER_OUTPUT} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 target_compile_definitions(${SERVER_OUTPUT} PRIVATE
@@ -302,31 +350,39 @@ else()
         TIMEOUT 10
         SKIP_RETURN_CODE 77
     )
-    add_test(
-        NAME nvml_ecc_exports
-        COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetCudaComputeCapability"
-    )
+    if(TARGET ${NVML_CLIENT_OUTPUT})
+      add_test(
+          NAME nvml_ecc_exports
+          COMMAND bash -c "nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetMemoryErrorCounter && nm -D \"$<TARGET_FILE:${NVML_CLIENT_OUTPUT}>\" | grep -q nvmlDeviceGetCudaComputeCapability"
+      )
+    endif()
     set_source_files_properties(
         ${SERVER_SOURCES}
         PROPERTIES LANGUAGE CUDA
     )
 endif()
+endif()
 
-if (NOT WIN32)
+if (LUPINE_BUILD_SERVER AND NOT WIN32)
     target_compile_options(${SERVER_OUTPUT} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>: --compiler-options=-fPIC,-g,-Wno-deprecated-declarations>
     )
 
+endif()
+
+if(TARGET ${CUDA_CLIENT_OUTPUT})
     target_compile_options(${CUDA_CLIENT_OUTPUT} PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
-    )
-
-    target_compile_options(${NVML_CLIENT_OUTPUT} PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>: -Wno-deprecated-declarations>
-    )
-
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>)
     message(STATUS "Building CUDA client output: ${CUDA_CLIENT_OUTPUT}")
     message(STATUS "Client TLS (OpenSSL): ${OpenSSL_FOUND}")
+endif()
+
+if(TARGET ${NVML_CLIENT_OUTPUT})
+    target_compile_options(${NVML_CLIENT_OUTPUT} PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>)
     message(STATUS "Building NVML client output: ${NVML_CLIENT_OUTPUT}")
 endif()
-message(STATUS "Building server output: ${SERVER_OUTPUT}")
+
+if(LUPINE_BUILD_SERVER)
+  message(STATUS "Building server output: ${SERVER_OUTPUT}")
+endif()

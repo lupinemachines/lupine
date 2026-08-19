@@ -8,7 +8,9 @@
 #include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
+#if !defined(__APPLE__)
 #include <sys/syscall.h>
+#endif
 #include <sys/uio.h>
 #include <unistd.h>
 #include <vector>
@@ -165,7 +167,13 @@ static size_t lupine_page_size() {
   return page_size > 0 ? static_cast<size_t>(page_size) : 4096;
 }
 
-static pid_t lupine_gettid() { return static_cast<pid_t>(syscall(SYS_gettid)); }
+static pid_t lupine_gettid() {
+#if defined(__APPLE__)
+  return static_cast<pid_t>(pthread_mach_thread_np(pthread_self()));
+#else
+  return static_cast<pid_t>(syscall(SYS_gettid));
+#endif
+}
 
 static size_t lupine_round_up(size_t value, size_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
@@ -882,7 +890,11 @@ static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
   }
   uintptr_t page = static_cast<uintptr_t>(ptr) &
                    ~(static_cast<uintptr_t>(page_size) - 1);
+#if defined(__APPLE__)
+  char residency = 0;
+#else
   unsigned char residency = 0;
+#endif
   return mincore(reinterpret_cast<void *>(page), page_size, &residency) == 0;
 }
 

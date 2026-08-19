@@ -4,11 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cuda.h>
-#include <cudaProfiler.h>
 #include <dlfcn.h>
-#include <elf.h>
 #include <fcntl.h>
-#include <features.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -28,7 +25,6 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 #include <thread>
 #include <unistd.h>
@@ -36,8 +32,11 @@
 #include <utility>
 #include <vector>
 
-#if !defined(__GLIBC__)
-#error "Lupine CUDA client requires glibc"
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#elif !defined(__GLIBC__)
+#error "Lupine CUDA client requires glibc or macOS"
 #endif
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
@@ -52,9 +51,11 @@
 #include "client_routing.h"
 #include "codegen/gen_api.h"
 #include "codegen/gen_cuda_client.h"
+#include "cuda_profiler_compat.h"
 #include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
+#include "lupine_elf.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "memcpy.h"
@@ -177,6 +178,7 @@ static bool lupine_symbol_looks_like_driver_api(const char *symbol) {
 
 using lupine_dlsym_fn = void *(*)(void *, const char *);
 
+#if defined(__GLIBC__)
 static const char *lupine_dlsym_glibc_version() {
 #if defined(__x86_64__)
   return "GLIBC_2.2.5";
@@ -200,6 +202,11 @@ static void *lupine_real_dlsym(void *handle, const char *name) {
   }
   return real_dlsym != nullptr ? real_dlsym(handle, name) : nullptr;
 }
+#else
+static void *lupine_real_dlsym(void *handle, const char *name) {
+  return ::dlsym(handle, name);
+}
+#endif
 
 extern "C" CUresult lupine_unsupported_driver_api() {
   LUPINE_LOG_ERROR("LUPINE unsupported generic Driver API called");
@@ -796,10 +803,12 @@ static void *lupine_local_libcuda_handle() {
     const char *override_path = getenv("LUPINE_REAL_LIBCUDA");
     const char *paths[] = {
         override_path,
+#if !defined(__APPLE__)
         "/usr/lib/x86_64-linux-gnu/libcuda.so.1",
         "/usr/lib/aarch64-linux-gnu/libcuda.so.1",
         "/usr/lib64/libcuda.so.1",
         "/usr/lib/wsl/lib/libcuda.so.1",
+#endif
         nullptr,
     };
     for (const char *path : paths) {
@@ -6808,6 +6817,21 @@ static bool lupine_is_writable_user_pointer(const void *ptr, size_t size) {
     return false;
   }
 
+#if defined(__APPLE__)
+  mach_vm_address_t region = static_cast<mach_vm_address_t>(start);
+  mach_vm_size_t region_size = 0;
+  vm_region_basic_info_data_64_t info = {};
+  mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+  mach_port_t object_name = MACH_PORT_NULL;
+  kern_return_t result = mach_vm_region(
+      mach_task_self(), &region, &region_size, VM_REGION_BASIC_INFO_64,
+      reinterpret_cast<vm_region_info_t>(&info), &info_count, &object_name);
+  if (object_name != MACH_PORT_NULL) {
+    mach_port_deallocate(mach_task_self(), object_name);
+  }
+  return result == KERN_SUCCESS && region <= start &&
+         end <= region + region_size && (info.protection & VM_PROT_WRITE) != 0;
+#else
   std::ifstream maps("/proc/self/maps");
   std::string line;
   while (std::getline(maps, line)) {
@@ -6823,6 +6847,7 @@ static bool lupine_is_writable_user_pointer(const void *ptr, size_t size) {
     }
   }
   return false;
+#endif
 }
 
 static CUresult lupine_cuStreamGetCaptureInfo(
@@ -8644,7 +8669,12 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
 
-  void *libCudaHandle = dlopen("libcuda.so", RTLD_NOW | RTLD_GLOBAL);
+#if defined(__APPLE__)
+  const char *libcuda_name = "libcuda.dylib";
+#else
+  const char *libcuda_name = "libcuda.so";
+#endif
+  void *libCudaHandle = dlopen(libcuda_name, RTLD_NOW | RTLD_GLOBAL);
   if (!libCudaHandle) {
     if (lupine_stub_missing_enabled() &&
         lupine_symbol_looks_like_driver_api(symbol)) {
@@ -8706,7 +8736,8 @@ extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
   return CUDA_SUCCESS;
 }
 
-void *dlsym(void *handle, const char *name) __THROW {
+#if defined(__GLIBC__)
+void *dlsym(void *handle, const char *name) noexcept {
   LUPINE_TRACE_LOG("dlsym: " << name);
 
   if (!lupine_symbol_looks_like_driver_api(name)) {
@@ -8766,6 +8797,7 @@ void *dlsym(void *handle, const char *name) __THROW {
   // std::endl;
   return lupine_real_dlsym(handle, name);
 }
+#endif
 
 static const std::unordered_map<std::string, void *> &
 lupine_manual_function_map() {

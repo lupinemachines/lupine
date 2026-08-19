@@ -23,6 +23,7 @@ extern "C" int lupine_ipc_broker_parent_handle(int) { return -1; }
 #else
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -30,7 +31,9 @@ extern "C" int lupine_ipc_broker_parent_handle(int) { return -1; }
 
 #include <fcntl.h>
 #include <sys/mman.h>
+#if !defined(__APPLE__)
 #include <sys/random.h>
+#endif
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -142,6 +145,10 @@ extern "C" int lupine_ipc_make_token(lupine_ipc_token *token) {
   if (token == nullptr) {
     return -1;
   }
+#if defined(__APPLE__)
+  arc4random_buf(token->bytes, sizeof(token->bytes));
+  return 0;
+#else
   size_t done = 0;
   while (done < sizeof(token->bytes)) {
     ssize_t n = getrandom(token->bytes + done, sizeof(token->bytes) - done, 0);
@@ -154,6 +161,7 @@ extern "C" int lupine_ipc_make_token(lupine_ipc_token *token) {
     done += static_cast<size_t>(n);
   }
   return 0;
+#endif
 }
 
 extern "C" int lupine_ipc_create_proxy_fd(uint32_t kind,
@@ -162,7 +170,15 @@ extern "C" int lupine_ipc_create_proxy_fd(uint32_t kind,
   if (token == nullptr || out_fd == nullptr) {
     return -1;
   }
+#if defined(__APPLE__)
+  char path[] = "/tmp/lupine-ipc-proxy.XXXXXX";
+  int fd = mkstemp(path);
+  if (fd >= 0) {
+    unlink(path);
+  }
+#else
   int fd = memfd_create("lupine-ipc-proxy", 0);
+#endif
   if (fd < 0) {
     return -1;
   }

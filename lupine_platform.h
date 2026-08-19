@@ -200,7 +200,11 @@ inline ssize_t lupine_socket_sendv(lupine_socket_t socket,
   struct msghdr msg = {};
   msg.msg_iov = const_cast<struct iovec *>(iov);
   msg.msg_iovlen = static_cast<size_t>(count);
+#ifdef MSG_NOSIGNAL
   return sendmsg(socket, &msg, MSG_NOSIGNAL);
+#else
+  return sendmsg(socket, &msg, 0);
+#endif
 }
 
 inline int lupine_fd_dup(int fd) { return dup(fd); }
@@ -259,6 +263,11 @@ inline int lupine_socket_apply_transport_options(lupine_socket_t fd) {
              reinterpret_cast<const char *>(&enabled), sizeof(enabled));
   setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE,
              reinterpret_cast<const char *>(&enabled), sizeof(enabled));
+#ifdef SO_NOSIGPIPE
+  // Darwin has no MSG_NOSIGNAL; apply the equivalent behavior to the socket.
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE,
+             reinterpret_cast<const char *>(&enabled), sizeof(enabled));
+#endif
 
   int keepidle = kKeepidleSec;
   int keepintvl = kKeepintvlSec;
@@ -279,7 +288,11 @@ inline int lupine_socket_apply_transport_options(lupine_socket_t fd) {
 #else
   constexpr int kDeadPeerTimeoutMs =
       (kKeepidleSec + kKeepintvlSec * kKeepcnt) * 1000;
+#if defined(__APPLE__)
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE,
+#else
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE,
+#endif
              reinterpret_cast<const char *>(&keepidle), sizeof(keepidle));
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL,
              reinterpret_cast<const char *>(&keepintvl), sizeof(keepintvl));

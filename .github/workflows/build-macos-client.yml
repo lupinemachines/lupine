@@ -1,0 +1,120 @@
+name: Build macOS Client
+
+on:
+  release:
+    types: [published]
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CUDA_HEADER_PACKAGE: nvidia-cuda-runtime-cu12
+  CUDA_HEADER_VERSION: 12.9.79
+
+jobs:
+  build:
+    name: macOS client / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: brew install libnghttp2 ninja openssl@3
+
+      - name: Download CUDA headers
+        run: |
+          set -euo pipefail
+          mkdir -p cuda-wheel cuda-sdk
+          python3 -m pip download \
+            --dest cuda-wheel \
+            --only-binary=:all: \
+            --platform manylinux2014_x86_64 \
+            --implementation py \
+            --python-version 3 \
+            --abi none \
+            --no-deps \
+            "${CUDA_HEADER_PACKAGE}==${CUDA_HEADER_VERSION}"
+          python3 -m zipfile -e \
+            "cuda-wheel/nvidia_cuda_runtime_cu12-${CUDA_HEADER_VERSION}-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" \
+            cuda-sdk
+          test -f cuda-sdk/nvidia/cuda_runtime/include/cuda.h
+
+      - name: Configure client-only build
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix libnghttp2);$(brew --prefix openssl@3)" \
+            -DLUPINE_BUILD_SERVER=OFF \
+            -DLUPINE_BUILD_NVML_CLIENT=OFF \
+            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cuda_runtime/include"
+
+      - name: Build CUDA client dylib
+        run: cmake --build build --parallel --target lupine_cuda_client
+
+      - name: Verify dylib
+        run: |
+          set -euo pipefail
+          test -f build/libcuda.dylib
+          test "$(lipo -archs build/libcuda.dylib)" = "${{ matrix.arch }}"
+          nm -gjU build/libcuda.dylib | grep -qx '_cuInit'
+          nm -gjU build/libcuda.dylib | grep -qx '_cuGetProcAddress'
+          if otool -L build/libcuda.dylib | tail -n +2 | grep -Eq 'libcuda|libcudart'; then
+            echo 'The client dylib unexpectedly links a CUDA library' >&2
+            exit 1
+          fi
+          DYLIB_PATH="$PWD/build/libcuda.dylib" python3 - <<'PY'
+          import ctypes
+          import os
+
+          client = ctypes.CDLL(os.environ["DYLIB_PATH"])
+          assert client.cuInit
+          assert client.cuGetProcAddress
+          PY
+
+      - name: Collect client artifact
+        run: |
+          set -euo pipefail
+          asset="lupine-client-cuda-${CUDA_HEADER_VERSION}-macos-${{ matrix.arch }}"
+          out="artifacts/${asset}"
+          mkdir -p "$out"
+          cp build/libcuda.dylib "$out/libcuda.dylib"
+          (cd "$out" && shasum -a 256 libcuda.dylib > SHA256SUMS)
+          (cd "$out" && zip -r "../${asset}.zip" .)
+
+      - name: Upload client artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-cuda-${{ env.CUDA_HEADER_VERSION }}-macos-${{ matrix.arch }}
+          path: artifacts/lupine-client-cuda-${{ env.CUDA_HEADER_VERSION }}-macos-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset="artifacts/lupine-client-cuda-${CUDA_HEADER_VERSION}-macos-${{ matrix.arch }}.zip"
+          gh release upload \
+            "${{ github.event.release.tag_name }}" \
+            "$asset" \
+            --repo "${{ github.repository }}" \
+            --clobber
