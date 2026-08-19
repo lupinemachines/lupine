@@ -94,6 +94,16 @@ extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
+// Pitched transfers move `slices` * `rows` rows of `width` bytes; rows sit
+// `row_stride` bytes apart and slices `slice_stride` bytes apart at this
+// endpoint. The wire carries the rows back-to-back, identical to a contiguous
+// transfer of width * rows * slices bytes. A flat 2D region is one slice.
+extern int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
+                             size_t rows, size_t row_stride, size_t slices,
+                             size_t slice_stride);
+extern int rpc_read_pitched(conn_t *conn, void *data, size_t width,
+                            size_t rows, size_t row_stride, size_t slices,
+                            size_t slice_stride);
 // Reserves the request-owned storage used by subsequent rpc_write_buffer
 // calls. The reservation must be made once before the first buffered write in
 // an RPC and is released with the request.

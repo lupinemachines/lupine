@@ -394,6 +394,19 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
   return rpc_http2_read(conn, data, size);
 }
 
+int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
+                     size_t row_stride, size_t slices, size_t slice_stride) {
+  for (size_t z = 0; z < slices; ++z) {
+    char *slice = (char *)data + z * slice_stride;
+    for (size_t row = 0; row < rows; ++row) {
+      if (rpc_read(conn, slice + row * row_stride, width) < 0) {
+        return -1;
+      }
+    }
+  }
+  return 0;
+}
+
 int rpc_drain(conn_t *conn, size_t size) {
   char buffer[64 * 1024];
   size_t offset = 0;
@@ -569,6 +582,22 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
     return 0;
   }
   return rpc_write_queue_push(conn, data, size, 0);
+}
+
+// Rows are queued, not copied, so the caller's buffer must stay valid until
+// the surrounding rpc_write_end.
+int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
+                      size_t rows, size_t row_stride, size_t slices,
+                      size_t slice_stride) {
+  for (size_t z = 0; z < slices; ++z) {
+    const char *slice = (const char *)data + z * slice_stride;
+    for (size_t row = 0; row < rows; ++row) {
+      if (rpc_write(conn, slice + row * row_stride, width) < 0) {
+        return -1;
+      }
+    }
+  }
+  return 0;
 }
 
 int rpc_copy_alloc(conn_t *conn, const size_t size) {
