@@ -2,17 +2,6 @@
 
 #include <cuda.h>
 #include <nvml.h>
-#ifdef LUPINE_TLS_OPENSSL
-#include <openssl/ssl.h>
-#endif
-#ifndef _WIN32
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
-#include <pthread.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +18,7 @@
 #include "codegen/gen_api.h"
 #include "lupine_log.h"
 #include "rpc.h"
+#include "transport.h"
 
 // CUDA <= 12.6 ships NVML API 12, which does not define the versioned
 // temperature struct. Keep the wrapper ABI-compatible with newer nvidia-smi.
@@ -45,13 +35,6 @@ typedef struct {
 
 namespace {
 
-constexpr const char *DEFAULT_PORT = "14833";
-
-pthread_mutex_t conn_mutex = PTHREAD_MUTEX_INITIALIZER;
-conn_t conns[16] = {};
-int nconns = 0;
-bool connected = false;
-
 struct lupine_nvml_remote_device {
   unsigned int conn_index = 0;
   unsigned int remote_index = 0;
@@ -60,7 +43,6 @@ struct lupine_nvml_remote_device {
 };
 
 std::vector<lupine_nvml_remote_device> devices;
-std::vector<std::string> conn_labels;
 bool devices_ready = false;
 
 // Real NVML reference counts init/shutdown; this shim connects lazily, so
@@ -82,8 +64,8 @@ nvmlReturn_t rpc_error() {
   return nvml_initialized() ? NVML_ERROR_UNKNOWN : NVML_ERROR_UNINITIALIZED;
 }
 
-void *rpc_client_dispatch_thread(void *p) {
-  conn_t *connection = static_cast<conn_t *>(p);
+void *nvml_transport_dispatch(void *argument) {
+  auto *connection = static_cast<conn_t *>(argument);
   while (!connection->closed) {
     int op = rpc_dispatch(connection, 1);
     if (op < 0 || connection->closed) {
@@ -96,214 +78,50 @@ void *rpc_client_dispatch_thread(void *p) {
   return nullptr;
 }
 
+const lupine_client_transport_config &nvml_transport_config() {
+  static const auto config = [] {
+    lupine_client_transport_config config;
+    config.dial_policy = lupine_client_dial_policy::single_attempt;
+    config.strict_endpoints = true;
+    config.log_missing_server = true;
+    config.dispatch = nvml_transport_dispatch;
+    return config;
+  }();
+  return config;
+}
+
+void nvml_retire_thread_lane(uint64_t lane_id) {
+  lupine_client_transport_retire_lane(lane_id);
+}
+
+pthread_once_t nvml_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
+
+void nvml_install_rpc_lifecycle_hooks() {
+  const rpc_lifecycle_hooks hooks = {nullptr, nvml_retire_thread_lane};
+  if (rpc_set_lifecycle_hooks(&hooks) < 0) {
+    LUPINE_LOG_ERROR("Failed to install NVML RPC lifecycle hooks");
+  }
+}
+
 int open_connection() {
-  if (pthread_mutex_lock(&conn_mutex) < 0) {
+  if (pthread_once(&nvml_rpc_lifecycle_once,
+                   nvml_install_rpc_lifecycle_hooks) != 0) {
     return -1;
   }
-  if (connected) {
-    pthread_mutex_unlock(&conn_mutex);
-    return 0;
-  }
-
-  char *servers_env = getenv("LUPINE_SERVER");
-  if (servers_env == nullptr) {
-    LUPINE_LOG_ERROR("LUPINE_SERVER environment variable not set");
-    pthread_mutex_unlock(&conn_mutex);
-    return -1;
-  }
-
-  char *servers = strdup(servers_env);
-  if (servers == nullptr) {
-    pthread_mutex_unlock(&conn_mutex);
-    return -1;
-  }
-
-  char *cursor = servers;
-  char *token = nullptr;
-  while ((token = strsep(&cursor, ",")) != nullptr) {
-    if (token[0] == '\0') {
-      continue;
-    }
-
-    bool tls = false;
-    if (strncmp(token, "https://", 8) == 0) {
-      tls = true;
-      token += 8;
-    } else if (strncmp(token, "http://", 7) == 0) {
-      token += 7;
-    } else if (strstr(token, "://") != nullptr ||
-               strncmp(token, "http:", 5) == 0 ||
-               strncmp(token, "https:", 6) == 0) {
-      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER URL scheme: " << token);
-      continue;
-    }
-
-    char *host = token;
-    char *port = const_cast<char *>(tls ? "443" : DEFAULT_PORT);
-    char *colon = strchr(token, ':');
-    if (colon != nullptr) {
-      *colon = '\0';
-      port = colon + 1;
-    }
-    if (host[0] == '\0' || port[0] == '\0') {
-      LUPINE_LOG_ERROR("Invalid LUPINE_SERVER endpoint");
-      continue;
-    }
-
-    addrinfo hints = {};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    addrinfo *res = nullptr;
-    if (getaddrinfo(host, port, &hints, &res) != 0) {
-      continue;
-    }
-
-    lupine_socket_t sockfd =
-        socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sockfd != LUPINE_INVALID_SOCKET) {
-      lupine_socket_apply_transport_options(sockfd);
-      if (connect(sockfd, res->ai_addr, res->ai_addrlen) == 0) {
-        if (nconns >= static_cast<int>(sizeof(conns) / sizeof(*conns))) {
-          lupine_socket_close(sockfd);
-          freeaddrinfo(res);
-          break;
-        }
-        std::string server_label(host);
-        if (strcmp(port, DEFAULT_PORT) != 0) {
-          server_label += ":";
-          server_label += port;
-        }
-
-        conn_t *c = &conns[nconns];
-        *c = {};
-        c->connfd = sockfd;
-        c->request_id = 0;
-        c->local_request_parity = c->request_id & 1;
-        if (tls) {
-#ifdef LUPINE_TLS_OPENSSL
-          static SSL_CTX *tls_ctx = []() {
-            SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
-            if (ctx != nullptr) {
-              SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-              SSL_CTX_set_default_verify_paths(ctx);
-              SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
-            }
-            return ctx;
-          }();
-          SSL *ssl = tls_ctx != nullptr ? SSL_new(tls_ctx) : nullptr;
-          if (ssl == nullptr || SSL_set_tlsext_host_name(ssl, host) != 1 ||
-              SSL_set1_host(ssl, host) != 1 ||
-              SSL_set_fd(ssl, static_cast<int>(sockfd)) != 1 ||
-              SSL_connect(ssl) != 1) {
-            if (ssl != nullptr) {
-              SSL_free(ssl);
-            }
-            LUPINE_LOG_ERROR("TLS handshake with " << host << " failed");
-            lupine_socket_close(sockfd);
-            freeaddrinfo(res);
-            continue;
-          }
-          c->tls_session = ssl;
-#else
-          LUPINE_LOG_ERROR("LUPINE_SERVER entry "
-                           << host << ":" << port
-                           << " uses https:// but this client was built "
-                              "without TLS support");
-          lupine_socket_close(sockfd);
-          freeaddrinfo(res);
-          continue;
-#endif
-        }
-        if (pthread_mutex_init(&c->read_mutex, nullptr) < 0 ||
-            pthread_mutex_init(&c->write_mutex, nullptr) < 0 ||
-            pthread_mutex_init(&c->call_mutex, nullptr) < 0 ||
-            pthread_cond_init(&c->read_cond, nullptr) < 0 ||
-            rpc_http2_client_init(c) < 0 ||
-            pthread_create(&c->read_thread, nullptr, rpc_client_dispatch_thread,
-                           c) < 0) {
-#ifdef LUPINE_TLS_OPENSSL
-          if (c->tls_session != nullptr) {
-            SSL_free(static_cast<SSL *>(c->tls_session));
-            c->tls_session = nullptr;
-          }
-#endif
-          lupine_socket_close(sockfd);
-          freeaddrinfo(res);
-          continue;
-        }
-        rpc_http2_client_start_heartbeat(c);
-        conn_labels.push_back(server_label);
-        ++nconns;
-        freeaddrinfo(res);
-        continue;
-      }
-      lupine_socket_close(sockfd);
-    }
-    freeaddrinfo(res);
-  }
-  free(servers);
-
-  if (nconns == 0) {
-    pthread_mutex_unlock(&conn_mutex);
-    return -1;
-  }
-
-  connected = true;
-  pthread_mutex_unlock(&conn_mutex);
-  return 0;
+  return lupine_client_transport_open(nvml_transport_config());
 }
 
 conn_t *connection(unsigned int index = 0) {
   if (!nvml_initialized() || open_connection() < 0) {
     return nullptr;
   }
-  if (index >= static_cast<unsigned int>(nconns)) {
-    return nullptr;
-  }
-  return &conns[index];
+  return lupine_client_transport_connection(index);
 }
 
 void close_connections() {
-  if (pthread_mutex_lock(&conn_mutex) != 0) {
-    return;
-  }
-  int count = nconns;
-  for (int i = 0; i < count; ++i) {
-    conn_t *c = &conns[i];
-    rpc_close_transport_socket(c);
-    pthread_mutex_lock(&c->read_mutex);
-    pthread_cond_broadcast(&c->read_cond);
-    pthread_mutex_unlock(&c->read_mutex);
-  }
-  pthread_mutex_unlock(&conn_mutex);
-
-  for (int i = 0; i < count; ++i) {
-    conn_t *c = &conns[i];
-    if (c->read_thread != 0) {
-      pthread_join(c->read_thread, nullptr);
-      c->read_thread = 0;
-    }
-    if (c->rpc_thread != 0) {
-      pthread_join(c->rpc_thread, nullptr);
-      c->rpc_thread = 0;
-    }
-#ifdef LUPINE_TLS_OPENSSL
-    if (c->tls_session != nullptr) {
-      SSL_free(static_cast<SSL *>(c->tls_session));
-      c->tls_session = nullptr;
-    }
-#endif
-    rpc_conn_destroy(c);
-  }
-
-  if (pthread_mutex_lock(&conn_mutex) == 0) {
-    nconns = 0;
-    connected = false;
-    devices_ready = false;
-    devices.clear();
-    conn_labels.clear();
-    pthread_mutex_unlock(&conn_mutex);
-  }
+  lupine_client_transport_close();
+  devices_ready = false;
+  devices.clear();
 }
 
 lupine_nvml_remote_device *mapped_device(nvmlDevice_t device) {
@@ -369,10 +187,12 @@ nvmlReturn_t ensure_devices() {
   }
 
   devices.clear();
-  for (int i = 0; i < nconns; ++i) {
+  unsigned int connection_count = lupine_client_transport_size();
+  for (unsigned int i = 0; i < connection_count; ++i) {
+    conn_t *conn = lupine_client_transport_connection(i);
     unsigned int count = 0;
     nvmlReturn_t result =
-        call_uint_out_on(&conns[i], RPC_nvmlDeviceGetCount_v2, &count);
+        call_uint_out_on(conn, RPC_nvmlDeviceGetCount_v2, &count);
     if (result != NVML_SUCCESS) {
       devices.clear();
       return result;
@@ -380,15 +200,15 @@ nvmlReturn_t ensure_devices() {
     for (unsigned int ordinal = 0; ordinal < count; ++ordinal) {
       nvmlDevice_t remote = nullptr;
       result = call_device_from_index_on(
-          &conns[i], RPC_nvmlDeviceGetHandleByIndex_v2, ordinal, &remote);
+          conn, RPC_nvmlDeviceGetHandleByIndex_v2, ordinal, &remote);
       if (result != NVML_SUCCESS) {
         devices.clear();
         return result;
       }
-      const std::string &server_label =
-          i < static_cast<int>(conn_labels.size()) ? conn_labels[i] : "";
+      const lupine_client_endpoint *endpoint =
+          lupine_client_transport_endpoint(i);
       devices.push_back(lupine_nvml_remote_device{
-          static_cast<unsigned int>(i), ordinal, remote, server_label});
+          i, ordinal, remote, endpoint == nullptr ? "" : endpoint->label});
     }
   }
   devices_ready = true;
@@ -408,9 +228,10 @@ nvmlReturn_t lookup_device_on_all_connections(nvmlDevice_t *device,
   }
 
   nvmlReturn_t first_error = NVML_ERROR_NOT_FOUND;
-  for (int i = 0; i < nconns; ++i) {
+  unsigned int connection_count = lupine_client_transport_size();
+  for (unsigned int i = 0; i < connection_count; ++i) {
     nvmlDevice_t remote = nullptr;
-    result = lookup(&conns[i], &remote);
+    result = lookup(lupine_client_transport_connection(i), &remote);
     if (result != NVML_SUCCESS) {
       if (first_error == NVML_ERROR_NOT_FOUND &&
           result != NVML_ERROR_NOT_FOUND) {
@@ -421,8 +242,7 @@ nvmlReturn_t lookup_device_on_all_connections(nvmlDevice_t *device,
 
     auto mapped = std::find_if(
         devices.begin(), devices.end(), [&](const auto &candidate) {
-          return candidate.conn_index == static_cast<unsigned int>(i) &&
-                 candidate.remote_device == remote;
+          return candidate.conn_index == i && candidate.remote_device == remote;
         });
     if (mapped == devices.end()) {
       // The server returned a handle that was not part of the device table
@@ -609,8 +429,10 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
     return NVML_ERROR_UNKNOWN;
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
-  for (int i = 0; i < nconns; ++i) {
-    nvmlReturn_t result = call_no_args_on(&conns[i], RPC_nvmlInit_v2);
+  unsigned int connection_count = lupine_client_transport_size();
+  for (unsigned int i = 0; i < connection_count; ++i) {
+    nvmlReturn_t result =
+        call_no_args_on(lupine_client_transport_connection(i), RPC_nvmlInit_v2);
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }
@@ -629,8 +451,9 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
     return NVML_ERROR_UNKNOWN;
   }
   nvmlReturn_t first_error = NVML_SUCCESS;
-  for (int i = 0; i < nconns; ++i) {
-    conn_t *c = &conns[i];
+  unsigned int connection_count = lupine_client_transport_size();
+  for (unsigned int i = 0; i < connection_count; ++i) {
+    conn_t *c = lupine_client_transport_connection(i);
     nvmlReturn_t result = rpc_error();
     if (rpc_write_start_request(c, RPC_nvmlInitWithFlags) < 0 ||
         rpc_write(c, &flags, sizeof(flags)) < 0 ||
@@ -660,20 +483,16 @@ extern "C" nvmlReturn_t nvmlShutdown(void) {
                                                 std::memory_order_acquire));
   bool last = previous == 1;
 
-  if (pthread_mutex_lock(&conn_mutex) != 0) {
-    return NVML_ERROR_UNKNOWN;
-  }
-  if (!connected) {
-    pthread_mutex_unlock(&conn_mutex);
+  if (lupine_client_transport_size() == 0) {
     return NVML_SUCCESS;
   }
-  int count = nconns;
-  pthread_mutex_unlock(&conn_mutex);
+  unsigned int count = lupine_client_transport_size();
 
   // The server refcounts too, so forward every shutdown, not just the last.
   nvmlReturn_t first_error = NVML_SUCCESS;
-  for (int i = 0; i < count; ++i) {
-    nvmlReturn_t result = call_no_args_on(&conns[i], RPC_nvmlShutdown);
+  for (unsigned int i = 0; i < count; ++i) {
+    nvmlReturn_t result = call_no_args_on(lupine_client_transport_connection(i),
+                                          RPC_nvmlShutdown);
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }

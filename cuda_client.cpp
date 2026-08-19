@@ -10,9 +10,6 @@
 #include <iostream>
 #include <map>
 #include <mutex>
-#ifdef LUPINE_TLS_OPENSSL
-#include <openssl/ssl.h>
-#endif
 #include <sstream>
 #include <stdio.h>
 #include <string.h>
@@ -62,31 +59,27 @@
 #include "memcpy.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
+#include "transport.h"
 
-pthread_mutex_t conn_mutex;
-conn_t conns[16];
-int nconns = 0;
-static bool lupine_rpc_shutting_down = false;
+void *rpc_client_dispatch_thread(void *arg);
+
+static void lupine_cuda_transport_connection_changed(conn_t *) {
+  lupine_invalidate_current_context_cache();
+}
+
+static const lupine_client_transport_config &lupine_cuda_transport_config() {
+  static const auto config = [] {
+    lupine_client_transport_config config;
+    config.dispatch = rpc_client_dispatch_thread;
+    config.connection_opened = lupine_cuda_transport_connection_changed;
+    config.connection_closed = lupine_cuda_transport_connection_changed;
+    return config;
+  }();
+  return config;
+}
 
 void rpc_destroy_thread_lane(uint64_t lane_id) {
-  conn_t *active_conns[sizeof(conns) / sizeof(*conns)];
-  int count = 0;
-
-  if (pthread_mutex_lock(&conn_mutex) != 0) {
-    return;
-  }
-  if (!lupine_rpc_shutting_down) {
-    for (int i = 0; i < nconns; ++i) {
-      if (!conns[i].closed) {
-        active_conns[count++] = &conns[i];
-      }
-    }
-  }
-  pthread_mutex_unlock(&conn_mutex);
-
-  for (int i = 0; i < count; ++i) {
-    rpc_write_lane_termination(active_conns[i], lane_id);
-  }
+  lupine_client_transport_retire_lane(lane_id);
 }
 
 static void lupine_rpc_connection_closed(conn_t *) {
@@ -102,16 +95,6 @@ static void lupine_install_rpc_lifecycle_hooks() {
     LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
 }
-
-const char *DEFAULT_PORT = "14833";
-
-void *rpc_client_dispatch_thread(void *arg);
-
-struct lupine_server_endpoint {
-  std::string host;
-  std::string port;
-  bool tls = false;
-};
 
 static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags);
 
@@ -706,96 +689,6 @@ extern "C" void lupine_remember_loaded_module_for_rpc(CUmodule module) {
   lupine_remember_loaded_module(module);
 }
 
-static std::vector<lupine_server_endpoint> &lupine_server_endpoints() {
-  static auto *endpoints = new std::vector<lupine_server_endpoint>();
-  return *endpoints;
-}
-
-static int lupine_connect_endpoint(conn_t *conn,
-                                   const lupine_server_endpoint &endpoint,
-                                   unsigned int logical_index) {
-  if (conn == nullptr) {
-    return -1;
-  }
-
-  lupine_socket_t sockfd =
-      lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str());
-  if (sockfd == LUPINE_INVALID_SOCKET) {
-    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
-                                      << endpoint.port << " failed");
-    return -1;
-  }
-
-  rpc_write_queue_free(conn);
-  // A new transport gets fresh server lane threads with no CUDA context.
-  lupine_invalidate_current_context_cache();
-  *conn = {};
-  conn->connfd = sockfd;
-  conn->request_id = 0;
-  conn->closed = 0;
-  conn->local_request_parity = conn->request_id & 1;
-  conn->logical_index = static_cast<int>(logical_index);
-  if (endpoint.tls) {
-#ifdef LUPINE_TLS_OPENSSL
-    static SSL_CTX *tls_ctx = []() {
-      SSL_CTX *c = SSL_CTX_new(TLS_client_method());
-      if (c != nullptr) {
-        SSL_CTX_set_min_proto_version(c, TLS1_2_VERSION);
-        SSL_CTX_set_default_verify_paths(c);
-        SSL_CTX_set_verify(c, SSL_VERIFY_PEER, nullptr);
-      }
-      return c;
-    }();
-    SSL *ssl = tls_ctx != nullptr ? SSL_new(tls_ctx) : nullptr;
-    if (ssl != nullptr &&
-        SSL_set_tlsext_host_name(ssl, endpoint.host.c_str()) == 1 &&
-        SSL_set1_host(ssl, endpoint.host.c_str()) == 1 &&
-        SSL_set_fd(ssl, static_cast<int>(sockfd)) == 1 &&
-        SSL_connect(ssl) == 1) {
-      conn->tls_session = ssl;
-    } else {
-      if (ssl != nullptr) {
-        SSL_free(ssl);
-      }
-      LUPINE_LOG_ERROR("TLS handshake with " << endpoint.host << " failed");
-      lupine_socket_close(sockfd);
-      return -1;
-    }
-#else
-    LUPINE_LOG_ERROR("LUPINE_SERVER entry "
-                     << endpoint.host << ":" << endpoint.port
-                     << " uses https:// but this client was built "
-                        "without TLS support");
-    lupine_socket_close(sockfd);
-    return -1;
-#endif
-  }
-  if (pthread_mutex_init(&conn->read_mutex, NULL) != 0 ||
-      pthread_mutex_init(&conn->write_mutex, NULL) != 0 ||
-      pthread_mutex_init(&conn->call_mutex, NULL) != 0 ||
-      pthread_cond_init(&conn->read_cond, NULL) != 0 ||
-      rpc_http2_client_init(conn) < 0 ||
-      pthread_create(&conn->read_thread, NULL, rpc_client_dispatch_thread,
-                     (void *)conn) != 0) {
-    lupine_socket_close(sockfd);
-    return -1;
-  }
-  rpc_http2_client_start_heartbeat(conn);
-
-  return 0;
-}
-
-static void lupine_join_connection_threads(conn_t *conn) {
-  if (conn->read_thread != 0) {
-    pthread_join(conn->read_thread, nullptr);
-    conn->read_thread = 0;
-  }
-  if (conn->rpc_thread != 0) {
-    pthread_join(conn->rpc_thread, nullptr);
-    conn->rpc_thread = 0;
-  }
-}
-
 static bool lupine_env_enabled(const char *name) {
   const char *value = getenv(name);
   if (value == nullptr || strcmp(value, "0") == 0) {
@@ -897,8 +790,9 @@ extern "C" CUresult cuInit(unsigned int flags) {
     }
   }
   if (rpc_open() == 0) {
-    for (int i = 0; i < nconns; ++i) {
-      CUresult result = lupine_remote_cuInit(&conns[i], flags);
+    for (int i = 0; i < rpc_size(); ++i) {
+      CUresult result =
+          lupine_remote_cuInit(rpc_client_get_connection(i), flags);
       if (result != CUDA_SUCCESS && first_error == CUDA_SUCCESS) {
         first_error = result;
       } else if (result == CUDA_SUCCESS) {
@@ -8302,56 +8196,9 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
   return it == stubs.end() ? nullptr : it->second;
 }
 
-void rpc_close(conn_t *conn) {
-  if (conn == nullptr) {
-    return;
-  }
+void rpc_close(conn_t *conn) { lupine_client_transport_close_connection(conn); }
 
-  // A reopened connection reuses the static conn_t slot but gets fresh server
-  // lane threads with no CUDA context. Invalidate all per-lane context hints.
-  lupine_invalidate_current_context_cache();
-
-  rpc_close_transport_socket(conn);
-
-  pthread_mutex_lock(&conn->read_mutex);
-  pthread_cond_broadcast(&conn->read_cond);
-  pthread_mutex_unlock(&conn->read_mutex);
-}
-
-static void lupine_rpc_shutdown() {
-  if (pthread_mutex_lock(&conn_mutex) < 0) {
-    return;
-  }
-  if (lupine_rpc_shutting_down) {
-    pthread_mutex_unlock(&conn_mutex);
-    return;
-  }
-  lupine_rpc_shutting_down = true;
-  int count = nconns;
-  for (int i = 0; i < count; ++i) {
-    rpc_close(&conns[i]);
-  }
-  pthread_mutex_unlock(&conn_mutex);
-
-  for (int i = 0; i < count; ++i) {
-    lupine_join_connection_threads(&conns[i]);
-#ifdef LUPINE_TLS_OPENSSL
-    // Safe now: the read thread is joined, so nothing touches the SSL*.
-    if (conns[i].tls_session != nullptr) {
-      SSL_free(static_cast<SSL *>(conns[i].tls_session));
-      conns[i].tls_session = nullptr;
-    }
-#endif
-    rpc_conn_destroy(&conns[i]);
-  }
-
-  if (pthread_mutex_lock(&conn_mutex) == 0) {
-    nconns = 0;
-    lupine_server_endpoints().clear();
-    lupine_rpc_shutting_down = false;
-    pthread_mutex_unlock(&conn_mutex);
-  }
-}
+static void lupine_rpc_shutdown() { lupine_client_transport_close(); }
 
 #ifdef _WIN32
 static void lupine_rpc_destructor() { lupine_rpc_shutdown(); }
@@ -8484,83 +8331,20 @@ close_connection:
 
 int rpc_open() {
   if (pthread_once(&lupine_rpc_lifecycle_once,
-                   lupine_install_rpc_lifecycle_hooks) != 0 ||
-      pthread_mutex_lock(&conn_mutex) < 0) {
+                   lupine_install_rpc_lifecycle_hooks) != 0) {
     return -1;
   }
-
-  if (nconns > 0) {
-    if (pthread_mutex_unlock(&conn_mutex) < 0)
-      return -1;
-    return 0;
-  }
-
-  char *server_ips = getenv("LUPINE_SERVER");
-  if (server_ips == NULL) {
-    if (pthread_mutex_unlock(&conn_mutex) < 0)
-      return -1;
-    return -1;
-  }
-
-  lupine_server_endpoints().clear();
-
-  char *server_ip = strdup(server_ips);
-  char *server_ip_cursor = server_ip;
-  char *token;
-  while ((token = strsep(&server_ip_cursor, ","))) {
-    if (nconns >= static_cast<int>(sizeof(conns) / sizeof(*conns))) {
-      LUPINE_LOG_ERROR("Too many LUPINE_SERVER entries; ignoring the rest");
-      break;
-    }
-
-    char *host;
-    char *port;
-    bool tls = false;
-
-    // Optional URL scheme: https:// enables TLS on this connection.
-    if (strncmp(token, "https://", 8) == 0) {
-      tls = true;
-      token += 8;
-    } else if (strncmp(token, "http://", 7) == 0) {
-      token += 7;
-    }
-
-    // Split the remaining string into host and port.
-    char *colon = strchr(token, ':');
-    if (colon == NULL) {
-      host = token;
-      port = const_cast<char *>(tls ? "443" : DEFAULT_PORT);
-    } else {
-      *colon = '\0';
-      host = token;
-      port = colon + 1;
-    }
-
-    lupine_server_endpoint endpoint{host, port, tls};
-    if (lupine_connect_endpoint(&conns[nconns], endpoint,
-                                static_cast<unsigned int>(nconns)) < 0) {
-      continue;
-    }
-    lupine_server_endpoints().push_back(endpoint);
-    nconns++;
-  }
-  free(server_ip);
-
-  if (pthread_mutex_unlock(&conn_mutex) < 0)
-    return -1;
-  if (nconns == 0)
-    return -1;
-  return 0;
+  return lupine_client_transport_open(lupine_cuda_transport_config());
 }
 
 conn_t *rpc_client_get_connection(unsigned int index) {
-  if (rpc_open() < 0 || index >= static_cast<unsigned int>(nconns)) {
+  if (rpc_open() < 0) {
     return nullptr;
   }
-  return &conns[index];
+  return lupine_client_transport_connection(index);
 }
 
-int rpc_size() { return nconns; }
+int rpc_size() { return static_cast<int>(lupine_client_transport_size()); }
 
 #if CUDA_VERSION >= 12000
 extern "C" CUresult cuTensorMapEncodeTiled(

@@ -112,22 +112,25 @@ extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // conn->closed, and safe for concurrent/idempotent cleanup.
 extern void rpc_close_transport_socket(conn_t *conn);
 extern void rpc_write_queue_free(conn_t *conn);
+extern int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id);
 extern void rpc_conn_destroy(conn_t *conn);
 
 // lupine_tcp_connect resolves host:port and returns a connected socket with
 // the standard transport options applied (TCP_NODELAY + keepalive; see
 // lupine_socket_apply_transport_options). A server that is not reachable yet
-// (e.g. still provisioning) is retried a few times with exponential backoff,
-// and each attempt is bounded by a deadline so a packet-filtered port cannot
-// stall the loop for minutes. Returns the socket, or LUPINE_INVALID_SOCKET on
-// permanent failure.
-extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port);
+// (e.g. still provisioning) is retried up to max_retries times with
+// exponential backoff and bounded attempts. Passing zero preserves the
+// client's single blocking attempt. Returns the socket, or
+// LUPINE_INVALID_SOCKET on permanent failure.
+extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
+                                          unsigned int max_retries = 5);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
                             int entry_count);
 extern int rpc_http2_client_init(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
+extern void rpc_http2_destroy(conn_t *conn);
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or

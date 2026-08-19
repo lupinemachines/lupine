@@ -36,6 +36,11 @@ SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
 
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+# cuda-c-linking needs LLVM dev libraries v7-v14; find_package only sees them
+# past a newer system LLVM when LLVM_HOME points at the versioned prefix.
+if [[ -z "${LLVM_HOME:-}" && -d /usr/lib/llvm-14 ]]; then
+  export LLVM_HOME=/usr/lib/llvm-14
+fi
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-120}"
 LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-600}"
@@ -76,6 +81,7 @@ CORE_SAMPLES=(
   simpleTexture3D volumeFiltering volumeRender
   radixSortThrust segmentationTreeThrust template interval
   ptxgen ptxjit matrixMulDynlinkJIT threadMigration
+  cuda-c-linking device-side-launch
 )
 
 LIBRARY_SAMPLES=(
@@ -96,6 +102,7 @@ LIBRARY_SAMPLES=(
   boxFilterNPP
   cannyEdgeDetectorNPP
   FilterBorderControlNPP
+  freeImageInteropNPP
 )
 
 DEFAULT_SAMPLES=(
@@ -242,25 +249,40 @@ if [[ -z "$CUDA_SAMPLES_BIN" ]]; then
   fi
 fi
 
+# Executable name when it differs from the sample's directory name.
+sample_exe_name() {
+  case "$1" in
+    device-side-launch)
+      printf 'dsl\n'
+      ;;
+    *)
+      printf '%s\n' "$1"
+      ;;
+  esac
+}
+
 resolve_sample_exe() {
   local sample="$1"
+  local exe_name=""
   local exe=""
   local group_dir=""
 
-  if [[ -x "$CUDA_SAMPLES_BIN/$sample" && ! -d "$CUDA_SAMPLES_BIN/$sample" ]]; then
-    printf '%s\n' "$CUDA_SAMPLES_BIN/$sample"
+  exe_name="$(sample_exe_name "$sample")"
+
+  if [[ -x "$CUDA_SAMPLES_BIN/$exe_name" && ! -d "$CUDA_SAMPLES_BIN/$exe_name" ]]; then
+    printf '%s\n' "$CUDA_SAMPLES_BIN/$exe_name"
     return 0
   fi
 
   group_dir="$(sample_libnvvm_group_dir "$sample")"
   if [[ -n "$group_dir" ]]; then
     # In-source build (legacy Makefile route: cmake .. && make install).
-    if [[ -x "$group_dir/install/bin/$sample" ]]; then
-      printf '%s\n' "$group_dir/install/bin/$sample"
+    if [[ -x "$group_dir/install/bin/$exe_name" ]]; then
+      printf '%s\n' "$group_dir/install/bin/$exe_name"
       return 0
     fi
     # Out-of-source build (selected-sample CMake route).
-    exe="$CUDA_SAMPLES_BUILD_DIR/selected/$(basename "$group_dir")/install/bin/$sample"
+    exe="$CUDA_SAMPLES_BUILD_DIR/selected/$(basename "$group_dir")/install/bin/$exe_name"
     if [[ -x "$exe" ]]; then
       printf '%s\n' "$exe"
       return 0
@@ -268,7 +290,7 @@ resolve_sample_exe() {
   fi
 
   if [[ "$cmake_samples" == "1" ]]; then
-    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$sample" -perm /111 2>/dev/null | head -n1 || true)"
+    exe="$(find "$CUDA_SAMPLES_BUILD_DIR" -type f -name "$exe_name" -perm /111 2>/dev/null | head -n1 || true)"
     if [[ -n "$exe" ]]; then
       printf '%s\n' "$exe"
       return 0
@@ -516,7 +538,8 @@ if [[ "$needs_build" == "1" ]]; then
         : > "$build_log"
         extra_cmake_args=()
         if [[ -n "$group_dir" ]]; then
-          extra_cmake_args=(-DCMAKE_INSTALL_PREFIX="$sample_build_dir/install")
+          extra_cmake_args=(-DCMAKE_INSTALL_PREFIX="$sample_build_dir/install"
+                            -DENABLE_CUDA_C_LINKING_SAMPLE=1)
         fi
         if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
           # shellcheck disable=SC2086
@@ -534,7 +557,8 @@ if [[ "$needs_build" == "1" ]]; then
     else
       if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
         # shellcheck disable=SC2086
-        cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release $CUDA_SAMPLES_CMAKE_ARGS
+        cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+          -DENABLE_CUDA_C_LINKING_SAMPLE=1 $CUDA_SAMPLES_CMAKE_ARGS
       fi
       cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$JOBS"
     fi
@@ -861,6 +885,10 @@ if [[ "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/Samples" ]]; then
   graphics=0; ipc=0; mgpu=0; um=0; other=0; covered=0; catalog_total=0
   while IFS= read -r _c; do
     [[ -n "$_c" ]] || continue
+    # 7_libNVVM helper dirs and ptxgen input fixtures; no standalone binary.
+    case "$_c" in
+      common|utils|cuda-shared-memory|syscalls) continue ;;
+    esac
     catalog_total=$((catalog_total + 1))
     if [[ -n "${_enabled[$_c]:-}" ]]; then
       covered=$((covered + 1))

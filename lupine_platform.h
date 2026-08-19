@@ -241,24 +241,6 @@ inline int strcasecmp(const char *first, const char *second) {
   return _stricmp(first, second);
 }
 
-inline char *strsep(char **string, const char *delimiters) {
-  if (string == nullptr || *string == nullptr) {
-    return nullptr;
-  }
-  char *token = *string;
-  char *cursor = token;
-  while (*cursor != '\0') {
-    if (std::strchr(delimiters, *cursor) != nullptr) {
-      *cursor = '\0';
-      *string = cursor + 1;
-      return token;
-    }
-    ++cursor;
-  }
-  *string = nullptr;
-  return token;
-}
-
 #ifndef O_RDONLY
 #define O_RDONLY _O_RDONLY
 #endif
