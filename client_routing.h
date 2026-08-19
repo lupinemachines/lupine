@@ -21,6 +21,20 @@ struct lupine_route {
   conn_t *conn = nullptr;
 };
 
+// Client-visible device pointers carry the owning connection's index in the
+// bits above the GPU VA range, so allocations from different connections
+// never alias even when identical server children hand out identical
+// addresses. The tag never crosses the wire; connection 0 and local CUDA stay
+// untagged, leaving single-connection values unchanged.
+static constexpr unsigned LUPINE_DEVPTR_TAG_SHIFT = 50;
+static inline CUdeviceptr lupine_devptr_to_wire(CUdeviceptr ptr) {
+  return ptr & ((static_cast<CUdeviceptr>(1) << LUPINE_DEVPTR_TAG_SHIFT) - 1);
+}
+static inline int lupine_devptr_tag(CUdeviceptr ptr) {
+  return static_cast<int>(ptr >> LUPINE_DEVPTR_TAG_SHIFT);
+}
+CUdeviceptr lupine_devptr_from_wire(CUdeviceptr ptr, conn_t *conn);
+
 lupine_route lupine_remote_route_for_conn(conn_t *conn);
 int lupine_route_identity(lupine_route route);
 lupine_route lupine_route_from_identity(int route_id);
@@ -72,6 +86,9 @@ extern "C" bool lupine_routes_share_server(lupine_route first,
 extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
                                               CUdeviceptr second);
 extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr);
+extern "C" bool lupine_deviceptr_allocation_info(CUdeviceptr ptr,
+                                                 CUdeviceptr *base,
+                                                 size_t *size, int *route_id);
 extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
                                                  CUdevice *device);
 extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,

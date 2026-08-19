@@ -63,7 +63,7 @@ CORE_SAMPLES=(
   quasirandomGenerator_nvrtc
   simpleCudaGraphs streamOrderedAllocation streamOrderedAllocationIPC cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP memMapIPCDrv
-  simple uvmlite simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
+  simple uvmlite simpleP2P simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation
   newdelete
@@ -680,6 +680,20 @@ start_remote_server() {
   return 1
 }
 
+# Multi-GPU samples run against one server named this many times in
+# LUPINE_SERVER: each connection is a virtual device, and peer access between
+# them works through CUDA IPC on the shared host.
+sample_virtual_gpus() {
+  case "$1" in
+    simpleP2P)
+      printf '2\n'
+      ;;
+    *)
+      printf '1\n'
+      ;;
+  esac
+}
+
 sample_timeout() {
   case "$1" in
     simpleStreams|scan|LargeKernelParameter|UnifiedMemoryStreams|UnifiedMemoryPerf|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
@@ -779,6 +793,14 @@ run_sample() {
     sample_argv+=("$arg")
   done < <(sample_args "$sample")
 
+  local virtual_gpus
+  virtual_gpus="$(sample_virtual_gpus "$sample")"
+  local lupine_server="$SERVER_HOST:$port"
+  local vgpu
+  for ((vgpu = 1; vgpu < virtual_gpus; vgpu++)); do
+    lupine_server="$lupine_server,$SERVER_HOST:$port"
+  done
+
   if ! start_remote_server "$pidfile" "$server_log" "$port"; then
     status="FAIL:ssh"
     signature="failed to start remote server on port $port"
@@ -791,7 +813,7 @@ run_sample() {
     cd "$sample_cwd"
     timeout --kill-after=5s "$timeout_seconds" env \
       LD_LIBRARY_PATH="$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
-      LUPINE_SERVER="$SERVER_HOST:$port" \
+      LUPINE_SERVER="$lupine_server" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$sample_exe" "${sample_argv[@]}"
   ) >"$log" 2>&1
