@@ -173,9 +173,14 @@ static int lupine_write_jit_outputs(conn_t *conn, lupine_jit_state *jit) {
       jit->output_lengths[i] =
           end == nullptr ? output_size : end - output;
     }
-    if (rpc_write(conn, &jit->output_lengths[i],
-                  sizeof(jit->output_lengths[i])) < 0 ||
-        rpc_write(conn, jit->option_values[i], jit->output_lengths[i]) < 0) {
+  }
+  if (rpc_write(conn, jit->output_lengths.data(),
+                jit->output_lengths.size() *
+                    sizeof(*jit->output_lengths.data())) < 0) {
+    return -1;
+  }
+  for (unsigned int i = 0; i < jit->num_options; ++i) {
+    if (rpc_write(conn, jit->option_values[i], jit->output_lengths[i]) < 0) {
       return -1;
     }
   }

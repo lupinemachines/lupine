@@ -3794,7 +3794,7 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
-  size_t jit_output_length = 0;
+  std::vector<size_t> jit_output_lengths(numOptions);
   if (rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_write(conn, &type, sizeof(type)) < 0 ||
@@ -3808,9 +3808,13 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  if (rpc_read(conn, jit_output_lengths.data(),
+               jit_output_lengths.size() * sizeof(*jit_output_lengths.data())) <
+      0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
   for (unsigned int i = 0; i < numOptions; ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, optionValues[i], jit_output_length) < 0) {
+    if (rpc_read(conn, optionValues[i], jit_output_lengths[i]) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
@@ -3842,7 +3846,7 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   size_t mapped_file_size = 0;
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
-  size_t jit_output_length = 0;
+  std::vector<size_t> jit_output_lengths(numOptions);
   int file_fd = open(path, O_RDONLY);
   if (file_fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
@@ -3882,9 +3886,14 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
     munmap(file_mapping, mapped_file_size);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  if (rpc_read(conn, jit_output_lengths.data(),
+               jit_output_lengths.size() * sizeof(*jit_output_lengths.data())) <
+      0) {
+    munmap(file_mapping, mapped_file_size);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
   for (unsigned int i = 0; i < numOptions; ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, optionValues[i], jit_output_length) < 0) {
+    if (rpc_read(conn, optionValues[i], jit_output_lengths[i]) < 0) {
       munmap(file_mapping, mapped_file_size);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
@@ -3914,7 +3923,6 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
   CUresult return_value;
   size_t cubin_size = 0;
   std::vector<void *> option_values;
-  size_t jit_output_length = 0;
   if (rpc_write_start_request(conn, RPC_cuLinkComplete) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3938,9 +3946,14 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
     *sizeOut = jit_state.cubin.size();
   }
 
+  std::vector<size_t> jit_output_lengths(option_values.size());
+  if (rpc_read(conn, jit_output_lengths.data(),
+               jit_output_lengths.size() * sizeof(*jit_output_lengths.data())) <
+      0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
   for (size_t i = 0; i < option_values.size(); ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, option_values[i], jit_output_length) < 0) {
+    if (rpc_read(conn, option_values[i], jit_output_lengths[i]) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
@@ -4690,7 +4703,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t image_size = image_bytes.size();
-  size_t jit_output_length = 0;
+  std::vector<size_t> jit_output_lengths(numJitOptions);
   if (rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
       rpc_copy_alloc(conn, libraryOptionValues == nullptr
                                ? numLibraryOptions * sizeof(uintptr_t)
@@ -4723,9 +4736,13 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_read(conn, library, sizeof(CUlibrary)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  if (rpc_read(conn, jit_output_lengths.data(),
+               jit_output_lengths.size() * sizeof(*jit_output_lengths.data())) <
+      0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
   for (unsigned int i = 0; i < numJitOptions; ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, jitOptionsValues[i], jit_output_length) < 0) {
+    if (rpc_read(conn, jitOptionsValues[i], jit_output_lengths[i]) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
