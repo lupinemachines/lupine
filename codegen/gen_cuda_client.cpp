@@ -675,47 +675,6 @@ CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode) {
   return return_value;
 }
 
-CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
-                              const char *name) {
-  lupine_route route = lupine_route_for_module(hmod);
-  CUresult return_value;
-  using real_fn_t =
-      CUresult (*)(CUdeviceptr *, size_t *, CUmodule, const char *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuModuleGetGlobal_v2",
-                                                  &return_value, dptr, bytes,
-                                                  hmod, name)) {
-    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-      lupine_note_deviceptr_owner_route(*dptr, route);
-    }
-    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
-      lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUdeviceptr *dptr_null_check;
-  size_t *bytes_null_check;
-  std::size_t name_len = std::strlen(name) + 1;
-  if (rpc_write_start_request(conn, RPC_cuModuleGetGlobal_v2) < 0 ||
-      rpc_write(conn, &dptr, sizeof(CUdeviceptr *)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(size_t *)) < 0 ||
-      rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
-      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      (dptr_null_check && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||
-      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
-      (bytes_null_check && rpc_read(conn, bytes, sizeof(size_t)) < 0) ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-    lupine_note_deviceptr_owner_route(*dptr, route);
-  }
-  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
-    lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
-  return return_value;
-}
-
 CUresult cuModuleGetTexRef(CUtexref *pTexRef, CUmodule hmod, const char *name) {
   lupine_route route = lupine_route_for_module(hmod);
   CUresult return_value;
@@ -6382,14 +6341,6 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
 #endif
 extern "C" CUresult cuCtxDestroy(CUcontext ctx) { return cuCtxDestroy_v2(ctx); }
 
-#ifdef cuModuleGetGlobal
-#undef cuModuleGetGlobal
-#endif
-extern "C" CUresult cuModuleGetGlobal(CUdeviceptr *dptr, size_t *bytes,
-                                      CUmodule hmod, const char *name) {
-  return cuModuleGetGlobal_v2(dptr, bytes, hmod, name);
-}
-
 #ifdef cuMemAlloc
 #undef cuMemAlloc
 #endif
@@ -7078,7 +7029,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphicsMapResources", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources", (void *)cuGraphicsUnmapResources},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
-    {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
     {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
