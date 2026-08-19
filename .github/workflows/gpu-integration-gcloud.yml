@@ -265,6 +265,7 @@ jobs:
                 libx11-dev \
                 libxi-dev \
                 libxmu-dev \
+                llvm-14-dev \
                 ninja-build \
                 openssh-client \
                 python3 \
@@ -303,9 +304,11 @@ jobs:
           fi
 
           export CCACHE_BASEDIR="$CUDA_SAMPLES_DIR"
+          export LLVM_HOME=/usr/lib/llvm-14
           if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
             cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" \
               -DCMAKE_BUILD_TYPE=Release \
+              -DENABLE_CUDA_C_LINKING_SAMPLE=1 \
               -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
               -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
             cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
@@ -324,7 +327,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}
-          key: gpu-integration-cuda-samples-v2-${{ matrix.label }}-${{ matrix.samples_ref }}
+          key: gpu-integration-cuda-samples-v3-${{ matrix.label }}-${{ matrix.samples_ref }}
 
       - name: Prepare CUDA sample cache context
         run: |
