@@ -103,12 +103,6 @@ static void lupine_install_rpc_lifecycle_hooks() {
 
 const char *DEFAULT_PORT = "14833";
 
-struct lupine_jit_outputs {
-  void *wall_time = nullptr;
-  void *info_log = nullptr;
-  void *error_log = nullptr;
-};
-
 void *rpc_client_dispatch_thread(void *arg);
 
 struct lupine_server_endpoint {
@@ -1443,7 +1437,6 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     conn_t *conn = lupine_route_remote_conn(route);
     size_t image_size = record.image.size();
     unsigned int zero_options = 0;
-    size_t jit_output_length = 0;
     if (rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
@@ -1452,12 +1445,6 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
         rpc_write(conn, &zero_options, sizeof(zero_options)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
-        rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, nullptr, jit_output_length) < 0 ||
-        rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, nullptr, jit_output_length) < 0 ||
-        rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, nullptr, jit_output_length) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
@@ -3738,7 +3725,8 @@ extern "C" CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
 }
 
 struct lupine_jit_client_state {
-  lupine_jit_outputs outputs;
+  std::vector<CUjit_option> options;
+  std::vector<void *> option_values;
   std::vector<unsigned char> cubin;
 };
 
@@ -3751,33 +3739,6 @@ static std::unordered_map<CUlinkState, lupine_jit_client_state> &
 lupine_jit_client_states() {
   static std::unordered_map<CUlinkState, lupine_jit_client_state> states;
   return states;
-}
-
-static int lupine_write_jit_options(conn_t *conn, unsigned int num_options,
-                                    const CUjit_option *options,
-                                    void *const *option_values,
-                                    lupine_jit_outputs *outputs) {
-  if (num_options != 0 && (options == nullptr || option_values == nullptr)) {
-    return -1;
-  }
-  for (unsigned int i = 0; i < num_options; ++i) {
-    void *value = option_values[i];
-    if (rpc_write(conn, &options[i], sizeof(options[i])) < 0 ||
-        rpc_write(conn, &option_values[i], sizeof(option_values[i])) < 0) {
-      return -1;
-    }
-    if (options[i] == CU_JIT_WALL_TIME && outputs->wall_time == nullptr &&
-        value != nullptr) {
-      outputs->wall_time = value;
-    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER &&
-               outputs->info_log == nullptr && value != nullptr) {
-      outputs->info_log = value;
-    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER &&
-               outputs->error_log == nullptr && value != nullptr) {
-      outputs->error_log = value;
-    }
-  }
-  return 0;
 }
 
 extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
@@ -3796,11 +3757,10 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  lupine_jit_outputs outputs;
   if (rpc_write_start_request(conn, RPC_cuLinkCreate_v2) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-      lupine_write_jit_options(conn, numOptions, options, optionValues,
-                               &outputs) < 0 ||
+      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, stateOut, sizeof(*stateOut)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3809,7 +3769,11 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   }
   if (return_value == CUDA_SUCCESS) {
     std::lock_guard<std::mutex> lock(lupine_jit_client_mutex());
-    lupine_jit_client_states()[*stateOut].outputs = outputs;
+    auto &jit_state = lupine_jit_client_states()[*stateOut];
+    if (numOptions != 0) {
+      jit_state.options.assign(options, options + numOptions);
+      jit_state.option_values.assign(optionValues, optionValues + numOptions);
+    }
   }
   return return_value;
 }
@@ -3832,7 +3796,6 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
-  lupine_jit_outputs outputs;
   size_t jit_output_length = 0;
   if (rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
@@ -3842,16 +3805,32 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, &name_len, sizeof(name_len)) < 0 ||
       rpc_write(conn, name, name_len) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-      lupine_write_jit_options(conn, numOptions, options, optionValues,
-                               &outputs) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.wall_time, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.info_log, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.error_log, jit_output_length) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      rpc_wait_for_response(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  bool wall_time_read = false;
+  bool info_log_read = false;
+  bool error_log_read = false;
+  for (unsigned int i = 0; i < numOptions; ++i) {
+    bool *output_read = nullptr;
+    if (options[i] == CU_JIT_WALL_TIME) {
+      output_read = &wall_time_read;
+    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER) {
+      output_read = &info_log_read;
+    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER) {
+      output_read = &error_log_read;
+    }
+    if (output_read != nullptr && !*output_read && optionValues[i] != nullptr) {
+      *output_read = true;
+      if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
+          rpc_read(conn, optionValues[i], jit_output_length) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+    }
+  }
+  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -3879,7 +3858,6 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   size_t mapped_file_size = 0;
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
-  lupine_jit_outputs outputs;
   size_t jit_output_length = 0;
   int file_fd = open(path, O_RDONLY);
   if (file_fd < 0) {
@@ -3914,16 +3892,34 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
       rpc_write(conn, file_payload, mapped_file_size) < 0 ||
       rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-      lupine_write_jit_options(conn, numOptions, options, optionValues,
-                               &outputs) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.wall_time, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.info_log, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.error_log, jit_output_length) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      rpc_wait_for_response(conn) < 0) {
+    munmap(file_mapping, mapped_file_size);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  bool wall_time_read = false;
+  bool info_log_read = false;
+  bool error_log_read = false;
+  for (unsigned int i = 0; i < numOptions; ++i) {
+    bool *output_read = nullptr;
+    if (options[i] == CU_JIT_WALL_TIME) {
+      output_read = &wall_time_read;
+    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER) {
+      output_read = &info_log_read;
+    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER) {
+      output_read = &error_log_read;
+    }
+    if (output_read != nullptr && !*output_read && optionValues[i] != nullptr) {
+      *output_read = true;
+      if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
+          rpc_read(conn, optionValues[i], jit_output_length) < 0) {
+        munmap(file_mapping, mapped_file_size);
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+    }
+  }
+  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     munmap(file_mapping, mapped_file_size);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3947,7 +3943,8 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t cubin_size = 0;
-  lupine_jit_outputs outputs;
+  std::vector<CUjit_option> options;
+  std::vector<void *> option_values;
   size_t jit_output_length = 0;
   if (rpc_write_start_request(conn, RPC_cuLinkComplete) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
@@ -3967,18 +3964,34 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
         rpc_read(conn, jit_state.cubin.data(), cubin_size) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    outputs = jit_state.outputs;
+    options = jit_state.options;
+    option_values = jit_state.option_values;
     *cubinOut = jit_state.cubin.empty() ? nullptr : jit_state.cubin.data();
     *sizeOut = jit_state.cubin.size();
   }
 
-  if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.wall_time, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.info_log, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.error_log, jit_output_length) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+  bool wall_time_read = false;
+  bool info_log_read = false;
+  bool error_log_read = false;
+  for (size_t i = 0; i < options.size(); ++i) {
+    bool *output_read = nullptr;
+    if (options[i] == CU_JIT_WALL_TIME) {
+      output_read = &wall_time_read;
+    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER) {
+      output_read = &info_log_read;
+    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER) {
+      output_read = &error_log_read;
+    }
+    if (output_read != nullptr && !*output_read &&
+        option_values[i] != nullptr) {
+      *output_read = true;
+      if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
+          rpc_read(conn, option_values[i], jit_output_length) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+    }
+  }
+  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -4721,7 +4734,6 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
                                   libraryOptionValues, numLibraryOptions);
   }
 
-  lupine_jit_outputs outputs;
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t image_size = image_bytes.size();
@@ -4734,8 +4746,9 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
       rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
       rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
-      lupine_write_jit_options(conn, numJitOptions, jitOptions,
-                               jitOptionsValues, &outputs) < 0 ||
+      rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
+      rpc_write(conn, jitOptionsValues,
+                numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
       rpc_write(conn, &numLibraryOptions, sizeof(numLibraryOptions)) < 0 ||
       rpc_write(conn, libraryOptions,
                 numLibraryOptions * sizeof(*libraryOptions)) < 0) {
@@ -4754,14 +4767,31 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
     }
   }
   if (rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.wall_time, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.info_log, jit_output_length) < 0 ||
-      rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-      rpc_read(conn, outputs.error_log, jit_output_length) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read(conn, library, sizeof(CUlibrary)) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  bool wall_time_read = false;
+  bool info_log_read = false;
+  bool error_log_read = false;
+  for (unsigned int i = 0; i < numJitOptions; ++i) {
+    bool *output_read = nullptr;
+    if (jitOptions[i] == CU_JIT_WALL_TIME) {
+      output_read = &wall_time_read;
+    } else if (jitOptions[i] == CU_JIT_INFO_LOG_BUFFER) {
+      output_read = &info_log_read;
+    } else if (jitOptions[i] == CU_JIT_ERROR_LOG_BUFFER) {
+      output_read = &error_log_read;
+    }
+    if (output_read != nullptr && !*output_read &&
+        jitOptionsValues[i] != nullptr) {
+      *output_read = true;
+      if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
+          rpc_read(conn, jitOptionsValues[i], jit_output_length) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+    }
+  }
+  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
