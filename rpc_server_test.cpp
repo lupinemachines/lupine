@@ -96,14 +96,14 @@ const rpc_backend unknown_backend = {
 };
 
 const rpc_handler_registry handlers = {
-    {10, {handle_first, &first_backend, "first"}},
-    {20, {handle_second, &second_backend, "second"}},
+    {10, {handle_first, &first_backend}},
+    {20, {handle_second, &second_backend}},
 };
 
 void test_registry_and_dispatch() {
   const rpc_backend *backends[] = {&first_backend, &second_backend};
   const rpc_handler_registry invalid_handlers = {
-      {30, {handle_first, &unknown_backend, "invalid"}},
+      {30, {handle_first, &unknown_backend}},
   };
   require(rpc_server_validate(handlers, backends, 2),
           "valid handler registry rejected");

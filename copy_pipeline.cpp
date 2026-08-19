@@ -1092,7 +1092,7 @@ static int lupine_write_lifecycle_response(conn_t *conn, int request_id,
   return 0;
 }
 
-int handle_manual_cuCtxCreate_v2(conn_t *conn) {
+int handle_cuCtxCreate_v2(conn_t *conn) {
   unsigned int flags = 0;
   CUdevice device = 0;
   if (rpc_read(conn, &flags, sizeof(flags)) < 0 ||
@@ -1117,7 +1117,7 @@ int handle_manual_cuCtxCreate_v2(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuDevicePrimaryCtxRetain(conn_t *conn) {
+int handle_cuDevicePrimaryCtxRetain(conn_t *conn) {
   CUdevice device = 0;
   if (rpc_read(conn, &device, sizeof(device)) < 0) {
     return -1;
@@ -1140,7 +1140,7 @@ int handle_manual_cuDevicePrimaryCtxRetain(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuDevicePrimaryCtxRelease_v2(conn_t *conn) {
+int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn) {
   CUdevice device = 0;
   if (rpc_read(conn, &device, sizeof(device)) < 0) {
     return -1;
@@ -1158,7 +1158,7 @@ int handle_manual_cuDevicePrimaryCtxRelease_v2(conn_t *conn) {
   return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
-int handle_manual_cuDevicePrimaryCtxReset_v2(conn_t *conn) {
+int handle_cuDevicePrimaryCtxReset_v2(conn_t *conn) {
   CUdevice device = 0;
   if (rpc_read(conn, &device, sizeof(device)) < 0) {
     return -1;
@@ -1176,7 +1176,7 @@ int handle_manual_cuDevicePrimaryCtxReset_v2(conn_t *conn) {
   return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
-int handle_manual_cuCtxAttach(conn_t *conn) {
+int handle_cuCtxAttach(conn_t *conn) {
   unsigned int flags = 0;
   if (rpc_read(conn, &flags, sizeof(flags)) < 0) {
     return -1;
@@ -1198,7 +1198,7 @@ int handle_manual_cuCtxAttach(conn_t *conn) {
   return 0;
 }
 
-int handle_manual_cuCtxDestroy_v2(conn_t *conn) {
+int handle_cuCtxDestroy_v2(conn_t *conn) {
   CUcontext context = nullptr;
   if (rpc_read(conn, &context, sizeof(context)) < 0) {
     return -1;
@@ -1216,7 +1216,7 @@ int handle_manual_cuCtxDestroy_v2(conn_t *conn) {
   return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
-int handle_manual_cuCtxDetach(conn_t *conn) {
+int handle_cuCtxDetach(conn_t *conn) {
   CUcontext context = nullptr;
   if (rpc_read(conn, &context, sizeof(context)) < 0) {
     return -1;
@@ -1398,7 +1398,7 @@ static int lupine_copy_htod_pipelined(conn_t *conn, int framed,
 #endif
 }
 
-int handle_manual_cuMemcpyHtoD_v2(conn_t *conn) {
+int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr destination = 0;
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
@@ -1701,7 +1701,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
   return 0;
 }
 
-int handle_manual_cuMemcpyDtoH_v2(conn_t *conn) {
+int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr source = 0;
   size_t bytes = 0;
   if (rpc_read(conn, &source, sizeof(source)) < 0 ||

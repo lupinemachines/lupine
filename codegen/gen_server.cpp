@@ -973,253 +973,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuModuleGetGlobal_v2(conn_t *conn) {
-  CUdeviceptr *dptr_null_check;
-  CUdeviceptr dptr;
-  size_t *bytes_null_check;
-  size_t bytes;
-  CUmodule hmod;
-  const char *name = nullptr;
-  std::size_t name_len;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
-      rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
-      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
-    goto ERROR_0;
-  name = (const char *)malloc(name_len);
-  if ((name_len != 0 && name == nullptr) ||
-      rpc_read(conn, (void *)name, name_len) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuModuleGetGlobal_v2(dptr_null_check ? &dptr : nullptr,
-                           bytes_null_check ? &bytes : nullptr, hmod, name);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      (dptr_null_check && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
-      rpc_write(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
-      (bytes_null_check && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  free((void *)name);
-  return 0;
-ERROR_0:
-  free((void *)name);
-  return -1;
-}
-
-int handle_cuLinkCreate_v2(conn_t *conn) {
-  unsigned int numOptions;
-  CUjit_option options;
-  void *optionValues;
-  CUlinkState stateOut;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &numOptions, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &options, sizeof(CUjit_option)) < 0 ||
-      rpc_read(conn, &optionValues, sizeof(void *)) < 0 ||
-      rpc_read(conn, &stateOut, sizeof(CUlinkState)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuLinkCreate_v2(numOptions, &options, &optionValues, &stateOut);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &options, sizeof(CUjit_option)) < 0 ||
-      rpc_write(conn, &optionValues, sizeof(void *)) < 0 ||
-      rpc_write(conn, &stateOut, sizeof(CUlinkState)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuLinkAddData_v2(conn_t *conn) {
-  CUlinkState state;
-  CUjitInputType type;
-  void *data;
-  size_t size;
-  const char *name = nullptr;
-  std::size_t name_len;
-  unsigned int numOptions;
-  CUjit_option *options = nullptr;
-  size_t options_size;
-  void **optionValues = nullptr;
-  size_t optionValues_size;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &state, sizeof(CUlinkState)) < 0 ||
-      rpc_read(conn, &type, sizeof(CUjitInputType)) < 0 ||
-      rpc_read(conn, &data, sizeof(void *)) < 0 ||
-      rpc_read(conn, &size, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
-    goto ERROR_0;
-  name = (const char *)malloc(name_len);
-  if ((name_len != 0 && name == nullptr) ||
-      rpc_read(conn, (void *)name, name_len) < 0 ||
-      rpc_read(conn, &numOptions, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-  options_size = numOptions * sizeof(CUjit_option);
-  options = (CUjit_option *)malloc(options_size);
-  if (options_size != 0 && options == nullptr)
-    goto ERROR_0;
-  if ((options_size != 0 && rpc_read(conn, options, options_size) < 0) || false)
-    goto ERROR_0;
-  optionValues_size = numOptions * sizeof(void *);
-  optionValues = (void **)malloc(optionValues_size);
-  if (optionValues_size != 0 && optionValues == nullptr)
-    goto ERROR_0;
-  if ((optionValues_size != 0 &&
-       rpc_read(conn, optionValues, optionValues_size) < 0) ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLinkAddData_v2(
-      state, type, data, size, name, numOptions,
-      (numOptions * sizeof(CUjit_option) == 0 ? nullptr : options),
-      (numOptions * sizeof(void *) == 0 ? nullptr : optionValues));
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  free((void *)optionValues);
-  free((void *)options);
-  free((void *)name);
-  return 0;
-ERROR_0:
-  free((void *)optionValues);
-  free((void *)options);
-  free((void *)name);
-  return -1;
-}
-
-int handle_cuLinkAddFile_v2(conn_t *conn) {
-  CUlinkState state;
-  CUjitInputType type;
-  const char *path = nullptr;
-  std::size_t path_len;
-  unsigned int numOptions;
-  CUjit_option *options = nullptr;
-  size_t options_size;
-  void **optionValues = nullptr;
-  size_t optionValues_size;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &state, sizeof(CUlinkState)) < 0 ||
-      rpc_read(conn, &type, sizeof(CUjitInputType)) < 0 ||
-      rpc_read(conn, &path_len, sizeof(std::size_t)) < 0)
-    goto ERROR_0;
-  path = (const char *)malloc(path_len);
-  if ((path_len != 0 && path == nullptr) ||
-      rpc_read(conn, (void *)path, path_len) < 0 ||
-      rpc_read(conn, &numOptions, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-  options_size = numOptions * sizeof(CUjit_option);
-  options = (CUjit_option *)malloc(options_size);
-  if (options_size != 0 && options == nullptr)
-    goto ERROR_0;
-  if ((options_size != 0 && rpc_read(conn, options, options_size) < 0) || false)
-    goto ERROR_0;
-  optionValues_size = numOptions * sizeof(void *);
-  optionValues = (void **)malloc(optionValues_size);
-  if (optionValues_size != 0 && optionValues == nullptr)
-    goto ERROR_0;
-  if ((optionValues_size != 0 &&
-       rpc_read(conn, optionValues, optionValues_size) < 0) ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLinkAddFile_v2(
-      state, type, path, numOptions,
-      (numOptions * sizeof(CUjit_option) == 0 ? nullptr : options),
-      (numOptions * sizeof(void *) == 0 ? nullptr : optionValues));
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  free((void *)optionValues);
-  free((void *)options);
-  free((void *)path);
-  return 0;
-ERROR_0:
-  free((void *)optionValues);
-  free((void *)options);
-  free((void *)path);
-  return -1;
-}
-
-int handle_cuLinkComplete(conn_t *conn) {
-  CUlinkState state;
-  void *cubinOut;
-  size_t sizeOut;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &state, sizeof(CUlinkState)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLinkComplete(state, &cubinOut, &sizeOut);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &cubinOut, sizeof(void *)) < 0 ||
-      rpc_write(conn, &sizeOut, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuLinkDestroy(conn_t *conn) {
-  CUlinkState state;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &state, sizeof(CUlinkState)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLinkDestroy(state);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuModuleGetTexRef(conn_t *conn) {
   CUtexref pTexRef;
   CUmodule hmod;
@@ -1406,30 +1159,6 @@ int handle_cuLibraryGetKernel(conn_t *conn) {
   return 0;
 ERROR_0:
   free((void *)name);
-  return -1;
-}
-
-int handle_cuLibraryGetModule(conn_t *conn) {
-  CUmodule pMod;
-  CUlibrary library;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLibraryGetModule(&pMod, library);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pMod, sizeof(CUmodule)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
   return -1;
 }
 
@@ -3635,37 +3364,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuPointerGetAttributes(conn_t *conn) {
-  unsigned int numAttributes;
-  CUpointer_attribute attributes;
-  void *data;
-  CUdeviceptr ptr;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &numAttributes, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &attributes, sizeof(CUpointer_attribute)) < 0 ||
-      rpc_read(conn, &data, sizeof(void *)) < 0 ||
-      rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuPointerGetAttributes(numAttributes, &attributes, &data, ptr);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &attributes, sizeof(CUpointer_attribute)) < 0 ||
-      rpc_write(conn, &data, sizeof(void *)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuStreamCreate(conn_t *conn) {
   CUstream phStream;
   unsigned int Flags;
@@ -3819,30 +3517,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuStreamBeginCapture_v2(conn_t *conn) {
-  CUstream hStream;
-  CUstreamCaptureMode mode;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuStreamBeginCapture_v2(hStream, mode);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
   CUstreamCaptureMode mode;
   int request_id;
@@ -3857,36 +3531,6 @@ int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuStreamEndCapture(conn_t *conn) {
-  CUstream hStream;
-  CUgraph *phGraph_null_check;
-  CUgraph phGraph;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &phGraph_null_check, sizeof(CUgraph *)) < 0 ||
-      (phGraph_null_check && rpc_read(conn, &phGraph, sizeof(CUgraph)) < 0) ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuStreamEndCapture(hStream, phGraph_null_check ? &phGraph : nullptr);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &phGraph_null_check, sizeof(CUgraph *)) < 0 ||
-      (phGraph_null_check && rpc_write(conn, &phGraph, sizeof(CUgraph)) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -4091,44 +3735,6 @@ int handle_cuEventCreate(conn_t *conn) {
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuEventRecord(conn_t *conn) {
-  CUevent hEvent;
-  CUstream hStream;
-  int request_id;
-  if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  cuEventRecord(hEvent, hStream);
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuEventRecordWithFlags(conn_t *conn) {
-  CUevent hEvent;
-  CUstream hStream;
-  unsigned int flags;
-  int request_id;
-  if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  cuEventRecordWithFlags(hEvent, hStream, flags);
 
   return 0;
 ERROR_0:
@@ -4716,49 +4322,6 @@ int handle_cuFuncGetParamInfo(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &paramOffset, sizeof(size_t)) < 0 ||
       rpc_write(conn, &paramSize, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuLaunchCooperativeKernel(conn_t *conn) {
-  CUfunction f;
-  unsigned int gridDimX;
-  unsigned int gridDimY;
-  unsigned int gridDimZ;
-  unsigned int blockDimX;
-  unsigned int blockDimY;
-  unsigned int blockDimZ;
-  unsigned int sharedMemBytes;
-  CUstream hStream;
-  void *kernelParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &f, sizeof(CUfunction)) < 0 ||
-      rpc_read(conn, &gridDimX, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &gridDimY, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &gridDimZ, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &blockDimX, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &blockDimY, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &blockDimZ, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &sharedMemBytes, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &kernelParams, sizeof(void *)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLaunchCooperativeKernel(
-      f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
-      sharedMemBytes, hStream, &kernelParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &kernelParams, sizeof(void *)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -6072,31 +5635,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuGraphClone(conn_t *conn) {
-  CUgraph phGraphClone;
-  CUgraph originalGraph;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &phGraphClone, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &originalGraph, sizeof(CUgraph)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphClone(&phGraphClone, originalGraph);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &phGraphClone, sizeof(CUgraph)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuGraphNodeFindInClone(conn_t *conn) {
   CUgraphNode phNode;
   CUgraphNode hOriginalNode;
@@ -6256,66 +5794,6 @@ int handle_cuGraphDestroyNode(conn_t *conn) {
   lupine_intercept_result = cuGraphDestroyNode(hNode);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphInstantiateWithFlags(conn_t *conn) {
-  CUgraphExec phGraphExec;
-  CUgraph hGraph;
-  unsigned long long flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphInstantiateWithFlags(&phGraphExec, hGraph, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphInstantiateWithParams(conn_t *conn) {
-  CUgraphExec phGraphExec;
-  CUgraph hGraph;
-  CUDA_GRAPH_INSTANTIATE_PARAMS instantiateParams;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &instantiateParams,
-               sizeof(CUDA_GRAPH_INSTANTIATE_PARAMS)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result =
-      cuGraphInstantiateWithParams(&phGraphExec, hGraph, &instantiateParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &phGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_write(conn, &instantiateParams,
-                sizeof(CUDA_GRAPH_INSTANTIATE_PARAMS)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -6653,74 +6131,6 @@ int handle_cuGraphUpload(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
   lupine_intercept_result = cuGraphUpload(hGraphExec, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphLaunch(conn_t *conn) {
-  CUgraphExec hGraphExec;
-  CUstream hStream;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphLaunch(hGraphExec, hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphExecDestroy(conn_t *conn) {
-  CUgraphExec hGraphExec;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphExecDestroy(hGraphExec);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuGraphDestroy(conn_t *conn) {
-  CUgraph hGraph;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuGraphDestroy(hGraph);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||

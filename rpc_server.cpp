@@ -38,12 +38,8 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
   if (result >= 0) {
     return 0;
   }
-  if (handler.error_style == rpc_handler_error_style::manual) {
-    LUPINE_LOG_ERROR("Error handling manual " << handler.name << " request.");
-  } else {
-    LUPINE_LOG_ERROR("Error handling " << backend.name << " request for op "
-                                       << op << ".");
-  }
+  LUPINE_LOG_ERROR("Error handling " << backend.name << " request for op "
+                                     << op << ".");
   return -1;
 }
 

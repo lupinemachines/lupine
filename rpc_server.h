@@ -8,11 +8,6 @@
 
 typedef int (*RequestHandler)(conn_t *conn);
 
-enum class rpc_handler_error_style {
-  generic,
-  manual,
-};
-
 struct rpc_handler;
 
 struct rpc_backend {
@@ -27,17 +22,11 @@ struct rpc_backend {
 
 struct rpc_handler {
   rpc_handler(RequestHandler request_handler = nullptr,
-              const rpc_backend *request_backend = nullptr,
-              const char *request_name = nullptr,
-              rpc_handler_error_style request_error_style =
-                  rpc_handler_error_style::generic)
-      : handler(request_handler), backend(request_backend), name(request_name),
-        error_style(request_error_style) {}
+              const rpc_backend *request_backend = nullptr)
+      : handler(request_handler), backend(request_backend) {}
 
   RequestHandler handler;
   const rpc_backend *backend;
-  const char *name;
-  rpc_handler_error_style error_style;
 };
 
 using rpc_handler_registry = std::unordered_map<int, rpc_handler>;

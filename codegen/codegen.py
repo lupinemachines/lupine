@@ -11,6 +11,7 @@ from string import Template
 import io
 import os
 import glob
+import re
 import subprocess
 import zlib
 from ops import (
@@ -178,15 +179,6 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceGetCudaComputeCapability",
 ]
 
-NVML_MANUAL_SERVER_FUNCTIONS = {
-    "nvmlDeviceGetComputeRunningProcesses",
-    "nvmlDeviceGetComputeRunningProcesses_v2",
-    "nvmlDeviceGetGraphicsRunningProcesses",
-    "nvmlDeviceGetGraphicsRunningProcesses_v2",
-    "nvmlDeviceGetMPSComputeRunningProcesses",
-    "nvmlDeviceGetMPSComputeRunningProcesses_v2",
-}
-
 PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
@@ -204,176 +196,6 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineManagedHostFlush",
 ]
 
-CUDA_MANUAL_SERVER_FUNCTIONS = [
-    "cuGetErrorName",
-    "cuGetErrorString",
-    "cuGetExportTableMetadata",
-    "cuPrivateGetModuleNode",
-    "cuModuleLoad",
-    "cuModuleLoadData",
-    "lupineFunctionParamLayoutSnapshot",
-    "lupineFunctionAttributeSnapshot",
-    "cuLibraryLoadData",
-    "lupineLibrarySnapshot",
-    "lupineLibraryAttributeSnapshot",
-    "cuCtxCreate_v2",
-    "cuDevicePrimaryCtxRetain",
-    "cuDevicePrimaryCtxRelease_v2",
-    "cuDevicePrimaryCtxReset_v2",
-    "cuCtxAttach",
-    "cuCtxDestroy_v2",
-    "cuCtxDetach",
-    "cuMemPoolSetAttribute",
-    "cuMemPoolGetAttribute",
-    "cuMemExportToShareableHandle",
-    "cuMemImportFromShareableHandle",
-    "cuMemPoolExportToShareableHandle",
-    "cuMemPoolImportFromShareableHandle",
-    "cuPointerGetAttribute",
-    "cuPointerSetAttribute",
-    "cuPointerGetAttributes",
-    "cuLinkCreate_v2",
-    "cuLinkAddData_v2",
-    "cuLinkAddFile_v2",
-    "cuLinkComplete",
-    "cuLinkDestroy",
-    "cuMemcpy3D_v2",
-    "cuMemcpy2D_v2",
-    "cuMemcpy2DUnaligned_v2",
-    "cuMemcpy2DAsync_v2",
-    "cuMemcpyDtoH_v2",
-    "cuMemcpyAtoH_v2",
-    "cuMemHostAlloc",
-    "cuMemHostGetFlags",
-    "cuDeviceGetGraphMemAttribute",
-    "cuDeviceSetGraphMemAttribute",
-    "cuLibraryGetModule",
-    "cuLibraryUnload",
-    "cuModuleGetGlobal_v2",
-    "cuOccupancyMaxPotentialBlockSize",
-    "cuOccupancyMaxPotentialBlockSizeWithFlags",
-    "cuLaunchKernel",
-    "cuLaunchKernelEx",
-    "cuLaunchCooperativeKernel",
-    "cuGraphAddKernelNode_v2",
-    "cuGraphKernelNodeGetParams_v2",
-    "cuGraphKernelNodeSetParams_v2",
-    "cuGraphAddMemcpyNode",
-    "cuGraphAddMemsetNode",
-    "cuGraphAddHostNode",
-    "cuGraphExecKernelNodeSetParams_v2",
-    "cuGraphConditionalHandleCreate",
-    "cuGraphAddNode_v2",
-    "cuGraphLaunch",
-    "cuGraphGetEdges_v2",
-    "cuGraphNodeGetDependencies_v2",
-    "cuGraphNodeGetDependentNodes_v2",
-    "cuMemPrefetchAsync",
-    "cuGraphHostNodeGetParams",
-    "cuGraphHostNodeSetParams",
-    "cuGraphExecHostNodeSetParams",
-    "cuLaunchHostFunc",
-    "cuStreamAddCallback",
-    "cuEventRecord",
-    "cuEventRecordWithFlags",
-    "cuEventQuery",
-    "lupineEventQueryBatch",
-    "cuStreamWaitEvent",
-    "cuStreamBeginCaptureToGraph",
-    "cuStreamUpdateCaptureDependencies_v2",
-    "cuStreamGetCaptureInfo_v3",
-    "cuStreamBeginCapture_v2",
-    "cuStreamEndCapture",
-    "cuGraphClone",
-    "cuGraphInstantiateWithFlags",
-    "cuGraphInstantiateWithParams",
-    "cuGraphExecDestroy",
-    "cuGraphDestroy",
-    "cuMemcpyHtoD_v2",
-    "cuMemcpyHtoDAsync_v2",
-    "lupineManagedHostFlush",
-    "lupineDeviceSnapshot",
-    "cuMemcpyDtoHAsync_v2",
-    "cuCtxSynchronize",
-    "cuStreamSynchronize",
-    "cuEventSynchronize",
-    "cuTensorMapEncodeTiled",
-]
-
-CUDA_MANUAL_SERVER_OVERRIDES = {
-    "cuGetExportTableMetadata": (
-        "handle_manual_cuGetExportTableMetadata",
-        "cuGetExportTable metadata",
-    ),
-    "cuPrivateGetModuleNode": (
-        "handle_manual_cuPrivateGetModuleNode",
-        "private module node",
-    ),
-    "cuOccupancyMaxPotentialBlockSize": (
-        "[](conn_t *conn) { return "
-        "handle_manual_cuOccupancyMaxPotentialBlockSize(conn, false); }",
-        "cuOccupancyMaxPotentialBlockSize",
-    ),
-    "cuOccupancyMaxPotentialBlockSizeWithFlags": (
-        "[](conn_t *conn) { return "
-        "handle_manual_cuOccupancyMaxPotentialBlockSize(conn, true); }",
-        "cuOccupancyMaxPotentialBlockSizeWithFlags",
-    ),
-    "cuGraphAddKernelNode_v2": (
-        "handle_manual_cuGraphAddKernelNode",
-        "cuGraphAddKernelNode",
-    ),
-    "cuGraphKernelNodeGetParams_v2": (
-        "handle_manual_cuGraphKernelNodeGetParams",
-        "cuGraphKernelNodeGetParams_v2",
-    ),
-    "cuGraphKernelNodeSetParams_v2": (
-        "handle_manual_cuGraphKernelNodeSetParams",
-        "cuGraphKernelNodeSetParams_v2",
-    ),
-    "cuGraphExecKernelNodeSetParams_v2": (
-        "handle_manual_cuGraphExecKernelNodeSetParams",
-        "cuGraphExecKernelNodeSetParams_v2",
-    ),
-    "cuGraphAddNode_v2": ("handle_manual_cuGraphAddNode", "cuGraphAddNode"),
-    "cuGraphGetEdges_v2": (
-        "handle_manual_cuGraphGetEdges",
-        "cuGraphGetEdges",
-    ),
-    "cuGraphNodeGetDependencies_v2": (
-        "handle_manual_cuGraphNodeGetDependencies",
-        "cuGraphNodeGetDependencies",
-    ),
-    "cuGraphNodeGetDependentNodes_v2": (
-        "handle_manual_cuGraphNodeGetDependentNodes",
-        "cuGraphNodeGetDependentNodes",
-    ),
-    "cuEventRecord": (
-        "[](conn_t *conn) { return handle_manual_cuEventRecord(conn, false); }",
-        "cuEventRecord",
-    ),
-    "cuEventRecordWithFlags": (
-        "[](conn_t *conn) { return handle_manual_cuEventRecord(conn, true); }",
-        "cuEventRecordWithFlags",
-    ),
-    "cuStreamUpdateCaptureDependencies_v2": (
-        "handle_manual_cuStreamUpdateCaptureDependencies",
-        "cuStreamUpdateCaptureDependencies",
-    ),
-    "cuStreamGetCaptureInfo_v3": (
-        "handle_manual_cuStreamGetCaptureInfo",
-        "cuStreamGetCaptureInfo",
-    ),
-    "cuStreamBeginCapture_v2": (
-        "handle_manual_cuStreamBeginCapture",
-        "cuStreamBeginCapture",
-    ),
-}
-
-CUDA_MANUAL_SERVER_GUARDS = {
-    "cuTensorMapEncodeTiled": "CUDA_VERSION >= 12000",
-}
-
 REGISTRY_CPP_TEMPLATE = Template(
     r'''#include "rpc_server.h"
 
@@ -383,34 +205,110 @@ REGISTRY_CPP_TEMPLATE = Template(
 #include "nvml_server.h"
 
 // clang-format off
-#define LUPINE_RPC_HANDLERS(GENERATED, MANUAL) \
+#define LUPINE_RPC_HANDLERS(HANDLER) \
 $registry_entries
 // clang-format on
 
-#define LUPINE_DECLARE_GENERATED(operation, handler, backend)                    \
+#define LUPINE_DECLARE_HANDLER(operation, handler, backend)                    \
   int handler(conn_t *conn);
-#define LUPINE_DECLARE_MANUAL(operation, handler, backend, name)
-LUPINE_RPC_HANDLERS(LUPINE_DECLARE_GENERATED, LUPINE_DECLARE_MANUAL)
-#undef LUPINE_DECLARE_GENERATED
-#undef LUPINE_DECLARE_MANUAL
+LUPINE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#undef LUPINE_DECLARE_HANDLER
 
 const rpc_handler_registry &lupine_rpc_handlers() {
-#define LUPINE_REGISTER_GENERATED(operation, handler, backend)                  \
+#define LUPINE_REGISTER_HANDLER(operation, handler, backend)                    \
   {operation, {handler, &backend}},
-#define LUPINE_REGISTER_MANUAL(operation, handler, backend, name)               \
-  {operation, {handler, &backend, name, rpc_handler_error_style::manual}},
   static const rpc_handler_registry handlers = {
-      LUPINE_RPC_HANDLERS(LUPINE_REGISTER_GENERATED, LUPINE_REGISTER_MANUAL)
+      LUPINE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $guarded_handlers
   };
-#undef LUPINE_REGISTER_GENERATED
-#undef LUPINE_REGISTER_MANUAL
+#undef LUPINE_REGISTER_HANDLER
   return handlers;
 }
 
 #undef LUPINE_RPC_HANDLERS
 '''
 )
+
+
+@dataclass(frozen=True)
+class ServerBinding:
+    name: str
+    backend: str
+    handler: str
+    guard: Optional[str] = None
+
+    @property
+    def backend_symbol(self) -> str:
+        return SERVER_BACKENDS[self.backend]
+
+
+SERVER_BACKENDS = {
+    "CUDA": "lupine_cuda_backend",
+    "NVML": "lupine_nvml_backend",
+}
+
+
+def annotation_directives(annotation: str) -> list[str]:
+    directives = []
+    for line in (annotation or "").splitlines():
+        line = line.strip().lstrip("*").strip()
+        if line.startswith("@"):
+            directives.append(line)
+    return directives
+
+
+def parse_server_binding(name: str, annotation: str) -> Optional[ServerBinding]:
+    backend = None
+    handler = None
+    guard = None
+    for directive in annotation_directives(annotation):
+        parts = directive.split(maxsplit=2)
+        if parts[0] == "@server":
+            if backend is not None or len(parts) < 2:
+                raise RuntimeError(
+                    f"Invalid @server annotation for {name}"
+                )
+            backend = parts[1].upper()
+            if backend not in SERVER_BACKENDS:
+                raise RuntimeError(f"Unknown RPC server backend {backend}")
+            if len(parts) == 3:
+                handler = parts[2]
+        elif parts[0] == "@serverguard":
+            if guard is not None or len(parts) < 2:
+                raise RuntimeError(
+                    f"Invalid @serverguard annotation for {name}"
+                )
+            guard = directive.removeprefix("@serverguard").strip()
+
+    if backend is None:
+        if guard is not None:
+            raise RuntimeError(
+                f"@serverguard without @server for {name}"
+            )
+        return None
+
+    if handler is None:
+        handler = "handle_" + name
+    return ServerBinding(name, backend, handler, guard)
+
+
+def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
+    bindings = {}
+    with open(path) as annotations_file:
+        source = annotations_file.read()
+    for match in re.finditer(r"/\*\*(.*?)\*/\s*([^;{]*?\()", source, re.DOTALL):
+        annotation, declaration = match.groups()
+        name_match = re.search(r"([A-Za-z_]\w*)\s*\($", declaration)
+        if name_match is None:
+            continue
+        binding = parse_server_binding(name_match.group(1), annotation)
+        if binding is None:
+            continue
+        previous = bindings.get(binding.name)
+        if previous is not None and previous != binding:
+            raise RuntimeError(f"Conflicting @server annotations for {binding.name}")
+        bindings[binding.name] = binding
+    return bindings
 
 
 def rpc_id(name: str) -> int:
@@ -531,6 +429,8 @@ def parse_annotation(
                 deferred_dtoh="DEFERRED_DTOH" in options,
                 stdout="STDOUT" in options,
             )
+            continue
+        if line.startswith("@server"):
             continue
         if line.startswith("@routingkey"):
             parts = line.split()
@@ -1164,14 +1064,16 @@ def server_call_name(function_name: str) -> str:
     return function_name
 
 
-def collect_nvml_functions(annotations: ParsedData):
+def collect_nvml_functions(
+    annotations: ParsedData, server_bindings: dict[str, ServerBinding]
+):
     by_name = {
         function.name.format(): function
         for function in annotations.namespace.functions
     }
     result = []
     for name in NVML_RPC_FUNCTIONS:
-        if name in NVML_MANUAL_SERVER_FUNCTIONS:
+        if name in server_bindings:
             continue
         function = by_name.get(name)
         if function is None:
@@ -1408,6 +1310,7 @@ def main():
     # Parse the files
     cuda_ast: ParsedData = parse_file(cuda_header, options=options)
     annotations: ParsedData = parse_file(annotations_header, options=options)
+    server_bindings = collect_server_bindings(annotations_header)
     functions = [
         function
         for function in cuda_ast.namespace.functions
@@ -1445,9 +1348,18 @@ def main():
             (function, annotation, metadata.operations, metadata)
         )
 
-    nvml_functions_with_annotations = collect_nvml_functions(annotations)
+    nvml_functions_with_annotations = collect_nvml_functions(
+        annotations, server_bindings
+    )
 
-    annotated_names = annotated_rpc_names(annotations)
+    annotated_names = sorted(
+        set(annotated_rpc_names(annotations))
+        | {
+            name
+            for name, binding in server_bindings.items()
+            if binding.backend == "CUDA"
+        }
+    )
 
     with open("gen_api.h", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n")
@@ -1471,8 +1383,12 @@ def main():
 
         for function, _, _, _ in functions_with_annotations:
             name = function.name.format()
+            if name in PRIVATE_RPC_FUNCTIONS:
+                continue
             write_rpc_define(f"RPC_{name}", name)
         for name in annotated_names:
+            if name in PRIVATE_RPC_FUNCTIONS:
+                continue
             write_rpc_define(f"RPC_{name}", name)
         for name in NVML_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
@@ -1931,7 +1847,10 @@ def main():
             '#include "nvml_server.h"\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
-            if metadata.disabled_server:
+            if (
+                metadata.disabled_server
+                or function.name.format() in server_bindings
+            ):
                 continue
 
             # parse the annotation doxygen
@@ -2026,53 +1945,54 @@ def main():
             f.write("    return -1;\n")
             f.write("}\n\n")
 
-    manual_handlers = set(CUDA_MANUAL_SERVER_FUNCTIONS)
     cuda_handlers = []
     for function, _, _, metadata in functions_with_annotations:
         name = function.name.format()
-        if not metadata.disabled_server and name not in manual_handlers:
+        if not metadata.disabled_server and name not in server_bindings:
             cuda_handlers.append(name)
 
-    registered_names = CUDA_MANUAL_SERVER_FUNCTIONS + cuda_handlers + NVML_RPC_FUNCTIONS
+    generated_bindings = [
+        ServerBinding(name, "CUDA", f"handle_{name}") for name in cuda_handlers
+    ]
+    generated_bindings.extend(
+        ServerBinding(name, "NVML", f"handle_{name}")
+        for name in NVML_RPC_FUNCTIONS
+        if name not in server_bindings
+    )
+    bindings = list(server_bindings.values()) + generated_bindings
+
     operations_by_id = {}
-    for name in registered_names:
-        operation = rpc_id(name)
+    for binding in bindings:
+        operation = rpc_id(binding.name)
         if operation in operations_by_id:
             raise RuntimeError(
-                f"Duplicate RPC operation for {operations_by_id[operation]} and {name}"
+                f"Duplicate RPC operation for {operations_by_id[operation]} "
+                f"and {binding.name}"
             )
-        operations_by_id[operation] = name
+        operations_by_id[operation] = binding.name
 
-    registry_entries = []
-    for name in CUDA_MANUAL_SERVER_FUNCTIONS:
-        if name in CUDA_MANUAL_SERVER_GUARDS:
-            continue
-        handler, display_name = CUDA_MANUAL_SERVER_OVERRIDES.get(
-            name, (f"handle_manual_{name}", name)
+    def registry_entry(binding: ServerBinding, macro: str) -> str:
+        operation_prefix = (
+            "LUPINE_RPC_" if binding.name in PRIVATE_RPC_FUNCTIONS else "RPC_"
         )
-        operation_prefix = "LUPINE_RPC_" if name in PRIVATE_RPC_FUNCTIONS else "RPC_"
-        registry_entries.append(
-            f'  MANUAL({operation_prefix}{name}, {handler}, lupine_cuda_backend, "{display_name}")'
+        return (
+            f"{macro}({operation_prefix}{binding.name}, {binding.handler}, "
+            f"{binding.backend_symbol})"
         )
-    registry_entries.extend(
-        f"  GENERATED(RPC_{name}, handle_{name}, lupine_cuda_backend)"
-        for name in cuda_handlers
-    )
-    registry_entries.extend(
-        f"  GENERATED(RPC_{name}, handle_{name}, lupine_nvml_backend)"
-        for name in NVML_RPC_FUNCTIONS
-    )
+
+    registry_entries = [
+        "  " + registry_entry(binding, "HANDLER")
+        for binding in bindings
+        if binding.guard is None
+    ]
 
     guarded_handlers = []
-    for name, guard in CUDA_MANUAL_SERVER_GUARDS.items():
-        handler, display_name = CUDA_MANUAL_SERVER_OVERRIDES.get(
-            name, (f"handle_manual_{name}", name)
-        )
-        operation_prefix = "LUPINE_RPC_" if name in PRIVATE_RPC_FUNCTIONS else "RPC_"
+    for binding in bindings:
+        if binding.guard is None:
+            continue
         guarded_handlers.append(
-            f'#if {guard}\n'
-            f'      LUPINE_REGISTER_MANUAL({operation_prefix}{name}, {handler}, '
-            f'lupine_cuda_backend, "{display_name}")\n'
+            f"#if {binding.guard}\n"
+            f"      {registry_entry(binding, 'LUPINE_REGISTER_HANDLER')}\n"
             f'#endif'
         )
 
