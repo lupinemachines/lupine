@@ -10,13 +10,11 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 
 env:
-  CUDA_HEADER_PACKAGE: nvidia-cuda-runtime-cu12
-  CUDA_HEADER_VERSION: 12.9.79
-  NVML_HEADER_PACKAGE: nvidia-nvml-dev-cu12
-  NVML_HEADER_VERSION: 12.9.79
+  CUDA_MAJOR_VERSION: "13"
 
 jobs:
   build:
@@ -27,9 +25,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          - runner: macos-26
             arch: arm64
-          - runner: macos-15-intel
+          - runner: macos-26-intel
             arch: x86_64
 
     steps:
@@ -43,6 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cuda-wheel cuda-sdk
+          next_cuda_major=$((CUDA_MAJOR_VERSION + 1))
           python3 -m pip download \
             --dest cuda-wheel \
             --only-binary=:all: \
@@ -51,16 +50,20 @@ jobs:
             --python-version 3 \
             --abi none \
             --no-deps \
-            "${CUDA_HEADER_PACKAGE}==${CUDA_HEADER_VERSION}" \
-            "${NVML_HEADER_PACKAGE}==${NVML_HEADER_VERSION}"
-          python3 -m zipfile -e \
-            "cuda-wheel/nvidia_cuda_runtime_cu12-${CUDA_HEADER_VERSION}-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" \
-            cuda-sdk
-          python3 -m zipfile -e \
-            "cuda-wheel/nvidia_nvml_dev_cu12-${NVML_HEADER_VERSION}-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" \
-            nvml-sdk
-          test -f cuda-sdk/nvidia/cuda_runtime/include/cuda.h
-          test -f nvml-sdk/nvidia/nvml_dev/include/nvml.h
+            "nvidia-cuda-runtime>=${CUDA_MAJOR_VERSION},<${next_cuda_major}" \
+            "nvidia-nvml-dev>=${CUDA_MAJOR_VERSION},<${next_cuda_major}"
+          cuda_wheel="$(find cuda-wheel -name 'nvidia_cuda_runtime-*.whl' -print -quit)"
+          nvml_wheel="$(find cuda-wheel -name 'nvidia_nvml_dev-*.whl' -print -quit)"
+          test -n "$cuda_wheel"
+          test -n "$nvml_wheel"
+          cuda_version="$(basename "$cuda_wheel" | sed -E 's/^nvidia_cuda_runtime-([^-]+)-.*/\1/')"
+          nvml_version="$(basename "$nvml_wheel" | sed -E 's/^nvidia_nvml_dev-([^-]+)-.*/\1/')"
+          unzip -q "$cuda_wheel" -d cuda-sdk
+          unzip -q "$nvml_wheel" -d cuda-sdk
+          printf '%s\n' "$cuda_version" > cuda-sdk/CUDA_HEADER_VERSION
+          printf '%s\n' "$nvml_version" > cuda-sdk/NVML_HEADER_VERSION
+          test -f cuda-sdk/nvidia/cu13/include/cuda.h
+          test -f cuda-sdk/nvidia/cu13/include/nvml.h
 
       - name: Configure client-only build
         run: |
@@ -69,8 +72,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DCMAKE_PREFIX_PATH="$(brew --prefix libnghttp2);$(brew --prefix openssl@3)" \
-            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cuda_runtime/include" \
-            -DLUPINE_NVML_INCLUDE_DIR="$PWD/nvml-sdk/nvidia/nvml_dev/include"
+            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include" \
+            -DLUPINE_NVML_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include"
 
       - name: Build client dylibs
         run: >
@@ -108,31 +111,122 @@ jobs:
           assert nvml.nvmlInit_v2
           PY
 
-      - name: Collect client artifact
+      - name: Stage thin dylibs
         run: |
           set -euo pipefail
-          asset="lupine-client-cuda-${CUDA_HEADER_VERSION}-macos-${{ matrix.arch }}"
+          mkdir -p "thin/${{ matrix.arch }}"
+          cp build/libcuda.dylib "thin/${{ matrix.arch }}/libcuda.dylib"
+          cp build/libnvidia-ml.dylib "thin/${{ matrix.arch }}/libnvidia-ml.dylib"
+          cp cuda-sdk/CUDA_HEADER_VERSION "thin/${{ matrix.arch }}/CUDA_HEADER_VERSION"
+          cp cuda-sdk/NVML_HEADER_VERSION "thin/${{ matrix.arch }}/NVML_HEADER_VERSION"
+
+      - name: Upload thin dylibs
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-macos-thin-${{ matrix.arch }}
+          path: thin/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    name: macOS universal client
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 10
+
+    steps:
+      - name: Download arm64 dylibs
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-macos-thin-arm64
+          path: thin/arm64
+
+      - name: Download x86_64 dylibs
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-macos-thin-x86_64
+          path: thin/x86_64
+
+      - name: Resolve header versions
+        id: versions
+        run: |
+          set -euo pipefail
+          cuda_version="$(< thin/arm64/CUDA_HEADER_VERSION)"
+          nvml_version="$(< thin/arm64/NVML_HEADER_VERSION)"
+          test "$cuda_version" = "$(< thin/x86_64/CUDA_HEADER_VERSION)"
+          test "$nvml_version" = "$(< thin/x86_64/NVML_HEADER_VERSION)"
+          echo "cuda=$cuda_version" >> "$GITHUB_OUTPUT"
+          echo "nvml=$nvml_version" >> "$GITHUB_OUTPUT"
+
+      - name: Create and verify universal dylibs
+        run: |
+          set -euo pipefail
+          mkdir -p universal
+          lipo -create \
+            thin/arm64/libcuda.dylib \
+            thin/x86_64/libcuda.dylib \
+            -output universal/libcuda.dylib
+          lipo -create \
+            thin/arm64/libnvidia-ml.dylib \
+            thin/x86_64/libnvidia-ml.dylib \
+            -output universal/libnvidia-ml.dylib
+          lipo -verify_arch arm64 x86_64 universal/libcuda.dylib
+          lipo -verify_arch arm64 x86_64 universal/libnvidia-ml.dylib
+          nm -gjU universal/libcuda.dylib > universal/libcuda.exports
+          nm -gjU universal/libnvidia-ml.dylib > universal/libnvidia-ml.exports
+          grep -qx '_cuInit' universal/libcuda.exports
+          grep -qx '_cuGetProcAddress' universal/libcuda.exports
+          grep -qx '_nvmlInit_v2' universal/libnvidia-ml.exports
+          otool -L universal/libcuda.dylib > universal/libcuda.dependencies
+          otool -L universal/libnvidia-ml.dylib > universal/libnvidia-ml.dependencies
+          if awk 'FNR > 1' universal/*.dependencies | grep -E 'libcuda|libcudart|libnvidia-ml'; then
+            echo 'A universal client dylib unexpectedly links an NVIDIA library' >&2
+            exit 1
+          fi
+          CUDA_DYLIB_PATH="$PWD/universal/libcuda.dylib" \
+          NVML_DYLIB_PATH="$PWD/universal/libnvidia-ml.dylib" \
+          python3 - <<'PY'
+          import ctypes
+          import os
+
+          cuda = ctypes.CDLL(os.environ["CUDA_DYLIB_PATH"])
+          nvml = ctypes.CDLL(os.environ["NVML_DYLIB_PATH"])
+          assert cuda.cuInit
+          assert cuda.cuGetProcAddress
+          assert nvml.nvmlInit_v2
+          PY
+
+      - name: Collect universal client artifact
+        env:
+          CUDA_HEADER_VERSION: ${{ steps.versions.outputs.cuda }}
+          NVML_HEADER_VERSION: ${{ steps.versions.outputs.nvml }}
+        run: |
+          set -euo pipefail
+          asset="lupine-client-cuda-${CUDA_HEADER_VERSION}-macos-universal2"
           out="artifacts/${asset}"
           mkdir -p "$out"
-          cp build/libcuda.dylib "$out/libcuda.dylib"
-          cp build/libnvidia-ml.dylib "$out/libnvidia-ml.dylib"
+          cp universal/libcuda.dylib "$out/libcuda.dylib"
+          cp universal/libnvidia-ml.dylib "$out/libnvidia-ml.dylib"
+          printf '%s\n' "$CUDA_HEADER_VERSION" > "$out/CUDA_HEADER_VERSION"
+          printf '%s\n' "$NVML_HEADER_VERSION" > "$out/NVML_HEADER_VERSION"
           (cd "$out" && shasum -a 256 libcuda.dylib libnvidia-ml.dylib > SHA256SUMS)
           (cd "$out" && zip -r "../${asset}.zip" .)
 
-      - name: Upload client artifact
+      - name: Upload universal client artifact
         uses: actions/upload-artifact@v7
         with:
-          name: lupine-client-cuda-${{ env.CUDA_HEADER_VERSION }}-macos-${{ matrix.arch }}
-          path: artifacts/lupine-client-cuda-${{ env.CUDA_HEADER_VERSION }}-macos-${{ matrix.arch }}.zip
+          name: lupine-client-cuda-${{ steps.versions.outputs.cuda }}-macos-universal2
+          path: artifacts/lupine-client-cuda-${{ steps.versions.outputs.cuda }}-macos-universal2.zip
           if-no-files-found: error
 
       - name: Upload release asset
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
+          CUDA_HEADER_VERSION: ${{ steps.versions.outputs.cuda }}
         run: |
           set -euo pipefail
-          asset="artifacts/lupine-client-cuda-${CUDA_HEADER_VERSION}-macos-${{ matrix.arch }}.zip"
+          asset="artifacts/lupine-client-cuda-${CUDA_HEADER_VERSION}-macos-universal2.zip"
           gh release upload \
             "${{ github.event.release.tag_name }}" \
             "$asset" \
