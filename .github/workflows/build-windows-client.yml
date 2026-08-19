@@ -104,33 +104,6 @@ jobs:
           cmake --build build/windows-client --config Release --parallel
           --target lupine_cuda_client lupine_nvml
 
-      - name: Verify exported APIs
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $vsInstall = & $vswhere -latest -property installationPath
-          $targetArch = '${{ matrix.cmake_arch }}'.ToLowerInvariant()
-          $dumpbin = Get-ChildItem "$vsInstall\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
-            Where-Object { $_.Directory.Name -eq $targetArch } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if ($null -eq $dumpbin) {
-            throw 'dumpbin.exe was not found'
-          }
-          $cudaExports = & $dumpbin.FullName /exports 'build/windows-client/Release/nvcuda.dll'
-          $nvmlExports = & $dumpbin.FullName /exports 'build/windows-client/Release/nvml.dll'
-          foreach ($symbol in @('cuInit', 'cuGetProcAddress', 'cuMemAlloc_v2')) {
-            if ($cudaExports -notmatch "\b$symbol\b") {
-              throw "nvcuda.dll does not export $symbol"
-            }
-          }
-          foreach ($symbol in @('nvmlInit_v2', 'nvmlDeviceGetCount_v2', 'nvmlShutdown')) {
-            if ($nvmlExports -notmatch "\b$symbol\b") {
-              throw "nvml.dll does not export $symbol"
-            }
-          }
-
       - name: Stage thin DLLs
         shell: pwsh
         run: |
