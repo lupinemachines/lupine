@@ -151,25 +151,19 @@ static void lupine_prepare_jit_outputs(lupine_jit_state *jit) {
   }
 }
 
-static size_t lupine_jit_log_length(const char *log, size_t capacity) {
-  size_t length = 0;
-  while (length < capacity && log[length] != '\0') {
-    ++length;
-  }
-  // Preserve the terminator when it fits; a full buffer is already bounded by
-  // the capacity routed with the request.
-  return length < capacity ? length + 1 : length;
-}
-
 static int lupine_write_jit_outputs(conn_t *conn, lupine_jit_state *jit) {
-  jit->info_log_length =
-      jit->info_log != nullptr
-          ? lupine_jit_log_length(jit->info_log, jit->info_log_size)
-          : 0;
-  jit->error_log_length =
-      jit->error_log != nullptr
-          ? lupine_jit_log_length(jit->error_log, jit->error_log_size)
-          : 0;
+  if (jit->info_log != nullptr) {
+    const auto *end = static_cast<const char *>(
+        std::memchr(jit->info_log, '\0', jit->info_log_size));
+    jit->info_log_length =
+        end == nullptr ? jit->info_log_size : end - jit->info_log;
+  }
+  if (jit->error_log != nullptr) {
+    const auto *end = static_cast<const char *>(
+        std::memchr(jit->error_log, '\0', jit->error_log_size));
+    jit->error_log_length =
+        end == nullptr ? jit->error_log_size : end - jit->error_log;
+  }
 
   if (rpc_write(conn, &jit->wall_time_length, sizeof(jit->wall_time_length)) <
           0 ||
