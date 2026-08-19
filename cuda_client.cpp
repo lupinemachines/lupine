@@ -3810,20 +3810,11 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  bool wall_time_read = false;
-  bool info_log_read = false;
-  bool error_log_read = false;
   for (unsigned int i = 0; i < numOptions; ++i) {
-    bool *output_read = nullptr;
-    if (options[i] == CU_JIT_WALL_TIME) {
-      output_read = &wall_time_read;
-    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER) {
-      output_read = &info_log_read;
-    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      output_read = &error_log_read;
-    }
-    if (output_read != nullptr && !*output_read && optionValues[i] != nullptr) {
-      *output_read = true;
+    if ((options[i] == CU_JIT_WALL_TIME ||
+         options[i] == CU_JIT_INFO_LOG_BUFFER ||
+         options[i] == CU_JIT_ERROR_LOG_BUFFER) &&
+        optionValues[i] != nullptr) {
       if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
           rpc_read(conn, optionValues[i], jit_output_length) < 0) {
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3898,20 +3889,11 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
     munmap(file_mapping, mapped_file_size);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  bool wall_time_read = false;
-  bool info_log_read = false;
-  bool error_log_read = false;
   for (unsigned int i = 0; i < numOptions; ++i) {
-    bool *output_read = nullptr;
-    if (options[i] == CU_JIT_WALL_TIME) {
-      output_read = &wall_time_read;
-    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER) {
-      output_read = &info_log_read;
-    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      output_read = &error_log_read;
-    }
-    if (output_read != nullptr && !*output_read && optionValues[i] != nullptr) {
-      *output_read = true;
+    if ((options[i] == CU_JIT_WALL_TIME ||
+         options[i] == CU_JIT_INFO_LOG_BUFFER ||
+         options[i] == CU_JIT_ERROR_LOG_BUFFER) &&
+        optionValues[i] != nullptr) {
       if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
           rpc_read(conn, optionValues[i], jit_output_length) < 0) {
         munmap(file_mapping, mapped_file_size);
@@ -3970,21 +3952,11 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
     *sizeOut = jit_state.cubin.size();
   }
 
-  bool wall_time_read = false;
-  bool info_log_read = false;
-  bool error_log_read = false;
   for (size_t i = 0; i < options.size(); ++i) {
-    bool *output_read = nullptr;
-    if (options[i] == CU_JIT_WALL_TIME) {
-      output_read = &wall_time_read;
-    } else if (options[i] == CU_JIT_INFO_LOG_BUFFER) {
-      output_read = &info_log_read;
-    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      output_read = &error_log_read;
-    }
-    if (output_read != nullptr && !*output_read &&
+    if ((options[i] == CU_JIT_WALL_TIME ||
+         options[i] == CU_JIT_INFO_LOG_BUFFER ||
+         options[i] == CU_JIT_ERROR_LOG_BUFFER) &&
         option_values[i] != nullptr) {
-      *output_read = true;
       if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
           rpc_read(conn, option_values[i], jit_output_length) < 0) {
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4770,21 +4742,11 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_read(conn, library, sizeof(CUlibrary)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  bool wall_time_read = false;
-  bool info_log_read = false;
-  bool error_log_read = false;
   for (unsigned int i = 0; i < numJitOptions; ++i) {
-    bool *output_read = nullptr;
-    if (jitOptions[i] == CU_JIT_WALL_TIME) {
-      output_read = &wall_time_read;
-    } else if (jitOptions[i] == CU_JIT_INFO_LOG_BUFFER) {
-      output_read = &info_log_read;
-    } else if (jitOptions[i] == CU_JIT_ERROR_LOG_BUFFER) {
-      output_read = &error_log_read;
-    }
-    if (output_read != nullptr && !*output_read &&
+    if ((jitOptions[i] == CU_JIT_WALL_TIME ||
+         jitOptions[i] == CU_JIT_INFO_LOG_BUFFER ||
+         jitOptions[i] == CU_JIT_ERROR_LOG_BUFFER) &&
         jitOptionsValues[i] != nullptr) {
-      *output_read = true;
       if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
           rpc_read(conn, jitOptionsValues[i], jit_output_length) < 0) {
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
