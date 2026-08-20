@@ -1504,7 +1504,6 @@ def main():
             'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
             'extern "C" void lupine_kernel_attribute_cache_erase(int route_id, CUkernel kernel, int attrib, int dev);\n'
             'extern "C" void lupine_invalidate_function_attribute_cache();\n'
-            'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
@@ -1530,38 +1529,14 @@ def main():
             )
             f.write("{\n")
 
-            if metadata.synchronize:
-                f.write(
-                    "    CUresult lupine_sync_result = "
-                    "lupine_flush_dirty_host_pages_to_server();\n"
-                    "    if (lupine_sync_result != CUDA_SUCCESS) {\n"
-                    "        return lupine_sync_result;\n"
-                    "    }\n"
-                )
-
             for translation in metadata.translate_deviceptrs:
                 name = translation.parameter.name
                 f.write("    CUdeviceptr {name}_rpc = {name};\n".format(name=name))
                 f.write(
-                    "    bool {name}_is_managed_host = "
-                    "lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n".format(
+                    "    lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n".format(
                         name=name
                     )
                 )
-            if metadata.translate_deviceptrs:
-                translated_condition = " || ".join(
-                    "{name}_is_managed_host".format(name=item.parameter.name)
-                    for item in metadata.translate_deviceptrs
-                )
-                f.write("    if ({condition}) {{\n".format(condition=translated_condition))
-                f.write(
-                    "        CUresult managed_result = "
-                    "lupine_flush_dirty_host_pages_to_server();\n"
-                )
-                f.write("        if (managed_result != CUDA_SUCCESS) {\n")
-                f.write("            return managed_result;\n")
-                f.write("        }\n")
-                f.write("    }\n")
 
             all_output = metadata.routing_parameter
             if metadata.routing_kind == "ALL":

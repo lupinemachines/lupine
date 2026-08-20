@@ -1,6 +1,7 @@
 #include "lupine_platform.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -11,8 +12,8 @@
 #include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
-#if !defined(__APPLE__)
 #include <sys/syscall.h>
+#if !defined(__APPLE__)
 #endif
 #include <sys/uio.h>
 #include <unistd.h>
@@ -71,6 +72,9 @@ struct lupine_host_allocation {
   CUdeviceptr device_ptr = 0;
   bool device_dirty = false;
   bool tracking_enabled = false;
+  // The registering thread's own stack: never write-protected (the tracker's
+  // own execution writes it), pushed whole at every flush instead.
+  bool always_dirty = false;
   int fault_slot = -1;
   // 0 fresh, 1 invalidated (PROT_NONE), 2 fetching (handler-only 1->2),
   // 3 invalidating (normal-context only).
@@ -113,8 +117,12 @@ static std::mutex &lupine_host_allocation_mutex() {
   return mutex;
 }
 
+// Leaked so the map survives static destruction: the flush hook runs inside
+// every request, including CUDA teardown calls other libraries make after
+// this library's globals have finalized.
 static lupine_host_allocation_map &lupine_mutable_host_allocations_locked() {
-  static lupine_host_allocation_map allocations;
+  static lupine_host_allocation_map &allocations =
+      *new lupine_host_allocation_map();
   return allocations;
 }
 
@@ -152,6 +160,12 @@ struct lupine_dirty_host_range_queue {
 
 static lupine_dirty_host_range_queue
     lupine_dirty_host_range_queues[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
+
+// Monotonic count of dirty-state creation; compared against the epoch last
+// observed by a successful full flush so the per-request hook can skip the
+// flush with one load. Bumped from the fault handler, so plain __atomic ops.
+static uint64_t lupine_dirty_epoch = 0;
+static std::atomic<uint64_t> lupine_flushed_epoch{0};
 
 struct lupine_fault_entry {
   uintptr_t base = 0;
@@ -209,6 +223,16 @@ static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
 static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
                                        size_t span_start, size_t span_end);
 static void lupine_apply_fresh_protections(lupine_host_allocation *allocation);
+
+static thread_local bool lupine_coherence_busy = false;
+
+struct lupine_coherence_busy_guard {
+  bool previous = lupine_coherence_busy;
+  lupine_coherence_busy_guard() { lupine_coherence_busy = true; }
+  ~lupine_coherence_busy_guard() { lupine_coherence_busy = previous; }
+};
+
+static bool lupine_range_on_own_stack(const void *p);
 static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
                                            size_t start_offset,
                                            size_t end_offset);
@@ -317,6 +341,7 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
     }
 
     uint32_t slot = 0;
+    __atomic_add_fetch(&lupine_dirty_epoch, 1, __ATOMIC_RELEASE);
     __atomic_add_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
     if (lupine_reserve_dirty_host_range(queue, &slot)) {
       queue.ranges[slot] = {allocation, page, page + page_size};
@@ -453,6 +478,10 @@ lupine_enable_dirty_tracking_locked(void *host,
 
   allocation->tracking_enabled = true;
   allocation->host_base = base;
+  allocation->always_dirty =
+      lupine_range_on_own_stack(host) ||
+      lupine_range_on_own_stack(reinterpret_cast<const void *>(
+          base + allocation->storage_size - 1));
 
   allocation->fresh_chunk_count =
       lupine_round_up(allocation->storage_size,
@@ -474,7 +503,8 @@ lupine_enable_dirty_tracking_locked(void *host,
     allocation->tracking_enabled = false;
     return false;
   }
-  if (!lupine_protect_host_range(host, allocation->storage_size, PROT_READ)) {
+  if (!allocation->always_dirty &&
+      !lupine_protect_host_range(host, allocation->storage_size, PROT_READ)) {
     lupine_remove_fault_entry(allocation->fault_slot);
     allocation->fault_slot = -1;
     free(allocation->fresh_chunks);
@@ -566,6 +596,9 @@ extern "C" void lupine_mark_host_range_clean(void *host, size_t size) {
     }
   }
 
+  if (allocation.always_dirty) {
+    return;
+  }
   size_t first_page = (start - base) / allocation.page_size;
   size_t last_page = (end - 1 - base) / allocation.page_size;
   uintptr_t protect_start = base + first_page * allocation.page_size;
@@ -665,10 +698,13 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
 
   auto release_ranges = [&](bool restore) {
     for (const auto &range : ranges) {
-      if (restore &&
+      if ((restore || range.allocation->always_dirty) &&
           __atomic_load_n(&range.allocation->retiring, __ATOMIC_ACQUIRE) == 0) {
         __atomic_store_n(&range.allocation->full_dirty, 1, __ATOMIC_RELEASE);
         __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
+        if (!restore) {
+          __atomic_add_fetch(&lupine_dirty_epoch, 1, __ATOMIC_RELEASE);
+        }
       }
       __atomic_sub_fetch(&range.allocation->pending_dirty_ranges, 1,
                          __ATOMIC_RELEASE);
@@ -699,7 +735,8 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
   }
 
   for (const auto &range : merged) {
-    if (!lupine_protect_host_range(reinterpret_cast<void *>(range.start),
+    if (!range.allocation->always_dirty &&
+        !lupine_protect_host_range(reinterpret_cast<void *>(range.start),
                                    range.end - range.start, PROT_READ)) {
       release_ranges(true);
       return CUDA_ERROR_UNKNOWN;
@@ -779,6 +816,9 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server() {
 
 static CUresult lupine_drain_retiring_dirty_ranges(
     lupine_host_allocation *allocation) {
+  // The flush below issues its own RPC; without this, its request start
+  // would re-enter the flush hook and self-deadlock on the queue mutex.
+  lupine_coherence_busy_guard busy;
   if (allocation == nullptr || allocation->route_id < 0 ||
       allocation->route_id >=
           static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
@@ -1037,16 +1077,8 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
   if (used_managed_mapping != nullptr) {
     *used_managed_mapping = used_managed;
   }
-  return lupine_flush_dirty_host_pages_to_server();
+  return CUDA_SUCCESS;
 }
-
-static thread_local bool lupine_coherence_busy = false;
-
-struct lupine_coherence_busy_guard {
-  bool previous = lupine_coherence_busy;
-  lupine_coherence_busy_guard() { lupine_coherence_busy = true; }
-  ~lupine_coherence_busy_guard() { lupine_coherence_busy = previous; }
-};
 
 // Wire-fetch [offset, offset + bytes) of the backing. Handler-safe: must
 // not take lupine_host_allocation_mutex(); caller made the range writable.
@@ -1116,7 +1148,9 @@ static void lupine_apply_fresh_protections(lupine_host_allocation *allocation) {
     size_t bytes = std::min(run_end * chunk_bytes, allocation->storage_size) -
                    index * chunk_bytes;
     mprotect(reinterpret_cast<void *>(start), bytes,
-             fresh ? PROT_READ : PROT_NONE);
+             fresh ? (allocation->always_dirty ? PROT_READ | PROT_WRITE
+                                               : PROT_READ)
+                   : PROT_NONE);
     index = run_end;
   }
 }
@@ -1140,7 +1174,8 @@ static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
       __atomic_store_n(&allocation->restore_pending, 0, __ATOMIC_RELEASE);
     } else if (span_end > span_start) {
       mprotect(reinterpret_cast<void *>(allocation->host_base + span_start),
-               span_end - span_start, PROT_READ);
+               span_end - span_start,
+               allocation->always_dirty ? PROT_READ | PROT_WRITE : PROT_READ);
     }
   } else {
     __atomic_store_n(&allocation->restore_pending, 1, __ATOMIC_RELEASE);
@@ -1381,8 +1416,23 @@ static void lupine_rpc_after_read_into(void *data, size_t size) {
   }
 }
 
+static void lupine_rpc_before_request() {
+  if (lupine_coherence_busy) {
+    return;
+  }
+  uint64_t epoch = __atomic_load_n(&lupine_dirty_epoch, __ATOMIC_ACQUIRE);
+  if (epoch == lupine_flushed_epoch.load(std::memory_order_relaxed)) {
+    return;
+  }
+  lupine_coherence_busy_guard busy;
+  if (lupine_flush_dirty_host_pages_to_server() == CUDA_SUCCESS) {
+    lupine_flushed_epoch.store(epoch, std::memory_order_relaxed);
+  }
+}
+
 extern "C" void lupine_register_rpc_hooks() {
   static const rpc_hooks hooks = {
+      lupine_rpc_before_request,
       lupine_rpc_before_read_into,
       lupine_rpc_after_read_into,
   };
@@ -1776,11 +1826,6 @@ extern "C" CUresult cuMemFreeHost(void *p) {
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-  if (flush_result != CUDA_SUCCESS) {
-    return flush_result;
-  }
-
   bool owned = false;
   bool owned_mmap = false;
   bool local_cuda = false;
@@ -1806,7 +1851,7 @@ extern "C" CUresult cuMemFreeHost(void *p) {
     lupine_disable_dirty_tracking(p, it->second);
     retiring_allocation = &it->second;
   }
-  flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
+  CUresult flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
   if (flush_result != CUDA_SUCCESS) {
     return flush_result;
   }
@@ -2123,6 +2168,7 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
       lupine_remote_cuMemFreeHost(server_host, route);
       return CUDA_ERROR_INVALID_VALUE;
     }
+    __atomic_add_fetch(&lupine_dirty_epoch, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&inserted.first->second.full_dirty, 1, __ATOMIC_RELEASE);
     __atomic_store_n(
         &lupine_dirty_host_range_queues[route_id].full_dirty_pending, 1,
@@ -2153,10 +2199,6 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
   if (p == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-  if (flush_result != CUDA_SUCCESS) {
-    return flush_result;
-  }
   bool local_cuda = false;
   CUdeviceptr server_host_ptr = 0;
   CUdeviceptr device_ptr = 0;
@@ -2183,7 +2225,7 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
     lupine_disable_dirty_tracking(tracked, it->second);
     retiring_allocation = &it->second;
   }
-  flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
+  CUresult flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
   if (flush_result != CUDA_SUCCESS) {
     return flush_result;
   }
@@ -2310,11 +2352,6 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
 }
 
 extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
-  CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-  if (flush_result != CUDA_SUCCESS) {
-    return flush_result;
-  }
-
   void *host = reinterpret_cast<void *>(dptr);
   lupine_host_allocation allocation;
   lupine_host_allocation *retiring_allocation = nullptr;
@@ -2360,7 +2397,7 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
     return return_value;
   }
 
-  flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
+  CUresult flush_result = lupine_drain_retiring_dirty_ranges(retiring_allocation);
   if (flush_result != CUDA_SUCCESS) {
     return flush_result;
   }
@@ -2747,12 +2784,7 @@ static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
                                                    unsigned int flags,
                                                    CUstream hStream) {
   CUdeviceptr translated = devPtr;
-  if (lupine_translate_managed_host_ptr(devPtr, &translated)) {
-    CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-    if (flush_result != CUDA_SUCCESS) {
-      return flush_result;
-    }
-  }
+  lupine_translate_managed_host_ptr(devPtr, &translated);
 
   CUmemLocation route_location = location;
   lupine_route route;

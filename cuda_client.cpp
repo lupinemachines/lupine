@@ -4098,10 +4098,6 @@ static void lupine_prefetch_event_queries(CUevent exclude, conn_t *conn) {
 }
 
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
-  CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-  if (flush_result != CUDA_SUCCESS) {
-    return flush_result;
-  }
   lupine_route route = lupine_route_for_event(hEvent);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUevent);
@@ -8340,14 +8336,7 @@ extern "C" CUresult cuTensorMapEncodeTiled(
   }
 
   CUdeviceptr address_rpc = reinterpret_cast<CUdeviceptr>(globalAddress);
-  const bool managed_alias =
-      lupine_translate_managed_host_ptr(address_rpc, &address_rpc);
-  if (managed_alias) {
-    CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-    if (flush_result != CUDA_SUCCESS) {
-      return flush_result;
-    }
-  }
+  lupine_translate_managed_host_ptr(address_rpc, &address_rpc);
 
   lupine_route route = lupine_route_for_deviceptr(address_rpc);
   using real_fn_t = CUresult (*)(
