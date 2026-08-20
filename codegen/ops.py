@@ -250,26 +250,6 @@ class ArrayOperation:
                 )
             )
 
-    def client_prepare_rpc_read(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        (lupine_prepare_host_range_write({param_name}, {size}), false) ||\n".format(
-                param_name=self.parameter.name,
-                size=self.transfer_size_expr(),
-            )
-        )
-
-    def client_post_rpc_read_success(self, f):
-        if not self.recv:
-            return
-        # Unconditional: the prepare pin must drop even on error returns.
-        f.write(
-            "    lupine_mark_host_range_clean({param_name}, {size});\n".format(
-                param_name=self.parameter.name,
-                size=self.transfer_size_expr(),
-            )
-        )
 
     def client_unified_copy(self, f, direction, error):
         f.write(
@@ -1078,11 +1058,6 @@ class CrossServerCopyAnnotation:
 
 
 @dataclass
-class DevicePtrTranslationAnnotation:
-    parameter: Parameter
-
-
-@dataclass
 class RoutingFallbackAnnotation:
     kind: str
     parameter: Parameter
@@ -1110,10 +1085,7 @@ class FunctionAnnotationMetadata:
     routing_fallback: Optional[RoutingFallbackAnnotation] = None
     record_owners: list[OwnerAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
-    translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
-        if self.translate_deviceptrs is None:
-            self.translate_deviceptrs = []

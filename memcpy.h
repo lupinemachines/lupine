@@ -9,8 +9,6 @@
 
 struct rpc_write_cursor;
 
-extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
-extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
 extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
                                                   CUdeviceptr *translated);

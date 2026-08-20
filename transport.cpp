@@ -172,6 +172,8 @@ int connect_endpoint(client_transport_state &state,
     return -1;
   }
   conn->logical_index = static_cast<int>(index);
+  conn->r_offset = state.config.r_offset;
+  conn->w_offset = state.config.w_offset;
   if (initialize_tls(conn, endpoint) < 0 || rpc_http2_client_init(conn) < 0) {
     reset_connection(conn);
     return -1;

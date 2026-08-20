@@ -1102,6 +1102,84 @@ void test_request_start_rejects_null_and_closed_conn() {
           "closed conn request start did not fail");
 }
 
+// TSan supports only narrow application VA bands and owns these fixed test
+// addresses itself. CUDA targets are not TSan-instrumented in this project.
+#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__)
+void test_rpc_read_uses_w_offset() {
+  long configured_page_size = sysconf(_SC_PAGESIZE);
+  require(configured_page_size > 0, "page size lookup failed");
+  size_t page_size = static_cast<size_t>(configured_page_size);
+
+  char path[] = "/tmp/lupine-rpc-alias-XXXXXX";
+  int fd = mkstemp(path);
+  require(fd >= 0, "shared alias file creation failed");
+  unlink(path);
+  require(ftruncate(fd, static_cast<off_t>(page_size)) == 0,
+          "shared alias file resize failed");
+
+  uintptr_t server_address = LUPINE_MIRROR_SERVER_BASE + UINT64_C(0x200000);
+  uintptr_t read_address = server_address + LUPINE_MIRROR_R_OFFSET;
+  uintptr_t write_address = server_address + LUPINE_MIRROR_W_OFFSET;
+  void *read_view =
+      mmap(reinterpret_cast<void *>(read_address), page_size,
+           PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED_NOREPLACE, fd, 0);
+  void *write_view =
+      mmap(reinterpret_cast<void *>(write_address), page_size,
+           PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED_NOREPLACE, fd, 0);
+  close(fd);
+  require(read_view == reinterpret_cast<void *>(read_address) &&
+              write_view == reinterpret_cast<void *>(write_address),
+          "fixed shared alias mapping failed");
+  require(mprotect(read_view, page_size, PROT_NONE) == 0,
+          "read view protection failed");
+
+  h2_pair pair = make_pair();
+  pair.client.r_offset = LUPINE_MIRROR_R_OFFSET;
+  pair.client.w_offset = LUPINE_MIRROR_W_OFFSET;
+  constexpr int kOp = 83;
+  const std::array<unsigned char, 8> expected = {3, 1, 4, 1, 5, 9, 2, 6};
+  std::thread server([&] {
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "alias response stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp,
+            "alias response dispatch failed");
+    int request_id = rpc_read_end(&pair.server);
+    require(request_id > 0, "alias request read end failed");
+    require(rpc_write_start_response(&pair.server, request_id) == 0,
+            "alias response write start failed");
+    require(rpc_write(&pair.server, expected.data(), expected.size()) == 0,
+            "alias response write failed");
+    require(rpc_write_end(&pair.server) == request_id,
+            "alias response write end failed");
+    rpc_unbind_http2_stream(&pair.server);
+  });
+
+  require(rpc_write_start_request(&pair.client, kOp) == 0,
+          "alias request write start failed");
+  int request_id = rpc_write_end(&pair.client);
+  require(request_id > 0, "alias request write end failed");
+  require(rpc_read_start(&pair.client, request_id) == 0,
+          "alias response read start failed");
+  require(rpc_read(&pair.client, read_view, expected.size()) ==
+              static_cast<int>(expected.size()),
+          "alias response read failed");
+  require(rpc_read_end(&pair.client) == request_id,
+          "alias response read end failed");
+  server.join();
+
+  require(memcmp(read_view, expected.data(), expected.size()) == 0,
+          "read view did not observe the writable alias");
+  require(pair.client.mirror_writes.size() == 1 &&
+              pair.client.mirror_writes[0].start == read_address &&
+              pair.client.mirror_writes[0].size == expected.size(),
+          "alias response write was not tracked");
+
+  munmap(read_view, page_size);
+  munmap(write_view, page_size);
+}
+#endif
+
 } // namespace
 
 int main() {
@@ -1109,6 +1187,9 @@ int main() {
   test_head_probe_cuda_version_metadata();
 #else
   test_request_start_rejects_null_and_closed_conn();
+#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__)
+  test_rpc_read_uses_w_offset();
+#endif
   test_rpc_write_queue_grows();
   test_rpc_write_buffer_uses_fixed_allocation();
   test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
