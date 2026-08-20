@@ -118,9 +118,14 @@ int rpc_read_payload_part(conn_t *conn, int framed, void *data, size_t size) {
   return static_cast<int>(size);
 }
 
+// The framed path decompresses into `data` without going through rpc_read,
+// so the payload carries its own coherence calls over the full extent.
 int rpc_read_payload(conn_t *conn, void *data, size_t size) {
-  return rpc_read_payload_part(conn, lupine_payload_framed(conn, size), data,
-                               size);
+  rpc_hooks_before_read(data, size);
+  int result = rpc_read_payload_part(conn, lupine_payload_framed(conn, size),
+                                     data, size);
+  rpc_hooks_after_read(data, size);
+  return result;
 }
 
 // rpc_drain_payload discards `size` uncompressed payload bytes, honoring the

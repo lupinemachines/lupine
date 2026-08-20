@@ -250,26 +250,6 @@ class ArrayOperation:
                 )
             )
 
-    def client_prepare_rpc_read(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        (lupine_prepare_host_range_write({param_name}, {size}), false) ||\n".format(
-                param_name=self.parameter.name,
-                size=self.transfer_size_expr(),
-            )
-        )
-
-    def client_post_rpc_read_success(self, f):
-        if not self.recv:
-            return
-        # Unconditional: the prepare pin must drop even on error returns.
-        f.write(
-            "    lupine_mark_host_range_clean({param_name}, {size});\n".format(
-                param_name=self.parameter.name,
-                size=self.transfer_size_expr(),
-            )
-        )
 
     def client_unified_copy(self, f, direction, error):
         f.write(

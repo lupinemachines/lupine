@@ -1490,7 +1490,6 @@ def main():
             'extern "C" void lupine_forget_stream_owner(CUstream stream);\n\n'
             'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
-            'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
             'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
             'extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr, CUdeviceptr *translated);\n'
@@ -1761,10 +1760,6 @@ def main():
                 f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
 
             for operation in operations:
-                if isinstance(operation, ArrayOperation):
-                    operation.client_prepare_rpc_read(f)
-
-            for operation in operations:
                 operation.client_rpc_read(f)
 
             f.write(
@@ -1780,10 +1775,6 @@ def main():
             )
 
             write_client_post_call(f, function, metadata)
-            for operation in operations:
-                if isinstance(operation, ArrayOperation):
-                    operation.client_post_rpc_read_success(f)
-
             f.write("    return return_value;\n")
             if metadata.routing_kind == "ALL":
                 f.write("        });\n")

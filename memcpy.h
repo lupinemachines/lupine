@@ -25,6 +25,7 @@ extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                           CUmemLocation location,
                                           unsigned int flags, CUstream hStream);
 
+extern "C" void lupine_register_rpc_hooks();
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
 extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
 extern "C" CUresult lupine_flush_dirty_host_pages_to_server();

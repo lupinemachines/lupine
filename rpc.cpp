@@ -389,21 +389,45 @@ int rpc_read_start(conn_t *conn, int write_id) {
   return 0;
 }
 
+static rpc_hooks hooks = {};
+
+void rpc_set_hooks(const rpc_hooks *new_hooks) { hooks = *new_hooks; }
+
+void rpc_hooks_before_read(void *data, size_t size) {
+  if (hooks.before_read_into != nullptr && size != 0) {
+    hooks.before_read_into(data, size);
+  }
+}
+
+void rpc_hooks_after_read(void *data, size_t size) {
+  if (hooks.after_read_into != nullptr && size != 0) {
+    hooks.after_read_into(data, size);
+  }
+}
+
 int rpc_read(conn_t *conn, void *data, size_t size) {
-  return rpc_http2_read(conn, data, size);
+  rpc_hooks_before_read(data, size);
+  int result = rpc_http2_read(conn, data, size);
+  rpc_hooks_after_read(data, size);
+  return result;
 }
 
 int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
                      size_t row_stride, size_t slices, size_t slice_stride) {
-  for (size_t z = 0; z < slices; ++z) {
+  if (width == 0 || rows == 0 || slices == 0) {
+    return 0;
+  }
+  int result = 0;
+  for (size_t z = 0; result == 0 && z < slices; ++z) {
     char *slice = (char *)data + z * slice_stride;
     for (size_t row = 0; row < rows; ++row) {
       if (rpc_read(conn, slice + row * row_stride, width) < 0) {
-        return -1;
+        result = -1;
+        break;
       }
     }
   }
-  return 0;
+  return result;
 }
 
 int rpc_drain(conn_t *conn, size_t size) {
@@ -588,10 +612,14 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
 int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
                       size_t rows, size_t row_stride, size_t slices,
                       size_t slice_stride) {
+  if (width == 0 || rows == 0 || slices == 0) {
+    return 0;
+  }
   for (size_t z = 0; z < slices; ++z) {
     const char *slice = (const char *)data + z * slice_stride;
     for (size_t row = 0; row < rows; ++row) {
-      if (rpc_write(conn, slice + row * row_stride, width) < 0) {
+      if (rpc_write_queue_push(conn, rpc_write_cursor::plain(
+                                         slice + row * row_stride, width)) < 0) {
         return -1;
       }
     }

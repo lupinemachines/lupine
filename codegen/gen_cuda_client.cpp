@@ -62,7 +62,6 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
                                                   const char *name,
                                                   lupine_route route);
 
-extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
 extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
                                               CUdeviceptr second);
@@ -131,13 +130,11 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
   if (rpc_write_start_request(conn, RPC_cuDeviceGetLuid) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(luid, 8 * sizeof(char)), false) ||
       (8 != 0 && rpc_read(conn, luid, 8) < 0) ||
       rpc_read(conn, deviceNodeMask, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  lupine_mark_host_range_clean(luid, 8 * sizeof(char));
   return return_value;
 }
 
@@ -1190,13 +1187,11 @@ CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
       rpc_write(conn, &len, sizeof(int)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(pciBusId, len * sizeof(char)), false) ||
       (len * sizeof(char) != 0 &&
        rpc_read(conn, pciBusId, len * sizeof(char)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  lupine_mark_host_range_clean(pciBusId, len * sizeof(char));
   return return_value;
 }
 

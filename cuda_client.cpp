@@ -94,6 +94,7 @@ static void lupine_install_rpc_lifecycle_hooks() {
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
+  lupine_register_rpc_hooks();
 }
 
 static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags);
@@ -1960,14 +1961,12 @@ extern "C" CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
       rpc_write(conn, &len, sizeof(int)) < 0 ||
       rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(name, len * sizeof(char)), false) ||
       (len * sizeof(char) != 0 &&
        rpc_read(conn, name, len * sizeof(char)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  lupine_mark_host_range_clean(name, len * sizeof(char));
   return return_value;
 }
 
@@ -1997,13 +1996,11 @@ extern "C" CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
   if (rpc_write_start_request(conn, RPC_cuDeviceGetUuid_v2) < 0 ||
       rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(uuid, 16 * sizeof(CUuuid)), false) ||
       rpc_read(conn, uuid, 16) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  lupine_mark_host_range_clean(uuid, 16 * sizeof(CUuuid));
   return return_value;
 }
 
@@ -3976,12 +3973,9 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
     if (bytes == 0) {
       continue;
     }
-    lupine_prepare_host_range_write(dst, bytes);
     if (rpc_read_payload(conn, dst, bytes) < 0) {
-      lupine_mark_host_range_clean(dst, bytes);
       return -1;
     }
-    lupine_mark_host_range_clean(dst, bytes);
   }
   return 0;
 }
@@ -5203,7 +5197,6 @@ extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
-  lupine_prepare_host_range_write(dstHost, ByteCount);
   auto *copy_dst = static_cast<unsigned char *>(dstHost);
   size_t offset = 0;
   do {
@@ -5213,26 +5206,21 @@ extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
         (return_value == CUDA_SUCCESS && chunk != 0 &&
          rpc_read(conn, copy_dst + offset, chunk) < 0)) {
       rpc_read_end(conn);
-      lupine_mark_host_range_clean(dstHost, ByteCount);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     bool final_chunk =
         return_value != CUDA_SUCCESS || offset + chunk == ByteCount;
     if (rpc_read_end(conn) < 0) {
-      lupine_mark_host_range_clean(dstHost, ByteCount);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     if (return_value != CUDA_SUCCESS) {
-      lupine_mark_host_range_clean(dstHost, ByteCount);
       return return_value;
     }
     offset += chunk;
     if (!final_chunk && rpc_read_start(conn, request_id) < 0) {
-      lupine_mark_host_range_clean(dstHost, ByteCount);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   } while (offset < ByteCount);
-  lupine_mark_host_range_clean(dstHost, ByteCount);
   return return_value;
 }
 
@@ -5360,21 +5348,17 @@ static CUresult lupine_cuMemcpy2D_common(const CUDA_MEMCPY2D *pCopy,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (returned_dst_size != 0) {
-    lupine_prepare_host_range_write(dst_host, returned_dst_size);
     if (rpc_read(conn, dst_host, returned_dst_size) < 0) {
-      lupine_mark_host_range_clean(dst_host, returned_dst_size);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
   if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     if (returned_dst_size != 0) {
-      lupine_mark_host_range_clean(dst_host, returned_dst_size);
     }
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (returned_dst_size != 0) {
-    lupine_mark_host_range_clean(dst_host, returned_dst_size);
   }
   return return_value;
 }
@@ -5514,21 +5498,17 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (returned_dst_size != 0) {
-    lupine_prepare_host_range_write(dst_host, returned_dst_size);
     if (rpc_read(conn, dst_host, returned_dst_size) < 0) {
-      lupine_mark_host_range_clean(dst_host, returned_dst_size);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
   if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     if (returned_dst_size != 0) {
-      lupine_mark_host_range_clean(dst_host, returned_dst_size);
     }
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (returned_dst_size != 0) {
-    lupine_mark_host_range_clean(dst_host, returned_dst_size);
   }
   return return_value;
 }
@@ -8253,9 +8233,7 @@ void *rpc_client_dispatch_thread(void *arg) {
         }
 
         // Copy received data to the destination (dst) on the host
-        lupine_prepare_host_range_write(dst, count);
         memcpy(dst, host_data, count);
-        lupine_mark_host_range_clean(dst, count);
         free(host_data);
       }
 

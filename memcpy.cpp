@@ -1040,10 +1040,19 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
   return lupine_flush_dirty_host_pages_to_server();
 }
 
+static thread_local bool lupine_coherence_busy = false;
+
+struct lupine_coherence_busy_guard {
+  bool previous = lupine_coherence_busy;
+  lupine_coherence_busy_guard() { lupine_coherence_busy = true; }
+  ~lupine_coherence_busy_guard() { lupine_coherence_busy = previous; }
+};
+
 // Wire-fetch [offset, offset + bytes) of the backing. Handler-safe: must
 // not take lupine_host_allocation_mutex(); caller made the range writable.
 static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
                                      size_t offset, size_t bytes) {
+  lupine_coherence_busy_guard busy;
   conn_t *conn = allocation->stale_fetch_conn;
   auto *dst = reinterpret_cast<unsigned char *>(allocation->host_base + offset);
   CUdeviceptr src = allocation->device_ptr + offset;
@@ -1314,6 +1323,70 @@ extern "C" void lupine_ensure_mapped_host_readable(const void *host,
     __atomic_sub_fetch(&fetch.allocation->pending_dirty_ranges, 1,
                        __ATOMIC_RELEASE);
   }
+}
+
+// A read into the calling thread's own stack is transport scratch, not a
+// mapped-mirror landing, even when the app registered that stack page
+// (NPP registers 4-byte stack outputs). Bracketing those write-protects the
+// live stack after every read; the resulting fault storm can wedge signal
+// delivery. Landings into registered stack memory still work through the
+// fault handler, like any other write to a tracked page.
+static bool lupine_range_on_own_stack(const void *p) {
+  static thread_local uintptr_t stack_lo = 1;
+  static thread_local uintptr_t stack_hi = 0;
+  if (stack_lo > stack_hi) {
+#if defined(_WIN32)
+    ULONG_PTR limit_lo = 0;
+    ULONG_PTR limit_hi = 0;
+    GetCurrentThreadStackLimits(&limit_lo, &limit_hi);
+    stack_lo = static_cast<uintptr_t>(limit_lo);
+    stack_hi = static_cast<uintptr_t>(limit_hi);
+#elif defined(__APPLE__)
+    stack_hi =
+        reinterpret_cast<uintptr_t>(pthread_get_stackaddr_np(pthread_self()));
+    stack_lo = stack_hi - pthread_get_stacksize_np(pthread_self());
+#else
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+      void *base = nullptr;
+      size_t stack_size = 0;
+      if (pthread_attr_getstack(&attr, &base, &stack_size) == 0) {
+        stack_lo = reinterpret_cast<uintptr_t>(base);
+        stack_hi = stack_lo + stack_size;
+      }
+      pthread_attr_destroy(&attr);
+    }
+#endif
+    if (stack_lo > stack_hi) {
+      stack_lo = stack_hi = 0;
+    }
+  }
+  uintptr_t address = reinterpret_cast<uintptr_t>(p);
+  return address >= stack_lo && address < stack_hi;
+}
+
+// RPC coherence hooks: every payload the transport moves into a tracked
+// mapping gets the demand-fetch bookkeeping automatically, so call sites
+// need none of it. The busy flag keeps the machinery's own transfers out:
+// a handler-context fetch must not take lupine_host_allocation_mutex().
+static void lupine_rpc_before_read_into(void *data, size_t size) {
+  if (!lupine_coherence_busy && !lupine_range_on_own_stack(data)) {
+    lupine_prepare_host_range_write(data, size);
+  }
+}
+
+static void lupine_rpc_after_read_into(void *data, size_t size) {
+  if (!lupine_coherence_busy && !lupine_range_on_own_stack(data)) {
+    lupine_mark_host_range_clean(data, size);
+  }
+}
+
+extern "C" void lupine_register_rpc_hooks() {
+  static const rpc_hooks hooks = {
+      lupine_rpc_before_read_into,
+      lupine_rpc_after_read_into,
+  };
+  rpc_set_hooks(&hooks);
 }
 
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
