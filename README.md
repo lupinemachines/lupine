@@ -255,7 +255,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --break-system-packages \
-    --index-url https://download.pytorch.org/whl/cu130 \
+    --index-url https://download.pytorch.org/whl/cu132 \
     torch
 
 COPY test/pytorch_lupine_tests.py /opt/lupine/test/pytorch_lupine_tests.py

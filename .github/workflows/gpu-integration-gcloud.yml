@@ -30,7 +30,7 @@ jobs:
             name: CUDA 13.3
             client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
             samples_ref: v13.3
-            pytorch_index_url: https://download.pytorch.org/whl/cu130
+            pytorch_index_url: https://download.pytorch.org/whl/cu132
             cuda_compat_package: cuda-compat-13-3
             server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4

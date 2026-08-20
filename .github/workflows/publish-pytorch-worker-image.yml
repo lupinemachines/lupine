@@ -25,7 +25,7 @@ jobs:
       matrix:
         cuda:
           - version: 13.3.1
-            torch_index: cu130
+            torch_index: cu132
           - version: 12.9.1
             torch_index: cu129
         platform:
