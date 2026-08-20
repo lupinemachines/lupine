@@ -3531,7 +3531,7 @@ CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
  * @routingkey STREAM hStream
  * @routingfallback DEVICEPTR dptr
  * @param hStream SEND_ONLY
- * @param dptr SEND_ONLY TRANSLATE_DEVICEPTR
+ * @param dptr SEND_ONLY
  * @param length SEND_ONLY
  * @param flags SEND_ONLY
  */
