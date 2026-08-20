@@ -27,21 +27,9 @@ jobs:
         cuda:
           - version: 13.1.0
             ubuntu: "24.04"
-          - version: 13.0.2
-            ubuntu: "24.04"
           - version: 12.9.1
             ubuntu: "24.04"
-          - version: 12.8.1
-            ubuntu: "24.04"
-          - version: 12.6.2
-            ubuntu: "24.04"
-          - version: 12.5.1
-            ubuntu: "22.04"
-          - version: 12.4.1
-            ubuntu: "22.04"
           - version: 11.8.0
-            ubuntu: "22.04"
-          - version: 11.7.1
             ubuntu: "22.04"
         platform:
           - arch: amd64
@@ -112,21 +100,9 @@ jobs:
         cuda:
           - version: 13.1.0
             ubuntu: "24.04"
-          - version: 13.0.2
-            ubuntu: "24.04"
           - version: 12.9.1
             ubuntu: "24.04"
-          - version: 12.8.1
-            ubuntu: "24.04"
-          - version: 12.6.2
-            ubuntu: "24.04"
-          - version: 12.5.1
-            ubuntu: "22.04"
-          - version: 12.4.1
-            ubuntu: "22.04"
           - version: 11.8.0
-            ubuntu: "22.04"
-          - version: 11.7.1
             ubuntu: "22.04"
 
     steps:

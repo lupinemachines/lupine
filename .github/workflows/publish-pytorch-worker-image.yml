@@ -26,14 +26,8 @@ jobs:
         cuda:
           - version: 13.1.0
             torch_index: cu130
-          - version: 13.0.2
-            torch_index: cu130
           - version: 12.9.1
             torch_index: cu129
-          - version: 12.8.1
-            torch_index: cu128
-          - version: 12.6.2
-            torch_index: cu126
         platform:
           - arch: amd64
             docker_platform: linux/amd64
@@ -102,10 +96,7 @@ jobs:
       matrix:
         cuda:
           - version: 13.1.0
-          - version: 13.0.2
           - version: 12.9.1
-          - version: 12.8.1
-          - version: 12.6.2
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
