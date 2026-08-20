@@ -877,7 +877,7 @@ static bool lupine_managed_host_alias_base(CUdeviceptr ptr,
   return true;
 }
 
-static void lupine_mark_mapped_device_dirty(void *host) {
+extern "C" void lupine_mark_mapped_device_dirty(void *host) {
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto it = lupine_find_host_allocation_locked(host);
   if (it != lupine_mutable_host_allocations_locked().end() &&
@@ -904,7 +904,7 @@ static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
   return mincore(reinterpret_cast<void *>(page), page_size, &residency) == 0;
 }
 
-static bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
+extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
   if (lupine_host_ptr_is_tracked(ptr)) {
     return true;
   }
@@ -913,13 +913,6 @@ static bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
   }
   return lupine_is_client_mapped_address(ptr);
 }
-
-enum class lupine_copy_direction {
-  host_to_host,
-  host_to_device,
-  device_to_host,
-  device_to_device,
-};
 
 static lupine_copy_direction lupine_infer_copy_direction(CUdeviceptr dst,
                                                          CUdeviceptr src) {
