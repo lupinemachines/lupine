@@ -1116,10 +1116,7 @@ static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
   return mincore(reinterpret_cast<void *>(page), page_size, &residency) == 0;
 }
 
-static bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
-  if (lupine_is_managed_host_alias(ptr)) {
-    return false;
-  }
+extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
   if (lupine_host_ptr_is_tracked(ptr)) {
     return true;
   }
@@ -1128,13 +1125,6 @@ static bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
   }
   return lupine_is_client_mapped_address(ptr);
 }
-
-enum class lupine_copy_direction {
-  host_to_host,
-  host_to_device,
-  device_to_host,
-  device_to_device,
-};
 
 static lupine_copy_direction lupine_infer_copy_direction(CUdeviceptr dst,
                                                          CUdeviceptr src) {
