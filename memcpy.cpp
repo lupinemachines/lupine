@@ -65,6 +65,9 @@ struct lupine_host_allocation {
   bool owned = false;
   bool owned_mmap = false;
   bool managed = false;
+  // Alias for a module-scope __managed__ variable; any kernel from its module
+  // can write it without the pointer appearing in the launch params.
+  bool module_global = false;
   bool local_cuda = false;
   bool client_to_server_only = false;
   CUdeviceptr server_host_ptr = 0;
@@ -103,6 +106,7 @@ struct lupine_mapped_host_snapshot {
   CUdeviceptr device_ptr = 0;
   bool device_dirty = false;
   bool managed = false;
+  bool module_global = false;
 };
 
 using lupine_host_allocation_map =
@@ -507,7 +511,7 @@ static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
     if (entry.second.device_ptr != 0 && !entry.second.local_cuda) {
       snapshots.push_back({entry.first, entry.second.size,
                            entry.second.device_ptr, entry.second.device_dirty,
-                           entry.second.managed});
+                           entry.second.managed, entry.second.module_global});
     }
   }
   return snapshots;
@@ -990,9 +994,9 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
     void *const *kernel_params, const size_t *sizes, uint32_t count,
     CUdeviceptr *translated_params, struct iovec *rpc_params,
     bool *used_managed_mapping) {
-  if (kernel_params == nullptr || sizes == nullptr ||
-      translated_params == nullptr || rpc_params == nullptr) {
-    return count == 0 ? CUDA_SUCCESS : CUDA_ERROR_INVALID_VALUE;
+  if (count != 0 && (kernel_params == nullptr || sizes == nullptr ||
+                     translated_params == nullptr || rpc_params == nullptr)) {
+    return CUDA_ERROR_INVALID_VALUE;
   }
   for (uint32_t i = 0; i < count; ++i) {
     rpc_params[i] = {kernel_params[i], sizes[i]};
@@ -1004,6 +1008,13 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
       lupine_mapped_host_snapshots();
   bool used_managed = false;
   for (const auto &mapping : snapshots) {
+    // A __managed__ module global is reachable from any kernel in its module
+    // without appearing in the params, so assume the launch writes it and let
+    // the next sync refetch.
+    if (mapping.module_global) {
+      lupine_mark_mapped_device_dirty(mapping.host);
+      used_managed = true;
+    }
     for (uint32_t i = 0; i < count; ++i) {
       if (sizes[i] != sizeof(CUdeviceptr)) {
         continue;
@@ -2138,6 +2149,64 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
   return result;
 }
 
+// Build the client-side mmap alias that stands in for managed device memory
+// and register it for demand fetch and dirty tracking.
+static CUresult lupine_register_managed_alias(CUdeviceptr device_ptr,
+                                              CUdeviceptr device_alloc_base,
+                                              size_t bytesize,
+                                              unsigned int flags,
+                                              lupine_route route, bool owned,
+                                              bool module_global,
+                                              void **alias_out) {
+  size_t page_size = lupine_page_size();
+  size_t storage_size = lupine_round_up(bytesize, page_size);
+  void *ptr = MAP_FAILED;
+#ifdef MAP_FIXED_NOREPLACE
+  ptr = mmap(reinterpret_cast<void *>(device_ptr), storage_size,
+             PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+#endif
+  if (ptr == MAP_FAILED) {
+    ptr = mmap(nullptr, storage_size, PROT_READ | PROT_WRITE,
+               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  }
+  if (ptr == MAP_FAILED) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    lupine_host_allocation allocation;
+    allocation.size = bytesize;
+    allocation.storage_size = storage_size;
+    allocation.page_size = page_size;
+    allocation.page_count = storage_size / page_size;
+    allocation.flags = flags;
+    allocation.owned = owned;
+    allocation.owned_mmap = true;
+    allocation.managed = true;
+    allocation.module_global = module_global;
+    allocation.server_host_ptr = device_ptr;
+    allocation.device_ptr = device_ptr;
+    allocation.device_alloc_base = device_alloc_base;
+    allocation.route_id = lupine_route_identity(route);
+    auto inserted = lupine_mutable_host_allocations_locked().emplace(
+        ptr, std::move(allocation));
+    if (!inserted.second) {
+      munmap(ptr, storage_size);
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+    if (!lupine_enable_dirty_tracking_locked(ptr, &inserted.first->second)) {
+      lupine_mutable_host_allocations_locked().erase(inserted.first);
+      munmap(ptr, storage_size);
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  *alias_out = ptr;
+  return CUDA_SUCCESS;
+}
+
 extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
                                       unsigned int flags) {
   if (dptr == nullptr || bytesize == 0) {
@@ -2156,8 +2225,6 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
     return result;
   }
 
-  size_t page_size = lupine_page_size();
-  size_t storage_size = lupine_round_up(bytesize, page_size);
   CUdeviceptr device_alloc_base = 0;
   size_t backing_size = std::max(bytesize, LUPINE_MANAGED_ALLOCATION_MIN_BYTES);
   conn_t *conn = lupine_route_remote_conn(route);
@@ -2177,54 +2244,101 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
   CUdeviceptr device_ptr = device_alloc_base;
   lupine_note_deviceptr_allocation_route(device_alloc_base, backing_size,
                                          route);
-  void *ptr = MAP_FAILED;
-#ifdef MAP_FIXED_NOREPLACE
-  ptr = mmap(reinterpret_cast<void *>(device_ptr), storage_size,
-             PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-#endif
-  if (ptr == MAP_FAILED) {
-    ptr = mmap(nullptr, storage_size, PROT_READ | PROT_WRITE,
-               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  }
-  if (ptr == MAP_FAILED) {
+  void *ptr = nullptr;
+  CUresult alias_result =
+      lupine_register_managed_alias(device_ptr, device_alloc_base, bytesize,
+                                    flags, route, true, false, &ptr);
+  if (alias_result != CUDA_SUCCESS) {
     cuMemFree_v2(device_alloc_base);
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    lupine_host_allocation allocation;
-    allocation.size = bytesize;
-    allocation.storage_size = storage_size;
-    allocation.page_size = page_size;
-    allocation.page_count = storage_size / page_size;
-    allocation.flags = flags;
-    allocation.owned = true;
-    allocation.owned_mmap = true;
-    allocation.managed = true;
-    allocation.server_host_ptr = device_ptr;
-    allocation.device_ptr = device_ptr;
-    allocation.device_alloc_base = device_alloc_base;
-    allocation.route_id = lupine_route_identity(route);
-    auto inserted = lupine_mutable_host_allocations_locked().emplace(
-        ptr, std::move(allocation));
-    if (!inserted.second) {
-      munmap(ptr, storage_size);
-      cuMemFree_v2(device_alloc_base);
-      return CUDA_ERROR_INVALID_VALUE;
-    }
-    if (!lupine_enable_dirty_tracking_locked(ptr, &inserted.first->second)) {
-      lupine_mutable_host_allocations_locked().erase(inserted.first);
-      munmap(ptr, storage_size);
-      cuMemFree_v2(device_alloc_base);
-      return CUDA_ERROR_OUT_OF_MEMORY;
-    }
+    return alias_result;
   }
 
   *dptr = reinterpret_cast<CUdeviceptr>(ptr);
   lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
   return CUDA_SUCCESS;
+}
+
+static void *lupine_find_module_global_alias(CUdeviceptr device_ptr) {
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  for (auto &entry : lupine_mutable_host_allocations_locked()) {
+    if (entry.second.module_global && entry.second.device_ptr == device_ptr) {
+      return entry.first;
+    }
+  }
+  return nullptr;
+}
+
+extern "C" CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes,
+                                         CUmodule hmod, const char *name) {
+  lupine_route route = lupine_route_for_module(hmod);
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUdeviceptr *, size_t *, CUmodule, const char *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuModuleGetGlobal_v2",
+                                                  &return_value, dptr, bytes,
+                                                  hmod, name)) {
+    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
+      lupine_note_deviceptr_owner_route(*dptr, route);
+    }
+    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+      lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  // Always request the size; the managed-alias mapping below needs it even
+  // when the caller does not.
+  size_t size_storage = 0;
+  size_t *size_request = bytes != nullptr ? bytes : &size_storage;
+  CUdeviceptr *dptr_null_check;
+  size_t *bytes_null_check;
+  std::size_t name_len = std::strlen(name) + 1;
+  if (rpc_write_start_request(conn, RPC_cuModuleGetGlobal_v2) < 0 ||
+      rpc_write(conn, &dptr, sizeof(CUdeviceptr *)) < 0 ||
+      rpc_write(conn, &size_request, sizeof(size_t *)) < 0 ||
+      rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
+      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      (dptr_null_check && rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+      (bytes_null_check && rpc_read(conn, size_request, sizeof(size_t)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value != CUDA_SUCCESS || dptr == nullptr) {
+    return return_value;
+  }
+  CUdeviceptr global_ptr = *dptr;
+  lupine_note_deviceptr_owner_route(global_ptr, route);
+  lupine_note_deviceptr_allocation_route(global_ptr, *size_request, route);
+
+  // __managed__ globals are host-dereferenceable through
+  // CU_POINTER_ATTRIBUTE_HOST_POINTER, so give them the same client mapping
+  // managed heap allocations get and hand back the alias. The alias is keyed
+  // by the global's device VA and stays registered across cuModuleUnload; a
+  // later module whose managed global lands on the same VA reuses it.
+  void *alias = lupine_find_module_global_alias(global_ptr);
+  if (alias == nullptr) {
+    int is_managed = 0;
+    if (cuPointerGetAttribute(&is_managed, CU_POINTER_ATTRIBUTE_IS_MANAGED,
+                              global_ptr) == CUDA_SUCCESS &&
+        is_managed != 0) {
+      if (lupine_register_managed_alias(global_ptr, 0, *size_request, 0, route,
+                                        false, true, &alias) == CUDA_SUCCESS) {
+        // The module image initializes the global on the device, so start the
+        // alias stale; the first host touch fetches the initialized bytes.
+        lupine_mark_mapped_device_dirty(alias);
+        lupine_sync_mapped_device_to_host();
+      } else {
+        alias = nullptr;
+      }
+    }
+  }
+  if (alias != nullptr) {
+    *dptr = reinterpret_cast<CUdeviceptr>(alias);
+    lupine_note_deviceptr_allocation_route(*dptr, *size_request, route);
+  }
+  return return_value;
 }
 
 extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {

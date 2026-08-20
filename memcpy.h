@@ -31,6 +31,8 @@ enum class lupine_copy_direction {
   device_to_host,
   device_to_device,
 };
+extern "C" CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes,
+                                         CUmodule hmod, const char *name);
 extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr);
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
 extern "C" void lupine_prepare_host_range_write(void *host, size_t size);

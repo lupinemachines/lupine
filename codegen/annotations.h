@@ -2365,6 +2365,7 @@ CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
 CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
                              const char *name);
 /**
+ * @disabled client - manual client aliases managed globals for host access
  * @routingkey MODULE hmod
  * @recordowner DEVICEPTR dptr
  * @param dptr RECV_ONLY NULLABLE
