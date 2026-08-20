@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         cuda:
-          - 13.1.0
+          - 13.3.1
           - 12.9.1
           - 11.8.0
 

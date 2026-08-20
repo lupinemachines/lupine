@@ -26,11 +26,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: cuda13-0
-            name: CUDA 13.0
-            client_image: nvidia/cuda:13.0.2-devel-ubuntu24.04
-            samples_ref: v13.0
-            pytorch_index_url: https://download.pytorch.org/whl/cu128
+          - label: cuda13-3
+            name: CUDA 13.3
+            client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
+            samples_ref: v13.3
+            pytorch_index_url: https://download.pytorch.org/whl/cu130
           - label: cuda12-4
             name: CUDA 12.4
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04

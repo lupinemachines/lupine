@@ -23,10 +23,10 @@ jobs:
       matrix:
         include:
           - component: client
-            cuda: 13.1.0
+            cuda: 13.3.1
             ubuntu: "24.04"
           - component: server
-            cuda: 13.1.0
+            cuda: 13.3.1
             ubuntu: "24.04"
           - component: client
             cuda: 12.9.1

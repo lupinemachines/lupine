@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         cuda:
-          - version: 13.1.0
+          - version: 13.3.1
             torch_index: cu130
           - version: 12.9.1
             torch_index: cu129
@@ -64,7 +64,7 @@ jobs:
             echo 'ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:cuda-${{ matrix.cuda.version }}-${{ matrix.platform.arch }}'
             if [ '${{ github.event_name }}' = 'release' ]; then
               echo 'ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}-${{ matrix.platform.arch }}'
-              if [ '${{ matrix.cuda.version }}' = '13.1.0' ]; then
+              if [ '${{ matrix.cuda.version }}' = '13.3.1' ]; then
                 echo 'ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:${{ github.event.release.tag_name }}-${{ matrix.platform.arch }}'
               fi
             fi
@@ -95,7 +95,7 @@ jobs:
       fail-fast: false
       matrix:
         cuda:
-          - version: 13.1.0
+          - version: 13.3.1
           - version: 12.9.1
     steps:
       - name: Set up Docker Buildx
@@ -122,7 +122,7 @@ jobs:
               --tag "${release_image}" \
               "${release_image}-amd64" \
               "${release_image}-arm64"
-            if [ '${{ matrix.cuda.version }}' = '13.1.0' ]; then
+            if [ '${{ matrix.cuda.version }}' = '13.3.1' ]; then
               alias="ghcr.io/${{ github.repository_owner }}/lupine-pytorch-worker:${{ github.event.release.tag_name }}"
               docker buildx imagetools create \
                 --tag "${alias}" \
