@@ -11,6 +11,7 @@ struct rpc_write_cursor;
 
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
                                                   CUdeviceptr *translated);
+extern "C" CUdeviceptr lupine_devptr_wire(CUdeviceptr ptr);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 
 CUresult lupine_sync_mapped_host_to_device_for_launch(

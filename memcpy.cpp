@@ -1060,6 +1060,14 @@ extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
   return true;
 }
 
+// Wire form of a CUdeviceptr argument: managed-mapping aliases leave the
+// client as the server-side allocation they mirror.
+extern "C" CUdeviceptr lupine_devptr_wire(CUdeviceptr ptr) {
+  CUdeviceptr translated = ptr;
+  lupine_translate_managed_host_ptr(ptr, &translated);
+  return translated;
+}
+
 static bool lupine_translate_client_host_ptr_to_server(
     CUdeviceptr ptr, CUdeviceptr *translated,
     CUdeviceptr *server_base = nullptr, CUdeviceptr *device_base = nullptr) {

@@ -59,9 +59,9 @@ a generated client fallback for device-to-device copies whose source and
 destination pointers are owned by different server connections. The fallback
 routes through the client-side cross-server copy helper.
 
-`@param <name> ... TRANSLATE_DEVICEPTR` makes the generated client wrapper
-translate a client-visible managed host alias to the server-visible
-`CUdeviceptr` before routing, local CUDA forwarding, or RPC serialization.
+Every by-value `CUdeviceptr` parameter is translated automatically: a
+client-visible managed host alias becomes the server-visible `CUdeviceptr`
+before routing, local CUDA forwarding, or RPC serialization.
 Client-dirty mapped pages are flushed centrally before each CUDA RPC request.
 `@routingfallback <kind> <param>` can be paired with stream routing for APIs
 that route by stream when a stream is supplied and by another object otherwise.
