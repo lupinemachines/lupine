@@ -4329,34 +4329,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuLaunchCooperativeKernelMultiDevice(conn_t *conn) {
-  CUDA_LAUNCH_PARAMS launchParamsList;
-  unsigned int numDevices;
-  unsigned int flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
-      rpc_read(conn, &numDevices, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLaunchCooperativeKernelMultiDevice(
-      &launchParamsList, numDevices, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuFuncSetBlockShape(conn_t *conn) {
   CUfunction hfunc;
   int x;
@@ -4553,6 +4525,34 @@ int handle_cuLaunchGridAsync(conn_t *conn) {
       cuLaunchGridAsync(f, grid_width, grid_height, hStream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuLaunchCooperativeKernelMultiDevice(conn_t *conn) {
+  CUDA_LAUNCH_PARAMS launchParamsList;
+  unsigned int numDevices;
+  unsigned int flags;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
+      rpc_read(conn, &numDevices, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuLaunchCooperativeKernelMultiDevice(
+      &launchParamsList, numDevices, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7807,3 +7807,30 @@ ERROR_0:
   free((void *)resources);
   return -1;
 }
+
+#if CUDA_VERSION >= 12040
+int handle_cuStreamGetGreenCtx(conn_t *conn) {
+  CUstream hStream;
+  CUgreenCtx phCtx;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuStreamGetGreenCtx(hStream, &phCtx);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &phCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif

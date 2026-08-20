@@ -31,16 +31,22 @@ jobs:
             client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
             samples_ref: v13.3
             pytorch_index_url: https://download.pytorch.org/whl/cu130
+            cuda_compat_package: cuda-compat-13-3
+            server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4
             name: CUDA 12.4
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
             pytorch_index_url: https://download.pytorch.org/whl/cu124
+            cuda_compat_package: ""
+            server_ld_library_path: ""
           - label: cuda11-8
             name: CUDA 11.8
             client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
             samples_ref: v11.8
             pytorch_index_url: https://download.pytorch.org/whl/cu118
+            cuda_compat_package: ""
+            server_ld_library_path: ""
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -68,6 +74,8 @@ jobs:
       CUDA_SAMPLE_JOBS: 4
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
+      CUDA_COMPAT_PACKAGE: ${{ matrix.cuda_compat_package }}
+      SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
       VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
@@ -152,7 +160,16 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates docker.io libnghttp2-14
+          SCRIPT
+
+          if [[ -n "$CUDA_COMPAT_PACKAGE" ]]; then
+            printf 'apt-get install -y --no-install-recommends %q\n' \
+              "$CUDA_COMPAT_PACKAGE" >> "$startup_script"
+          fi
+
+          cat >> "$startup_script" <<'SCRIPT'
           rm -rf /var/lib/apt/lists/*
+          touch /var/lib/lupine-startup-complete
           SCRIPT
 
           # shellcheck disable=SC2206
@@ -367,7 +384,9 @@ jobs:
             done
 
             deadline=$((SECONDS + 300))
-            until command -v docker >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; do
+            until command -v docker >/dev/null 2>&1 &&
+              sudo docker info >/dev/null 2>&1 &&
+              test -f /var/lib/lupine-startup-complete; do
               if [ "$SECONDS" -ge "$deadline" ]; then
                 echo "Docker did not become ready before the timeout" >&2
                 exit 1
@@ -478,7 +497,7 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
@@ -489,6 +508,7 @@ jobs:
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
+            -e SERVER_LD_LIBRARY_PATH="$SERVER_LD_LIBRARY_PATH" \
             -e SERVER_HOST=host.docker.internal \
             -e SERVER_USER=gha \
             -e SERVER_SSH_TARGET=gha@host.docker.internal \

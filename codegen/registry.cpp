@@ -257,7 +257,6 @@
   HANDLER(RPC_cuFuncSetCacheConfig, handle_cuFuncSetCacheConfig, rpc_backend::cuda) \
   HANDLER(RPC_cuFuncGetModule, handle_cuFuncGetModule, rpc_backend::cuda) \
   HANDLER(RPC_cuFuncGetParamInfo, handle_cuFuncGetParamInfo, rpc_backend::cuda) \
-  HANDLER(RPC_cuLaunchCooperativeKernelMultiDevice, handle_cuLaunchCooperativeKernelMultiDevice, rpc_backend::cuda) \
   HANDLER(RPC_cuFuncSetBlockShape, handle_cuFuncSetBlockShape, rpc_backend::cuda) \
   HANDLER(RPC_cuFuncSetSharedSize, handle_cuFuncSetSharedSize, rpc_backend::cuda) \
   HANDLER(RPC_cuParamSetSize, handle_cuParamSetSize, rpc_backend::cuda) \
@@ -266,6 +265,7 @@
   HANDLER(RPC_cuLaunch, handle_cuLaunch, rpc_backend::cuda) \
   HANDLER(RPC_cuLaunchGrid, handle_cuLaunchGrid, rpc_backend::cuda) \
   HANDLER(RPC_cuLaunchGridAsync, handle_cuLaunchGridAsync, rpc_backend::cuda) \
+  HANDLER(RPC_cuLaunchCooperativeKernelMultiDevice, handle_cuLaunchCooperativeKernelMultiDevice, rpc_backend::cuda) \
   HANDLER(RPC_cuParamSetTexRef, handle_cuParamSetTexRef, rpc_backend::cuda) \
   HANDLER(RPC_cuFuncSetSharedMemConfig, handle_cuFuncSetSharedMemConfig, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphCreate, handle_cuGraphCreate, rpc_backend::cuda) \
@@ -449,6 +449,10 @@ LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
                        handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12040
+LUPINE_DECLARE_HANDLER(RPC_cuStreamGetGreenCtx, handle_cuStreamGetGreenCtx,
+                       rpc_backend::cuda)
+#endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -467,9 +471,14 @@ const rpc_handler_registry &lupine_rpc_handlers() {
                                   handle_cuTensorMapEncodeTiled,
                                   rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12040
+              LUPINE_REGISTER_HANDLER(RPC_cuStreamGetGreenCtx,
+                                      handle_cuStreamGetGreenCtx,
+                                      rpc_backend::cuda)
+#endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
-              LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+                  LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
 #endif
   };

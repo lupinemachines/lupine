@@ -3447,6 +3447,13 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId);
  */
 CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
 /**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey STREAM hStream
+ * @param hStream SEND_ONLY
+ * @param phCtx RECV_ONLY
+ */
+CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx);
+/**
  * @disabled - manual client handles cross-server event waits
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
