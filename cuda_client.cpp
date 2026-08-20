@@ -10,6 +10,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <stdio.h>
 #include <string.h>
@@ -864,11 +865,185 @@ extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
   return result;
 }
 
+// ---- Cross-connection peer access ----
+// Two virtual devices can be the same physical GPU reached over separate
+// connections (LUPINE_SERVER naming one endpoint twice). The server forks per
+// connection, so those are distinct CUDA contexts in distinct processes on one
+// host: CUDA IPC maps an allocation exported by one connection into the other,
+// kernels launched there dereference it directly, and peer copies stay on the
+// server instead of round-tripping through the client.
+
+static std::mutex &lupine_peer_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+// Route-identity pairs (accessor, owner) with peer access enabled.
+static std::set<std::pair<int, int>> &lupine_enabled_peer_routes() {
+  static std::set<std::pair<int, int>> routes;
+  return routes;
+}
+
+// (allocation base, target route identity) -> where the IPC mapping landed
+// on the target connection, as a wire address.
+static std::map<std::pair<CUdeviceptr, int>, CUdeviceptr> &
+lupine_peer_mappings() {
+  static std::map<std::pair<CUdeviceptr, int>, CUdeviceptr> mappings;
+  return mappings;
+}
+
+static bool lupine_devices_share_uuid(CUdevice a, CUdevice b) {
+  CUuuid uuid_a = {};
+  CUuuid uuid_b = {};
+  if (cuDeviceGetUuid_v2(&uuid_a, a) != CUDA_SUCCESS ||
+      cuDeviceGetUuid_v2(&uuid_b, b) != CUDA_SUCCESS) {
+    return false;
+  }
+  return memcmp(uuid_a.bytes, uuid_b.bytes, sizeof(uuid_a.bytes)) == 0;
+}
+
+// Whether the two remote routes each own a device with the same GPU UUID,
+// i.e. the same physical GPU is reachable on both connections.
+static bool lupine_routes_share_gpu(lupine_route a, lupine_route b) {
+  if (lupine_route_is_local(a) || lupine_route_is_local(b)) {
+    return false;
+  }
+  int identity_a = lupine_route_identity(a);
+  int identity_b = lupine_route_identity(b);
+  int count = 0;
+  if (lupine_virtual_device_count(&count) != CUDA_SUCCESS) {
+    return false;
+  }
+  std::vector<CUdevice> devices_a;
+  std::vector<CUdevice> devices_b;
+  for (int ordinal = 0; ordinal < count; ++ordinal) {
+    CUdevice translated = static_cast<CUdevice>(ordinal);
+    int identity =
+        lupine_route_identity(lupine_route_for_device(&translated));
+    if (identity == identity_a) {
+      devices_a.push_back(static_cast<CUdevice>(ordinal));
+    }
+    if (identity == identity_b) {
+      devices_b.push_back(static_cast<CUdevice>(ordinal));
+    }
+  }
+  for (CUdevice dev_a : devices_a) {
+    for (CUdevice dev_b : devices_b) {
+      if (lupine_devices_share_uuid(dev_a, dev_b)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static bool lupine_peer_route_enabled(int accessor_id, int owner_id) {
+  std::lock_guard<std::mutex> lock(lupine_peer_mutex());
+  return lupine_enabled_peer_routes().count({accessor_id, owner_id}) != 0;
+}
+
+// Resolve ptr, an allocation owned by another connection, to a wire address
+// that target_route's child can dereference: export it with cuIpcGetMemHandle
+// on the owner and open it on the target (the children are sibling processes
+// on one host). Mappings live until the server children exit.
+extern "C" bool lupine_peer_translate_deviceptr(CUdeviceptr ptr,
+                                                lupine_route target_route,
+                                                CUdeviceptr *translated) {
+  if (lupine_route_is_local(target_route)) {
+    return false;
+  }
+  CUdeviceptr base = 0;
+  size_t size = 0;
+  int owner_id = -2;
+  if (!lupine_deviceptr_allocation_info(ptr, &base, &size, &owner_id)) {
+    return false;
+  }
+  int target_id = lupine_route_identity(target_route);
+  if (owner_id == target_id) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_peer_mutex());
+    auto it = lupine_peer_mappings().find({base, target_id});
+    if (it != lupine_peer_mappings().end()) {
+      *translated = it->second + (ptr - base);
+      return true;
+    }
+  }
+  CUipcMemHandle handle = {};
+  if (cuIpcGetMemHandle(&handle, base) != CUDA_SUCCESS) {
+    return false;
+  }
+  conn_t *conn = lupine_route_remote_conn(target_route);
+  CUdeviceptr mapped = 0;
+  unsigned int flags = CU_IPC_MEM_LAZY_ENABLE_PEER_ACCESS;
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cuIpcOpenMemHandle_v2) < 0 ||
+      rpc_write(conn, &mapped, sizeof(mapped)) < 0 ||
+      rpc_write(conn, &handle, sizeof(handle)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &mapped, sizeof(mapped)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return false;
+  }
+  if (result != CUDA_SUCCESS || mapped == 0) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(lupine_peer_mutex());
+  auto inserted =
+      lupine_peer_mappings().emplace(std::make_pair(base, target_id), mapped);
+  *translated = inserted.first->second + (ptr - base);
+  return true;
+}
+
+// Rewrite pointer-sized launch params for the wire: the launch connection's
+// own pointers lose their client-side tag, and pointers into another
+// connection's memory become that memory's IPC mapping here once peer access
+// is enabled.
+extern "C" void lupine_peer_translate_launch_params(
+    lupine_route route, void *const *kernel_params, const size_t *sizes,
+    uint32_t count, CUdeviceptr *translated_params, struct iovec *rpc_params) {
+  if (lupine_route_is_local(route) || kernel_params == nullptr || count == 0 ||
+      rpc_size() <= 1) {
+    return;
+  }
+  int launch_id = lupine_route_identity(route);
+  for (uint32_t i = 0; i < count; ++i) {
+    if (sizes[i] != sizeof(CUdeviceptr) ||
+        rpc_params[i].iov_base != kernel_params[i]) {
+      continue;
+    }
+    CUdeviceptr arg = 0;
+    memcpy(&arg, kernel_params[i], sizeof(arg));
+    CUdeviceptr base = 0;
+    size_t size = 0;
+    int owner_id = -2;
+    if (!lupine_deviceptr_allocation_info(arg, &base, &size, &owner_id)) {
+      continue;
+    }
+    CUdeviceptr translated = 0;
+    if (owner_id == launch_id) {
+      translated = lupine_devptr_to_wire(arg);
+      if (translated == arg) {
+        continue;
+      }
+    } else if (!lupine_peer_route_enabled(launch_id, owner_id) ||
+               !lupine_peer_translate_deviceptr(arg, route, &translated)) {
+      continue;
+    }
+    translated_params[i] = translated;
+    rpc_params[i].iov_base = &translated_params[i];
+  }
+}
+
 extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
                                           CUdevice peerDev) {
   if (canAccessPeer == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
+  CUdevice virtual_dev = dev;
   CUdevice peer = peerDev;
   lupine_route route = lupine_route_for_device(&dev);
   lupine_route peer_route = lupine_route_for_device(&peer);
@@ -891,7 +1066,10 @@ extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (!lupine_translate_device_for_conn(conn, &peerDev)) {
-    *canAccessPeer = 0;
+    // The peer lives on another connection. The same physical GPU reached
+    // twice still supports peer semantics through CUDA IPC.
+    *canAccessPeer =
+        lupine_devices_share_uuid(virtual_dev, peerDev) ? 1 : 0;
     return CUDA_SUCCESS;
   }
 
@@ -914,7 +1092,19 @@ extern "C" CUresult cuCtxEnablePeerAccess(CUcontext peerContext,
   lupine_route peer_route = lupine_route_for_context(peerContext);
   if (lupine_route_identity(current_route) !=
       lupine_route_identity(peer_route)) {
-    return CUDA_ERROR_PEER_ACCESS_UNSUPPORTED;
+    if (!lupine_routes_share_gpu(current_route, peer_route)) {
+      return CUDA_ERROR_PEER_ACCESS_UNSUPPORTED;
+    }
+    // Same physical GPU on both connections; record the pair and satisfy
+    // accesses through IPC mappings at launch and copy time.
+    std::lock_guard<std::mutex> lock(lupine_peer_mutex());
+    if (!lupine_enabled_peer_routes()
+             .insert({lupine_route_identity(current_route),
+                      lupine_route_identity(peer_route)})
+             .second) {
+      return CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED;
+    }
+    return CUDA_SUCCESS;
   }
   if (lupine_route_is_local(current_route)) {
     using real_fn_t = CUresult (*)(CUcontext, unsigned int);
@@ -939,7 +1129,12 @@ extern "C" CUresult cuCtxDisablePeerAccess(CUcontext peerContext) {
   lupine_route peer_route = lupine_route_for_context(peerContext);
   if (lupine_route_identity(current_route) !=
       lupine_route_identity(peer_route)) {
-    return CUDA_ERROR_PEER_ACCESS_NOT_ENABLED;
+    std::lock_guard<std::mutex> lock(lupine_peer_mutex());
+    return lupine_enabled_peer_routes().erase(
+               {lupine_route_identity(current_route),
+                lupine_route_identity(peer_route)}) != 0
+               ? CUDA_SUCCESS
+               : CUDA_ERROR_PEER_ACCESS_NOT_ENABLED;
   }
   if (lupine_route_is_local(current_route)) {
     using real_fn_t = CUresult (*)(CUcontext);
@@ -3156,6 +3351,43 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
     return CUDA_SUCCESS;
   }
 
+  // Same physical GPU on both connections: map the source into the
+  // destination connection via CUDA IPC and copy on the server instead of
+  // round-tripping every byte through the client.
+  lupine_route dst_route = lupine_route_for_deviceptr(dstDevice);
+  CUdeviceptr dst_wire = lupine_devptr_to_wire(dstDevice);
+  CUdeviceptr src_translated = 0;
+  if (lupine_peer_translate_deviceptr(srcDevice, dst_route,
+                                      &src_translated)) {
+    conn_t *conn = lupine_route_remote_conn(dst_route);
+    if (conn == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (async) {
+      // Fire-and-forget like the generated cuMemcpyDtoDAsync_v2 stub.
+      if (rpc_write_start_request(conn, RPC_cuMemcpyDtoDAsync_v2) < 0 ||
+          rpc_write(conn, &dst_wire, sizeof(CUdeviceptr)) < 0 ||
+          rpc_write(conn, &src_translated, sizeof(CUdeviceptr)) < 0 ||
+          rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
+          rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+          rpc_write_end(conn) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+      return CUDA_SUCCESS;
+    }
+    CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_write_start_request(conn, RPC_cuMemcpyDtoD_v2) < 0 ||
+        rpc_write(conn, &dst_wire, sizeof(CUdeviceptr)) < 0 ||
+        rpc_write(conn, &src_translated, sizeof(CUdeviceptr)) < 0 ||
+        rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return return_value;
+  }
+
   constexpr size_t chunk_size = 16 * 1024 * 1024;
   std::vector<unsigned char> staging(std::min(ByteCount, chunk_size));
   size_t offset = 0;
@@ -4883,6 +5115,9 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   if (status != CUDA_SUCCESS) {
     return status;
   }
+  lupine_peer_translate_launch_params(route, kernelParams, param_sizes.data(),
+                                      param_count, translated_params.data(),
+                                      rpc_params.data());
   bool sync_after_launch =
       used_managed_mapping &&
       (lupine_managed_kernel_requires_launch_sync(requested_function) ||
@@ -4996,6 +5231,9 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (status != CUDA_SUCCESS) {
     return status;
   }
+  lupine_peer_translate_launch_params(route, kernelParams, param_sizes.data(),
+                                      param_count, translated_params.data(),
+                                      rpc_params.data());
   bool sync_after_launch =
       used_managed_mapping &&
       (lupine_managed_kernel_requires_launch_sync(requested_function) ||
@@ -5248,6 +5486,7 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
   lupine_note_async_dtoh_copy();
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
+  srcDevice = lupine_devptr_to_wire(srcDevice);
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoHAsync_v2) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
@@ -5323,6 +5562,8 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
@@ -5345,6 +5586,8 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -5395,6 +5638,8 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     } else {
       conn = lupine_rpc_conn_for_current_context();
     }
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -5474,6 +5719,8 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
@@ -5496,6 +5743,8 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -5546,6 +5795,8 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     } else {
       conn = lupine_rpc_conn_for_current_context();
     }
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -5626,6 +5877,8 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_stream(hStream)
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
@@ -5649,6 +5902,8 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_stream(hStream)
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
@@ -5700,6 +5955,8 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     } else {
       conn = lupine_rpc_conn_for_stream(hStream);
     }
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
@@ -5846,6 +6103,8 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
@@ -5870,6 +6129,8 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -5923,6 +6184,8 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     } else {
       conn = lupine_rpc_conn_for_current_context();
     }
+    copy.srcDevice = lupine_devptr_to_wire(copy.srcDevice);
+    copy.dstDevice = lupine_devptr_to_wire(copy.dstDevice);
     if (rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||

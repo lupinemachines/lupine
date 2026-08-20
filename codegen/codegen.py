@@ -878,12 +878,13 @@ def write_client_rpc_write(f, operation: Operation, metadata: FunctionAnnotation
     if (
         isinstance(operation, OpaqueTypeOperation)
         and operation.send
-        and operation.parameter.name in client_translated_deviceptr_names(metadata)
+        and operation.type_.format() == "CUdeviceptr"
     ):
+        # {name}_wire holds the untagged pointer (and the managed-host
+        # translation when TRANSLATE_DEVICEPTR applies).
         f.write(
-            "        rpc_write(conn, &{param_name}_rpc, sizeof({param_type})) < 0 ||\n".format(
-                param_name=operation.parameter.name,
-                param_type=operation.type_.format(),
+            "        rpc_write(conn, &{param_name}_wire, sizeof(CUdeviceptr)) < 0 ||\n".format(
+                param_name=operation.parameter.name
             )
         )
         return
@@ -926,7 +927,38 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
     )
 
 
-def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMetadata):
+# Device pointers handed to the client carry the owning connection's index in
+# the bits above the GPU VA range (see lupine_devptr_from_wire), so
+# allocations from different connections never alias even when the server
+# processes hand out identical addresses. Sends strip the tag; receives on the
+# remote path apply it before ownership is recorded.
+def deviceptr_out_params(metadata: FunctionAnnotationMetadata) -> list[str]:
+    names = []
+    for operation in metadata.operations:
+        if isinstance(operation, (OpaqueTypeOperation, DereferenceOperation)):
+            if (
+                operation.recv
+                and isinstance(operation.type_, Pointer)
+                and operation.type_.ptr_to.format() == "CUdeviceptr"
+            ):
+                names.append(operation.parameter.name)
+        elif isinstance(operation, NullableOperation):
+            if operation.recv and operation.ptr.ptr_to.format() == "CUdeviceptr":
+                names.append(operation.parameter.name)
+    return names
+
+
+def write_client_post_call(
+    f, function: Function, metadata: FunctionAnnotationMetadata, remote: bool = False
+):
+    if remote:
+        for name in deviceptr_out_params(metadata):
+            f.write(
+                "    if (return_value == CUDA_SUCCESS && {name} != nullptr)\n"
+                "        *{name} = lupine_devptr_from_wire(*{name}, conn);\n".format(
+                    name=name
+                )
+            )
     if function.name.format() == "cuDriverGetVersion":
         f.write("    if (driverVersion != nullptr) {\n")
         f.write("        const char *override_version = getenv(\"LUPINE_DRIVER_VERSION_OVERRIDE\");\n")
@@ -1654,6 +1686,13 @@ def main():
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
                     f.write(operation.client_declaration())
+                    if operation.send and operation.type_.format() == "CUdeviceptr":
+                        f.write(
+                            "    CUdeviceptr {name}_wire = lupine_devptr_to_wire({expr});\n".format(
+                                name=operation.parameter.name,
+                                expr=client_param_expr(metadata, operation.parameter),
+                            )
+                        )
                 if (
                     isinstance(operation, InOutCountOperation)
                     or isinstance(operation, NullableArrayOperation)
@@ -1752,7 +1791,7 @@ def main():
                 )
             )
 
-            write_client_post_call(f, function, metadata)
+            write_client_post_call(f, function, metadata, remote=True)
             for operation in operations:
                 if isinstance(operation, ArrayOperation):
                     operation.client_post_rpc_read_success(f)

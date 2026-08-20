@@ -26,6 +26,7 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  srcDevice = lupine_devptr_to_wire(srcDevice);
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0) {
@@ -92,6 +93,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   }
   lupine_ensure_mapped_host_readable(srcHost, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
+  dstDevice = lupine_devptr_to_wire(dstDevice);
   if (rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||

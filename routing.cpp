@@ -117,6 +117,14 @@ int lupine_route_identity(lupine_route route) {
   return -2;
 }
 
+CUdeviceptr lupine_devptr_from_wire(CUdeviceptr ptr, conn_t *conn) {
+  int index = lupine_conn_index(conn);
+  if (ptr == 0 || index <= 0) {
+    return ptr;
+  }
+  return ptr | (static_cast<CUdeviceptr>(index) << LUPINE_DEVPTR_TAG_SHIFT);
+}
+
 extern "C" bool lupine_routes_share_server(lupine_route first,
                                            lupine_route second) {
   return lupine_route_identity(first) == lupine_route_identity(second);
@@ -702,6 +710,25 @@ extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
       continue;
     }
     if (static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
+      return true;
+    }
+  }
+  return false;
+}
+
+extern "C" bool lupine_deviceptr_allocation_info(CUdeviceptr ptr,
+                                                 CUdeviceptr *base,
+                                                 size_t *size, int *route_id) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  for (const auto &entry : lupine_deviceptr_allocations()) {
+    const auto &allocation = entry.second;
+    if (allocation.base == 0 || allocation.size == 0 || ptr < allocation.base) {
+      continue;
+    }
+    if (static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
+      *base = allocation.base;
+      *size = allocation.size;
+      *route_id = allocation.route_id;
       return true;
     }
   }

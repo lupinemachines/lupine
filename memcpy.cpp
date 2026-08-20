@@ -2258,10 +2258,12 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
   return CUDA_SUCCESS;
 }
 
-static void *lupine_find_module_global_alias(CUdeviceptr device_ptr) {
+static void *lupine_find_module_global_alias(CUdeviceptr device_ptr,
+                                             int route_id) {
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   for (auto &entry : lupine_mutable_host_allocations_locked()) {
-    if (entry.second.module_global && entry.second.device_ptr == device_ptr) {
+    if (entry.second.module_global && entry.second.device_ptr == device_ptr &&
+        entry.second.route_id == route_id) {
       return entry.first;
     }
   }
@@ -2308,6 +2310,10 @@ extern "C" CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes,
   if (return_value != CUDA_SUCCESS || dptr == nullptr) {
     return return_value;
   }
+  // The wire value keys the alias machinery (its fetch and flush send it
+  // back raw); the tagged value is what the app and the routing records see.
+  CUdeviceptr wire_global = *dptr;
+  *dptr = lupine_devptr_from_wire(*dptr, conn);
   CUdeviceptr global_ptr = *dptr;
   lupine_note_deviceptr_owner_route(global_ptr, route);
   lupine_note_deviceptr_allocation_route(global_ptr, *size_request, route);
@@ -2317,13 +2323,14 @@ extern "C" CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes,
   // managed heap allocations get and hand back the alias. The alias is keyed
   // by the global's device VA and stays registered across cuModuleUnload; a
   // later module whose managed global lands on the same VA reuses it.
-  void *alias = lupine_find_module_global_alias(global_ptr);
+  void *alias =
+      lupine_find_module_global_alias(wire_global, lupine_route_identity(route));
   if (alias == nullptr) {
     int is_managed = 0;
     if (cuPointerGetAttribute(&is_managed, CU_POINTER_ATTRIBUTE_IS_MANAGED,
                               global_ptr) == CUDA_SUCCESS &&
         is_managed != 0) {
-      if (lupine_register_managed_alias(global_ptr, 0, *size_request, 0, route,
+      if (lupine_register_managed_alias(wire_global, 0, *size_request, 0, route,
                                         false, true, &alias) == CUDA_SUCCESS) {
         // The module image initializes the global on the device, so start the
         // alias stale; the first host touch fetches the initialized bytes.
@@ -2378,9 +2385,10 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
       return result;
     }
     conn_t *conn = lupine_route_remote_conn(route);
+    CUdeviceptr dptr_wire = lupine_devptr_to_wire(dptr);
     CUresult return_value;
     if (rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||
-        rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
+        rpc_write(conn, &dptr_wire, sizeof(CUdeviceptr)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
         rpc_read_end(conn) < 0) {
@@ -2463,6 +2471,7 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
                            : real(data, attribute, query_ptr);
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  query_ptr = lupine_devptr_to_wire(query_ptr);
   CUresult return_value;
   if (rpc_write_start_request(conn, RPC_cuPointerGetAttribute) < 0 ||
       rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
@@ -2527,6 +2536,7 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
   memcpy(payload, value, value_size);
 
   conn_t *conn = lupine_route_remote_conn(route);
+  target_ptr = lupine_devptr_to_wire(target_ptr);
   CUresult return_value;
   if (rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
       rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
@@ -2713,6 +2723,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
+  query_ptr = lupine_devptr_to_wire(query_ptr);
   if (rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
       rpc_write(conn, attributes,
