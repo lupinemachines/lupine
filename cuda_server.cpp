@@ -2007,8 +2007,16 @@ int handle_cuLinkDestroy(conn_t *conn) {
 
 // The wire carries no sizes: both sides derive the packed host payload
 // lengths from the copy descriptor, and a failed copy carries no payload.
-int handle_cuMemcpy3D_v2(conn_t *conn) {
-  CUDA_MEMCPY3D copy = {};
+// One handler body covers cuMemcpy3D, cuMemcpy3DAsync, and the peer
+// variants: CUDA_MEMCPY3D and CUDA_MEMCPY3D_PEER share every geometry field.
+template <typename Copy>
+static int lupine_handle_memcpy3d(conn_t *conn,
+                                  CUresult (*driver)(const Copy *),
+                                  CUresult (*driver_async)(const Copy *,
+                                                           CUstream),
+                                  bool async) {
+  Copy copy = {};
+  CUstream stream = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
@@ -2017,7 +2025,8 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
   size_t packed_size = copy.WidthInBytes * copy.Height * copy.Depth;
   std::vector<unsigned char> src_host(
       copy.srcMemoryType == CU_MEMORYTYPE_HOST ? packed_size : 0);
-  if (rpc_read(conn, src_host.data(), src_host.size()) < 0) {
+  if (rpc_read(conn, src_host.data(), src_host.size()) < 0 ||
+      (async && rpc_read(conn, &stream, sizeof(stream)) < 0)) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -2034,7 +2043,14 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
     copy.dstHost = dst_host.empty() ? nullptr : dst_host.data();
   }
 
-  result = cuMemcpy3D_v2(&copy);
+  if (async) {
+    result = driver_async(&copy, stream);
+    if (result == CUDA_SUCCESS) {
+      result = cuStreamSynchronize(stream);
+    }
+  } else {
+    result = driver(&copy);
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
       (result == CUDA_SUCCESS &&
@@ -2043,6 +2059,26 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
     return -1;
   }
   return 0;
+}
+
+int handle_cuMemcpy3D_v2(conn_t *conn) {
+  return lupine_handle_memcpy3d<CUDA_MEMCPY3D>(conn, cuMemcpy3D_v2,
+                                               cuMemcpy3DAsync_v2, false);
+}
+
+int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
+  return lupine_handle_memcpy3d<CUDA_MEMCPY3D>(conn, cuMemcpy3D_v2,
+                                               cuMemcpy3DAsync_v2, true);
+}
+
+int handle_cuMemcpy3DPeer(conn_t *conn) {
+  return lupine_handle_memcpy3d<CUDA_MEMCPY3D_PEER>(
+      conn, cuMemcpy3DPeer, cuMemcpy3DPeerAsync, false);
+}
+
+int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
+  return lupine_handle_memcpy3d<CUDA_MEMCPY3D_PEER>(
+      conn, cuMemcpy3DPeer, cuMemcpy3DPeerAsync, true);
 }
 
 // The wire carries no sizes: both sides derive the packed host payload
