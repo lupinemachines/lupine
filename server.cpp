@@ -23,15 +23,15 @@
 #include <vector>
 #endif
 
-#include "checkpoint.h"
-#include "codegen/gen_api.h"
-#include "codegen/gen_server.h"
-#include "copy_pipeline.h"
 #include "ipc.h"
 #include "lupine_log.h"
-#include "cuda_server.h"
 #include "rpc.h"
+#include "rpc_server.h"
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+#include "checkpoint.h"
+#include "copy_pipeline.h"
 #include "server_checkpoint.h"
+#endif
 
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
@@ -78,9 +78,8 @@ lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
       break;
     }
     if (WIFSIGNALED(status)) {
-      LUPINE_LOG_ERROR("Connection child "
-                       << child << " terminated by signal "
-                       << WTERMSIG(status));
+      LUPINE_LOG_ERROR("Connection child " << child << " terminated by signal "
+                                           << WTERMSIG(status));
     } else if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
       LUPINE_LOG_ERROR("Connection child "
                        << child << " exited abnormally with status " << status);
@@ -94,246 +93,6 @@ lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
 }
 #endif
 
-static void lupine_log_manual_handler_error(const char *name) {
-  LUPINE_LOG_ERROR("Error handling manual " << name << " request.");
-}
-
-struct lupine_cuda_custom_handler {
-  RequestHandler handler;
-  const char *name;
-};
-
-// Custom CUDA handlers are looked up before the auto-generated handlers from
-// get_handler(), so entries here take precedence for overlapping operations.
-static const std::unordered_map<int, lupine_cuda_custom_handler> &
-lupine_cuda_custom_handlers() {
-  static const std::unordered_map<int, lupine_cuda_custom_handler> handlers = {
-      {RPC_cuGetErrorName, {handle_manual_cuGetErrorName, "cuGetErrorName"}},
-      {RPC_cuGetErrorString,
-       {handle_manual_cuGetErrorString, "cuGetErrorString"}},
-      {LUPINE_RPC_cuGetExportTableMetadata,
-       {handle_manual_cuGetExportTableMetadata, "cuGetExportTable metadata"}},
-      {LUPINE_RPC_cuPrivateGetModuleNode,
-       {handle_manual_cuPrivateGetModuleNode, "private module node"}},
-      {RPC_cuModuleLoad, {handle_manual_cuModuleLoad, "cuModuleLoad"}},
-      {RPC_cuModuleLoadData,
-       {handle_manual_cuModuleLoadData, "cuModuleLoadData"}},
-      {LUPINE_RPC_lupineFunctionParamLayoutSnapshot,
-       {handle_manual_lupineFunctionParamLayoutSnapshot,
-        "lupineFunctionParamLayoutSnapshot"}},
-      {LUPINE_RPC_lupineFunctionAttributeSnapshot,
-       {handle_manual_lupineFunctionAttributeSnapshot,
-        "lupineFunctionAttributeSnapshot"}},
-      {RPC_cuLibraryLoadData,
-       {handle_manual_cuLibraryLoadData, "cuLibraryLoadData"}},
-      {LUPINE_RPC_lupineLibrarySnapshot,
-       {handle_manual_lupineLibrarySnapshot, "lupineLibrarySnapshot"}},
-      {LUPINE_RPC_lupineLibraryAttributeSnapshot,
-       {handle_manual_lupineLibraryAttributeSnapshot,
-        "lupineLibraryAttributeSnapshot"}},
-      {RPC_cuCtxCreate_v2, {handle_manual_cuCtxCreate_v2, "cuCtxCreate_v2"}},
-      {RPC_cuDevicePrimaryCtxRetain,
-       {handle_manual_cuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain"}},
-      {RPC_cuDevicePrimaryCtxRelease_v2,
-       {handle_manual_cuDevicePrimaryCtxRelease_v2,
-        "cuDevicePrimaryCtxRelease_v2"}},
-      {RPC_cuDevicePrimaryCtxReset_v2,
-       {handle_manual_cuDevicePrimaryCtxReset_v2,
-        "cuDevicePrimaryCtxReset_v2"}},
-      {RPC_cuCtxAttach, {handle_manual_cuCtxAttach, "cuCtxAttach"}},
-      {RPC_cuCtxDestroy_v2, {handle_manual_cuCtxDestroy_v2, "cuCtxDestroy_v2"}},
-      {RPC_cuCtxDetach, {handle_manual_cuCtxDetach, "cuCtxDetach"}},
-      {RPC_cuMemPoolSetAttribute,
-       {handle_manual_cuMemPoolSetAttribute, "cuMemPoolSetAttribute"}},
-      {RPC_cuMemPoolGetAttribute,
-       {handle_manual_cuMemPoolGetAttribute, "cuMemPoolGetAttribute"}},
-      {RPC_cuMemExportToShareableHandle,
-       {handle_manual_cuMemExportToShareableHandle,
-        "cuMemExportToShareableHandle"}},
-      {RPC_cuMemImportFromShareableHandle,
-       {handle_manual_cuMemImportFromShareableHandle,
-        "cuMemImportFromShareableHandle"}},
-      {RPC_cuMemPoolExportToShareableHandle,
-       {handle_manual_cuMemPoolExportToShareableHandle,
-        "cuMemPoolExportToShareableHandle"}},
-      {RPC_cuMemPoolImportFromShareableHandle,
-       {handle_manual_cuMemPoolImportFromShareableHandle,
-        "cuMemPoolImportFromShareableHandle"}},
-      {RPC_cuPointerGetAttribute,
-       {handle_manual_cuPointerGetAttribute, "cuPointerGetAttribute"}},
-      {RPC_cuPointerSetAttribute,
-       {handle_manual_cuPointerSetAttribute, "cuPointerSetAttribute"}},
-      {RPC_cuPointerGetAttributes,
-       {handle_manual_cuPointerGetAttributes, "cuPointerGetAttributes"}},
-      {RPC_cuLinkCreate_v2, {handle_manual_cuLinkCreate_v2, "cuLinkCreate_v2"}},
-      {RPC_cuLinkAddData_v2,
-       {handle_manual_cuLinkAddData_v2, "cuLinkAddData_v2"}},
-      {RPC_cuLinkAddFile_v2,
-       {handle_manual_cuLinkAddFile_v2, "cuLinkAddFile_v2"}},
-      {RPC_cuLinkComplete, {handle_manual_cuLinkComplete, "cuLinkComplete"}},
-      {RPC_cuLinkDestroy, {handle_manual_cuLinkDestroy, "cuLinkDestroy"}},
-      {RPC_cuMemcpy3D_v2, {handle_manual_cuMemcpy3D_v2, "cuMemcpy3D_v2"}},
-      {RPC_cuMemcpy2D_v2, {handle_manual_cuMemcpy2D_v2, "cuMemcpy2D_v2"}},
-      {RPC_cuMemcpy2DUnaligned_v2,
-       {handle_manual_cuMemcpy2DUnaligned_v2, "cuMemcpy2DUnaligned_v2"}},
-      {RPC_cuMemcpy2DAsync_v2,
-       {handle_manual_cuMemcpy2DAsync_v2, "cuMemcpy2DAsync_v2"}},
-      {RPC_cuMemcpyDtoH_v2, {handle_manual_cuMemcpyDtoH_v2, "cuMemcpyDtoH_v2"}},
-      {RPC_cuMemcpyAtoH_v2, {handle_manual_cuMemcpyAtoH_v2, "cuMemcpyAtoH_v2"}},
-      {RPC_cuMemHostAlloc, {handle_manual_cuMemHostAlloc, "cuMemHostAlloc"}},
-      {RPC_cuMemHostGetFlags,
-       {handle_manual_cuMemHostGetFlags, "cuMemHostGetFlags"}},
-      {RPC_cuDeviceGetGraphMemAttribute,
-       {handle_manual_cuDeviceGetGraphMemAttribute,
-        "cuDeviceGetGraphMemAttribute"}},
-      {RPC_cuDeviceSetGraphMemAttribute,
-       {handle_manual_cuDeviceSetGraphMemAttribute,
-        "cuDeviceSetGraphMemAttribute"}},
-      {RPC_cuLibraryGetModule,
-       {handle_manual_cuLibraryGetModule, "cuLibraryGetModule"}},
-      {RPC_cuLibraryUnload, {handle_manual_cuLibraryUnload, "cuLibraryUnload"}},
-      {RPC_cuModuleGetGlobal_v2,
-       {handle_manual_cuModuleGetGlobal_v2, "cuModuleGetGlobal_v2"}},
-      {RPC_cuOccupancyMaxPotentialBlockSize,
-       {[](conn_t *conn) {
-          return handle_manual_cuOccupancyMaxPotentialBlockSize(conn, false);
-        },
-        "cuOccupancyMaxPotentialBlockSize"}},
-      {RPC_cuOccupancyMaxPotentialBlockSizeWithFlags,
-       {[](conn_t *conn) {
-          return handle_manual_cuOccupancyMaxPotentialBlockSize(conn, true);
-        },
-        "cuOccupancyMaxPotentialBlockSizeWithFlags"}},
-      {RPC_cuLaunchKernel, {handle_manual_cuLaunchKernel, "cuLaunchKernel"}},
-      {RPC_cuLaunchKernelEx,
-       {handle_manual_cuLaunchKernelEx, "cuLaunchKernelEx"}},
-      {RPC_cuLaunchCooperativeKernel,
-       {handle_manual_cuLaunchCooperativeKernel, "cuLaunchCooperativeKernel"}},
-      {RPC_cuGraphAddKernelNode_v2,
-       {handle_manual_cuGraphAddKernelNode, "cuGraphAddKernelNode"}},
-      {RPC_cuGraphKernelNodeGetParams_v2,
-       {handle_manual_cuGraphKernelNodeGetParams,
-        "cuGraphKernelNodeGetParams_v2"}},
-      {RPC_cuGraphKernelNodeSetParams_v2,
-       {handle_manual_cuGraphKernelNodeSetParams,
-        "cuGraphKernelNodeSetParams_v2"}},
-      {RPC_cuGraphAddMemcpyNode,
-       {handle_manual_cuGraphAddMemcpyNode, "cuGraphAddMemcpyNode"}},
-      {RPC_cuGraphAddMemsetNode,
-       {handle_manual_cuGraphAddMemsetNode, "cuGraphAddMemsetNode"}},
-      {RPC_cuGraphAddHostNode,
-       {handle_manual_cuGraphAddHostNode, "cuGraphAddHostNode"}},
-      {RPC_cuGraphExecKernelNodeSetParams_v2,
-       {handle_manual_cuGraphExecKernelNodeSetParams,
-        "cuGraphExecKernelNodeSetParams_v2"}},
-      {LUPINE_RPC_cuGraphConditionalHandleCreate,
-       {handle_manual_cuGraphConditionalHandleCreate,
-        "cuGraphConditionalHandleCreate"}},
-      {LUPINE_RPC_cuGraphAddNode_v2,
-       {handle_manual_cuGraphAddNode, "cuGraphAddNode"}},
-      {RPC_cuGraphLaunch, {handle_manual_cuGraphLaunch, "cuGraphLaunch"}},
-      {RPC_cuGraphGetEdges_v2,
-       {handle_manual_cuGraphGetEdges, "cuGraphGetEdges"}},
-      {RPC_cuGraphNodeGetDependencies_v2,
-       {handle_manual_cuGraphNodeGetDependencies,
-        "cuGraphNodeGetDependencies"}},
-      {RPC_cuGraphNodeGetDependentNodes_v2,
-       {handle_manual_cuGraphNodeGetDependentNodes,
-        "cuGraphNodeGetDependentNodes"}},
-      {LUPINE_RPC_cuMemPrefetchAsync,
-       {handle_manual_cuMemPrefetchAsync, "cuMemPrefetchAsync"}},
-      {RPC_cuGraphHostNodeGetParams,
-       {handle_manual_cuGraphHostNodeGetParams, "cuGraphHostNodeGetParams"}},
-      {RPC_cuGraphHostNodeSetParams,
-       {handle_manual_cuGraphHostNodeSetParams, "cuGraphHostNodeSetParams"}},
-      {RPC_cuGraphExecHostNodeSetParams,
-       {handle_manual_cuGraphExecHostNodeSetParams,
-        "cuGraphExecHostNodeSetParams"}},
-      {RPC_cuLaunchHostFunc,
-       {handle_manual_cuLaunchHostFunc, "cuLaunchHostFunc"}},
-      {RPC_cuStreamAddCallback,
-       {handle_manual_cuStreamAddCallback, "cuStreamAddCallback"}},
-      {RPC_cuEventRecord,
-       {[](conn_t *conn) { return handle_manual_cuEventRecord(conn, false); },
-        "cuEventRecord"}},
-      {RPC_cuEventRecordWithFlags,
-       {[](conn_t *conn) { return handle_manual_cuEventRecord(conn, true); },
-        "cuEventRecordWithFlags"}},
-      {RPC_cuEventQuery, {handle_manual_cuEventQuery, "cuEventQuery"}},
-      {LUPINE_RPC_lupineEventQueryBatch,
-       {handle_manual_lupineEventQueryBatch, "lupineEventQueryBatch"}},
-      {RPC_cuStreamWaitEvent,
-       {handle_manual_cuStreamWaitEvent, "cuStreamWaitEvent"}},
-      {LUPINE_RPC_cuStreamBeginCaptureToGraph,
-       {handle_manual_cuStreamBeginCaptureToGraph,
-        "cuStreamBeginCaptureToGraph"}},
-      {RPC_cuStreamUpdateCaptureDependencies_v2,
-       {handle_manual_cuStreamUpdateCaptureDependencies,
-        "cuStreamUpdateCaptureDependencies"}},
-      {LUPINE_RPC_cuStreamGetCaptureInfo_v3,
-       {handle_manual_cuStreamGetCaptureInfo, "cuStreamGetCaptureInfo"}},
-      {RPC_cuStreamBeginCapture_v2,
-       {handle_manual_cuStreamBeginCapture, "cuStreamBeginCapture"}},
-      {RPC_cuStreamEndCapture,
-       {handle_manual_cuStreamEndCapture, "cuStreamEndCapture"}},
-      {RPC_cuGraphClone, {handle_manual_cuGraphClone, "cuGraphClone"}},
-      {RPC_cuGraphInstantiateWithFlags,
-       {handle_manual_cuGraphInstantiateWithFlags,
-        "cuGraphInstantiateWithFlags"}},
-      {RPC_cuGraphInstantiateWithParams,
-       {handle_manual_cuGraphInstantiateWithParams,
-        "cuGraphInstantiateWithParams"}},
-      {RPC_cuGraphExecDestroy,
-       {handle_manual_cuGraphExecDestroy, "cuGraphExecDestroy"}},
-      {RPC_cuGraphDestroy, {handle_manual_cuGraphDestroy, "cuGraphDestroy"}},
-      {RPC_cuMemcpyHtoD_v2, {handle_manual_cuMemcpyHtoD_v2, "cuMemcpyHtoD_v2"}},
-      {RPC_cuMemcpyHtoDAsync_v2,
-       {handle_manual_cuMemcpyHtoDAsync_v2, "cuMemcpyHtoDAsync_v2"}},
-      {LUPINE_RPC_lupineManagedHostFlush,
-       {handle_manual_lupineManagedHostFlush, "lupineManagedHostFlush"}},
-      {LUPINE_RPC_lupineDeviceSnapshot,
-       {handle_manual_lupineDeviceSnapshot, "lupineDeviceSnapshot"}},
-      {RPC_cuMemcpyDtoHAsync_v2,
-       {handle_manual_cuMemcpyDtoHAsync_v2, "cuMemcpyDtoHAsync_v2"}},
-      {RPC_cuCtxSynchronize,
-       {handle_manual_cuCtxSynchronize, "cuCtxSynchronize"}},
-      {RPC_cuStreamSynchronize,
-       {handle_manual_cuStreamSynchronize, "cuStreamSynchronize"}},
-      {RPC_cuEventSynchronize,
-       {handle_manual_cuEventSynchronize, "cuEventSynchronize"}},
-#if CUDA_VERSION >= 12000
-      {RPC_cuTensorMapEncodeTiled,
-       {handle_manual_cuTensorMapEncodeTiled, "cuTensorMapEncodeTiled"}},
-#endif
-  };
-  return handlers;
-}
-
-static int lupine_handle_rpc_request(conn_t *conn, int op) {
-  LUPINE_TRACE_LOG("LUPINE server handling op " << op);
-
-  const auto &custom_handlers = lupine_cuda_custom_handlers();
-  auto custom = custom_handlers.find(op);
-  if (custom != custom_handlers.end()) {
-    if (custom->second.handler(conn) < 0) {
-      lupine_log_manual_handler_error(custom->second.name);
-      return -1;
-    }
-    return 0;
-  }
-
-  auto opHandler = get_handler(op);
-  if (opHandler == nullptr) {
-    LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
-    return -1;
-  }
-  if (opHandler(conn) < 0) {
-    LUPINE_LOG_ERROR("Error handling request.");
-    return -1;
-  }
-  return 0;
-}
-
 struct lupine_lane {
   uint64_t id = 0;
   std::mutex mutex;
@@ -343,54 +102,94 @@ struct lupine_lane {
   std::thread worker;
 };
 
-static bool lupine_initialize_rpc_synchronization(conn_t *conn) {
-  if (pthread_mutex_init(&conn->read_mutex, nullptr) != 0) {
-    return false;
+int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
+                        int op) {
+  LUPINE_TRACE_LOG("LUPINE server handling op " << op);
+  auto it = handlers.find(op);
+  if (it == handlers.end()) {
+    LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
+    return -1;
   }
-  if (pthread_mutex_init(&conn->write_mutex, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->read_mutex);
-    return false;
+
+  const rpc_handler &handler = it->second;
+  const char *backend_name = nullptr;
+  int result = -1;
+  switch (handler.backend) {
+  case rpc_backend::cuda:
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  {
+    backend_name = "CUDA";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
   }
-  if (pthread_mutex_init(&conn->call_mutex, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->write_mutex);
-    pthread_mutex_destroy(&conn->read_mutex);
-    return false;
+#else
+    break;
+#endif
+  case rpc_backend::nvml:
+#ifdef LUPINE_BUILD_NVML_BACKEND
+    backend_name = "NVML";
+    result = handler.handler(conn);
+#endif
+    break;
   }
-  if (pthread_cond_init(&conn->read_cond, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->call_mutex);
-    pthread_mutex_destroy(&conn->write_mutex);
-    pthread_mutex_destroy(&conn->read_mutex);
-    return false;
+
+  if (result >= 0) {
+    return 0;
   }
-  return true;
+  if (backend_name == nullptr) {
+    LUPINE_LOG_ERROR("RPC op " << op << " belongs to a disabled backend.");
+  } else {
+    LUPINE_LOG_ERROR("Error handling " << backend_name << " request for op "
+                                       << op << ".");
+  }
+  return -1;
 }
 
 int client_handler(lupine_socket_t connfd) {
+  const rpc_handler_registry &handlers = lupine_rpc_handlers();
   conn_t conn = {};
-  conn.connfd = connfd;
-  conn.request_id = 1;
-  conn.local_request_parity = conn.request_id & 1;
-  if (!lupine_initialize_rpc_synchronization(&conn)) {
+  if (rpc_conn_init(&conn, connfd, 1) < 0) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
-    lupine_socket_close(connfd);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();
+#else
+    return 0;
+#endif
   }
 
-  int http2_init_result = rpc_http2_server_init(&conn);
+  const rpc_http2_server_metadata metadata = {
+#ifdef LUPINE_BACKEND_VERSION
+      LUPINE_BACKEND_VERSION,
+#else
+      nullptr,
+#endif
+  };
+  int http2_init_result = rpc_http2_server_init_with_metadata(&conn, &metadata);
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");
     rpc_conn_destroy(&conn);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();
+#else
+    return 0;
+#endif
   }
   if (http2_init_result != 0) {
     rpc_conn_destroy(&conn);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();
+#else
+    return 0;
+#endif
   }
+#ifdef LUPINE_BUILD_CUDA_BACKEND
   if (!lupine_server_initialize_connection(&conn)) {
-    LUPINE_LOG_ERROR("Error initializing per-connection staging state.");
+    LUPINE_LOG_ERROR("Error initializing per-connection CUDA state.");
     rpc_conn_destroy(&conn);
     return lupine_server_checkpoint_child_finish();
   }
+#endif
 
   LUPINE_LOG_DEBUG("Client connected.");
 
@@ -438,12 +237,14 @@ int client_handler(lupine_socket_t connfd) {
     int op = conn.read_op;
 
     if (!connection_ready) {
+#ifdef LUPINE_BUILD_CUDA_BACKEND
       if (!lupine_server_checkpoint_connection_ready(
               rpc_http2_session_id(&conn))) {
         pthread_mutex_unlock(&conn.read_mutex);
         LUPINE_LOG_ERROR("Failed to restore connection checkpoint.");
         break;
       }
+#endif
       connection_ready = true;
     }
 
@@ -457,7 +258,7 @@ int client_handler(lupine_socket_t connfd) {
       }
       lane = std::make_shared<lupine_lane>();
       lane->id = lane_id;
-      lane->worker = std::thread([&conn, lane]() {
+      lane->worker = std::thread([&conn, &handlers, lane]() {
         for (;;) {
           int op = 0;
           {
@@ -473,11 +274,8 @@ int client_handler(lupine_socket_t connfd) {
             rpc_read_end(&conn);
             return;
           }
-          {
-            lupine_checkpoint::cuda_call_guard dispatch_guard;
-            if (lupine_handle_rpc_request(&conn, op) >= 0) {
-              continue;
-            }
+          if (rpc_server_dispatch(handlers, &conn, op) >= 0) {
+            continue;
           }
           rpc_read_end(&conn);
           return;
@@ -538,15 +336,21 @@ int client_handler(lupine_socket_t connfd) {
     conn.rpc_thread = 0;
   }
 
-  // Preserve the connection's CUDA state through checkpointing. Cleanup can
-  // release CUDA-owned staging resources and must happen afterward.
-  int checkpoint_result = lupine_server_checkpoint_child_finish();
+  int checkpoint_result = 0;
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  // Finish checkpointing before releasing per-connection CUDA resources.
+  checkpoint_result = lupine_server_checkpoint_child_finish();
   lupine_server_cleanup_connection(&conn);
+#endif
   rpc_conn_destroy(&conn);
   return checkpoint_result;
 }
 
 int main() {
+  if (!rpc_server_validate(lupine_rpc_handlers())) {
+    LUPINE_LOG_ERROR("Invalid RPC handler registry.");
+    return EXIT_FAILURE;
+  }
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
   if (lupine_socket_init() < 0) {
@@ -607,8 +411,8 @@ int main() {
     exit(EXIT_FAILURE);
   }
   std::unordered_set<pid_t> connection_children;
-  // One broker socket per connection child; children park and fetch CUDA IPC
-  // shareable fds through the parent, which never touches CUDA (see ipc.h).
+  // One broker socket per connection child; children park and fetch backend
+  // shareable fds through the runtime-neutral parent (see ipc.h).
   std::vector<int> broker_fds;
 #endif
 
@@ -684,12 +488,10 @@ int main() {
 #endif
 
 #ifndef _WIN32
-    // fork a process per connection so each client gets its own CUDA driver
-    // state (primary context, allocations, modules). this matches local
-    // semantics: a client resetting or corrupting its context cannot affect
-    // other clients, and everything is released when the client disconnects.
-    // the parent must never initialize CUDA; forked children cannot use a
-    // parent's initialized driver.
+    // Fork a process per connection so each client gets isolated backend
+    // runtime state. A client resetting or corrupting its state cannot affect
+    // other clients, and everything is released on disconnect. The parent
+    // must not initialize accelerator runtimes inherited by forked children.
     fflush(stdout);
     fflush(stderr);
 
@@ -734,11 +536,13 @@ int main() {
       }
       close(broker_pair[0]);
       lupine_ipc_set_broker_fd(broker_pair[1]);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
       if (!lupine_server_checkpoint_child_start(connfd)) {
         LUPINE_LOG_ERROR("Failed to initialize graceful child shutdown.");
         lupine_socket_close(connfd);
         exit(EXIT_FAILURE);
       }
+#endif
       (void)sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
       int checkpoint_result = client_handler(connfd);
       exit(checkpoint_result == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
@@ -760,8 +564,8 @@ int main() {
   lupine_socket_close(sockfd);
 
 #ifndef _WIN32
-  // Every connection owns its CUDA state in a dedicated child, so each child
-  // must quiesce and optionally checkpoint itself.
+  // Every connection owns backend state in a dedicated child, so each child
+  // must quiesce and optionally persist itself.
   lupine_reap_connection_children(connection_children);
   for (pid_t child : connection_children) {
     (void)kill(child, SIGTERM);

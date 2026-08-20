@@ -94,6 +94,16 @@ extern int rpc_write_start_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
+// Pitched transfers move `slices` * `rows` rows of `width` bytes; rows sit
+// `row_stride` bytes apart and slices `slice_stride` bytes apart at this
+// endpoint. The wire carries the rows back-to-back, identical to a contiguous
+// transfer of width * rows * slices bytes. A flat 2D region is one slice.
+extern int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
+                             size_t rows, size_t row_stride, size_t slices,
+                             size_t slice_stride);
+extern int rpc_read_pitched(conn_t *conn, void *data, size_t width,
+                            size_t rows, size_t row_stride, size_t slices,
+                            size_t slice_stride);
 // Reserves the request-owned storage used by subsequent rpc_write_buffer
 // calls. The reservation must be made once before the first buffered write in
 // an RPC and is released with the request.
@@ -112,22 +122,28 @@ extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // conn->closed, and safe for concurrent/idempotent cleanup.
 extern void rpc_close_transport_socket(conn_t *conn);
 extern void rpc_write_queue_free(conn_t *conn);
+extern int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id);
 extern void rpc_conn_destroy(conn_t *conn);
 
 // lupine_tcp_connect resolves host:port and returns a connected socket with
 // the standard transport options applied (TCP_NODELAY + keepalive; see
 // lupine_socket_apply_transport_options). A server that is not reachable yet
-// (e.g. still provisioning) is retried a few times with exponential backoff,
-// and each attempt is bounded by a deadline so a packet-filtered port cannot
-// stall the loop for minutes. Returns the socket, or LUPINE_INVALID_SOCKET on
-// permanent failure.
-extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port);
+// (e.g. still provisioning) is retried up to max_retries times with
+// exponential backoff and bounded attempts. Passing zero preserves the
+// client's single blocking attempt. Returns the socket, or
+// LUPINE_INVALID_SOCKET on permanent failure.
+extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
+                                          unsigned int max_retries = 5);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
                             int entry_count);
 extern int rpc_http2_client_init(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
+extern void rpc_http2_destroy(conn_t *conn);
+struct rpc_http2_server_metadata {
+  const char *backend_version;
+};
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or
@@ -136,6 +152,9 @@ extern const char *rpc_http2_client_probe(conn_t *conn);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
 extern int rpc_http2_server_init(conn_t *conn);
+extern int
+rpc_http2_server_init_with_metadata(conn_t *conn,
+                                    const rpc_http2_server_metadata *metadata);
 extern int rpc_http2_compress_lz4(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.

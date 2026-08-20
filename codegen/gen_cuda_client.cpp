@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "gen_api.h"
+#include "gen_rpc_ids.h"
 
 #include "client_routing.h"
 #include "rpc.h"

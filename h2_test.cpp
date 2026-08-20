@@ -255,7 +255,13 @@ void test_head_probe_cuda_version_metadata() {
   const char *cuda_version = nullptr;
   std::thread probe(
       [&] { cuda_version = rpc_http2_client_probe(&pair.client); });
+#ifdef LUPINE_CUDA_VERSION
+  const rpc_http2_server_metadata metadata = {LUPINE_CUDA_VERSION};
+  int server_result =
+      rpc_http2_server_init_with_metadata(&pair.server, &metadata);
+#else
   int server_result = rpc_http2_server_init(&pair.server);
+#endif
   probe.join();
 
   require(server_result == 1, "HEAD / was not handled as a metadata request");

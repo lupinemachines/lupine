@@ -14,17 +14,11 @@
 #include <netdb.h>
 #endif
 
-// lupine_tcp_connect resolves host:port and connects with a bounded retry
-// policy (see rpc.h). It only resolves and dials; the caller owns TLS setup
-// and the HTTP/2 session. A transiently unreachable server (e.g. still
-// provisioning) is retried with exponential backoff, and each attempt is
-// bounded by a deadline so a packet-filtered port cannot stall the loop for
-// minutes (the kernel's SYN retransmit backoff).
-lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
-  // Hardcoded connect policy: a few retries with exponential backoff to ride
-  // out a server that is still starting, each capped so a black-holed port is
-  // detected quickly instead of blocking for the full SYN-retransmit window.
-  constexpr int kMaxRetries = 5;
+// lupine_tcp_connect only resolves and dials; the caller owns TLS setup and
+// the HTTP/2 session. Retried connections use bounded attempts and exponential
+// backoff; zero retries preserves the one-shot blocking policy.
+lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
+                                   unsigned int max_retries) {
   constexpr int kInitialBackoffMs = 1000;
   constexpr int kMaxBackoffMs = 30000;
   constexpr int kConnectTimeoutMs = 10000;
@@ -49,18 +43,26 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
           continue;
         }
         lupine_socket_apply_transport_options(sockfd);
-        if (lupine_socket_connect_with_timeout(
-                sockfd, ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen),
-                kConnectTimeoutMs) == 0) {
+        int result = max_retries == 0
+                         ? connect(sockfd, ai->ai_addr,
+                                   static_cast<socklen_t>(ai->ai_addrlen))
+                         : lupine_socket_connect_with_timeout(
+                               sockfd, ai->ai_addr,
+                               static_cast<socklen_t>(ai->ai_addrlen),
+                               kConnectTimeoutMs);
+        if (result == 0) {
           freeaddrinfo(res);
           return sockfd;
         }
         lupine_socket_close(sockfd);
+        if (max_retries == 0) {
+          break;
+        }
       }
       freeaddrinfo(res);
     }
 
-    if (attempt >= kMaxRetries) {
+    if (static_cast<unsigned int>(attempt) >= max_retries) {
       return LUPINE_INVALID_SOCKET;
     }
 
@@ -73,13 +75,11 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port) {
     }
     LUPINE_LOG_ERROR("Connecting to " << host << " port " << port
                                       << " failed, retrying in " << delay_ms
-                                      << "ms (" << (kMaxRetries - attempt)
+                                      << "ms (" << (max_retries - attempt)
                                       << " retries left)");
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
   }
 }
-
-extern void rpc_http2_destroy(conn_t *conn);
 
 void rpc_close_transport_socket(conn_t *conn) {
   if (conn == nullptr) {
@@ -189,6 +189,37 @@ void rpc_write_queue_free(conn_t *conn) {
   conn->write_queue = nullptr;
   conn->write_queue_count = 0;
   conn->write_queue_capacity = 0;
+}
+
+int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
+  *conn = {};
+  conn->connfd = connfd;
+  conn->request_id = request_id;
+  conn->local_request_parity = request_id & 1;
+  if (pthread_mutex_init(&conn->read_mutex, nullptr) != 0) {
+    goto fail;
+  }
+  if (pthread_mutex_init(&conn->write_mutex, nullptr) != 0) {
+    pthread_mutex_destroy(&conn->read_mutex);
+    goto fail;
+  }
+  if (pthread_mutex_init(&conn->call_mutex, nullptr) != 0) {
+    pthread_mutex_destroy(&conn->write_mutex);
+    pthread_mutex_destroy(&conn->read_mutex);
+    goto fail;
+  }
+  if (pthread_cond_init(&conn->read_cond, nullptr) == 0) {
+    return 0;
+  }
+  pthread_mutex_destroy(&conn->call_mutex);
+  pthread_mutex_destroy(&conn->write_mutex);
+  pthread_mutex_destroy(&conn->read_mutex);
+
+fail:
+  rpc_close_transport_socket(conn);
+  *conn = {};
+  conn->connfd = LUPINE_INVALID_SOCKET;
+  return -1;
 }
 
 void rpc_conn_destroy(conn_t *conn) {
@@ -394,6 +425,19 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
   return rpc_http2_read(conn, data, size);
 }
 
+int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
+                     size_t row_stride, size_t slices, size_t slice_stride) {
+  for (size_t z = 0; z < slices; ++z) {
+    char *slice = (char *)data + z * slice_stride;
+    for (size_t row = 0; row < rows; ++row) {
+      if (rpc_read(conn, slice + row * row_stride, width) < 0) {
+        return -1;
+      }
+    }
+  }
+  return 0;
+}
+
 int rpc_drain(conn_t *conn, size_t size) {
   char buffer[64 * 1024];
   size_t offset = 0;
@@ -569,6 +613,22 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
     return 0;
   }
   return rpc_write_queue_push(conn, data, size, 0);
+}
+
+// Rows are queued, not copied, so the caller's buffer must stay valid until
+// the surrounding rpc_write_end.
+int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
+                      size_t rows, size_t row_stride, size_t slices,
+                      size_t slice_stride) {
+  for (size_t z = 0; z < slices; ++z) {
+    const char *slice = (const char *)data + z * slice_stride;
+    for (size_t row = 0; row < rows; ++row) {
+      if (rpc_write(conn, slice + row * row_stride, width) < 0) {
+        return -1;
+      }
+    }
+  }
+  return 0;
 }
 
 int rpc_copy_alloc(conn_t *conn, const size_t size) {

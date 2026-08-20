@@ -26,7 +26,7 @@ COPY . /opt/lupine-src
 RUN cmake -S /opt/lupine-src -B /opt/lupine-src/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
-    && cmake --build /opt/lupine-src/build --parallel --target lupine_cuda_client lupine_nvml \
+    && cmake --build /opt/lupine-src/build --parallel --target lupine_cuda_client lupine_nvml_client \
     && mkdir -p /opt/lupine/lib \
     && cp /opt/lupine-src/build/libcuda.so.1 /opt/lupine/lib/libcuda.so.1 \
     && cp /opt/lupine-src/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1 \

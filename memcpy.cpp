@@ -1,3 +1,5 @@
+#include "lupine_platform.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -5,6 +7,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#ifndef _WIN32
 #include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -13,12 +16,13 @@
 #endif
 #include <sys/uio.h>
 #include <unistd.h>
+#endif
 #include <vector>
 
 #include <cuda.h>
 
 #include "client_routing.h"
-#include "codegen/gen_api.h"
+#include "codegen/gen_rpc_ids.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_log.h"
 #include "memcpy.h"
@@ -168,7 +172,9 @@ static size_t lupine_page_size() {
 }
 
 static pid_t lupine_gettid() {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+  return static_cast<pid_t>(lupine_thread_id());
+#elif defined(__APPLE__)
   return static_cast<pid_t>(pthread_mach_thread_np(pthread_self()));
 #else
   return static_cast<pid_t>(syscall(SYS_gettid));
