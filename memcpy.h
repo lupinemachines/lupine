@@ -26,9 +26,17 @@ extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                           unsigned int flags, CUstream hStream);
 
 extern "C" void lupine_register_rpc_hooks();
+enum class lupine_copy_direction {
+  host_to_host,
+  host_to_device,
+  device_to_host,
+  device_to_device,
+};
+extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr);
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
 extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
 extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
+extern "C" void lupine_mark_mapped_device_dirty(void *host);
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
                                                   CUdeviceptr *translated);
 extern "C" CUdeviceptr lupine_devptr_wire(CUdeviceptr ptr);
