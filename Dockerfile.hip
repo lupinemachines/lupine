@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM rocm/dev-ubuntu-24.04:7.2.4-complete
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -17,7 +17,6 @@ COPY . /opt/lupine
 
 RUN cmake -S /opt/lupine -B /opt/lupine/build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_DISABLE_FIND_PACKAGE_CUDAToolkit=TRUE \
       -DLUPINE_BUILD_CUDA=OFF \
       -DLUPINE_BUILD_NVML=OFF \
       -DLUPINE_BUILD_HIP=ON \

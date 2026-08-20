@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   codegen:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -24,6 +24,13 @@ jobs:
           cuda: "13.1.0"
           method: network
           sub-packages: '["nvcc"]'
+
+      - name: Install HIP SDK
+        run: |
+          wget -q https://repo.radeon.com/amdgpu-install/7.2.4/ubuntu/noble/amdgpu-install_7.2.4.70204-1_all.deb
+          sudo apt-get install -y ./amdgpu-install_7.2.4.70204-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y rocm-hip-runtime-dev
 
       - name: Regenerate checked-in sources
         run: |

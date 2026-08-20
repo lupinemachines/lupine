@@ -295,11 +295,13 @@ microgpt_train: PASS
 
 ## Local development
 
-Building the binaries requires running codegen first. Lupine codegen reads the cuda dependency header files in order to generate rpc calls.
+Building the binaries requires running codegen first. Lupine codegen reads the CUDA and HIP API headers to generate RPC calls.
 
-To ensure codegen works properly, the proper cuda packages need to be installed on your OS. Take a look at our [Dockerfile](./Dockerfile) to see an example.
+To ensure codegen works properly, the CUDA and HIP SDK headers need to be installed on your OS. Take a look at our [Dockerfile](./Dockerfile) and [Dockerfile.hip](./Dockerfile.hip) for examples.
 
 Take a look [here to install CUDA Toolkit](https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=WSL-Ubuntu&target_version=2.0&target_type=deb_network) (choose your system)
+
+Install the [ROCm HIP SDK](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/install-methods/package-manager/package-manager-ubuntu.html), or set `HIP_PATH`/`ROCM_PATH` when it is installed outside `/opt/rocm`.
 
 Codegen requires [cuBLAS](https://developer.nvidia.com/hpc-sdk-downloads), [cuDNN](https://developer.nvidia.com/cudnn-downloads?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=24.04&target_type=deb_network), [NVML](https://developer.nvidia.com/management-library-nvml), etc:
 
@@ -328,7 +330,8 @@ cmake --build build
 ```
 
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NVML shim at
-`build/libnvidia-ml.so.1`, and the server at `build/lupine_driver_server`.
+`build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
+server at `build/lupine_driver_server`.
 
 The Lupine server must be running before initiating client commands.
 

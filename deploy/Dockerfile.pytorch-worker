@@ -25,6 +25,7 @@ COPY . /opt/lupine-src
 
 RUN cmake -S /opt/lupine-src -B /opt/lupine-src/build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DLUPINE_BUILD_HIP=OFF \
         -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
     && cmake --build /opt/lupine-src/build --parallel --target lupine_cuda_client lupine_nvml_client \
     && mkdir -p /opt/lupine/lib \

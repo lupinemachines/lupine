@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   hip-only:
-    name: HIP client + server (no CUDA or ROCm SDK)
+    name: HIP client + server (ROCm SDK)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

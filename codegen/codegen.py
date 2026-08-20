@@ -1462,9 +1462,14 @@ def write_hip_server_handler(f, function, operations):
     f.write("}\n\n")
 
 
+HIP_ROOT = (
+    os.environ.get("HIP_PATH") or os.environ.get("ROCM_PATH") or "/opt/rocm"
+)
+
 # List of possible directories to search for header files
 COMMON_INCLUDE_DIRS = [
     "./",
+    os.path.join(HIP_ROOT, "include"),
     "/usr/local/cuda/include/",
     "/opt/cuda/include/",
     "/usr/local/include/",
@@ -1505,18 +1510,18 @@ def validate_async_annotation(
 
 
 def main():
+    cuda_header = find_header_file("cuda.h")
+    hip_header = find_header_file("hip_runtime_api.h")
+    annotations_header = find_header_file("annotations.h")
+
+    cuda_include_dir = os.path.dirname(cuda_header)
+    hip_include_dir = os.path.dirname(os.path.dirname(hip_header))
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            include_paths=["/usr/local/cuda/include"],
+            defines=["__HIP_PLATFORM_AMD__"],
+            include_paths=[cuda_include_dir, hip_include_dir],
         ),
     )
-
-    try:
-        cuda_header = find_header_file("cuda.h")
-        annotations_header = find_header_file("annotations.h")
-    except FileNotFoundError as e:
-        print(e)
-        return
 
     # Parse the files
     cuda_ast: ParsedData = parse_file(cuda_header, options=options)

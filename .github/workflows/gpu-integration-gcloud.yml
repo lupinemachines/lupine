@@ -546,6 +546,7 @@ jobs:
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
+                -DLUPINE_BUILD_HIP=OFF \
                 -DCUDAToolkit_ROOT="$CUDA_HOME" \
                 -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \

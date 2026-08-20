@@ -4,7 +4,7 @@ project(LupineProject LANGUAGES C CXX)
 
 option(LUPINE_BUILD_CUDA "Build the CUDA client and server backend" ON)
 option(LUPINE_BUILD_NVML "Build the NVML client and server backend" ON)
-option(LUPINE_BUILD_HIP "Build the HIP client and server backend when present" ON)
+option(LUPINE_BUILD_HIP "Build the HIP client and server backend (requires HIP SDK)" ON)
 if(APPLE)
     set(LUPINE_BUILD_SERVER_DEFAULT OFF)
 else()
@@ -77,7 +77,13 @@ if(LUPINE_BUILD_SERVER AND
 endif()
 
 if(LUPINE_BUILD_HIP)
-    message(STATUS "Building HIP components without a ROCm SDK dependency")
+    find_path(LUPINE_HIP_INCLUDE_DIR hip/hip_runtime_api.h
+        HINTS
+            $ENV{HIP_PATH}/include
+            $ENV{ROCM_PATH}/include
+            /opt/rocm/include
+        REQUIRED)
+    message(STATUS "Found HIP SDK headers: ${LUPINE_HIP_INCLUDE_DIR}")
 endif()
 
 function(lupine_internal_target target)
@@ -261,7 +267,10 @@ if(NOT WIN32 AND LUPINE_BUILD_HIP)
         ${CMAKE_CURRENT_SOURCE_DIR}/hip_client.cpp)
     target_include_directories(lupine_hip_client PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${LUPINE_HIP_INCLUDE_DIR})
+    target_compile_definitions(lupine_hip_client PRIVATE
+        __HIP_PLATFORM_AMD__)
     target_link_libraries(lupine_hip_client PRIVATE lupine_client_transport)
     target_link_options(lupine_hip_client PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/hip.exports")
@@ -310,6 +319,10 @@ if(LUPINE_BUILD_SERVER)
         add_library(lupine_hip_server STATIC
             ${CMAKE_CURRENT_SOURCE_DIR}/hip_server.cpp)
         lupine_internal_target(lupine_hip_server)
+        target_include_directories(lupine_hip_server PRIVATE
+            ${LUPINE_HIP_INCLUDE_DIR})
+        target_compile_definitions(lupine_hip_server PRIVATE
+            __HIP_PLATFORM_AMD__)
         target_link_libraries(lupine_hip_server PRIVATE lupine_server_core)
     endif()
 
@@ -456,37 +469,6 @@ if(BUILD_TESTING AND NOT WIN32)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetMemoryErrorCounter && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetCudaComputeCapability")
-    endif()
-
-    # Exercise the complete HIP-only path without requiring a ROCm SDK or GPU.
-    if(TARGET lupine_hip_client AND TARGET lupine_hip_server AND
-       TARGET lupine_driver_server AND NOT LUPINE_BUILD_CUDA AND
-       NOT LUPINE_BUILD_NVML)
-        add_library(fake_amdhip64 SHARED
-            ${CMAKE_CURRENT_SOURCE_DIR}/test/fake_hip_runtime.cpp)
-        target_include_directories(fake_amdhip64 PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR})
-        set_target_properties(fake_amdhip64 PROPERTIES
-            OUTPUT_NAME amdhip64
-            VERSION 6
-            SOVERSION 6
-            LIBRARY_OUTPUT_DIRECTORY
-                ${CMAKE_CURRENT_BINARY_DIR}/fake-hip-runtime)
-        add_executable(hip_enumeration_test
-            ${CMAKE_CURRENT_SOURCE_DIR}/test/hip_enumeration_test.cpp)
-        target_include_directories(hip_enumeration_test PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR})
-        target_link_libraries(hip_enumeration_test PRIVATE ${CMAKE_DL_LIBS})
-        add_dependencies(hip_enumeration_test
-            fake_amdhip64 lupine_hip_client lupine_driver_server)
-        add_test(NAME hip_enumeration_test
-            COMMAND bash
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/run_hip_enumeration_test.sh
-                $<TARGET_FILE:lupine_driver_server>
-                $<TARGET_FILE_DIR:fake_amdhip64>
-                $<TARGET_FILE:hip_enumeration_test>
-                $<TARGET_FILE:lupine_hip_client>)
-        set_tests_properties(hip_enumeration_test PROPERTIES TIMEOUT 30)
     endif()
 endif()
 

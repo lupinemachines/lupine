@@ -13,9 +13,7 @@
 #include <nvml.h>
 #endif
 
-// Use Lupine's vendored HIP ABI declarations so code generation does not
-// depend on a local ROCm installation.
-#include "../hip_compat.h"
+#include <hip/hip_runtime_api.h>
 
 typedef struct {
   unsigned int version;
