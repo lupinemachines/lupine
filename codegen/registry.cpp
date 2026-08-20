@@ -703,7 +703,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 
 #endif
 #ifdef LUPINE_BUILD_HIP_BACKEND
-                  LUPINE_HIP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+      LUPINE_HIP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
 #endif
   };

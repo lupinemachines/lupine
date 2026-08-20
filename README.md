@@ -296,8 +296,9 @@ microgpt_train: PASS
 ## Local development
 
 Building the binaries requires running codegen first. The repository provides a
-containerized runner so local development and CI use the same CUDA headers,
-Python, parser, and formatter versions. Docker is the only host dependency.
+containerized runner so local development and CI use the same CUDA and HIP
+headers, Python, parser, and formatter versions. Docker is the only host
+dependency.
 
 ### Run codegen
 
@@ -315,7 +316,8 @@ cmake --build build
 ```
 
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NVML shim at
-`build/libnvidia-ml.so.1`, and the server at `build/lupine_driver_server`.
+`build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
+server at `build/lupine_driver_server`.
 
 The Lupine server must be running before initiating client commands.
 

@@ -4,7 +4,7 @@
 #include <utility>
 #include <vector>
 
-#include "hip_compat.h"
+#include <hip/hip_runtime_api.h>
 
 #include "codegen/gen_rpc_ids.h"
 #include "lupine_log.h"

@@ -4,6 +4,18 @@ FROM nvidia/cuda:13.3.1-devel-ubuntu24.04@sha256:4ff859525f99de5782aa73607ce2421
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates wget \
+    && wget -q \
+      https://repo.radeon.com/amdgpu-install/7.2.4/ubuntu/noble/amdgpu-install_7.2.4.70204-1_all.deb \
+      -O /tmp/amdgpu-install.deb \
+    && apt-get install -y --no-install-recommends /tmp/amdgpu-install.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends rocm-hip-runtime-dev \
+    && rm -rf /var/lib/apt/lists/* /tmp/amdgpu-install.deb
+
 ENV UV_PYTHON=3.12.3 \
     UV_PYTHON_INSTALL_DIR=/tmp/uv-python \
     UV_CACHE_DIR=/tmp/uv-cache
