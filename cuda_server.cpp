@@ -1948,7 +1948,7 @@ int handle_cuLinkComplete(conn_t *conn) {
   lupine_jit_state *jit_outputs = &empty_jit_outputs;
   // Held until the response is flushed: the cubin buffer belongs to the
   // driver's link state, and a concurrent cuLinkDestroy would free it while
-  // the queued iovec still points at it.
+  // the queued cursor still points at it.
   std::unique_lock<std::mutex> lock;
   if (link_state != nullptr) {
     lock = std::unique_lock<std::mutex>(link_state->mutex);

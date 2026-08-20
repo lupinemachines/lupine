@@ -142,15 +142,14 @@ static int rpc_write_queue_reset(conn_t *conn, size_t count) {
   return 0;
 }
 
-static int rpc_write_queue_push(conn_t *conn, const void *data, size_t size,
-                                unsigned char framed) {
+static int rpc_write_queue_push(conn_t *conn, rpc_write_cursor cursor) {
   if (conn == nullptr ||
       conn->write_queue.size() >= static_cast<size_t>(INT_MAX) ||
       conn->write_queue.size() == conn->write_queue.max_size()) {
     return -1;
   }
   try {
-    conn->write_queue.push_back({{(void *)data, size}, framed});
+    conn->write_queue.push_back(cursor);
   } catch (const std::bad_alloc &) {
     return -1;
   }
@@ -195,7 +194,7 @@ void rpc_conn_destroy(conn_t *conn) {
   rpc_close_transport_socket(conn);
   rpc_http2_destroy(conn);
   rpc_write_buffer_release(conn);
-  std::vector<rpc_write_entry>().swap(conn->write_queue);
+  std::vector<rpc_write_cursor>().swap(conn->write_queue);
   pthread_mutex_destroy(&conn->read_mutex);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
@@ -218,11 +217,12 @@ int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
   conn->write_op = LUPINE_RPC_TERMINATE_LANE;
   int result = -1;
   if (rpc_write_queue_reset(conn, 3) == 0) {
-    conn->write_queue[0] = {{&conn->write_id, sizeof(conn->write_id)}, 0};
-    conn->write_queue[1] = {{&lane_id, sizeof(lane_id)}, 0};
-    conn->write_queue[2] = {{&conn->write_op, sizeof(conn->write_op)}, 0};
-    result = rpc_http2_writev(conn, conn->write_queue.data(),
-                              static_cast<int>(conn->write_queue.size()));
+    conn->write_queue[0] =
+        rpc_write_cursor::plain(&conn->write_id, sizeof(conn->write_id));
+    conn->write_queue[1] = rpc_write_cursor::plain(&lane_id, sizeof(lane_id));
+    conn->write_queue[2] =
+        rpc_write_cursor::plain(&conn->write_op, sizeof(conn->write_op));
+    result = rpc_http2_write(conn, conn->write_queue);
   }
   pthread_mutex_unlock(&conn->write_mutex);
   pthread_mutex_unlock(&conn->call_mutex);
@@ -580,7 +580,7 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
   if (size == 0) {
     return 0;
   }
-  return rpc_write_queue_push(conn, data, size, 0);
+  return rpc_write_queue_push(conn, rpc_write_cursor::plain(data, size));
 }
 
 // Rows are queued, not copied, so the caller's buffer must stay valid until
@@ -636,11 +636,12 @@ void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment) {
   return buffer;
 }
 
-int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
+int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
+                      size_t count) {
   if (count == 0) {
     return 0;
   }
-  if (conn == nullptr || iovecs == nullptr ||
+  if (conn == nullptr || cursors == nullptr ||
       count > static_cast<size_t>(INT_MAX) - conn->write_queue.size() ||
       count > conn->write_queue.max_size() - conn->write_queue.size()) {
     return -1;
@@ -652,10 +653,12 @@ int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
     return -1;
   }
   for (size_t i = 0; i < count; ++i) {
-    if (iovecs[i].iov_base == nullptr && iovecs[i].iov_len != 0) {
+    if ((cursors[i].data == nullptr && cursors[i].size != 0) ||
+        (cursors[i].source == nullptr && cursors[i].source_size != 0) ||
+        (cursors[i].size != 0 && cursors[i].source_size != 0)) {
       return -1;
     }
-    conn->write_queue.push_back({iovecs[i], 0});
+    conn->write_queue.push_back(cursors[i]);
   }
   return 0;
 }
@@ -665,7 +668,7 @@ int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs, size_t count) {
 // buffer must stay valid until rpc_write_end() returns, exactly like
 // rpc_write(). See compress.cpp for the framing format.
 int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  return rpc_write_queue_push(conn, data, size, 1);
+  return rpc_write_queue_push(conn, rpc_write_cursor::framed(data, size));
 }
 
 // rpc_write_end finalizes the current request builder on the given connection
@@ -686,12 +689,13 @@ int rpc_write_end(conn_t *conn) {
   int write_id = conn->write_id;
   int result = -1;
   if (conn->write_queue.size() >= 3) {
-    conn->write_queue[0] = {{&conn->write_id, sizeof(conn->write_id)}, 0};
-    conn->write_queue[1] = {{&conn->write_lane_id, sizeof(conn->write_lane_id)},
-                            0};
-    conn->write_queue[2] = {{&conn->write_op, sizeof(conn->write_op)}, 0};
-    result = rpc_http2_writev(conn, conn->write_queue.data(),
-                              static_cast<int>(conn->write_queue.size()));
+    conn->write_queue[0] =
+        rpc_write_cursor::plain(&conn->write_id, sizeof(conn->write_id));
+    conn->write_queue[1] = rpc_write_cursor::plain(&conn->write_lane_id,
+                                                   sizeof(conn->write_lane_id));
+    conn->write_queue[2] =
+        rpc_write_cursor::plain(&conn->write_op, sizeof(conn->write_op));
+    result = rpc_http2_write(conn, conn->write_queue);
   }
   rpc_write_buffer_release(conn);
   pthread_mutex_unlock(&conn->write_mutex);

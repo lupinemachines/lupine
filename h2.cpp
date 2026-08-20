@@ -79,30 +79,15 @@ struct h2_transport {
   std::string session_id;
 };
 
-// h2_write_cursor either points at caller bytes that are sent verbatim
-// (base/len) or, for LZ4-framed payloads, at uncompressed source bytes
-// (src/src_len) that are compressed into the transport scratch one block at
-// a time as nghttp2 pulls data. For a framed cursor, base/len cover only the
-// currently materialized block.
-struct h2_write_cursor {
-  const unsigned char *base = nullptr;
-  size_t len = 0;
-  const char *src = nullptr;
-  size_t src_len = 0;
-  // For a framed cursor whose source is already compressed (e.g. a fatbin
-  // with compressed members), skip the per-block LZ4 attempt and emit every
-  // block with the raw fallback token. Same wire format, no wasted CPU.
-};
-
 struct h2_write_source {
-  std::vector<h2_write_cursor> cursors;
+  std::vector<rpc_write_cursor> &cursors;
   size_t index = 0;
   size_t pending_len = 0;
 
   size_t remaining() const {
     size_t total = 0;
     for (size_t i = index; i < cursors.size(); ++i) {
-      total += cursors[i].len + cursors[i].src_len;
+      total += cursors[i].remaining();
     }
     return total;
   }
@@ -253,30 +238,32 @@ ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
 // compressed. Only the cursor at write_source->index is ever materialized,
 // and only after its previous block has been fully sent, so a single scratch
 // buffer per connection is safe.
-void h2_materialize_block(h2_transport *transport, h2_write_cursor &cursor) {
-  size_t raw = std::min<size_t>(LUPINE_COMPRESS_BLOCK_BYTES, cursor.src_len);
+void h2_materialize_block(h2_transport *transport, rpc_write_cursor &cursor) {
+  size_t raw =
+      std::min<size_t>(LUPINE_COMPRESS_BLOCK_BYTES, cursor.source_size);
   size_t bound =
       static_cast<size_t>(LZ4_compressBound(LUPINE_COMPRESS_BLOCK_BYTES));
   if (transport->compress_scratch.size() < sizeof(uint32_t) + bound) {
     transport->compress_scratch.resize(sizeof(uint32_t) + bound);
   }
   unsigned char *out = transport->compress_scratch.data();
-  int compressed = LZ4_compress_default(
-      cursor.src, reinterpret_cast<char *>(out + sizeof(uint32_t)),
-      static_cast<int>(raw), static_cast<int>(bound));
+  int compressed =
+      LZ4_compress_default(reinterpret_cast<const char *>(cursor.source),
+                           reinterpret_cast<char *>(out + sizeof(uint32_t)),
+                           static_cast<int>(raw), static_cast<int>(bound));
   uint32_t token = 0;
   size_t block_len = raw;
   if (compressed > 0 && static_cast<size_t>(compressed) < raw) {
     token = static_cast<uint32_t>(compressed);
     block_len = static_cast<size_t>(compressed);
   } else {
-    memcpy(out + sizeof(uint32_t), cursor.src, raw);
+    memcpy(out + sizeof(uint32_t), cursor.source, raw);
   }
   memcpy(out, &token, sizeof(token));
-  cursor.base = out;
-  cursor.len = sizeof(uint32_t) + block_len;
-  cursor.src += raw;
-  cursor.src_len -= raw;
+  cursor.data = out;
+  cursor.size = sizeof(uint32_t) + block_len;
+  cursor.source += raw;
+  cursor.source_size -= raw;
 }
 
 ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t, uint8_t *,
@@ -287,8 +274,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t, uint8_t *,
   auto *write_source = static_cast<h2_write_source *>(source->ptr);
   auto &cursors = write_source->cursors;
   while (write_source->index < cursors.size() &&
-         cursors[write_source->index].len == 0 &&
-         cursors[write_source->index].src_len == 0) {
+         cursors[write_source->index].remaining() == 0) {
     ++write_source->index;
   }
   if (write_source->index == cursors.size()) {
@@ -296,7 +282,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t, uint8_t *,
     write_source->pending_len = 0;
     return 0;
   }
-  if (cursors[write_source->index].len == 0) {
+  if (cursors[write_source->index].size == 0) {
     h2_materialize_block(transport, cursors[write_source->index]);
   }
   // Offer only materialized bytes; a framed cursor with unconsumed source
@@ -304,8 +290,8 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t, uint8_t *,
   size_t available = 0;
   bool lazy_pending = false;
   for (size_t i = write_source->index; i < cursors.size(); ++i) {
-    available += cursors[i].len;
-    if (cursors[i].src_len > 0) {
+    available += cursors[i].size;
+    if (cursors[i].source_size > 0) {
       lazy_pending = true;
       break;
     }
@@ -357,8 +343,8 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
   size_t cursor_index = write_source->index;
   while (remaining > 0 && cursor_index < write_source->cursors.size()) {
     auto &cursor = write_source->cursors[cursor_index];
-    size_t chunk = std::min(remaining, cursor.len);
-    iov.push_back({const_cast<unsigned char *>(cursor.base), chunk});
+    size_t chunk = std::min(remaining, cursor.size);
+    iov.push_back({const_cast<unsigned char *>(cursor.data), chunk});
     remaining -= chunk;
     ++cursor_index;
   }
@@ -378,12 +364,12 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
   remaining = length;
   while (remaining > 0) {
     auto &cursor = write_source->cursors[write_source->index];
-    size_t chunk = std::min(remaining, cursor.len);
-    cursor.base += chunk;
-    cursor.len -= chunk;
+    size_t chunk = std::min(remaining, cursor.size);
+    cursor.data += chunk;
+    cursor.size -= chunk;
     remaining -= chunk;
-    if (cursor.len == 0) {
-      if (cursor.src_len != 0) {
+    if (cursor.size == 0) {
+      if (cursor.source_size != 0) {
         // Framed cursor: the sent block is done but more source remains; the
         // next block is materialized by the next read callback.
         break;
@@ -821,27 +807,10 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
   return static_cast<int>(size);
 }
 
-int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
-                     int entry_count) {
+int rpc_http2_write(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  h2_write_source source;
-  source.cursors.reserve(entry_count);
-  for (int i = 0; i < entry_count; ++i) {
-    const rpc_write_entry &entry = entries[i];
-    if (entry.iov.iov_len == 0) {
-      continue;
-    }
-    h2_write_cursor cursor;
-    if (entry.framed) {
-      cursor.src = static_cast<const char *>(entry.iov.iov_base);
-      cursor.src_len = entry.iov.iov_len;
-    } else {
-      cursor.base = static_cast<const unsigned char *>(entry.iov.iov_base);
-      cursor.len = entry.iov.iov_len;
-    }
-    source.cursors.push_back(cursor);
-  }
-  if (source.cursors.empty()) {
+  h2_write_source source{cursors};
+  if (source.remaining() == 0) {
     return 0;
   }
 

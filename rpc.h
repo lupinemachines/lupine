@@ -10,12 +10,25 @@
 // (h2.cpp) and decoded by the rpc_read_payload helpers (compress.cpp).
 #define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
 
-struct rpc_write_entry {
-  struct iovec iov;
-  // 0 = plain bytes, 1 = framed with per-block LZ4 attempts, 2 = framed but
-  // every block is stored raw (the source is already compressed, so the LZ4
-  // attempt would only waste CPU; the wire format is unchanged).
-  unsigned char framed;
+// References caller-owned bytes while an RPC is being serialized. Plain
+// cursors use data/size directly. Framed cursors keep uncompressed bytes in
+// source/source_size while HTTP/2 materializes one framed block at a time into
+// data/size.
+struct rpc_write_cursor {
+  const unsigned char *data = nullptr;
+  size_t size = 0;
+  const unsigned char *source = nullptr;
+  size_t source_size = 0;
+
+  static rpc_write_cursor plain(const void *data, size_t size) {
+    return {static_cast<const unsigned char *>(data), size, nullptr, 0};
+  }
+
+  static rpc_write_cursor framed(const void *data, size_t size) {
+    return {nullptr, 0, static_cast<const unsigned char *>(data), size};
+  }
+
+  size_t remaining() const { return size + source_size; }
 };
 
 struct rpc_http2_read_stats {
@@ -50,7 +63,7 @@ struct conn_t {
   pthread_t rpc_thread;
   pthread_mutex_t read_mutex, write_mutex, call_mutex;
   pthread_cond_t read_cond;
-  std::vector<rpc_write_entry> write_queue;
+  std::vector<rpc_write_cursor> write_queue;
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
   size_t write_copy_offset;
@@ -108,8 +121,8 @@ extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 // The complete allocation is fixed before serialization starts, so returned
 // pointers remain valid until the request ends.
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
-extern int rpc_write_iovecs(conn_t *conn, const struct iovec *iovecs,
-                            size_t count);
+extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
+                             size_t count);
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
@@ -131,8 +144,8 @@ extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
                                           unsigned int max_retries = 5);
 
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
-extern int rpc_http2_writev(conn_t *conn, const rpc_write_entry *entries,
-                            int entry_count);
+extern int rpc_http2_write(conn_t *conn,
+                           std::vector<rpc_write_cursor> &cursors);
 extern int rpc_http2_client_init(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);

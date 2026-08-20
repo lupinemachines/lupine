@@ -4876,7 +4876,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   bool used_managed_mapping = false;
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   std::vector<CUdeviceptr> translated_params(param_count);
-  std::vector<struct iovec> rpc_params(param_count);
+  std::vector<rpc_write_cursor> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
       kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data(), &used_managed_mapping);
@@ -4903,7 +4903,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
-      rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0 ||
+      rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -4989,7 +4989,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   bool used_managed_mapping = false;
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   std::vector<CUdeviceptr> translated_params(param_count);
-  std::vector<struct iovec> rpc_params(param_count);
+  std::vector<rpc_write_cursor> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
       kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data(), &used_managed_mapping);
@@ -5016,7 +5016,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
-      rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0) {
+      rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (fire_and_forget) {
@@ -5080,7 +5080,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
   std::vector<CUdeviceptr> translated_params(param_count);
-  std::vector<struct iovec> rpc_params(param_count);
+  std::vector<rpc_write_cursor> rpc_params(param_count);
   status = lupine_sync_mapped_host_to_device_for_launch(
       kernelParams, param_sizes.data(), param_count, translated_params.data(),
       rpc_params.data());
@@ -5103,7 +5103,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
-      rpc_write_iovecs(conn, rpc_params.data(), rpc_params.size()) < 0 ||
+      rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
