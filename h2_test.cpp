@@ -820,9 +820,8 @@ void test_rpc_write_queue_grows() {
           "zero-length rpc_write failed");
   require(rpc_write_payload(&zero_length, nullptr, 0) == 0,
           "zero-length rpc_write_payload failed");
-  require(zero_length.write_queue_count == 0,
+  require(zero_length.write_queue.empty(),
           "zero-length write consumed a queue entry");
-  rpc_write_queue_free(&zero_length);
 
   h2_pair pair = make_pair();
   init_rpc_write(&pair.client);
@@ -854,7 +853,7 @@ void test_rpc_write_queue_grows() {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
             "large queue rpc_write failed");
   }
-  require(pair.client.write_queue_count == kCount + 3,
+  require(pair.client.write_queue.size() == kCount + 3,
           "large queue count mismatch");
   require(rpc_write_end(&pair.client) == 17, "large queue write_end failed");
   reader.join();
@@ -889,7 +888,7 @@ void test_rpc_write_buffer_uses_fixed_allocation() {
   *direct = third;
   require(rpc_write_buffer(&pair.client, 1, alignof(uint8_t)) == nullptr,
           "rpc_write_buffer exceeded its fixed allocation");
-  require(pair.client.write_queue_count == 6,
+  require(pair.client.write_queue.size() == 6,
           "fixed copy queue count mismatch");
   require(pair.client.write_copy_offset == 20, "fixed copy cursor mismatch");
   require(pair.client.write_queue[3].iov.iov_base ==

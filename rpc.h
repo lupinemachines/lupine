@@ -3,6 +3,7 @@
 
 #include "lupine_platform.h"
 #include <stdint.h>
+#include <vector>
 
 // Uncompressed block size for the optional LZ4 payload framing. The framed
 // bytes are produced lazily, one block at a time, by the HTTP/2 transport
@@ -49,12 +50,7 @@ struct conn_t {
   pthread_t rpc_thread;
   pthread_mutex_t read_mutex, write_mutex, call_mutex;
   pthread_cond_t read_cond;
-  // Explicitly managed so conn_t remains trivially destructible. Client APIs
-  // can call back into a shim during process teardown, after C++ globals have
-  // begun finalizing.
-  rpc_write_entry *write_queue;
-  int write_queue_count;
-  int write_queue_capacity;
+  std::vector<rpc_write_entry> write_queue;
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
   size_t write_copy_offset;
@@ -121,7 +117,6 @@ extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // socket before aborting it. Safe after a transport error has already set
 // conn->closed, and safe for concurrent/idempotent cleanup.
 extern void rpc_close_transport_socket(conn_t *conn);
-extern void rpc_write_queue_free(conn_t *conn);
 extern int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id);
 extern void rpc_conn_destroy(conn_t *conn);
 
