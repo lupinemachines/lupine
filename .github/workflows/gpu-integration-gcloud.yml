@@ -233,9 +233,6 @@ jobs:
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
 
-          ARG CUDA_SAMPLE_SKIP_LIST=""
-          ARG CUDA_SAMPLES_REF=""
-
           ENV DEBIAN_FRONTEND=noninteractive \
               CUDA_HOME=/usr/local/cuda \
               CUDA_LIB_DIR=/usr/local/cuda/lib64 \
@@ -278,13 +275,8 @@ jobs:
           RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
           set -euo pipefail
 
-          if [[ -n "$CUDA_SAMPLES_REF" ]]; then
-            git clone --branch "$CUDA_SAMPLES_REF" --depth 1 \
-              https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
-          else
-            git clone --depth 1 \
-              https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
-          fi
+          git clone --branch "${{ matrix.samples_ref }}" --depth 1 \
+            https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
           git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
 
           if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
@@ -360,8 +352,6 @@ jobs:
           tags: ${{ env.CLIENT_IMAGE }}
           build-args: |
             BASE_IMAGE=${{ matrix.client_image }}
-            CUDA_SAMPLE_SKIP_LIST=${{ env.CUDA_SAMPLE_SKIP_LIST }}
-            CUDA_SAMPLES_REF=${{ matrix.samples_ref }}
           cache-from: type=gha,scope=gpu-integration-${{ matrix.label }}
           cache-to: type=gha,mode=max,scope=gpu-integration-${{ matrix.label }}
 
