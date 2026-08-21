@@ -6377,6 +6377,29 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
   return return_value;
 }
 
+#if CUDA_VERSION >= 12040
+CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx) {
+  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
+                                           : lupine_route_for_default());
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUstream, CUgreenCtx *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuStreamGetGreenCtx", &return_value, hStream, phCtx)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuStreamGetGreenCtx) < 0 ||
+      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
 #ifdef cuCtxDestroy
 #undef cuCtxDestroy
 #endif
@@ -7077,6 +7100,9 @@ std::unordered_map<std::string, void *> functionMap = {
      (void *)cuGraphicsResourceSetMapFlags_v2},
     {"cuGraphicsMapResources", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources", (void *)cuGraphicsUnmapResources},
+#if CUDA_VERSION >= 12040
+    {"cuStreamGetGreenCtx", (void *)cuStreamGetGreenCtx},
+#endif
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},

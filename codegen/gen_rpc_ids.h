@@ -356,6 +356,7 @@
 #define RPC_cuGraphicsUnmapResources 121118754
 #define RPC_cuGetProcAddress_v2 1976428842
 #define RPC_cuGetExportTable 2020229241
+#define RPC_cuStreamGetGreenCtx 1723357044
 #define RPC_cuCtxCreate_v2 804269166
 #define RPC_cuCtxCreate_v3 1492589816
 #define RPC_cuDeviceGetGraphMemAttribute 622504442
