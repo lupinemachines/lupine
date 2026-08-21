@@ -449,6 +449,10 @@ LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
                        handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12040
+LUPINE_DECLARE_HANDLER(RPC_cuStreamGetGreenCtx, handle_cuStreamGetGreenCtx,
+                       rpc_backend::cuda)
+#endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -467,9 +471,14 @@ const rpc_handler_registry &lupine_rpc_handlers() {
                                   handle_cuTensorMapEncodeTiled,
                                   rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12040
+              LUPINE_REGISTER_HANDLER(RPC_cuStreamGetGreenCtx,
+                                      handle_cuStreamGetGreenCtx,
+                                      rpc_backend::cuda)
+#endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
-              LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+                  LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
 #endif
   };

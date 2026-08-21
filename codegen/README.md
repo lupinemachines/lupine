@@ -40,6 +40,11 @@ route-local device back to its virtual client ordinal before returning it.
 manual client implementation with the original API name. These manual symbols
 remain part of the generated client function map.
 
+`@guard <preprocessor-expression>` wraps the generated client wrapper, server
+handler, function-map entry, and server registration. Use it for APIs that are
+not declared by every supported CUDA toolkit, such as an API introduced in a
+newer CUDA minor release.
+
 Generated wrappers can record ownership for handles returned by an API with
 `@recordowner <kind> <param>`. Supported owner kinds are `CONTEXT`, `MODULE`,
 `FUNCTION`, `STREAM`, `EVENT`, `MEMORY_POOL`, `GRAPH`, `GRAPH_NODE`,

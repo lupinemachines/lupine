@@ -1097,6 +1097,7 @@ class SynchronizeAnnotation:
 @dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
+    guard: Optional[str] = None
     disabled_client: bool = False
     disabled_server: bool = False
     # @async: fire-and-forget op; client does not wait, server sends no response.

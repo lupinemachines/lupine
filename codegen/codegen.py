@@ -447,6 +447,12 @@ def parse_annotation(
                 stdout="STDOUT" in options,
             )
             continue
+        if line.strip().startswith("@guard"):
+            guard = line.strip().removeprefix("@guard").strip()
+            if not guard or metadata.guard is not None:
+                raise RuntimeError("Invalid @guard annotation")
+            metadata.guard = guard
+            continue
         if line.startswith("@server"):
             continue
         if line.startswith("@routingkey"):
@@ -1511,6 +1517,9 @@ def main():
             if metadata.disabled_client:
                 continue
 
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
+
             joined_params = ", ".join(format_function_params(function))
 
             f.write(
@@ -1731,6 +1740,8 @@ def main():
                 else:
                     f.write("    return CUDA_SUCCESS;\n")
                 f.write("}\n\n")
+                if metadata.guard is not None:
+                    f.write("#endif\n\n")
                 continue
 
             f.write(
@@ -1777,6 +1788,8 @@ def main():
             if metadata.routing_kind == "ALL":
                 f.write("        });\n")
             f.write("}\n\n")
+            if metadata.guard is not None:
+                f.write("#endif\n\n")
 
         function_by_name = {
             function.name.format(): function
@@ -1817,11 +1830,15 @@ def main():
             if metadata.disabled_client and metadata.disabled_server:
                 continue
 
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
             f.write(
                 '    {{"{name}", (void *){name}}},\n'.format(
                     name=function.name.format()
                 )
             )
+            if metadata.guard is not None:
+                f.write("#endif\n")
         # write manual overrides
         function_names = set(
             f.name.format()
@@ -1868,6 +1885,9 @@ def main():
                 or function.name.format() in server_bindings
             ):
                 continue
+
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
 
             # parse the annotation doxygen
             f.write(
@@ -1938,6 +1958,8 @@ def main():
                 write_server_buffer_cleanup(f, owned_buffers, "    ")
                 f.write("    return -1;\n")
                 f.write("}\n\n")
+                if metadata.guard is not None:
+                    f.write("#endif\n\n")
                 continue
 
             f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
@@ -1960,15 +1982,19 @@ def main():
             write_server_buffer_cleanup(f, owned_buffers, "    ")
             f.write("    return -1;\n")
             f.write("}\n\n")
-
-    cuda_handlers = []
-    for function, _, _, metadata in functions_with_annotations:
-        name = function.name.format()
-        if not metadata.disabled_server and name not in server_bindings:
-            cuda_handlers.append(name)
+            if metadata.guard is not None:
+                f.write("#endif\n\n")
 
     generated_bindings = [
-        ServerBinding(name, "CUDA", f"handle_{name}") for name in cuda_handlers
+        ServerBinding(
+            function.name.format(),
+            "CUDA",
+            f"handle_{function.name.format()}",
+            metadata.guard,
+        )
+        for function, _, _, metadata in functions_with_annotations
+        if not metadata.disabled_server
+        and function.name.format() not in server_bindings
     ]
     generated_bindings.extend(
         ServerBinding(name, "NVML", f"handle_{name}")
