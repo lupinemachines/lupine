@@ -124,6 +124,9 @@ extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
+// Signals transport readers to stop without releasing connection resources.
+// Owners use this before joining workers that may be blocked on the transport.
+extern void rpc_shutdown_transport_socket(conn_t *conn);
 // Marks a connection closed and atomically takes ownership of its transport
 // socket before aborting it. Safe after a transport error has already set
 // conn->closed, and safe for concurrent/idempotent cleanup.

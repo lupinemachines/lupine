@@ -1170,9 +1170,16 @@ void rpc_http2_destroy(conn_t *conn) {
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   conn->http2 = nullptr;
+#ifdef _WIN32
+  (void)shutdown(transport->netfd, SD_RECEIVE);
+#else
+  (void)shutdown(transport->netfd, SHUT_RD);
+#endif
   pthread_mutex_lock(&transport->session_mutex);
   transport->response_waiters = -1;
+  transport->transport_failed = true;
   pthread_cond_broadcast(&transport->heartbeat_progress);
+  pthread_cond_broadcast(&transport->session_progress);
   pthread_mutex_unlock(&transport->session_mutex);
   if (transport->heartbeat_thread != 0) {
     pthread_join(transport->heartbeat_thread, nullptr);

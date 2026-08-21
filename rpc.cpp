@@ -82,6 +82,36 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
   }
 }
 
+namespace {
+
+void rpc_shutdown_socket(lupine_socket_t socket) {
+#ifdef _WIN32
+  (void)shutdown(socket, SD_RECEIVE);
+#else
+  (void)shutdown(socket, SHUT_RD);
+#endif
+}
+
+} // namespace
+
+void rpc_shutdown_transport_socket(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+
+#ifdef _WIN32
+  conn->closed = 1;
+  const lupine_socket_t socket = conn->connfd;
+#else
+  __atomic_store_n(&conn->closed, 1, __ATOMIC_RELEASE);
+  const lupine_socket_t socket =
+      __atomic_load_n(&conn->connfd, __ATOMIC_ACQUIRE);
+#endif
+  if (socket != LUPINE_INVALID_SOCKET) {
+    rpc_shutdown_socket(socket);
+  }
+}
+
 void rpc_close_transport_socket(conn_t *conn) {
   if (conn == nullptr) {
     return;
@@ -110,11 +140,8 @@ void rpc_close_transport_socket(conn_t *conn) {
 #endif
   // Wake a reader blocked in recv without sending a FIN. SHUT_RDWR would
   // gracefully close the write side before SO_LINGER can reset the peer.
-#ifdef _WIN32
-  (void)shutdown(socket, SD_RECEIVE);
-#else
-  (void)shutdown(socket, SHUT_RD);
-#endif
+  rpc_shutdown_socket(socket);
+  rpc_http2_destroy(conn);
   (void)lupine_socket_close(socket);
 }
 

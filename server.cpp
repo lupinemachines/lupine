@@ -243,7 +243,7 @@ int client_handler(lupine_socket_t connfd) {
     lanes.emplace(stream_id, lane);
   }
 
-  rpc_close_transport_socket(&conn);
+  rpc_shutdown_transport_socket(&conn);
   for (auto &entry : lanes) {
     auto &lane = entry.second;
     if (lane->worker.joinable()) {

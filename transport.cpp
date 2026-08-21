@@ -241,7 +241,7 @@ void lupine_client_transport_close_connection(conn_t *conn) {
   if (state.config.connection_closed != nullptr) {
     state.config.connection_closed(conn);
   }
-  rpc_close_transport_socket(conn);
+  rpc_shutdown_transport_socket(conn);
 }
 
 void lupine_client_transport_close() {
