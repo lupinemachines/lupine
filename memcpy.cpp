@@ -77,6 +77,7 @@ struct lupine_host_allocation {
   bool tracking_enabled = false;
   // Set once the server-side device mapping can be accessed directly.
   bool device_mapping_used = false;
+  volatile sig_atomic_t eager_flush_pending = 0;
   int fault_slot = -1;
   // 0 fresh, 1 invalidated (PROT_NONE), 2 fetching (handler-only 1->2),
   // 3 invalidating (normal-context only).
@@ -704,6 +705,9 @@ static void lupine_mark_device_mapping_used(void *host, bool managed) {
   auto it = lupine_mutable_host_allocations_locked().find(host);
   if (it != lupine_mutable_host_allocations_locked().end()) {
     it->second.device_mapping_used = true;
+    if (!it->second.tracking_enabled) {
+      __atomic_store_n(&it->second.eager_flush_pending, 1, __ATOMIC_RELEASE);
+    }
   }
   if (managed) {
     for (auto &entry : lupine_mutable_host_allocations_locked()) {
@@ -831,12 +835,15 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     for (auto &entry : lupine_mutable_host_allocations_locked()) {
       auto &allocation = entry.second;
       if (allocation.tracking_enabled || !allocation.device_mapping_used ||
+          __atomic_load_n(&allocation.eager_flush_pending, __ATOMIC_ACQUIRE) ==
+              0 ||
           allocation.server_host_ptr == 0 || allocation.local_cuda ||
           allocation.route_id != static_cast<int>(route_id) ||
           __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
         continue;
       }
       __atomic_add_fetch(&allocation.pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
+      __atomic_store_n(&allocation.eager_flush_pending, 0, __ATOMIC_RELEASE);
       ranges.push_back({&allocation, allocation.host_base,
                         allocation.host_base + allocation.size});
     }
@@ -858,6 +865,9 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
           __atomic_load_n(&range.allocation->retiring, __ATOMIC_ACQUIRE) == 0) {
         __atomic_store_n(&range.allocation->full_dirty, 1, __ATOMIC_RELEASE);
         __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
+      } else if (restore) {
+        __atomic_store_n(&range.allocation->eager_flush_pending, 1,
+                         __ATOMIC_RELEASE);
       }
       __atomic_sub_fetch(&range.allocation->pending_dirty_ranges, 1,
                          __ATOMIC_RELEASE);
@@ -1542,6 +1552,7 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     if (result != CUDA_SUCCESS) {
       return result;
     }
+    lupine_mark_device_mapping_used(mapping.host, false);
   }
 
   // Deferred DtoH payloads land through the writable alias. Apply those
@@ -1989,6 +2000,10 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
       known_allocation = true;
       if (it->second.device_ptr != 0) {
         it->second.device_mapping_used = true;
+        if (!it->second.tracking_enabled) {
+          __atomic_store_n(&it->second.eager_flush_pending, 1,
+                           __ATOMIC_RELEASE);
+        }
         uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
         uintptr_t addr = reinterpret_cast<uintptr_t>(p);
         *pdptr = it->second.device_ptr + (addr - base);
@@ -2174,6 +2189,14 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
   }
 
   size_t page_size = lupine_page_size();
+  // Eager synchronization owns the whole registered page range. An unaligned
+  // device mapping would include unrelated bytes on its edge pages, so retain
+  // the existing rejection and let callers use their fallback path.
+  if (lupine_host_flags_request_mapping(Flags) &&
+      ((reinterpret_cast<uintptr_t>(p) % page_size) != 0 ||
+       (bytesize % page_size) != 0)) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
   void *tracked = reinterpret_cast<void *>(covering_base);
 
   void *server_host = nullptr;

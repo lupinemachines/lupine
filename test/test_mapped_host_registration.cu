@@ -70,10 +70,9 @@ int main() {
     return 1;
   }
   unsigned char *unaligned = block + 64;
-  if (!cu_ok(cuMemHostRegister(unaligned, page_size * 2 + 17,
+  if (!cu_is(cuMemHostRegister(unaligned, page_size * 2 + 17,
                                CU_MEMHOSTREGISTER_DEVICEMAP),
-             "unaligned cuMemHostRegister") ||
-      !cu_ok(cuMemHostUnregister(unaligned), "unaligned cuMemHostUnregister")) {
+             CUDA_ERROR_INVALID_VALUE, "unaligned cuMemHostRegister")) {
     return 1;
   }
 
