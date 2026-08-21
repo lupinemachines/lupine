@@ -33,6 +33,7 @@ SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-lupine-$$}"
 SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
+SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:-}"
 
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
@@ -213,6 +214,12 @@ detect_cuda_samples_ref() {
       ;;
     13.1.*)
       printf '%s\n' v13.1
+      ;;
+    13.2.*)
+      printf '%s\n' v13.2
+      ;;
+    13.3.*)
+      printf '%s\n' v13.3
       ;;
   esac
 }
@@ -662,12 +669,18 @@ start_remote_server() {
   local server_log="$2"
   local port="$3"
   local attempt
+  local server_environment="LUPINE_PORT=$port"
+
+  if [[ -n "$SERVER_LD_LIBRARY_PATH" ]]; then
+    printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
+      "$SERVER_LD_LIBRARY_PATH" "$server_environment"
+  fi
 
   for attempt in 1 2 3; do
     stop_remote_server "$pidfile" "$server_log"
     if ssh_with_timeout "
       rm -f '$server_log' '$pidfile'
-      LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null &
+      $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null &
       echo \$! >'$pidfile'
       sleep 0.5
       test -s '$pidfile'

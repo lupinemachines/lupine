@@ -11,7 +11,7 @@ currently provisioned, but subsequent requests should be faster.
 ```
 $ docker run --rm \
   -e LUPINE_SERVER=demo.lupinemachines.com:14833 \
-  ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04 \
+  ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04 \
   nvidia-smi -L
 GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
 ```
@@ -35,7 +35,7 @@ result: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
 
 ## Quick Start
 
-Use the published GHCR images. The examples below pin CUDA 13.1.0 on
+Use the published GHCR images. The examples below pin CUDA 13.3.1 on
 Ubuntu 24.04; other published tags use the same
 `cuda-<cuda-version>-ubuntu<ubuntu-version>` format.
 
@@ -43,7 +43,7 @@ Run the server on the GPU machine:
 
 ```bash
 docker run --rm --gpus all -p 14833:14833 \
-  ghcr.io/lupinemachines/lupine-server:cuda-13.1.0-ubuntu24.04
+  ghcr.io/lupinemachines/lupine-server:cuda-13.3.1-ubuntu24.04
 ```
 
 Run the client pointing at that server:
@@ -51,7 +51,7 @@ Run the client pointing at that server:
 ```bash
 docker run --rm -it \
   -e LUPINE_SERVER=<server>:14833 \
-  ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04 \
+  ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04 \
   nvidia-smi
 ```
 
@@ -175,11 +175,11 @@ Run a server on each GPU machine:
 ```bash
 # on gpu-host-a
 docker run --rm --gpus all -p 14833:14833 \
-  ghcr.io/lupinemachines/lupine-server:cuda-13.1.0-ubuntu24.04
+  ghcr.io/lupinemachines/lupine-server:cuda-13.3.1-ubuntu24.04
 
 # on gpu-host-b
 docker run --rm --gpus all -p 14833:14833 \
-  ghcr.io/lupinemachines/lupine-server:cuda-13.1.0-ubuntu24.04
+  ghcr.io/lupinemachines/lupine-server:cuda-13.3.1-ubuntu24.04
 ```
 
 Point the client at both servers:
@@ -187,7 +187,7 @@ Point the client at both servers:
 ```bash
 docker run --rm --network host \
   -e LUPINE_SERVER=gpu-host-a:14833,gpu-host-b:14833 \
-  ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04 \
+  ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04 \
   nvidia-smi -L
 ```
 
@@ -203,7 +203,7 @@ CUDA driver applications use the same `LUPINE_SERVER` value:
 ```bash
 docker run --rm --network host \
   -e LUPINE_SERVER=gpu-host-a:14833,gpu-host-b:14833 \
-  ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04 \
+  ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04 \
   ./your_cuda_program
 ```
 
@@ -229,7 +229,7 @@ docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
 Client images are also published with a `-slim` tag, for example
-`ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04-slim`. The
+`ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04-slim`. The
 default client tag keeps the CUDA runtime libraries for applications that link
 against them; the slim tag includes only the LUPINE shims, their runtime
 dependencies, and `nvidia-smi`.
@@ -245,7 +245,7 @@ Create a PyTorch client Dockerfile in the repo root:
 
 ```dockerfile
 # Dockerfile.pytorch-lupine
-FROM ghcr.io/lupinemachines/lupine-client:cuda-13.1.0-ubuntu24.04
+FROM ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -255,7 +255,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --break-system-packages \
-    --index-url https://download.pytorch.org/whl/cu130 \
+    --index-url https://download.pytorch.org/whl/cu132 \
     torch
 
 COPY test/pytorch_lupine_tests.py /opt/lupine/test/pytorch_lupine_tests.py
@@ -268,14 +268,14 @@ CMD ["python3", "/opt/lupine/test/pytorch_lupine_tests.py", "microgpt_train"]
 Build it:
 
 ```bash
-docker build -f Dockerfile.pytorch-lupine -t lupine-pytorch:cuda-13.1 .
+docker build -f Dockerfile.pytorch-lupine -t lupine-pytorch:cuda-13.3 .
 ```
 
 Run the server on the GPU machine:
 
 ```bash
 docker run --rm --gpus all -p 14833:14833 \
-  ghcr.io/lupinemachines/lupine-server:cuda-13.1.0-ubuntu24.04
+  ghcr.io/lupinemachines/lupine-server:cuda-13.3.1-ubuntu24.04
 ```
 
 Run the PyTorch client from the CPU-only machine:
@@ -283,7 +283,7 @@ Run the PyTorch client from the CPU-only machine:
 ```bash
 docker run --rm \
   -e LUPINE_SERVER=<server>:14833 \
-  lupine-pytorch:cuda-13.1
+  lupine-pytorch:cuda-13.3
 ```
 
 Expected success looks like:

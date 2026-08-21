@@ -29,9 +29,9 @@ jobs:
       matrix:
         include:
           - cuda:
-              version: 13.1.2
-              packages: cuda-nvcc-13-1 cuda-cudart-devel-13-1 cuda-driver-devel-13-1 cuda-nvml-devel-13-1 cuda-profiler-api-13-1
-              home: /usr/local/cuda-13.1
+              version: 13.3.1
+              packages: cuda-nvcc-13-3 cuda-cudart-devel-13-3 cuda-driver-devel-13-3 cuda-nvml-devel-13-3 cuda-profiler-api-13-3
+              home: /usr/local/cuda-13.3
             platform:
               arch: x86_64
               docker_platform: linux/amd64
