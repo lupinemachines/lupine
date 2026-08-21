@@ -242,9 +242,6 @@ void lupine_client_transport_close_connection(conn_t *conn) {
     state.config.connection_closed(conn);
   }
   rpc_close_transport_socket(conn);
-  pthread_mutex_lock(&conn->read_mutex);
-  pthread_cond_broadcast(&conn->read_cond);
-  pthread_mutex_unlock(&conn->read_mutex);
 }
 
 void lupine_client_transport_close() {
@@ -268,10 +265,6 @@ void lupine_client_transport_close() {
     if (conn->read_thread != 0) {
       pthread_join(conn->read_thread, nullptr);
       conn->read_thread = 0;
-    }
-    if (conn->rpc_thread != 0) {
-      pthread_join(conn->rpc_thread, nullptr);
-      conn->rpc_thread = 0;
     }
     reset_connection(conn);
     state.endpoints[i] = {};

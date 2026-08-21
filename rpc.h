@@ -39,8 +39,6 @@ struct rpc_http2_read_stats {
   uint64_t peak_staged_bytes;
 };
 
-#define LUPINE_RPC_TERMINATE_LANE 0xFFFF
-
 // The server's HTTP/2 receive window, and with it the ceiling on the pinned
 // staging a client can hold there: fire-and-forget device-bound payload bytes
 // stay uncredited until the staging buffer they landed in retires.
@@ -52,17 +50,12 @@ struct conn_t {
   lupine_socket_t connfd;
 
   int request_id;
-  int read_id;
-  int read_op;
-  uint64_t read_lane_id;
   int write_id;
   int write_op;
-  uint64_t write_lane_id;
+  int32_t write_stream_id;
 
   pthread_t read_thread;
-  pthread_t rpc_thread;
-  pthread_mutex_t read_mutex, write_mutex, call_mutex;
-  pthread_cond_t read_cond;
+  pthread_mutex_t write_mutex, call_mutex;
   std::vector<rpc_write_cursor> write_queue;
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
@@ -84,6 +77,11 @@ struct rpc_lifecycle_hooks {
 extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
 
 extern int rpc_dispatch(conn_t *conn, int parity);
+// Binds the calling thread to a peer-created HTTP/2 lane. Server lane workers
+// use this before rpc_dispatch; the stream id is the lane identity.
+extern int rpc_bind_http2_stream(conn_t *conn, int32_t stream_id);
+extern void rpc_unbind_http2_stream(conn_t *conn);
+extern int32_t rpc_current_http2_stream(conn_t *conn);
 extern int rpc_read_start(conn_t *conn, int write_id);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
 // Reads a field emitted by rpc_write_buffer. Keeping buffered reads distinct
@@ -143,9 +141,18 @@ extern void rpc_conn_destroy(conn_t *conn);
 extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
                                           unsigned int max_retries = 5);
 
+constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
+extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
+                                 size_t size);
 extern int rpc_http2_write(conn_t *conn,
                            std::vector<rpc_write_cursor> &cursors);
+extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
+                                  std::vector<rpc_write_cursor> &cursors);
+extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
+extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
+extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
+extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
@@ -179,11 +186,17 @@ extern void rpc_http2_response_wait_end(conn_t *conn);
 // them. Between hold_begin and hold_end the transport stops crediting received
 // DATA bytes back to the peer; hold_end returns the byte count the caller now
 // owns and must hand to rpc_http2_window_release once the buffer those bytes
-// landed in is idle. Held bytes are capped, so a caller that never releases
-// costs window but cannot close it.
+// landed in is idle. Credit stays tagged with its stream because HTTP/2 flow
+// control is stream-specific. Held bytes are capped, so a caller that never
+// releases costs window but cannot close it.
+struct rpc_http2_window_credit {
+  int32_t stream_id = -1;
+  uint64_t bytes = 0;
+};
 extern void rpc_http2_window_hold_begin(conn_t *conn);
-extern uint64_t rpc_http2_window_hold_end(conn_t *conn);
-extern void rpc_http2_window_release(conn_t *conn, uint64_t bytes);
+extern rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn);
+extern void rpc_http2_window_release(conn_t *conn,
+                                     rpc_http2_window_credit credit);
 
 // Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
 extern int lupine_payload_framed(conn_t *conn, size_t total_size);

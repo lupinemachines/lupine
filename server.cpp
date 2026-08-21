@@ -1,10 +1,9 @@
+#include <atomic>
 #include <cerrno>
-#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <stdio.h>
 #include <thread>
 #include <unordered_map>
@@ -94,11 +93,8 @@ lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
 #endif
 
 struct lupine_lane {
-  uint64_t id = 0;
-  std::mutex mutex;
-  std::condition_variable cond;
-  bool ready = false;
-  int op = 0;
+  int32_t id = -1;
+  std::atomic<bool> done{false};
   std::thread worker;
 };
 
@@ -193,147 +189,66 @@ int client_handler(lupine_socket_t connfd) {
 
   LUPINE_LOG_DEBUG("Client connected.");
 
-  std::unordered_map<uint64_t, std::shared_ptr<lupine_lane>> lanes;
-  bool connection_ready = false;
-  while (!conn.closed) {
-    if (pthread_mutex_lock(&conn.read_mutex) != 0) {
-      break;
-    }
-    while (conn.read_id != 0 && !conn.closed) {
-      pthread_cond_wait(&conn.read_cond, &conn.read_mutex);
-    }
-    if (conn.closed) {
-      pthread_mutex_unlock(&conn.read_mutex);
-      break;
-    }
-
-    int request_id = 0;
-    if (rpc_read(&conn, &request_id, sizeof(request_id)) !=
-            sizeof(request_id) ||
-        request_id == 0) {
-      pthread_mutex_unlock(&conn.read_mutex);
-      LUPINE_LOG_ERROR("RPC dispatch failed; closing client.");
-      break;
-    }
-
-    conn.read_id = request_id;
-    if (request_id % 2 == conn.local_request_parity) {
-      if (pthread_cond_broadcast(&conn.read_cond) < 0 ||
-          pthread_mutex_unlock(&conn.read_mutex) < 0) {
-        break;
-      }
-      continue;
-    }
-
-    if (rpc_read(&conn, &conn.read_lane_id, sizeof(conn.read_lane_id)) !=
-            sizeof(conn.read_lane_id) ||
-        rpc_read(&conn, &conn.read_op, sizeof(conn.read_op)) !=
-            sizeof(conn.read_op)) {
-      pthread_mutex_unlock(&conn.read_mutex);
-      LUPINE_LOG_ERROR("RPC dispatch failed; closing client.");
-      break;
-    }
-    uint64_t lane_id = conn.read_lane_id;
-    int op = conn.read_op;
-
-    if (!connection_ready) {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
-      if (!lupine_server_checkpoint_connection_ready(
-              rpc_http2_session_id(&conn))) {
-        pthread_mutex_unlock(&conn.read_mutex);
-        LUPINE_LOG_ERROR("Failed to restore connection checkpoint.");
-        break;
-      }
-#endif
-      connection_ready = true;
-    }
-
-    std::shared_ptr<lupine_lane> lane;
-    auto it = lanes.find(lane_id);
-    if (it == lanes.end()) {
-      if (lanes.size() >= MAX_LANES) {
-        pthread_mutex_unlock(&conn.read_mutex);
-        LUPINE_LOG_ERROR("Too many active RPC lanes.");
-        break;
-      }
-      lane = std::make_shared<lupine_lane>();
-      lane->id = lane_id;
-      lane->worker = std::thread([&conn, &handlers, lane]() {
-        for (;;) {
-          int op = 0;
-          {
-            std::unique_lock<std::mutex> lock(lane->mutex);
-            lane->cond.wait(lock, [&lane]() { return lane->ready; });
-            op = lane->op;
-            lane->ready = false;
-          }
-
-          conn.read_lane_id = lane->id;
-          conn.read_op = op;
-          if (conn.read_id == -1 || op == LUPINE_RPC_TERMINATE_LANE) {
-            rpc_read_end(&conn);
-            return;
-          }
-          if (rpc_server_dispatch(handlers, &conn, op) >= 0) {
-            continue;
-          }
-          rpc_read_end(&conn);
-          return;
-        }
-      });
-      lanes.emplace(lane_id, lane);
-    } else {
-      lane = it->second;
-    }
-
-    {
-      std::lock_guard<std::mutex> lock(lane->mutex);
-      lane->op = op;
-      lane->ready = true;
-    }
-    lane->cond.notify_one();
-    if (pthread_cond_broadcast(&conn.read_cond) < 0 ||
-        pthread_mutex_unlock(&conn.read_mutex) < 0) {
-      break;
-    }
-
-    if (op == LUPINE_RPC_TERMINATE_LANE) {
-      if (lane->worker.joinable()) {
-        lane->worker.join();
-      }
-      lanes.erase(lane_id);
-    }
+  if (!lupine_server_checkpoint_connection_ready(rpc_http2_session_id(&conn))) {
+    LUPINE_LOG_ERROR("Failed to restore connection checkpoint.");
+    rpc_conn_destroy(&conn);
+    return lupine_server_checkpoint_child_finish();
   }
+#endif
 
-  for (auto &entry : lanes) {
-    auto &lane = entry.second;
-    if (pthread_mutex_lock(&conn.read_mutex) != 0) {
+  std::unordered_map<int32_t, std::shared_ptr<lupine_lane>> lanes;
+  while (!conn.closed) {
+    for (auto it = lanes.begin(); it != lanes.end();) {
+      if (!it->second->done.load(std::memory_order_acquire)) {
+        ++it;
+        continue;
+      }
+      if (it->second->worker.joinable()) {
+        it->second->worker.join();
+      }
+      it = lanes.erase(it);
+    }
+
+    int32_t stream_id = rpc_http2_accept_stream(&conn);
+    if (stream_id < 0) {
       break;
     }
-    while (conn.read_id != 0) {
-      pthread_cond_wait(&conn.read_cond, &conn.read_mutex);
-    }
-    conn.read_id = -1;
-    {
-      std::lock_guard<std::mutex> lock(lane->mutex);
-      lane->op = LUPINE_RPC_TERMINATE_LANE;
-      lane->ready = true;
-    }
-    lane->cond.notify_one();
-    if (pthread_cond_broadcast(&conn.read_cond) < 0 ||
-        pthread_mutex_unlock(&conn.read_mutex) < 0) {
+    if (lanes.size() >= MAX_LANES) {
+      LUPINE_LOG_ERROR("Too many active RPC lanes.");
       break;
     }
-    if (lane->worker.joinable()) {
-      lane->worker.join();
-    }
+
+    auto lane = std::make_shared<lupine_lane>();
+    lane->id = stream_id;
+    lane->worker = std::thread([&conn, &handlers, lane]() {
+      if (rpc_bind_http2_stream(&conn, lane->id) == 0) {
+        while (!conn.closed) {
+          int op = rpc_dispatch(&conn, 0);
+          if (op < 0) {
+            break;
+          }
+          if (rpc_server_dispatch(handlers, &conn, op) < 0) {
+            (void)rpc_read_end(&conn);
+            break;
+          }
+        }
+        if (!conn.closed) {
+          (void)rpc_http2_end_stream(&conn, lane->id);
+        }
+        rpc_unbind_http2_stream(&conn);
+      }
+      lane->done.store(true, std::memory_order_release);
+    });
+    lanes.emplace(stream_id, lane);
   }
 
   rpc_close_transport_socket(&conn);
-  pthread_cond_broadcast(&conn.read_cond);
-  if (conn.rpc_thread != 0) {
-    pthread_join(conn.rpc_thread, nullptr);
-    conn.rpc_thread = 0;
+  for (auto &entry : lanes) {
+    auto &lane = entry.second;
+    if (lane->worker.joinable()) {
+      lane->worker.join();
+    }
   }
 
   int checkpoint_result = 0;

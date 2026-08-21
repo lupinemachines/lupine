@@ -161,24 +161,14 @@ int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
   conn->connfd = connfd;
   conn->request_id = request_id;
   conn->local_request_parity = request_id & 1;
-  if (pthread_mutex_init(&conn->read_mutex, nullptr) != 0) {
-    goto fail;
-  }
   if (pthread_mutex_init(&conn->write_mutex, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->read_mutex);
     goto fail;
   }
   if (pthread_mutex_init(&conn->call_mutex, nullptr) != 0) {
     pthread_mutex_destroy(&conn->write_mutex);
-    pthread_mutex_destroy(&conn->read_mutex);
     goto fail;
   }
-  if (pthread_cond_init(&conn->read_cond, nullptr) == 0) {
-    return 0;
-  }
-  pthread_mutex_destroy(&conn->call_mutex);
-  pthread_mutex_destroy(&conn->write_mutex);
-  pthread_mutex_destroy(&conn->read_mutex);
+  return 0;
 
 fail:
   rpc_close_transport_socket(conn);
@@ -195,38 +185,8 @@ void rpc_conn_destroy(conn_t *conn) {
   rpc_http2_destroy(conn);
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
-  pthread_mutex_destroy(&conn->read_mutex);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
-  pthread_cond_destroy(&conn->read_cond);
-}
-
-int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
-  if (conn == nullptr || conn->closed) {
-    return -1;
-  }
-  if (pthread_mutex_lock(&conn->call_mutex) != 0) {
-    return -1;
-  }
-  if (pthread_mutex_lock(&conn->write_mutex) != 0) {
-    pthread_mutex_unlock(&conn->call_mutex);
-    return -1;
-  }
-  conn->request_id = conn->request_id + 2;
-  conn->write_id = conn->request_id;
-  conn->write_op = LUPINE_RPC_TERMINATE_LANE;
-  int result = -1;
-  if (rpc_write_queue_reset(conn, 3) == 0) {
-    conn->write_queue[0] =
-        rpc_write_cursor::plain(&conn->write_id, sizeof(conn->write_id));
-    conn->write_queue[1] = rpc_write_cursor::plain(&lane_id, sizeof(lane_id));
-    conn->write_queue[2] =
-        rpc_write_cursor::plain(&conn->write_op, sizeof(conn->write_op));
-    result = rpc_http2_write(conn, conn->write_queue);
-  }
-  pthread_mutex_unlock(&conn->write_mutex);
-  pthread_mutex_unlock(&conn->call_mutex);
-  return result;
 }
 
 namespace {
@@ -276,81 +236,92 @@ struct rpc_thread_lane {
 
 static thread_local rpc_thread_lane rpc_tls_lane;
 
-uint64_t rpc_thread_lane_id(conn_t *conn) {
-  (void)conn;
-  return rpc_tls_lane.id;
+struct rpc_read_frame {
+  int32_t stream_id = -1;
+  int request_id = 0;
+};
+
+struct rpc_pending_request {
+  int request_id = 0;
+  int32_t stream_id = -1;
+};
+
+struct rpc_thread_io {
+  conn_t *bound_conn = nullptr;
+  int32_t bound_stream = -1;
+  conn_t *read_conn = nullptr;
+  rpc_read_frame read;
+  conn_t *pending_conn = nullptr;
+  rpc_pending_request pending;
+  conn_t *held_call_lock = nullptr;
+};
+
+static thread_local rpc_thread_io rpc_tls_io;
+
+void rpc_release_held_call_lock(conn_t *conn) {
+  if (rpc_tls_io.held_call_lock == conn) {
+    rpc_tls_io.held_call_lock = nullptr;
+    pthread_mutex_unlock(&conn->call_mutex);
+  }
 }
 
 } // namespace
 
-void *_rpc_read_id_dispatch(void *p) {
-  conn_t *conn = (conn_t *)p;
-
-  while (!conn->closed) {
-    if (pthread_mutex_lock(&conn->read_mutex) != 0) {
-      break;
-    }
-    while (conn->read_id != 0 && !conn->closed) {
-      pthread_cond_wait(&conn->read_cond, &conn->read_mutex);
-    }
-    if (conn->closed) {
-      pthread_mutex_unlock(&conn->read_mutex);
-      break;
-    }
-
-    int request_id = 0;
-    if (rpc_http2_read(conn, &request_id, sizeof(request_id)) !=
-            sizeof(request_id) ||
-        request_id == 0) {
-      rpc_mark_connection_closed(conn);
-      pthread_cond_broadcast(&conn->read_cond);
-      pthread_mutex_unlock(&conn->read_mutex);
-      break;
-    }
-
-    conn->read_id = request_id;
-    if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
-        pthread_mutex_unlock(&conn->read_mutex) < 0) {
-      break;
-    }
+int rpc_bind_http2_stream(conn_t *conn, int32_t stream_id) {
+  if (conn == nullptr || stream_id < 0) {
+    return -1;
   }
-  rpc_mark_connection_closed(conn);
-  pthread_cond_broadcast(&conn->read_cond);
-  conn->rpc_thread = 0;
-  return NULL;
+  rpc_tls_io.bound_conn = conn;
+  rpc_tls_io.bound_stream = stream_id;
+  return 0;
+}
+
+void rpc_unbind_http2_stream(conn_t *conn) {
+  if (rpc_tls_io.bound_conn == conn) {
+    rpc_tls_io.bound_conn = nullptr;
+    rpc_tls_io.bound_stream = -1;
+  }
+}
+
+int32_t rpc_current_http2_stream(conn_t *conn) {
+  if (rpc_tls_io.read_conn == conn) {
+    return rpc_tls_io.read.stream_id;
+  }
+  if (rpc_tls_io.bound_conn == conn) {
+    return rpc_tls_io.bound_stream;
+  }
+  return rpc_http2_dispatch_stream(conn);
 }
 
 int rpc_dispatch(conn_t *conn, int parity) {
-  if (conn->rpc_thread == 0 &&
-      pthread_create(&conn->rpc_thread, nullptr, _rpc_read_id_dispatch,
-                     (void *)conn) < 0) {
+  if (conn == nullptr || conn->closed) {
     return -1;
   }
-
-  if (pthread_mutex_lock(&conn->read_mutex) < 0) {
+  int32_t stream_id = rpc_current_http2_stream(conn);
+  if (stream_id < 0) {
     return -1;
   }
-
-  while (!conn->closed && (conn->read_id < 2 || conn->read_id % 2 != parity)) {
-    pthread_cond_wait(&conn->read_cond, &conn->read_mutex);
-  }
-
-  if (conn->closed) {
-    pthread_mutex_unlock(&conn->read_mutex);
+  int request_id = 0;
+  int op = 0;
+  int read_result =
+      rpc_http2_read_stream(conn, stream_id, &request_id, sizeof(request_id));
+  if (read_result != sizeof(request_id) || request_id < 2 ||
+      request_id % 2 != parity) {
+    if (read_result != LUPINE_RPC_HTTP2_STREAM_END) {
+      rpc_mark_connection_closed(conn);
+    }
     return -1;
   }
-
-  if (rpc_http2_read(conn, &conn->read_lane_id, sizeof(conn->read_lane_id)) !=
-          sizeof(conn->read_lane_id) ||
-      rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) !=
-          sizeof(conn->read_op)) {
-    rpc_mark_connection_closed(conn);
-    pthread_cond_broadcast(&conn->read_cond);
-    pthread_mutex_unlock(&conn->read_mutex);
+  read_result = rpc_http2_read_stream(conn, stream_id, &op, sizeof(op));
+  if (read_result != sizeof(op)) {
+    if (read_result != LUPINE_RPC_HTTP2_STREAM_END) {
+      rpc_mark_connection_closed(conn);
+    }
     return -1;
   }
-  pthread_mutex_unlock(&conn->read_mutex);
-  return conn->read_op;
+  rpc_tls_io.read_conn = conn;
+  rpc_tls_io.read = {stream_id, request_id};
+  return op;
 }
 
 // rpc_read_start waits for a response with a specific request id on the
@@ -358,39 +329,36 @@ int rpc_dispatch(conn_t *conn, int parity) {
 // that was sent with rpc_write_end.
 //
 // Once this returns, the matching frame is reserved for the caller until
-// rpc_read_end() releases it back to the dispatch thread.
+// rpc_read_end() completes it.
 int rpc_read_start(conn_t *conn, int write_id) {
-  if (pthread_mutex_lock(&conn->read_mutex) < 0)
-    return -1;
-
-  while (!conn->closed && conn->read_id != write_id) {
-    if (pthread_cond_wait(&conn->read_cond, &conn->read_mutex) != 0) {
-      pthread_mutex_unlock(&conn->read_mutex);
-      return -1;
-    }
-  }
-
-  if (conn->closed) {
-    pthread_mutex_unlock(&conn->read_mutex);
+  if (rpc_tls_io.pending_conn != conn ||
+      rpc_tls_io.pending.request_id != write_id) {
+    rpc_release_held_call_lock(conn);
     return -1;
   }
-
-  if (rpc_http2_read(conn, &conn->read_lane_id, sizeof(conn->read_lane_id)) !=
-          sizeof(conn->read_lane_id) ||
-      rpc_http2_read(conn, &conn->read_op, sizeof(conn->read_op)) !=
-          sizeof(conn->read_op) ||
-      conn->read_op != -1) {
+  int32_t stream_id = rpc_tls_io.pending.stream_id;
+  int request_id = 0;
+  int op = 0;
+  if (rpc_http2_read_stream(conn, stream_id, &request_id, sizeof(request_id)) !=
+          sizeof(request_id) ||
+      request_id != write_id ||
+      rpc_http2_read_stream(conn, stream_id, &op, sizeof(op)) != sizeof(op) ||
+      op != -1) {
     rpc_mark_connection_closed(conn);
-    pthread_cond_broadcast(&conn->read_cond);
-    pthread_mutex_unlock(&conn->read_mutex);
+    rpc_release_held_call_lock(conn);
     return -1;
   }
-  pthread_mutex_unlock(&conn->read_mutex);
+  rpc_tls_io.pending_conn = nullptr;
+  rpc_tls_io.pending = {};
+  rpc_tls_io.read_conn = conn;
+  rpc_tls_io.read = {stream_id, request_id};
   return 0;
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {
-  return rpc_http2_read(conn, data, size);
+  int32_t stream_id = rpc_current_http2_stream(conn);
+  return stream_id < 0 ? -1
+                       : rpc_http2_read_stream(conn, stream_id, data, size);
 }
 
 int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
@@ -420,16 +388,18 @@ int rpc_drain(conn_t *conn, size_t size) {
 }
 
 int rpc_read_end(conn_t *conn) {
-  if (pthread_mutex_lock(&conn->read_mutex) != 0) {
+  if (rpc_tls_io.read_conn == conn) {
+    int read_id = rpc_tls_io.read.request_id;
+    rpc_tls_io.read_conn = nullptr;
+    rpc_tls_io.read = {};
+    rpc_release_held_call_lock(conn);
+    return read_id;
+  }
+  rpc_release_held_call_lock(conn);
+  if (conn != nullptr && !conn->closed) {
     return -1;
   }
-  int read_id = conn->read_id;
-  conn->read_id = 0;
-  if (pthread_cond_broadcast(&conn->read_cond) < 0 ||
-      pthread_mutex_unlock(&conn->read_mutex) < 0) {
-    return -1;
-  }
-  return read_id;
+  return -1;
 }
 
 // Per-op RPC statistics, enabled by setting LUPINE_RPC_STATS to an output
@@ -534,7 +504,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     return -1;
   }
 
-  if (rpc_write_queue_reset(conn, 3) < 0) {
+  if (rpc_write_queue_reset(conn, 2) < 0) {
     pthread_mutex_unlock(&conn->write_mutex);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
@@ -542,7 +512,12 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   conn->write_id = conn->request_id;
   conn->write_op = op;
-  conn->write_lane_id = rpc_thread_lane_id(conn);
+  conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
+  if (conn->write_stream_id < 0) {
+    pthread_mutex_unlock(&conn->write_mutex);
+    pthread_mutex_unlock(&conn->call_mutex);
+    return -1;
+  }
   if (lupine_rpc_stats_path() != nullptr) {
     lupine_rpc_stats_record(op, 1, 0);
   }
@@ -566,13 +541,17 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
     return -1;
   }
 
-  if (rpc_write_queue_reset(conn, 3) < 0) {
+  if (rpc_write_queue_reset(conn, 2) < 0) {
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
   conn->write_id = read_id;
   conn->write_op = -1;
-  conn->write_lane_id = conn->read_lane_id;
+  conn->write_stream_id = rpc_current_http2_stream(conn);
+  if (conn->write_stream_id < 0) {
+    pthread_mutex_unlock(&conn->write_mutex);
+    return -1;
+  }
   return 0;
 }
 
@@ -687,20 +666,30 @@ int rpc_write_end(conn_t *conn) {
     return -1;
   }
   int write_id = conn->write_id;
+  int32_t write_stream_id = conn->write_stream_id;
   int result = -1;
-  if (conn->write_queue.size() >= 3) {
+  if (conn->write_queue.size() >= 2) {
     conn->write_queue[0] =
         rpc_write_cursor::plain(&conn->write_id, sizeof(conn->write_id));
-    conn->write_queue[1] = rpc_write_cursor::plain(&conn->write_lane_id,
-                                                   sizeof(conn->write_lane_id));
-    conn->write_queue[2] =
+    conn->write_queue[1] =
         rpc_write_cursor::plain(&conn->write_op, sizeof(conn->write_op));
-    result = rpc_http2_write(conn, conn->write_queue);
+    result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
   }
   rpc_write_buffer_release(conn);
   pthread_mutex_unlock(&conn->write_mutex);
   if (request) {
-    pthread_mutex_unlock(&conn->call_mutex);
+    if (result == 0) {
+      rpc_tls_io.pending_conn = conn;
+      rpc_tls_io.pending = {write_id, write_stream_id};
+    }
+    // Servers originate RPCs only on the dedicated server-to-client stream.
+    // Keep that stream's request/response exchange serialized so a caller can
+    // read its response directly without an application-level dispatcher.
+    if (result == 0 && conn->local_request_parity == 1) {
+      rpc_tls_io.held_call_lock = conn;
+    } else {
+      pthread_mutex_unlock(&conn->call_mutex);
+    }
   }
   return result == 0 ? write_id : -1;
 }
