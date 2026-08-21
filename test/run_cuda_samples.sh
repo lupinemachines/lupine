@@ -86,7 +86,7 @@ CORE_SAMPLES=(
 )
 
 LIBRARY_SAMPLES=(
-  simpleCUBLAS matrixMulCUBLAS simpleCUBLAS_LU batchCUBLAS
+  simpleCUBLAS matrixMulCUBLAS simpleCUBLAS_LU batchCUBLAS simpleCUBLASXT
   simpleCUFFT simpleCUFFT_callback
   oceanFFT
   cuSolverDn_LinearSolver cuSolverSp_LinearSolver cuSolverSp_LowlevelCholesky

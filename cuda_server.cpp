@@ -2005,23 +2005,19 @@ int handle_cuLinkDestroy(conn_t *conn) {
   return 0;
 }
 
+// The wire carries no sizes: both sides derive the packed host payload
+// lengths from the copy descriptor, and a failed copy carries no payload.
 int handle_cuMemcpy3D_v2(conn_t *conn) {
   CUDA_MEMCPY3D copy = {};
-  size_t src_host_size = 0;
-  size_t dst_host_size = 0;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-      rpc_read(conn, &src_host_size, sizeof(src_host_size)) < 0) {
+  if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
     return -1;
   }
-
-  std::vector<unsigned char> src_host(src_host_size);
-  if (src_host_size != 0 &&
-      rpc_read(conn, src_host.data(), src_host_size) < 0) {
-    return -1;
-  }
-  if (rpc_read(conn, &dst_host_size, sizeof(dst_host_size)) < 0) {
+  size_t packed_size = copy.WidthInBytes * copy.Height * copy.Depth;
+  std::vector<unsigned char> src_host(
+      copy.srcMemoryType == CU_MEMORYTYPE_HOST ? packed_size : 0);
+  if (rpc_read(conn, src_host.data(), src_host.size()) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -2029,7 +2025,8 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
     return -1;
   }
 
-  std::vector<unsigned char> dst_host(dst_host_size);
+  std::vector<unsigned char> dst_host(
+      copy.dstMemoryType == CU_MEMORYTYPE_HOST ? packed_size : 0);
   if (copy.srcMemoryType == CU_MEMORYTYPE_HOST) {
     copy.srcHost = src_host.empty() ? nullptr : src_host.data();
   }
@@ -2038,35 +2035,31 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
   }
 
   result = cuMemcpy3D_v2(&copy);
-  size_t returned_dst_size = result == CUDA_SUCCESS ? dst_host.size() : 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &returned_dst_size, sizeof(returned_dst_size)) < 0 ||
-      rpc_write(conn, dst_host.data(), returned_dst_size) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (result == CUDA_SUCCESS &&
+       rpc_write(conn, dst_host.data(), dst_host.size()) < 0) ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
 }
 
+// The wire carries no sizes: both sides derive the packed host payload
+// lengths from the copy descriptor, and a failed copy carries no payload.
 static int handle_cuMemcpy2D_common(conn_t *conn, bool async,
                                            bool unaligned) {
   CUDA_MEMCPY2D copy = {};
-  size_t src_host_size = 0;
-  size_t dst_host_size = 0;
   CUstream stream = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-      rpc_read(conn, &src_host_size, sizeof(src_host_size)) < 0) {
+  if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
     return -1;
   }
-
-  std::vector<unsigned char> src_host(src_host_size);
-  if (src_host_size != 0 &&
-      rpc_read(conn, src_host.data(), src_host_size) < 0) {
-    return -1;
-  }
-  if (rpc_read(conn, &dst_host_size, sizeof(dst_host_size)) < 0 ||
+  size_t packed_size = copy.WidthInBytes * copy.Height;
+  std::vector<unsigned char> src_host(
+      copy.srcMemoryType == CU_MEMORYTYPE_HOST ? packed_size : 0);
+  if (rpc_read(conn, src_host.data(), src_host.size()) < 0 ||
       (async && rpc_read(conn, &stream, sizeof(stream)) < 0)) {
     return -1;
   }
@@ -2075,7 +2068,8 @@ static int handle_cuMemcpy2D_common(conn_t *conn, bool async,
     return -1;
   }
 
-  std::vector<unsigned char> dst_host(dst_host_size);
+  std::vector<unsigned char> dst_host(
+      copy.dstMemoryType == CU_MEMORYTYPE_HOST ? packed_size : 0);
   if (copy.srcMemoryType == CU_MEMORYTYPE_HOST) {
     copy.srcHost = src_host.empty() ? nullptr : src_host.data();
   }
@@ -2094,11 +2088,11 @@ static int handle_cuMemcpy2D_common(conn_t *conn, bool async,
     result = cuMemcpy2D_v2(&copy);
   }
 
-  size_t returned_dst_size = result == CUDA_SUCCESS ? dst_host.size() : 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &returned_dst_size, sizeof(returned_dst_size)) < 0 ||
-      rpc_write(conn, dst_host.data(), returned_dst_size) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (result == CUDA_SUCCESS &&
+       rpc_write(conn, dst_host.data(), dst_host.size()) < 0) ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
