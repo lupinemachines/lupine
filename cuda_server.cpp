@@ -534,8 +534,8 @@ struct lupine_graph_host_copy {
   size_t bytes = 0;
 };
 
-struct lupine_pending_dtoh_copy {
-  CUstream stream = nullptr;
+struct lupine_pending_dtoh_item {
+  CUevent event = nullptr;
   void *client_dst = nullptr;
   void *server_src = nullptr;
   size_t bytes = 0;
@@ -674,8 +674,14 @@ lupine_event_capture_resource_map() {
   return *resources;
 }
 
+using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
 using lupine_pending_dtoh_streams =
-    std::unordered_map<CUstream, std::vector<lupine_pending_dtoh_copy>>;
+    std::unordered_map<CUstream, lupine_pending_dtoh_items>;
+
+static bool lupine_is_event_dtoh_marker(const lupine_pending_dtoh_item &item,
+                                        CUevent event) {
+  return item.event != nullptr && item.event == event;
+}
 
 static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies() {
@@ -915,17 +921,27 @@ static void *lupine_alloc_process_host_buffer(size_t bytes) {
   return ptr;
 }
 
-static std::vector<lupine_pending_dtoh_copy>
+static void lupine_append_pending_dtoh_copies(
+    lupine_pending_dtoh_items::const_iterator begin,
+    lupine_pending_dtoh_items::const_iterator end,
+    std::vector<lupine_pending_dtoh_item> *copies) {
+  for (auto item = begin; item != end; ++item) {
+    if (item->event == nullptr) {
+      copies->push_back(*item);
+    }
+  }
+}
+
+static std::vector<lupine_pending_dtoh_item>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams) {
-  std::vector<lupine_pending_dtoh_copy> copies;
+  std::vector<lupine_pending_dtoh_item> copies;
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
         if (all_streams) {
           for (auto &entry : streams) {
-            auto &stream_copies = entry.second;
-            copies.insert(copies.end(), stream_copies.begin(),
-                          stream_copies.end());
+            lupine_append_pending_dtoh_copies(entry.second.begin(),
+                                              entry.second.end(), &copies);
           }
           return true;
         }
@@ -934,15 +950,86 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
         if (stream_it == streams.end()) {
           return false;
         }
-        copies.swap(stream_it->second);
+        lupine_append_pending_dtoh_copies(stream_it->second.begin(),
+                                          stream_it->second.end(), &copies);
         streams.erase(stream_it);
         return streams.empty();
       });
   return copies;
 }
 
+static void
+lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
+                                 CUevent event) {
+  for (auto stream_it = streams->begin(); stream_it != streams->end();) {
+    auto &items = stream_it->second;
+    items.erase(std::remove_if(items.begin(), items.end(),
+                               [event](const auto &item) {
+                                 return lupine_is_event_dtoh_marker(item,
+                                                                    event);
+                               }),
+                items.end());
+    if (items.empty()) {
+      stream_it = streams->erase(stream_it);
+    } else {
+      ++stream_it;
+    }
+  }
+}
+
+static void lupine_note_event_record(conn_t *conn, CUevent event,
+                                     CUstream stream) {
+  lupine_pending_dtoh_streams initial;
+  initial[stream].push_back({event});
+  lupine_pending_dtoh_copies().upsert(
+      conn,
+      [event, stream](lupine_pending_dtoh_streams &streams,
+                      libcuckoo::UpsertContext) {
+        lupine_remove_event_dtoh_markers(&streams, event);
+        streams[stream].push_back({event});
+      },
+      std::move(initial));
+}
+
+static void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event) {
+  lupine_pending_dtoh_copies().erase_fn(
+      conn, [event](lupine_pending_dtoh_streams &streams) {
+        lupine_remove_event_dtoh_markers(&streams, event);
+        return streams.empty();
+      });
+}
+
+static std::vector<lupine_pending_dtoh_item>
+lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
+  std::vector<lupine_pending_dtoh_item> copies;
+  lupine_pending_dtoh_copies().erase_fn(
+      conn, [&](lupine_pending_dtoh_streams &streams) {
+        for (auto stream_it = streams.begin(); stream_it != streams.end();
+             ++stream_it) {
+          auto &items = stream_it->second;
+          auto marker = std::find_if(
+              items.begin(), items.end(), [event](const auto &item) {
+                return lupine_is_event_dtoh_marker(item, event);
+              });
+          if (marker == items.end()) {
+            continue;
+          }
+          auto through_marker = std::next(marker);
+          lupine_append_pending_dtoh_copies(items.begin(), through_marker,
+                                            &copies);
+          items.erase(items.begin(), through_marker);
+          if (items.empty()) {
+            streams.erase(stream_it);
+          }
+          return streams.empty();
+        }
+        return false;
+      });
+  return copies;
+}
+
 static int lupine_write_pending_dtoh_copies(
-    conn_t *conn, const std::vector<lupine_pending_dtoh_copy> &pending,
+    conn_t *conn, const std::vector<lupine_pending_dtoh_item> &pending,
     bool include_count) {
   if (include_count) {
     auto *copy_count = static_cast<uint32_t *>(
@@ -963,7 +1050,7 @@ static int lupine_write_pending_dtoh_copies(
 }
 
 static void lupine_cleanup_pending_dtoh_copies(
-    std::vector<lupine_pending_dtoh_copy> *pending) {
+    std::vector<lupine_pending_dtoh_item> *pending) {
   if (pending == nullptr) {
     return;
   }
@@ -3339,14 +3426,17 @@ static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
   }
 
   lupine_graph_resources *resources = nullptr;
-  if (lupine_stream_capture_resource_map().find(stream, resources)) {
-    lupine_event_capture_resource_map().insert_or_assign(event, resources);
-  }
+  (void)lupine_stream_capture_resource_map().find(stream, resources);
 
-  if (with_flags) {
-    (void)cuEventRecordWithFlags(event, stream, flags);
-  } else {
-    (void)cuEventRecord(event, stream);
+  CUresult result = with_flags ? cuEventRecordWithFlags(event, stream, flags)
+                               : cuEventRecord(event, stream);
+  if (result == CUDA_SUCCESS) {
+    if (resources == nullptr) {
+      lupine_event_capture_resource_map().erase(event);
+    } else {
+      lupine_event_capture_resource_map().insert_or_assign(event, resources);
+    }
+    lupine_note_event_record(conn, event, stream);
   }
   return 0;
 }
@@ -3357,6 +3447,28 @@ int handle_cuEventRecord(conn_t *conn) {
 
 int handle_cuEventRecordWithFlags(conn_t *conn) {
   return handle_cuEventRecordCommon(conn, true);
+}
+
+int handle_cuEventDestroy_v2(conn_t *conn) {
+  CUevent event = nullptr;
+  if (rpc_read(conn, &event, sizeof(event)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = cuEventDestroy_v2(event);
+  if (result == CUDA_SUCCESS) {
+    lupine_event_capture_resource_map().erase(event);
+    lupine_forget_event_dtoh_marker(conn, event);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
 }
 
 int handle_cuEventQuery(conn_t *conn) {
@@ -3374,9 +3486,9 @@ int handle_cuEventQuery(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0) {
     return -1;
   }
-  std::vector<lupine_pending_dtoh_copy> pending;
+  std::vector<lupine_pending_dtoh_item> pending;
   if (result == CUDA_SUCCESS) {
-    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+    pending = lupine_detach_event_dtoh_copies(conn, event);
   }
   bool failed = rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
                 lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
@@ -4123,7 +4235,7 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     } else {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS && byteCount != 0) {
-        lupine_pending_dtoh_copy copy{stream, dstHost, host, byteCount,
+        lupine_pending_dtoh_item copy{nullptr, dstHost, host, byteCount,
                                       alloc_result == CUDA_SUCCESS};
         lupine_pending_dtoh_copies().upsert(
             conn,
@@ -4300,7 +4412,10 @@ int handle_cuEventSynchronize(conn_t *conn) {
   lupine_start_stdout_capture(&capture);
   CUresult result = cuEventSynchronize(event);
   lupine_finish_stdout_capture(&capture);
-  auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+  std::vector<lupine_pending_dtoh_item> pending;
+  if (result == CUDA_SUCCESS) {
+    pending = lupine_detach_event_dtoh_copies(conn, event);
+  }
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
                 rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
                 lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||

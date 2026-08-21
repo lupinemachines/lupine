@@ -3739,28 +3739,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuEventDestroy_v2(conn_t *conn) {
-  CUevent hEvent;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuEventDestroy_v2(hEvent);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuEventElapsedTime_v2(conn_t *conn) {
   float pMilliseconds;
   CUevent hStart;

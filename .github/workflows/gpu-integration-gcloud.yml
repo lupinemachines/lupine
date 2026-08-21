@@ -14,6 +14,9 @@ concurrency:
 on:
   pull_request:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -237,10 +240,6 @@ jobs:
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
 
-          ARG CUDA_SAMPLE_SKIP_LIST=""
-          ARG CUDA_SAMPLES_CACHE_HIT="false"
-          ARG CUDA_SAMPLES_REF=""
-
           ENV DEBIAN_FRONTEND=noninteractive \
               CUDA_HOME=/usr/local/cuda \
               CUDA_LIB_DIR=/usr/local/cuda/lib64 \
@@ -278,29 +277,14 @@ jobs:
                 python3-venv \
               && rm -rf /var/lib/apt/lists/*
 
-          COPY --from=cuda_samples_src . /opt/cuda-samples-src
-          COPY --from=cuda_samples_build . /opt/cuda-samples-build
-
-          # Keep the expensive CUDA sample build before COPY . so regular
-          # Lupine source changes do not invalidate this step. Warm runs copy
-          # the restored Actions cache into the image and skip compilation.
+          # BuildKit exports this expensive layer to the GitHub Actions cache.
+          # Keep it before COPY . so regular Lupine changes do not invalidate it.
           RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
           set -euo pipefail
 
-          if [[ "$CUDA_SAMPLES_CACHE_HIT" == "true" && -d "$CUDA_SAMPLES_DIR/.git" && -d "$CUDA_SAMPLES_BUILD_DIR" ]]; then
-            git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
-            echo "Using restored CUDA sample cache"
-            exit 0
-          fi
-
-          rm -rf "$CUDA_SAMPLES_DIR" "$CUDA_SAMPLES_BUILD_DIR"
-          git clone https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
+          git clone --branch "${{ matrix.samples_ref }}" --depth 1 \
+            https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
           git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
-          if [[ -n "$CUDA_SAMPLES_REF" ]]; then
-            git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
-            git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
-            git -C "$CUDA_SAMPLES_DIR" reset --hard "$CUDA_SAMPLES_REF"
-          fi
 
           if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
             find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
@@ -325,20 +309,6 @@ jobs:
           WORKDIR /src
           COPY . /src
           EOF
-
-      - name: Restore CUDA sample cache
-        id: cuda-samples-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}
-          key: gpu-integration-cuda-samples-v3-${{ matrix.label }}-${{ matrix.samples_ref }}
-
-      - name: Prepare CUDA sample cache context
-        run: |
-          set -euo pipefail
-          cache_dir="${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}"
-          mkdir -p "$cache_dir/src" "$cache_dir/build"
-          touch "$cache_dir/src/.keep" "$cache_dir/build/.keep"
 
       - name: Wait for SSH and NVIDIA driver
         run: |
@@ -380,7 +350,19 @@ jobs:
             done
           '
 
-      - name: Build and stream ${{ matrix.name }} client image to L4 VM
+      - name: Build ${{ matrix.name }} client image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ runner.temp }}/gpu-integration.Dockerfile
+          load: true
+          tags: ${{ env.CLIENT_IMAGE }}
+          build-args: |
+            BASE_IMAGE=${{ matrix.client_image }}
+          cache-from: type=gha,scope=gpu-integration-${{ matrix.label }}
+          cache-to: type=gha,mode=max,scope=gpu-integration-${{ matrix.label }}
+
+      - name: Stream ${{ matrix.name }} client image to L4 VM
         run: |
           set -euo pipefail
           ssh_base=(
@@ -395,52 +377,10 @@ jobs:
             "gha@$VM_IP"
           )
 
-          common_build_args=(
-            --progress=plain
-            --file "${RUNNER_TEMP}/gpu-integration.Dockerfile"
-            --tag "$CLIENT_IMAGE"
-            --build-context "cuda_samples_src=${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}/src"
-            --build-context "cuda_samples_build=${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}/build"
-            --build-arg "BASE_IMAGE=${{ matrix.client_image }}"
-            --build-arg "CUDA_SAMPLES_CACHE_HIT=${{ steps.cuda-samples-cache.outputs.cache-hit == 'true' }}"
-            --build-arg "CUDA_SAMPLE_SKIP_LIST=${CUDA_SAMPLE_SKIP_LIST:-}"
-            --build-arg "CUDA_SAMPLES_REF=${{ matrix.samples_ref }}"
-          )
-
           start=$SECONDS
-          docker buildx build \
-            "${common_build_args[@]}" \
-            --output=type=docker,dest=- \
-            . | "${ssh_base[@]}" 'sudo docker load'
+          docker save "$CLIENT_IMAGE" | "${ssh_base[@]}" 'sudo docker load'
           echo "Streamed $CLIENT_IMAGE to L4 VM in $((SECONDS - start))s"
           "${ssh_base[@]}" "sudo docker image inspect '$CLIENT_IMAGE' >/dev/null"
-
-          if [[ "${{ steps.cuda-samples-cache.outputs.cache-hit }}" != "true" ]]; then
-            docker buildx build "${common_build_args[@]}" --load .
-          fi
-
-      - name: Extract CUDA sample cache
-        if: steps.cuda-samples-cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          cache_dir="${RUNNER_TEMP}/cuda-samples-cache-${{ matrix.label }}"
-          rm -rf "$cache_dir"
-          mkdir -p "$cache_dir/src" "$cache_dir/build"
-          container_id="$(docker create "$CLIENT_IMAGE")"
-          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          docker cp "$container_id:/opt/cuda-samples-src/." "$cache_dir/src/"
-          if ! docker cp "$container_id:/opt/cuda-samples-build/." "$cache_dir/build/" 2>/tmp/cuda-samples-build-copy.err; then
-            echo "No separate CUDA samples build directory found; caching source tree only"
-            touch "$cache_dir/build/.keep"
-          fi
-          du -sh "$cache_dir"
-
-      - name: Save CUDA sample cache
-        if: steps.cuda-samples-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ runner.temp }}/cuda-samples-cache-${{ matrix.label }}
-          key: ${{ steps.cuda-samples-cache.outputs.cache-primary-key }}
 
       - name: Run ${{ matrix.name }} client inside L4 VM
         run: |

@@ -204,9 +204,35 @@ bool test_pending_dtoh_suppresses_local_answer() {
     std::cerr << "FAIL: pending async copy was answered locally\n";
     return false;
   }
-  lupine_event_note_dtoh_drained(&table, lupine_event_dtoh_issued(&table));
+  lupine_event_note_dtoh_drained(&table, 1);
   if (lupine_event_query_needed(&table, event, &recorded)) {
     std::cerr << "FAIL: drained copy still forced a round trip\n";
+    return false;
+  }
+  return true;
+}
+
+bool test_partially_drained_dtoh_stays_pending() {
+  lupine_event_table table;
+  CUevent event = fake_event(0);
+  uint64_t recorded = 0;
+  CUresult result = CUDA_SUCCESS;
+  lupine_event_note_recorded(&table, event);
+  if (!lupine_event_query_needed(&table, event, &recorded)) {
+    std::cerr << "FAIL: first record did not require a query\n";
+    return false;
+  }
+  lupine_event_note_query_results(&table, &event, &recorded, &result, 1);
+  lupine_event_note_async_dtoh(&table);
+  lupine_event_note_async_dtoh(&table);
+  lupine_event_note_dtoh_drained(&table, 1);
+  if (!lupine_event_query_needed(&table, event, &recorded)) {
+    std::cerr << "FAIL: partially drained copies were treated as complete\n";
+    return false;
+  }
+  lupine_event_note_dtoh_drained(&table, 1);
+  if (lupine_event_query_needed(&table, event, &recorded)) {
+    std::cerr << "FAIL: fully drained copies still forced a round trip\n";
     return false;
   }
   return true;
@@ -221,7 +247,8 @@ int main() {
       !test_prefetch_batch_excludes_and_filters() ||
       !test_query_results_cache_only_successes() ||
       !test_destroyed_event_is_removed_from_prefetch() ||
-      !test_pending_dtoh_suppresses_local_answer()) {
+      !test_pending_dtoh_suppresses_local_answer() ||
+      !test_partially_drained_dtoh_stays_pending()) {
     return 1;
   }
   std::cout << "event completion tracking tests passed\n";

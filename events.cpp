@@ -30,8 +30,8 @@ void lupine_event_note_destroyed(lupine_event_table *table, CUevent event) {
 
 bool lupine_event_query_needed(lupine_event_table *table, CUevent event,
                                uint64_t *recorded) {
-  bool copies_pending = table->dtoh_issued.load(std::memory_order_relaxed) !=
-                        table->dtoh_drained.load(std::memory_order_relaxed);
+  bool copies_pending =
+      table->dtoh_pending.load(std::memory_order_relaxed) != 0;
   lupine_event_slot *slots = table->slots;
   std::lock_guard<std::mutex> lock(table->mutex);
   *recorded = 0;
@@ -86,16 +86,18 @@ void lupine_event_note_query_results(lupine_event_table *table,
 }
 
 void lupine_event_note_async_dtoh(lupine_event_table *table) {
-  table->dtoh_issued.fetch_add(1, std::memory_order_relaxed);
+  table->dtoh_pending.fetch_add(1, std::memory_order_relaxed);
 }
 
-uint64_t lupine_event_dtoh_issued(lupine_event_table *table) {
-  return table->dtoh_issued.load(std::memory_order_relaxed);
-}
-
-void lupine_event_note_dtoh_drained(lupine_event_table *table,
-                                    uint64_t drained) {
-  table->dtoh_drained.store(drained, std::memory_order_relaxed);
+void lupine_event_note_dtoh_drained(lupine_event_table *table, uint64_t count) {
+  uint64_t pending = table->dtoh_pending.load(std::memory_order_relaxed);
+  while (pending != 0) {
+    uint64_t remaining = count >= pending ? 0 : pending - count;
+    if (table->dtoh_pending.compare_exchange_weak(pending, remaining,
+                                                  std::memory_order_relaxed)) {
+      return;
+    }
+  }
 }
 
 static lupine_event_table &lupine_event_table_instance() {
@@ -140,10 +142,6 @@ void lupine_note_async_dtoh_copy() {
   lupine_event_note_async_dtoh(&lupine_event_table_instance());
 }
 
-uint64_t lupine_async_dtoh_issued_count() {
-  return lupine_event_dtoh_issued(&lupine_event_table_instance());
-}
-
-void lupine_note_async_dtoh_drained(uint64_t drained) {
-  lupine_event_note_dtoh_drained(&lupine_event_table_instance(), drained);
+void lupine_note_async_dtoh_drained(uint64_t count) {
+  lupine_event_note_dtoh_drained(&lupine_event_table_instance(), count);
 }

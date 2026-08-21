@@ -6930,7 +6930,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuEventRecord", (void *)cuEventRecord},
     {"cuEventRecordWithFlags", (void *)cuEventRecordWithFlags},
     {"cuEventSynchronize", (void *)cuEventSynchronize},
-    {"cuEventDestroy_v2", (void *)cuEventDestroy_v2},
     {"cuEventElapsedTime_v2", (void *)cuEventElapsedTime_v2},
     {"cuImportExternalMemory", (void *)cuImportExternalMemory},
     {"cuExternalMemoryGetMappedBuffer",
