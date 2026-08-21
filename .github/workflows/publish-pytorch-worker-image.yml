@@ -24,8 +24,6 @@ jobs:
       fail-fast: false
       matrix:
         cuda:
-          - version: 13.1.0
-            torch_index: cu130
           - version: 13.0.2
             torch_index: cu130
           - version: 12.9.1
