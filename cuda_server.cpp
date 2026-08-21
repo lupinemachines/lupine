@@ -986,7 +986,27 @@ static void lupine_note_event_record(conn_t *conn, CUevent event,
       [event, stream](lupine_pending_dtoh_streams &streams,
                       libcuckoo::UpsertContext) {
         lupine_remove_event_dtoh_markers(&streams, event);
-        streams[stream].push_back({event});
+        if (stream != nullptr) {
+          streams[stream].push_back({event});
+          return;
+        }
+
+        // The legacy default stream orders this event after every blocking
+        // stream's prior work. The null queue is its sentinel.
+        streams.try_emplace(nullptr);
+        for (auto &entry : streams) {
+          if (entry.first != nullptr) {
+            if (entry.first == CU_STREAM_PER_THREAD) {
+              continue;
+            }
+            unsigned int flags = 0;
+            if (cuStreamGetFlags(entry.first, &flags) != CUDA_SUCCESS ||
+                (flags & CU_STREAM_NON_BLOCKING) != 0) {
+              continue;
+            }
+          }
+          entry.second.push_back({event});
+        }
       },
       std::move(initial));
 }
@@ -1004,14 +1024,14 @@ lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
   std::vector<lupine_pending_dtoh_item> copies;
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
-        for (auto stream_it = streams.begin(); stream_it != streams.end();
-             ++stream_it) {
+        for (auto stream_it = streams.begin(); stream_it != streams.end();) {
           auto &items = stream_it->second;
           auto marker = std::find_if(
               items.begin(), items.end(), [event](const auto &item) {
                 return lupine_is_event_dtoh_marker(item, event);
               });
           if (marker == items.end()) {
+            ++stream_it;
             continue;
           }
           auto through_marker = std::next(marker);
@@ -1019,11 +1039,12 @@ lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
                                             &copies);
           items.erase(items.begin(), through_marker);
           if (items.empty()) {
-            streams.erase(stream_it);
+            stream_it = streams.erase(stream_it);
+          } else {
+            ++stream_it;
           }
-          return streams.empty();
         }
-        return false;
+        return streams.empty();
       });
   return copies;
 }
