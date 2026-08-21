@@ -375,10 +375,6 @@ int rpc_read_start(conn_t *conn, int write_id) {
     rpc_release_held_call_lock(conn);
     return -1;
   }
-  // Keep the request-to-stream association until this thread sends another
-  // request. A single RPC may return several response frames with the same
-  // request id (chunked DtoH does this once per transfer block), and each
-  // frame is entered through rpc_read_start after the previous rpc_read_end.
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, request_id};
   return 0;
