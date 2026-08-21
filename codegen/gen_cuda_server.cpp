@@ -19,6 +19,12 @@ extern "C" CUresult CUDAAPI cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
                                                CUdevice dstDevice,
                                                CUstream hStream);
 
+#ifdef cuMemAdvise
+#undef cuMemAdvise
+#endif
+extern "C" CUresult CUDAAPI cuMemAdvise(CUdeviceptr devPtr, size_t count,
+                                        CUmem_advise advice, CUdevice device);
+
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;
   int request_id;
@@ -3310,6 +3316,37 @@ int handle_cuMemPrefetchAsync_v2(conn_t *conn) {
     goto ERROR_0;
   lupine_intercept_result =
       cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12020
+int handle_cuMemAdvise_v2(conn_t *conn) {
+  CUdeviceptr devPtr;
+  size_t count;
+  CUmem_advise advice;
+  CUmemLocation location;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &advice, sizeof(CUmem_advise)) < 0 ||
+      rpc_read(conn, &location, sizeof(CUmemLocation)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuMemAdvise_v2(devPtr, count, advice, location);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
@@ -7889,6 +7926,34 @@ int handle_cuMemPrefetchAsync(conn_t *conn) {
     goto ERROR_0;
   lupine_intercept_result =
       cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemAdvise(conn_t *conn) {
+  CUdeviceptr devPtr;
+  size_t count;
+  CUmem_advise advice;
+  CUdevice device;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &advice, sizeof(CUmem_advise)) < 0 ||
+      rpc_read(conn, &device, sizeof(CUdevice)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuMemAdvise(devPtr, count, advice, device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||

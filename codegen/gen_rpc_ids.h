@@ -170,6 +170,7 @@
 #define RPC_cuMemPoolExportPointer 858999363
 #define RPC_cuMemPoolImportPointer 1026713940
 #define RPC_cuMemPrefetchAsync_v2 199313298
+#define RPC_cuMemAdvise_v2 1952016083
 #define RPC_cuMemRangeGetAttributes 694140572
 #define RPC_cuPointerSetAttribute 749063765
 #define RPC_cuPointerGetAttributes 1948058610
@@ -371,7 +372,7 @@
 #define RPC_cuGraphNodeGetDependencies_v2 773232156
 #define RPC_cuGraphNodeGetDependentNodes_v2 310507977
 #define RPC_cuGraphRemoveDependencies_v2 1606074400
-#define RPC_cuMemAdvise_v2 1952016083
+#define RPC_cuMemAdvise 2001260778
 #define RPC_cuMemGetHandleForAddressRange 835443611
 #define RPC_cuMemHostRegister_v2 590145791
 #define RPC_cuMemHostUnregister 983276883

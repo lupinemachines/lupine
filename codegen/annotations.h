@@ -2762,8 +2762,9 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       size_t ByteCount);
 /**
  * @disabled server - manual server pipelines large host-to-device copies
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param ByteCount SEND_ONLY
  * @param srcHost SEND_ONLY LENGTH:ByteCount COMPRESSIBLE
  * @server CUDA
@@ -2781,10 +2782,11 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
 CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
 /**
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @crossservercopy dstDevice srcDevice ByteCount
- * @param dstDevice SEND_ONLY
- * @param srcDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
+ * @param srcDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param ByteCount SEND_ONLY
  */
 CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
@@ -2905,8 +2907,8 @@ CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
  * @async
  * @routingkey DEVICEPTR dstDevice
  * @crossservercopy dstDevice srcDevice ByteCount STREAM:hStream ASYNC
- * @param dstDevice SEND_ONLY
- * @param srcDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
+ * @param srcDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param ByteCount SEND_ONLY
  * @param hStream SEND_ONLY
  */
@@ -2952,29 +2954,33 @@ CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy, CUstream hStream);
  */
 CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
 /**
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param uc SEND_ONLY
  * @param N SEND_ONLY
  */
 CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N);
 /**
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param us SEND_ONLY
  * @param N SEND_ONLY
  */
 CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N);
 /**
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param ui SEND_ONLY
  * @param N SEND_ONLY
  */
 CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N);
 /**
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param dstPitch SEND_ONLY
  * @param uc SEND_ONLY
  * @param Width SEND_ONLY
@@ -2983,8 +2989,9 @@ CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N);
 CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
                          unsigned char uc, size_t Width, size_t Height);
 /**
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param dstPitch SEND_ONLY
  * @param us SEND_ONLY
  * @param Width SEND_ONLY
@@ -2993,8 +3000,9 @@ CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
 CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
                           unsigned short us, size_t Width, size_t Height);
 /**
+ * @synchronize
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param dstPitch SEND_ONLY
  * @param ui SEND_ONLY
  * @param Width SEND_ONLY
@@ -3005,7 +3013,7 @@ CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
 /**
  * @async
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param uc SEND_ONLY
  * @param N SEND_ONLY
  * @param hStream SEND_ONLY
@@ -3015,7 +3023,7 @@ CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
 /**
  * @async
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param us SEND_ONLY
  * @param N SEND_ONLY
  * @param hStream SEND_ONLY
@@ -3025,7 +3033,7 @@ CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
 /**
  * @async
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param ui SEND_ONLY
  * @param N SEND_ONLY
  * @param hStream SEND_ONLY
@@ -3035,7 +3043,7 @@ CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
 /**
  * @async
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param dstPitch SEND_ONLY
  * @param uc SEND_ONLY
  * @param Width SEND_ONLY
@@ -3048,7 +3056,7 @@ CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
 /**
  * @async
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param dstPitch SEND_ONLY
  * @param us SEND_ONLY
  * @param Width SEND_ONLY
@@ -3061,7 +3069,7 @@ CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
 /**
  * @async
  * @routingkey DEVICEPTR dstDevice
- * @param dstDevice SEND_ONLY
+ * @param dstDevice SEND_ONLY TRANSLATE_DEVICEPTR
  * @param dstPitch SEND_ONLY
  * @param ui SEND_ONLY
  * @param Width SEND_ONLY
@@ -3395,7 +3403,11 @@ CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
 CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                CUmemLocation location, unsigned int flags,
                                CUstream hStream);
+#ifdef cuMemAdvise
+#undef cuMemAdvise
+#endif
 /**
+ * @disabled client - manual client handles managed-pointer and target routing
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
@@ -3403,6 +3415,16 @@ CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
  */
 CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
                      CUdevice device);
+/**
+ * @guard CUDA_VERSION >= 12020
+ * @disabled client - manual client handles managed-pointer and target routing
+ * @param devPtr SEND_ONLY
+ * @param count SEND_ONLY
+ * @param advice SEND_ONLY
+ * @param location SEND_ONLY
+ */
+CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
+                        CUmemLocation location);
 /**
  * @param data SEND_RECV
  * @param dataSize SEND_ONLY
