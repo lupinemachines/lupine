@@ -683,6 +683,27 @@ static bool lupine_is_event_dtoh_marker(const lupine_pending_dtoh_item &item,
   return item.event != nullptr && item.event == event;
 }
 
+static bool lupine_is_legacy_default_stream(CUstream stream) {
+  return stream == nullptr || stream == CU_STREAM_LEGACY;
+}
+
+static CUstream lupine_canonical_dtoh_stream(CUstream stream) {
+  return lupine_is_legacy_default_stream(stream) ? nullptr : stream;
+}
+
+static bool lupine_stream_orders_with_legacy_default(CUstream stream) {
+  stream = lupine_canonical_dtoh_stream(stream);
+  if (stream == nullptr) {
+    return true;
+  }
+  if (stream == CU_STREAM_PER_THREAD) {
+    return false;
+  }
+  unsigned int flags = CU_STREAM_NON_BLOCKING;
+  return cuStreamGetFlags(stream, &flags) == CUDA_SUCCESS &&
+         (flags & CU_STREAM_NON_BLOCKING) == 0;
+}
+
 static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies() {
   static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams>
@@ -979,14 +1000,33 @@ lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
 
 static void lupine_note_event_record(conn_t *conn, CUevent event,
                                      CUstream stream) {
+  bool legacy_default = lupine_is_legacy_default_stream(stream);
+  stream = lupine_canonical_dtoh_stream(stream);
   lupine_pending_dtoh_streams initial;
   initial[stream].push_back({event});
   lupine_pending_dtoh_copies().upsert(
       conn,
-      [event, stream](lupine_pending_dtoh_streams &streams,
-                      libcuckoo::UpsertContext) {
+      [event, stream, legacy_default](lupine_pending_dtoh_streams &streams,
+                                      libcuckoo::UpsertContext) {
         lupine_remove_event_dtoh_markers(&streams, event);
-        streams[stream].push_back({event});
+        if (!legacy_default) {
+          streams[stream].push_back({event});
+          return;
+        }
+
+        // An operation in the legacy default stream waits for all previously
+        // submitted work in blocking streams. Mark every such DtoH queue so
+        // synchronizing this event returns all copies the event completed.
+        // Non-blocking and per-thread streams do not participate in the
+        // implicit dependency and must remain pending.
+        for (auto &entry : streams) {
+          if (lupine_stream_orders_with_legacy_default(entry.first)) {
+            entry.second.push_back({event});
+          }
+        }
+        if (streams.find(nullptr) == streams.end()) {
+          streams[nullptr].push_back({event});
+        }
       },
       std::move(initial));
 }
@@ -1004,14 +1044,14 @@ lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
   std::vector<lupine_pending_dtoh_item> copies;
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
-        for (auto stream_it = streams.begin(); stream_it != streams.end();
-             ++stream_it) {
+        for (auto stream_it = streams.begin(); stream_it != streams.end();) {
           auto &items = stream_it->second;
           auto marker = std::find_if(
               items.begin(), items.end(), [event](const auto &item) {
                 return lupine_is_event_dtoh_marker(item, event);
               });
           if (marker == items.end()) {
+            ++stream_it;
             continue;
           }
           auto through_marker = std::next(marker);
@@ -1019,11 +1059,12 @@ lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
                                             &copies);
           items.erase(items.begin(), through_marker);
           if (items.empty()) {
-            streams.erase(stream_it);
+            stream_it = streams.erase(stream_it);
+          } else {
+            ++stream_it;
           }
-          return streams.empty();
         }
-        return false;
+        return streams.empty();
       });
   return copies;
 }
@@ -4205,6 +4246,8 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   if (rpc_read_end(conn) < 0) {
     return -1;
   }
+
+  stream = lupine_canonical_dtoh_stream(stream);
 
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (stream != nullptr) {
