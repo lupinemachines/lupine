@@ -174,6 +174,51 @@ int main() {
   }
   expect(ok == 1, "htod from stale mirror carries device bytes");
 
+  // RPC responses can land in a permanently writable alias of a protected
+  // mapped allocation. The application view must see those bytes, and the
+  // next device use must flush them back to the remote allocation.
+  const unsigned char kDtoH = 0x88;
+  write_bytes<<<(unsigned)(kPage / 256), 256>>>(scratch, kDtoH, kPage);
+  if (fatal(cudaDeviceSynchronize(), "dtoh source sync")) {
+    return 2;
+  }
+  unsigned char *dtoh_host = nullptr;
+  unsigned char *dtoh_device = nullptr;
+  if (fatal(cudaHostAlloc((void **)&dtoh_host, kPage, cudaHostAllocMapped),
+            "dtoh mapped alloc") ||
+      fatal(cudaHostGetDevicePointer((void **)&dtoh_device, dtoh_host, 0),
+            "dtoh mapped device pointer") ||
+      fatal(cudaMemcpy(dtoh_host, scratch, kPage, cudaMemcpyDeviceToHost),
+            "dtoh into mapped host")) {
+    return 2;
+  }
+  expect(dtoh_host[0] == kDtoH && dtoh_host[kPage - 1] == kDtoH,
+         "dtoh alias updates mapped host view");
+  ok = check_device_bytes(dtoh_device, kDtoH, dev_ok,
+                          "dtoh mapped device check");
+  if (ok < 0) {
+    return 2;
+  }
+  expect(ok == 1, "dtoh into mapped host is flushed to device");
+
+  unsigned char *dtoh_managed = nullptr;
+  if (fatal(cudaMallocManaged((void **)&dtoh_managed, kPage),
+            "dtoh managed alloc") ||
+      fatal(cudaMemcpy(dtoh_managed, scratch, kPage, cudaMemcpyDeviceToHost),
+            "dtoh into managed")) {
+    return 2;
+  }
+  expect(dtoh_managed[0] == kDtoH && dtoh_managed[kPage - 1] == kDtoH,
+         "dtoh alias updates managed host view");
+  ok = check_device_bytes(dtoh_managed, kDtoH, dev_ok,
+                          "dtoh managed device check");
+  if (ok < 0) {
+    return 2;
+  }
+  expect(ok == 1, "dtoh into managed memory is flushed to device");
+  cudaFreeHost(dtoh_host);
+  cudaFree(dtoh_managed);
+
   // Scattered single-byte device writes read back in random order, then a
   // long sequential scan through the readahead escalation.
   const size_t kSpots[] = {0, (1u << 20) + 123, (32u << 20) + 4096,

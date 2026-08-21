@@ -1526,8 +1526,6 @@ def main():
             'extern "C" void lupine_forget_stream_owner(CUstream stream);\n\n'
             'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
-            'extern "C" void lupine_prepare_host_range_write(void *host, size_t size);\n'
-            'extern "C" void lupine_mark_host_range_clean(void *host, size_t size);\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
             'extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr, CUdeviceptr *translated);\n'
             'extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,\n'
@@ -1545,7 +1543,7 @@ def main():
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
-            'extern "C" void lupine_ensure_mapped_host_readable(const void *host, size_t size);\n\n'
+            'extern "C" const void *lupine_mapped_host_read_source(const void *host, size_t size);\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1578,19 +1576,17 @@ def main():
 
             for translation in metadata.translate_deviceptrs:
                 name = translation.parameter.name
-                f.write("    CUdeviceptr {name}_rpc = {name};\n".format(name=name))
+                f.write(f"    CUdeviceptr {name}_rpc = {name};\n")
                 f.write(
-                    "    bool {name}_is_managed_host = "
-                    "lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n".format(
-                        name=name
-                    )
+                    f"    bool {name}_is_managed_host = "
+                    f"lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n"
                 )
             if metadata.translate_deviceptrs:
                 translated_condition = " || ".join(
-                    "{name}_is_managed_host".format(name=item.parameter.name)
+                    f"{item.parameter.name}_is_managed_host"
                     for item in metadata.translate_deviceptrs
                 )
-                f.write("    if ({condition}) {{\n".format(condition=translated_condition))
+                f.write(f"    if ({translated_condition}) {{\n")
                 f.write(
                     "        CUresult managed_result = "
                     "lupine_flush_dirty_host_pages_to_server();\n"
@@ -1797,10 +1793,6 @@ def main():
                 f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
 
             for operation in operations:
-                if isinstance(operation, ArrayOperation):
-                    operation.client_prepare_rpc_read(f)
-
-            for operation in operations:
                 operation.client_rpc_read(f)
 
             f.write(
@@ -1816,10 +1808,6 @@ def main():
             )
 
             write_client_post_call(f, function, metadata)
-            for operation in operations:
-                if isinstance(operation, ArrayOperation):
-                    operation.client_post_rpc_read_success(f)
-
             f.write("    return return_value;\n")
             if metadata.routing_kind == "ALL":
                 f.write("        });\n")

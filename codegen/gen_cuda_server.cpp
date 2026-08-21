@@ -1551,28 +1551,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuMemFree_v2(conn_t *conn) {
-  CUdeviceptr dptr;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuMemFree_v2(dptr);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuMemGetAddressRange_v2(conn_t *conn) {
   CUdeviceptr pbase;
   size_t psize;
@@ -1626,28 +1604,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuMemFreeHost(conn_t *conn) {
-  void *p;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &p, sizeof(void *)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuMemFreeHost(p);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuMemHostGetDevicePointer_v2(conn_t *conn) {
   CUdeviceptr pdptr;
   void *p;
@@ -1666,33 +1622,6 @@ int handle_cuMemHostGetDevicePointer_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pdptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuMemAllocManaged(conn_t *conn) {
-  CUdeviceptr dptr;
-  size_t bytesize;
-  unsigned int flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &bytesize, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuMemAllocManaged(&dptr, bytesize, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

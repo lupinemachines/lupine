@@ -118,11 +118,6 @@ int rpc_read_payload_part(conn_t *conn, int framed, void *data, size_t size) {
   return static_cast<int>(size);
 }
 
-int rpc_read_payload(conn_t *conn, void *data, size_t size) {
-  return rpc_read_payload_part(conn, lupine_payload_framed(conn, size), data,
-                               size);
-}
-
 // rpc_drain_payload discards `size` uncompressed payload bytes, honoring the
 // payload framing. Like rpc_read_payload_part, drains must start at a block
 // boundary of the payload.

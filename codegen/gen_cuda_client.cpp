@@ -62,8 +62,6 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
                                                   const char *name,
                                                   lupine_route route);
 
-extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
-extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
 extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
                                               CUdeviceptr second);
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
@@ -85,8 +83,8 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
-extern "C" void lupine_ensure_mapped_host_readable(const void *host,
-                                                   size_t size);
+extern "C" const void *lupine_mapped_host_read_source(const void *host,
+                                                      size_t size);
 
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
@@ -131,13 +129,11 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
   if (rpc_write_start_request(conn, RPC_cuDeviceGetLuid) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(luid, 8 * sizeof(char)), false) ||
       (8 != 0 && rpc_read(conn, luid, 8) < 0) ||
       rpc_read(conn, deviceNodeMask, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  lupine_mark_host_range_clean(luid, 8 * sizeof(char));
   return return_value;
 }
 
@@ -1221,13 +1217,11 @@ CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
       rpc_write(conn, &len, sizeof(int)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_prepare_host_range_write(pciBusId, len * sizeof(char)), false) ||
       (len * sizeof(char) != 0 &&
        rpc_read(conn, pciBusId, len * sizeof(char)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  lupine_mark_host_range_clean(pciBusId, len * sizeof(char));
   return return_value;
 }
 
@@ -1375,7 +1369,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   conn_t *conn = lupine_route_remote_conn(route);
   if (ByteCount != 0 && srcHost == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  lupine_ensure_mapped_host_readable(srcHost, ByteCount);
+  srcHost = lupine_mapped_host_read_source(srcHost, ByteCount);
   if (rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
@@ -6872,12 +6866,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemGetInfo_v2", (void *)cuMemGetInfo_v2},
     {"cuMemAlloc_v2", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch_v2", (void *)cuMemAllocPitch_v2},
-    {"cuMemFree_v2", (void *)cuMemFree_v2},
     {"cuMemGetAddressRange_v2", (void *)cuMemGetAddressRange_v2},
     {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
-    {"cuMemFreeHost", (void *)cuMemFreeHost},
     {"cuMemHostGetDevicePointer_v2", (void *)cuMemHostGetDevicePointer_v2},
-    {"cuMemAllocManaged", (void *)cuMemAllocManaged},
     {"cuDeviceGetByPCIBusId", (void *)cuDeviceGetByPCIBusId},
     {"cuDeviceGetPCIBusId", (void *)cuDeviceGetPCIBusId},
     {"cuIpcGetEventHandle", (void *)cuIpcGetEventHandle},

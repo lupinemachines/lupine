@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
 #ifndef _WIN32
+#include <fcntl.h>
 #include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -21,6 +24,7 @@
 
 #include <cuda.h>
 
+#include "address_space.h"
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
 #include "lupine_attr_sizes.h"
@@ -64,13 +68,16 @@ struct lupine_host_allocation {
   unsigned int flags = 0;
   bool owned = false;
   bool owned_mmap = false;
+  void *io_alias = nullptr;
   bool managed = false;
   bool local_cuda = false;
   bool client_to_server_only = false;
   CUdeviceptr server_host_ptr = 0;
   CUdeviceptr device_ptr = 0;
-  bool device_dirty = false;
   bool tracking_enabled = false;
+  // Set once the server-side device mapping can be accessed directly.
+  bool device_mapping_used = false;
+  volatile sig_atomic_t eager_flush_pending = 0;
   int fault_slot = -1;
   // 0 fresh, 1 invalidated (PROT_NONE), 2 fetching (handler-only 1->2),
   // 3 invalidating (normal-context only).
@@ -79,16 +86,11 @@ struct lupine_host_allocation {
   conn_t *stale_fetch_conn = nullptr;
   // Fetch owner; its own nested faults unprotect instead of self-waiting.
   volatile pid_t stale_fetch_tid = 0;
-  // Payload writes bracketed by prepare/mark; invalidation waits for zero,
-  // since faulting a conn-holding writer would deadlock the recovery fetch.
-  volatile sig_atomic_t io_pins = 0;
   // Per-chunk fetched flags; owner (state 2) sets, invalidator (3) clears.
   unsigned char *fresh_chunks = nullptr;
   size_t fresh_chunk_count = 0;
   size_t fetch_seq_next = 0;
   size_t fetch_readahead = 0;
-  // Protections deferred to the last unpinner.
-  volatile sig_atomic_t restore_pending = 0;
   volatile sig_atomic_t full_dirty = 0;
   volatile sig_atomic_t retiring = 0;
   uint32_t pending_dirty_ranges = 0;
@@ -101,8 +103,8 @@ struct lupine_mapped_host_snapshot {
   void *host = nullptr;
   size_t size = 0;
   CUdeviceptr device_ptr = 0;
-  bool device_dirty = false;
   bool managed = false;
+  bool device_mapping_used = false;
 };
 
 using lupine_host_allocation_map =
@@ -171,6 +173,182 @@ static size_t lupine_page_size() {
   return page_size > 0 ? static_cast<size_t>(page_size) : 4096;
 }
 
+#ifndef _WIN32
+static int lupine_create_shared_memory_fd() {
+#if !defined(__APPLE__) && defined(SYS_memfd_create)
+  constexpr unsigned int kMemfdCloseOnExec = 0x0001U;
+  int fd = static_cast<int>(
+      syscall(SYS_memfd_create, "lupine-host-mirror", kMemfdCloseOnExec));
+  if (fd >= 0) {
+    return fd;
+  }
+#endif
+
+  static std::atomic<unsigned long long> next_name{0};
+  for (int attempt = 0; attempt < 16; ++attempt) {
+    char name[64];
+    snprintf(name, sizeof(name), "/lupine-%ld-%llu",
+             static_cast<long>(getpid()),
+             next_name.fetch_add(1, std::memory_order_relaxed));
+    int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+    if (fd >= 0) {
+      shm_unlink(name);
+      return fd;
+    }
+  }
+  return -1;
+}
+#endif
+
+static bool lupine_server_range(const conn_t *conn, uintptr_t server,
+                                size_t size) {
+  if (conn != nullptr && conn->va_size != 0) {
+    return lupine_va_contains(conn, server, size);
+  }
+  if (server < LUPINE_MIRROR_SERVER_BASE || size > LUPINE_MIRROR_WINDOW_SIZE ||
+      server - LUPINE_MIRROR_SERVER_BASE > LUPINE_MIRROR_WINDOW_SIZE - size) {
+    return false;
+  }
+  return true;
+}
+
+#ifndef _WIN32
+static bool lupine_reserve_mirror_window(uintptr_t base) {
+  int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#ifdef MAP_NORESERVE
+  flags |= MAP_NORESERVE;
+#endif
+#ifdef MAP_FIXED_NOREPLACE
+  flags |= MAP_FIXED_NOREPLACE;
+#endif
+  void *mapping = mmap(reinterpret_cast<void *>(base),
+                       LUPINE_MIRROR_WINDOW_SIZE, PROT_NONE, flags, -1, 0);
+  if (mapping == MAP_FAILED) {
+    return false;
+  }
+  if (mapping != reinterpret_cast<void *>(base)) {
+    munmap(mapping, LUPINE_MIRROR_WINDOW_SIZE);
+    return false;
+  }
+  return true;
+}
+
+static bool lupine_reserve_mirror_windows() {
+  static std::once_flag once;
+  static bool reserved = false;
+  std::call_once(once, [] {
+    uintptr_t read_base = LUPINE_MIRROR_SERVER_BASE + LUPINE_MIRROR_R_OFFSET;
+    uintptr_t write_base = LUPINE_MIRROR_SERVER_BASE + LUPINE_MIRROR_W_OFFSET;
+    if (!lupine_reserve_mirror_window(read_base)) {
+      return;
+    }
+    if (!lupine_reserve_mirror_window(write_base)) {
+      munmap(reinterpret_cast<void *>(read_base), LUPINE_MIRROR_WINDOW_SIZE);
+      return;
+    }
+    reserved = true;
+  });
+  return reserved;
+}
+
+static void lupine_restore_mirror_reservation(void *address, size_t size) {
+  int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+#ifdef MAP_NORESERVE
+  flags |= MAP_NORESERVE;
+#endif
+  mmap(address, size, PROT_NONE, flags, -1, 0);
+}
+#endif
+
+static bool lupine_create_shared_views(conn_t *conn, uintptr_t server,
+                                       size_t size, void **host_view,
+                                       void **io_alias) {
+  *host_view = nullptr;
+  *io_alias = nullptr;
+  if (!lupine_server_range(conn, server, size)) {
+    return false;
+  }
+  bool identity = conn != nullptr && conn->va_size != 0;
+  uintptr_t host_address = identity ? server : server + LUPINE_MIRROR_R_OFFSET;
+  uintptr_t alias_address =
+      identity ? server + conn->w_offset : server + LUPINE_MIRROR_W_OFFSET;
+#if defined(_WIN32)
+  ULARGE_INTEGER mapping_size = {};
+  mapping_size.QuadPart = size;
+  HANDLE mapping =
+      CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+                         mapping_size.HighPart, mapping_size.LowPart, nullptr);
+  if (mapping == nullptr) {
+    return false;
+  }
+  void *host = MapViewOfFileEx(mapping, FILE_MAP_WRITE, 0, 0, size,
+                               reinterpret_cast<void *>(host_address));
+  void *alias = host == nullptr
+                    ? nullptr
+                    : MapViewOfFileEx(mapping, FILE_MAP_WRITE, 0, 0, size,
+                                      reinterpret_cast<void *>(alias_address));
+  CloseHandle(mapping);
+  if (host == nullptr || alias == nullptr) {
+    if (host != nullptr) {
+      UnmapViewOfFile(host);
+    }
+    if (alias != nullptr) {
+      UnmapViewOfFile(alias);
+    }
+    return false;
+  }
+#else
+  if (!identity && !lupine_reserve_mirror_windows()) {
+    return false;
+  }
+  int fd = lupine_create_shared_memory_fd();
+  if (fd < 0 || ftruncate(fd, static_cast<off_t>(size)) != 0) {
+    if (fd >= 0) {
+      close(fd);
+    }
+    return false;
+  }
+  void *host = mmap(reinterpret_cast<void *>(host_address), size,
+                    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0);
+  void *alias =
+      host == MAP_FAILED
+          ? MAP_FAILED
+          : mmap(reinterpret_cast<void *>(alias_address), size,
+                 PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0);
+  close(fd);
+  if (host == MAP_FAILED || alias == MAP_FAILED) {
+    if (host != MAP_FAILED) {
+      lupine_restore_mirror_reservation(host, size);
+    }
+    if (alias != MAP_FAILED) {
+      lupine_restore_mirror_reservation(alias, size);
+    }
+    return false;
+  }
+#endif
+  *host_view = host;
+  *io_alias = alias;
+  return true;
+}
+
+static void lupine_release_shared_views(void *host, void *alias, size_t size) {
+#if defined(_WIN32)
+  if (host != nullptr) {
+    UnmapViewOfFile(host);
+  }
+  if (alias != nullptr) {
+    UnmapViewOfFile(alias);
+  }
+#else
+  if (host != nullptr) {
+    lupine_restore_mirror_reservation(host, size);
+  }
+  if (alias != nullptr) {
+    lupine_restore_mirror_reservation(alias, size);
+  }
+#endif
+}
+
 static pid_t lupine_gettid() {
 #if defined(_WIN32)
   return static_cast<pid_t>(lupine_thread_id());
@@ -208,7 +386,6 @@ static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
                                     size_t *out_end);
 static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
                                        size_t span_start, size_t span_end);
-static void lupine_apply_fresh_protections(lupine_host_allocation *allocation);
 static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
                                            size_t start_offset,
                                            size_t end_offset);
@@ -226,6 +403,28 @@ lupine_reserve_dirty_host_range(lupine_dirty_host_range_queue &queue,
   }
   *slot = next;
   return true;
+}
+
+static void lupine_queue_dirty_host_range(lupine_host_allocation *allocation,
+                                          uintptr_t start, uintptr_t end) {
+  int route_id = allocation->route_id;
+  if (start >= end || route_id < 0 ||
+      route_id >= static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
+    return;
+  }
+
+  auto &queue = lupine_dirty_host_range_queues[route_id];
+  uint32_t slot = 0;
+  __atomic_add_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
+  if (lupine_reserve_dirty_host_range(queue, &slot)) {
+    queue.ranges[slot] = {allocation, start, end};
+    __atomic_store_n(&queue.ready[slot], 1, __ATOMIC_RELEASE);
+    return;
+  }
+
+  __atomic_sub_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_RELEASE);
+  __atomic_store_n(&allocation->full_dirty, 1, __ATOMIC_RELEASE);
+  __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
 }
 
 static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
@@ -255,7 +454,6 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
       return;
     }
 
-    auto &queue = lupine_dirty_host_range_queues[route_id];
     uintptr_t page = entry.base + page_index * page_size;
     if (__atomic_load_n(&allocation->retiring, __ATOMIC_ACQUIRE) != 0) {
       mprotect(reinterpret_cast<void *>(page), page_size,
@@ -316,20 +514,9 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
       return;
     }
 
-    uint32_t slot = 0;
-    __atomic_add_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
-    if (lupine_reserve_dirty_host_range(queue, &slot)) {
-      queue.ranges[slot] = {allocation, page, page + page_size};
-      __atomic_store_n(&queue.ready[slot], 1, __ATOMIC_RELEASE);
-    } else {
-      __atomic_sub_fetch(&allocation->pending_dirty_ranges, 1,
-                         __ATOMIC_RELEASE);
-      __atomic_store_n(&allocation->full_dirty, 1, __ATOMIC_RELEASE);
-      __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
-    }
+    lupine_queue_dirty_host_range(allocation, page, page + page_size);
 
-    mprotect(reinterpret_cast<void *>(page), page_size,
-             PROT_READ | PROT_WRITE);
+    mprotect(reinterpret_cast<void *>(page), page_size, PROT_READ | PROT_WRITE);
     __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
     return;
   }
@@ -393,8 +580,7 @@ static int lupine_add_fault_entry(void *base, size_t size,
       continue;
     }
     lupine_fault_entries[index].base = reinterpret_cast<uintptr_t>(base);
-    lupine_fault_entries[index].end =
-        reinterpret_cast<uintptr_t>(base) + size;
+    lupine_fault_entries[index].end = reinterpret_cast<uintptr_t>(base) + size;
     __atomic_store_n(&lupine_fault_entries[index].allocation, allocation,
                      __ATOMIC_RELEASE);
     if (index >= high_water) {
@@ -504,105 +690,96 @@ static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
   std::vector<lupine_mapped_host_snapshot> snapshots;
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   for (const auto &entry : lupine_mutable_host_allocations_locked()) {
-    if (entry.second.device_ptr != 0 && !entry.second.local_cuda) {
+    if (entry.second.device_ptr != 0 && !entry.second.local_cuda &&
+        !entry.second.client_to_server_only) {
       snapshots.push_back({entry.first, entry.second.size,
-                           entry.second.device_ptr, entry.second.device_dirty,
-                           entry.second.managed});
+                           entry.second.device_ptr, entry.second.managed,
+                           entry.second.device_mapping_used});
     }
   }
   return snapshots;
 }
 
-extern "C" void lupine_mark_host_range_clean(void *host, size_t size) {
-  if (host == nullptr || size == 0) {
-    return;
-  }
-
+static void lupine_mark_device_mapping_used(void *host, bool managed) {
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-  auto it = lupine_find_host_allocation_locked(host);
-  if (it == lupine_mutable_host_allocations_locked().end() ||
-      !it->second.tracking_enabled) {
-    return;
-  }
-
-  auto &allocation = it->second;
-  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
-  uintptr_t start = reinterpret_cast<uintptr_t>(host);
-  uintptr_t end = std::min(start + size, base + allocation.size);
-  if (start >= end) {
-    return;
-  }
-  sig_atomic_t remaining_pins = 0;
-  if (__atomic_load_n(&allocation.io_pins, __ATOMIC_ACQUIRE) > 0) {
-    remaining_pins =
-        __atomic_sub_fetch(&allocation.io_pins, 1, __ATOMIC_ACQ_REL);
-  }
-  sig_atomic_t state =
-      __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
-  if (state == 2) {
-    // The fetch owns the protections; re-protecting now would fault it.
-    return;
-  }
-  if (remaining_pins == 0 &&
-      __atomic_load_n(&allocation.restore_pending, __ATOMIC_ACQUIRE) != 0 &&
-      state != 3) {
-    __atomic_store_n(&allocation.restore_pending, 0, __ATOMIC_RELEASE);
-    lupine_apply_fresh_protections(&allocation);
-    return;
-  }
-  if (state == 1 &&
-      __atomic_load_n(&allocation.restore_pending, __ATOMIC_ACQUIRE) != 0) {
-    return;
-  }
-  if (state == 1 && allocation.fresh_chunks != nullptr) {
-    // Mark covered chunks fresh so a readahead fetch cannot clobber them.
-    size_t chunk_bytes = LUPINE_DEMAND_FETCH_CHUNK_BYTES;
-    size_t first_chunk =
-        (lupine_round_up(start - base, chunk_bytes)) / chunk_bytes;
-    size_t last_chunk = (end - base) / chunk_bytes;
-    for (size_t index = first_chunk;
-         index < last_chunk && index < allocation.fresh_chunk_count; ++index) {
-      __atomic_store_n(&allocation.fresh_chunks[index], 1, __ATOMIC_RELEASE);
+  auto it = lupine_mutable_host_allocations_locked().find(host);
+  if (it != lupine_mutable_host_allocations_locked().end()) {
+    it->second.device_mapping_used = true;
+    if (!it->second.tracking_enabled) {
+      __atomic_store_n(&it->second.eager_flush_pending, 1, __ATOMIC_RELEASE);
     }
   }
-
-  size_t first_page = (start - base) / allocation.page_size;
-  size_t last_page = (end - 1 - base) / allocation.page_size;
-  uintptr_t protect_start = base + first_page * allocation.page_size;
-  size_t protect_size = (last_page - first_page + 1) * allocation.page_size;
-  lupine_protect_host_range(reinterpret_cast<void *>(protect_start),
-                            protect_size, PROT_READ);
+  if (managed) {
+    for (auto &entry : lupine_mutable_host_allocations_locked()) {
+      if (entry.second.managed) {
+        entry.second.device_mapping_used = true;
+      }
+    }
+  }
 }
 
-extern "C" void lupine_prepare_host_range_write(void *host, size_t size) {
-  if (host == nullptr || size == 0) {
-    return;
+static CUresult lupine_collect_rpc_mirror_writes(conn_t *conn) {
+  std::vector<rpc_mirror_write> writes;
+  if (pthread_mutex_lock(&conn->write_mutex) != 0) {
+    return CUDA_ERROR_UNKNOWN;
+  }
+  writes.swap(conn->mirror_writes);
+  if (pthread_mutex_unlock(&conn->write_mutex) != 0) {
+    return CUDA_ERROR_UNKNOWN;
   }
 
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-  auto it = lupine_find_host_allocation_locked(host);
-  if (it == lupine_mutable_host_allocations_locked().end() ||
-      !it->second.tracking_enabled) {
-    return;
-  }
+  for (const auto &write : writes) {
+    auto it = lupine_find_host_allocation_locked(
+        reinterpret_cast<void *>(write.start));
+    if (it == lupine_mutable_host_allocations_locked().end() ||
+        !it->second.tracking_enabled) {
+      continue;
+    }
+    auto &allocation = it->second;
+    uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
+    size_t offset = write.start - base;
+    size_t bytes = std::min(write.size, allocation.size - offset);
+    if (bytes == 0) {
+      continue;
+    }
+    uintptr_t end = write.start + bytes;
+    lupine_queue_dirty_host_range(&allocation, write.start, end);
 
-  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
-  uintptr_t start = reinterpret_cast<uintptr_t>(host);
-  uintptr_t end = std::min(start + size, base + it->second.size);
-  if (start >= end) {
-    return;
+    if (__atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE) != 1) {
+      continue;
+    }
+    if (allocation.fresh_chunks != nullptr) {
+      size_t chunk_bytes = LUPINE_DEMAND_FETCH_CHUNK_BYTES;
+      size_t first_chunk = lupine_round_up(offset, chunk_bytes) / chunk_bytes;
+      size_t last_chunk = (end - base) / chunk_bytes;
+      for (size_t index = first_chunk;
+           index < last_chunk && index < allocation.fresh_chunk_count;
+           ++index) {
+        __atomic_store_n(&allocation.fresh_chunks[index], 1, __ATOMIC_RELEASE);
+      }
+    }
+    size_t first_page = offset / allocation.page_size;
+    size_t last_page = (end - 1 - base) / allocation.page_size;
+    uintptr_t protect_start = base + first_page * allocation.page_size;
+    size_t protect_size = (last_page - first_page + 1) * allocation.page_size;
+    lupine_protect_host_range(reinterpret_cast<void *>(protect_start),
+                              protect_size, PROT_READ);
   }
-  __atomic_add_fetch(&it->second.io_pins, 1, __ATOMIC_ACQ_REL);
-
-  size_t first_page = (start - base) / it->second.page_size;
-  size_t last_page = (end - 1 - base) / it->second.page_size;
-  uintptr_t protect_start = base + first_page * it->second.page_size;
-  size_t protect_size = (last_page - first_page + 1) * it->second.page_size;
-  lupine_protect_host_range(reinterpret_cast<void *>(protect_start),
-                            protect_size, PROT_READ | PROT_WRITE);
+  return CUDA_SUCCESS;
 }
 
 static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
+  conn_t *conn = lupine_route_remote_conn(
+      lupine_route_from_identity(static_cast<int>(route_id)));
+  if (conn == nullptr) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  CUresult collect_result = lupine_collect_rpc_mirror_writes(conn);
+  if (collect_result != CUDA_SUCCESS) {
+    return collect_result;
+  }
+
   auto &queue = lupine_dirty_host_range_queues[route_id];
   std::lock_guard<std::mutex> route_lock(queue.mutex);
 
@@ -614,9 +791,6 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
   }
   bool has_full_dirty =
       __atomic_load_n(&queue.full_dirty_pending, __ATOMIC_ACQUIRE) != 0;
-  if (end == queue.start && !has_full_dirty) {
-    return CUDA_SUCCESS;
-  }
 
   std::vector<lupine_dirty_host_range> ranges;
   ranges.reserve(end - queue.start);
@@ -653,6 +827,28 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     }
   }
 
+  // Caller-owned registrations remain writable because protecting arbitrary
+  // application pages can fault inside an RPC read. If their device mapping
+  // has actually been used, synchronize the whole allocation eagerly.
+  {
+    std::lock_guard<std::mutex> allocation_lock(lupine_host_allocation_mutex());
+    for (auto &entry : lupine_mutable_host_allocations_locked()) {
+      auto &allocation = entry.second;
+      if (allocation.tracking_enabled || !allocation.device_mapping_used ||
+          __atomic_load_n(&allocation.eager_flush_pending, __ATOMIC_ACQUIRE) ==
+              0 ||
+          allocation.server_host_ptr == 0 || allocation.local_cuda ||
+          allocation.route_id != static_cast<int>(route_id) ||
+          __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
+        continue;
+      }
+      __atomic_add_fetch(&allocation.pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
+      __atomic_store_n(&allocation.eager_flush_pending, 0, __ATOMIC_RELEASE);
+      ranges.push_back({&allocation, allocation.host_base,
+                        allocation.host_base + allocation.size});
+    }
+  }
+
   if (ranges.empty()) {
     return CUDA_SUCCESS;
   }
@@ -665,32 +861,34 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
 
   auto release_ranges = [&](bool restore) {
     for (const auto &range : ranges) {
-      if (restore &&
+      if (restore && range.allocation->tracking_enabled &&
           __atomic_load_n(&range.allocation->retiring, __ATOMIC_ACQUIRE) == 0) {
         __atomic_store_n(&range.allocation->full_dirty, 1, __ATOMIC_RELEASE);
         __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
+      } else if (restore) {
+        __atomic_store_n(&range.allocation->eager_flush_pending, 1,
+                         __ATOMIC_RELEASE);
       }
       __atomic_sub_fetch(&range.allocation->pending_dirty_ranges, 1,
                          __ATOMIC_RELEASE);
     }
   };
 
-  std::sort(ranges.begin(), ranges.end(),
-            [](const lupine_dirty_host_range &a,
-               const lupine_dirty_host_range &b) {
-              if (a.allocation != b.allocation) {
-                return a.allocation->host_base < b.allocation->host_base;
-              }
-              if (a.start != b.start) {
-                return a.start < b.start;
-              }
-              return a.end < b.end;
-            });
+  std::sort(
+      ranges.begin(), ranges.end(),
+      [](const lupine_dirty_host_range &a, const lupine_dirty_host_range &b) {
+        if (a.allocation != b.allocation) {
+          return a.allocation->host_base < b.allocation->host_base;
+        }
+        if (a.start != b.start) {
+          return a.start < b.start;
+        }
+        return a.end < b.end;
+      });
   std::vector<lupine_dirty_host_range> merged;
   merged.reserve(ranges.size());
   for (const auto &range : ranges) {
-    if (merged.empty() ||
-        merged.back().allocation != range.allocation ||
+    if (merged.empty() || merged.back().allocation != range.allocation ||
         merged.back().end < range.start) {
       merged.push_back(range);
     } else {
@@ -699,21 +897,15 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
   }
 
   for (const auto &range : merged) {
-    if (!lupine_protect_host_range(reinterpret_cast<void *>(range.start),
+    if (range.allocation->tracking_enabled &&
+        !lupine_protect_host_range(reinterpret_cast<void *>(range.start),
                                    range.end - range.start, PROT_READ)) {
       release_ranges(true);
       return CUDA_ERROR_UNKNOWN;
     }
   }
 
-  conn_t *conn = lupine_route_remote_conn(
-      lupine_route_from_identity(static_cast<int>(route_id)));
-  if (conn == nullptr) {
-    release_ranges(true);
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  std::array<std::array<unsigned char,
-                        LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES>,
+  std::array<std::array<unsigned char, LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES>,
              LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES>
       headers;
   std::array<rpc_write_cursor, LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES * 2>
@@ -745,8 +937,11 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
     cursors[count * 2] = rpc_write_cursor::plain(
         headers[count].data(), LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES);
-    cursors[count * 2 + 1] =
-        rpc_write_cursor::plain(reinterpret_cast<void *>(range.start), bytes);
+    const void *source = reinterpret_cast<void *>(range.start);
+    if (allocation.io_alias != nullptr) {
+      source = static_cast<unsigned char *>(allocation.io_alias) + offset;
+    }
+    cursors[count * 2 + 1] = rpc_write_cursor::plain(source, bytes);
     ++count;
     if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
       CUresult result = send_batch(count);
@@ -777,8 +972,8 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server() {
   return CUDA_SUCCESS;
 }
 
-static CUresult lupine_drain_retiring_dirty_ranges(
-    lupine_host_allocation *allocation) {
+static CUresult
+lupine_drain_retiring_dirty_ranges(lupine_host_allocation *allocation) {
   if (allocation == nullptr || allocation->route_id < 0 ||
       allocation->route_id >=
           static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
@@ -789,8 +984,8 @@ static CUresult lupine_drain_retiring_dirty_ranges(
   if (result != CUDA_SUCCESS) {
     return result;
   }
-  while (__atomic_load_n(&allocation->pending_dirty_ranges,
-                         __ATOMIC_ACQUIRE) != 0) {
+  while (__atomic_load_n(&allocation->pending_dirty_ranges, __ATOMIC_ACQUIRE) !=
+         0) {
   }
   return CUDA_SUCCESS;
 }
@@ -831,11 +1026,9 @@ extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
   return true;
 }
 
-static bool
-lupine_translate_client_host_ptr_to_server(CUdeviceptr ptr,
-                                            CUdeviceptr *translated,
-                                            CUdeviceptr *server_base = nullptr,
-                                            CUdeviceptr *device_base = nullptr) {
+static bool lupine_translate_client_host_ptr_to_server(
+    CUdeviceptr ptr, CUdeviceptr *translated,
+    CUdeviceptr *server_base = nullptr, CUdeviceptr *device_base = nullptr) {
   void *host = reinterpret_cast<void *>(ptr);
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto it = lupine_find_host_allocation_locked(host);
@@ -878,15 +1071,6 @@ static bool lupine_managed_host_alias_base(CUdeviceptr ptr,
   return true;
 }
 
-static void lupine_mark_mapped_device_dirty(void *host) {
-  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-  auto it = lupine_find_host_allocation_locked(host);
-  if (it != lupine_mutable_host_allocations_locked().end() &&
-      !it->second.client_to_server_only) {
-    it->second.device_dirty = true;
-  }
-}
-
 static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
   if (ptr == 0) {
     return false;
@@ -895,8 +1079,8 @@ static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
   if (page_size <= 0) {
     return false;
   }
-  uintptr_t page = static_cast<uintptr_t>(ptr) &
-                   ~(static_cast<uintptr_t>(page_size) - 1);
+  uintptr_t page =
+      static_cast<uintptr_t>(ptr) & ~(static_cast<uintptr_t>(page_size) - 1);
 #if defined(__APPLE__)
   char residency = 0;
 #else
@@ -963,7 +1147,7 @@ extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
 #undef cuMemcpy_ptds
 #endif
 extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
-                                   size_t ByteCount) {
+                                  size_t ByteCount) {
   return cuMemcpy(dst, src, ByteCount);
 }
 
@@ -1012,6 +1196,7 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
       lupine_mapped_host_snapshots();
   bool used_managed = false;
   for (const auto &mapping : snapshots) {
+    bool mapping_used = false;
     for (uint32_t i = 0; i < count; ++i) {
       if (sizes[i] != sizeof(CUdeviceptr)) {
         continue;
@@ -1023,15 +1208,18 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
         translated_params[i] = translated;
         rpc_params[i].data =
             reinterpret_cast<const unsigned char *>(&translated_params[i]);
-        lupine_mark_mapped_device_dirty(mapping.host);
         used_managed = used_managed || mapping.managed;
+        mapping_used = true;
         break;
       }
       if (lupine_device_ptr_in_mapping(arg, mapping)) {
-        lupine_mark_mapped_device_dirty(mapping.host);
         used_managed = used_managed || mapping.managed;
+        mapping_used = true;
         break;
       }
+    }
+    if (mapping_used) {
+      lupine_mark_device_mapping_used(mapping.host, mapping.managed);
     }
   }
   if (used_managed_mapping != nullptr) {
@@ -1045,10 +1233,12 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
 static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
                                      size_t offset, size_t bytes) {
   conn_t *conn = allocation->stale_fetch_conn;
-  auto *dst = reinterpret_cast<unsigned char *>(allocation->host_base + offset);
+  auto *dst =
+      allocation->io_alias != nullptr
+          ? static_cast<unsigned char *>(allocation->io_alias) + offset
+          : reinterpret_cast<unsigned char *>(allocation->host_base + offset);
   CUdeviceptr src = allocation->device_ptr + offset;
-  if (allocation->host_base == 0 || bytes == 0 ||
-      allocation->device_ptr == 0) {
+  if (allocation->host_base == 0 || bytes == 0 || allocation->device_ptr == 0) {
     return bytes == 0;
   }
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
@@ -1086,35 +1276,7 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   return true;
 }
 
-// Apply the freshness map to protections. Only the fetch owner (state 2)
-// or a mutex holder with no fetch in flight may call this.
-static void lupine_apply_fresh_protections(lupine_host_allocation *allocation) {
-  if (allocation->fresh_chunks == nullptr || allocation->host_base == 0) {
-    return;
-  }
-  size_t chunk_bytes = LUPINE_DEMAND_FETCH_CHUNK_BYTES;
-  size_t index = 0;
-  while (index < allocation->fresh_chunk_count) {
-    bool fresh = __atomic_load_n(&allocation->fresh_chunks[index],
-                                 __ATOMIC_ACQUIRE) != 0;
-    size_t run_end = index + 1;
-    while (run_end < allocation->fresh_chunk_count &&
-           (__atomic_load_n(&allocation->fresh_chunks[run_end],
-                            __ATOMIC_ACQUIRE) != 0) == fresh) {
-      ++run_end;
-    }
-    uintptr_t start = allocation->host_base + index * chunk_bytes;
-    size_t bytes = std::min(run_end * chunk_bytes, allocation->storage_size) -
-                   index * chunk_bytes;
-    mprotect(reinterpret_cast<void *>(start), bytes,
-             fresh ? PROT_READ : PROT_NONE);
-    index = run_end;
-  }
-}
-
-// Publish a finished fetch: protect the span (or defer while payloads are
-// pinned) and drop the stale state once every chunk is fresh. The allocation
-// mutex serializes against prepare/mark; never touch mirror memory under it.
+// Publish a finished fetch and drop the stale state once every chunk is fresh.
 static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
                                        size_t span_start, size_t span_end) {
   bool all_fresh = true;
@@ -1125,16 +1287,9 @@ static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
     }
   }
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-  if (__atomic_load_n(&allocation->io_pins, __ATOMIC_ACQUIRE) == 0) {
-    if (__atomic_load_n(&allocation->restore_pending, __ATOMIC_ACQUIRE) != 0) {
-      lupine_apply_fresh_protections(allocation);
-      __atomic_store_n(&allocation->restore_pending, 0, __ATOMIC_RELEASE);
-    } else if (span_end > span_start) {
-      mprotect(reinterpret_cast<void *>(allocation->host_base + span_start),
-               span_end - span_start, PROT_READ);
-    }
-  } else {
-    __atomic_store_n(&allocation->restore_pending, 1, __ATOMIC_RELEASE);
+  if (span_end > span_start) {
+    mprotect(reinterpret_cast<void *>(allocation->host_base + span_start),
+             span_end - span_start, PROT_READ);
   }
   __atomic_store_n(&allocation->device_stale, all_fresh ? 0 : 1,
                    __ATOMIC_RELEASE);
@@ -1180,8 +1335,10 @@ static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
     return true;
   }
 
-  mprotect(reinterpret_cast<void *>(allocation->host_base + start), end - start,
-           PROT_READ | PROT_WRITE);
+  if (allocation->io_alias == nullptr) {
+    mprotect(reinterpret_cast<void *>(allocation->host_base + start),
+             end - start, PROT_READ | PROT_WRITE);
+  }
   size_t data_bytes =
       start < allocation->size ? std::min(end, allocation->size) - start : 0;
   if (data_bytes != 0 &&
@@ -1245,8 +1402,10 @@ static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
       run_end += chunk_bytes;
     }
     run_end = std::min(run_end, allocation->storage_size);
-    mprotect(reinterpret_cast<void *>(allocation->host_base + position),
-             run_end - position, PROT_READ | PROT_WRITE);
+    if (allocation->io_alias == nullptr) {
+      mprotect(reinterpret_cast<void *>(allocation->host_base + position),
+               run_end - position, PROT_READ | PROT_WRITE);
+    }
     size_t data_bytes = position < allocation->size
                             ? std::min(run_end, allocation->size) - position
                             : 0;
@@ -1272,16 +1431,16 @@ static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
   return ok;
 }
 
-// RPC paths that read caller memory under connection locks call this first:
-// a demand fetch cannot start once this thread holds the route's connection.
-extern "C" void lupine_ensure_mapped_host_readable(const void *host,
-                                                   size_t size) {
+// Materialize stale data before the connection is held, then return the
+// permanent W alias so later R invalidation cannot fault inside the RPC.
+extern "C" const void *lupine_mapped_host_read_source(const void *host,
+                                                      size_t size) {
   if (host == nullptr || size == 0) {
-    return;
+    return host;
   }
   uintptr_t start = reinterpret_cast<uintptr_t>(host);
   if (start > UINTPTR_MAX - size) {
-    return;
+    return host;
   }
   struct pending_fetch {
     lupine_host_allocation *allocation;
@@ -1314,16 +1473,27 @@ extern "C" void lupine_ensure_mapped_host_readable(const void *host,
     __atomic_sub_fetch(&fetch.allocation->pending_dirty_ranges, 1,
                        __ATOMIC_RELEASE);
   }
+
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(const_cast<void *>(host));
+  if (it == lupine_mutable_host_allocations_locked().end() ||
+      it->second.io_alias == nullptr) {
+    return host;
+  }
+  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
+  if (start + size > base + it->second.size) {
+    return host;
+  }
+  return static_cast<unsigned char *>(it->second.io_alias) + (start - base);
 }
 
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
   for (const auto &mapping : lupine_mapped_host_snapshots()) {
-    if (!mapping.device_dirty || mapping.size == 0) {
+    if (mapping.size == 0 || !mapping.device_mapping_used) {
       continue;
     }
-    // Invalidate instead of copying back; the fault handler fetches on
-    // touch. Never wait while holding a lock (state-2 fetches and pinned
-    // payload writes need the connection); fall back to the eager copy.
+    // Invalidate instead of copying back; the fault handler fetches on touch.
+    // Never wait while holding a lock; fall back to the eager copy.
     bool invalidated = false;
     bool give_up = false;
     for (int attempt = 0; !invalidated && !give_up; ++attempt) {
@@ -1343,8 +1513,7 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
         }
         sig_atomic_t previous =
             __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
-        if (previous != 2 &&
-            __atomic_load_n(&allocation.io_pins, __ATOMIC_ACQUIRE) == 0) {
+        if (previous != 2) {
           sig_atomic_t expected = previous;
           if (__atomic_compare_exchange_n(&allocation.device_stale, &expected,
                                           3, false, __ATOMIC_ACQ_REL,
@@ -1355,11 +1524,9 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
             }
             allocation.fetch_seq_next = 0;
             allocation.fetch_readahead = 0;
-            __atomic_store_n(&allocation.restore_pending, 0, __ATOMIC_RELEASE);
             if (lupine_protect_host_range(mapping.host, allocation.storage_size,
                                           PROT_NONE)) {
               __atomic_store_n(&allocation.device_stale, 1, __ATOMIC_RELEASE);
-              allocation.device_dirty = false;
               invalidated = true;
             } else {
               __atomic_store_n(&allocation.device_stale, previous,
@@ -1385,10 +1552,20 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    auto it = lupine_mutable_host_allocations_locked().find(mapping.host);
-    if (it != lupine_mutable_host_allocations_locked().end()) {
-      it->second.device_dirty = false;
+    lupine_mark_device_mapping_used(mapping.host, false);
+  }
+
+  // Deferred DtoH payloads land through the writable alias. Apply those
+  // writes after invalidation so their pages remain readable and a later
+  // device-bound RPC can flush them back to the server mirror.
+  for (int route_id = 0; route_id < rpc_size(); ++route_id) {
+    conn_t *conn = lupine_route_remote_conn(
+        lupine_route_from_identity(static_cast<int>(route_id)));
+    if (conn != nullptr) {
+      CUresult result = lupine_collect_rpc_mirror_writes(conn);
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
     }
   }
   return CUDA_SUCCESS;
@@ -1633,15 +1810,25 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
   }
 
   void *ptr = nullptr;
+  void *io_alias = nullptr;
   size_t page_size = lupine_page_size();
   size_t storage_size =
       bytesize == 0 ? page_size : lupine_round_up(bytesize, page_size);
-  ptr = mmap(nullptr, storage_size, PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (ptr == MAP_FAILED) {
-    ptr = nullptr;
+  bool mapped = false;
+  if (bytesize == 0) {
+    ptr = mmap(nullptr, storage_size, PROT_READ | PROT_WRITE,
+               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    mapped = ptr != MAP_FAILED;
+    if (!mapped) {
+      ptr = nullptr;
+    }
+  } else {
+    conn_t *conn = lupine_route_remote_conn(route);
+    mapped = lupine_create_shared_views(
+        conn, reinterpret_cast<uintptr_t>(remote_host), storage_size, &ptr,
+        &io_alias);
   }
-  if (ptr == nullptr) {
+  if (!mapped) {
     lupine_remote_cuMemFreeHost(remote_host, route);
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -1658,19 +1845,28 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
     allocation.flags = Flags;
     allocation.owned = true;
     allocation.owned_mmap = true;
+    allocation.io_alias = io_alias;
     allocation.server_host_ptr = reinterpret_cast<CUdeviceptr>(remote_host);
     allocation.device_ptr = device_ptr;
     allocation.route_id = lupine_route_identity(route);
     auto &allocations = lupine_mutable_host_allocations_locked();
     auto inserted = allocations.emplace(ptr, std::move(allocation));
     if (!inserted.second) {
-      munmap(ptr, storage_size);
+      if (io_alias != nullptr) {
+        lupine_release_shared_views(ptr, io_alias, storage_size);
+      } else {
+        munmap(ptr, storage_size);
+      }
       lupine_remote_cuMemFreeHost(remote_host, route);
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
     if (!lupine_enable_dirty_tracking_locked(ptr, &inserted.first->second)) {
       allocations.erase(inserted.first);
-      munmap(ptr, storage_size);
+      if (io_alias != nullptr) {
+        lupine_release_shared_views(ptr, io_alias, storage_size);
+      } else {
+        munmap(ptr, storage_size);
+      }
       lupine_remote_cuMemFreeHost(remote_host, route);
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
@@ -1711,6 +1907,7 @@ extern "C" CUresult cuMemFreeHost(void *p) {
   bool owned = false;
   bool owned_mmap = false;
   bool local_cuda = false;
+  void *io_alias = nullptr;
   size_t storage_size = 0;
   CUdeviceptr server_host_ptr = 0;
   CUdeviceptr device_ptr = 0;
@@ -1725,6 +1922,7 @@ extern "C" CUresult cuMemFreeHost(void *p) {
     owned = it->second.owned;
     owned_mmap = it->second.owned_mmap;
     local_cuda = it->second.local_cuda;
+    io_alias = it->second.io_alias;
     storage_size = it->second.storage_size;
     server_host_ptr = it->second.server_host_ptr;
     device_ptr = it->second.device_ptr;
@@ -1760,7 +1958,11 @@ extern "C" CUresult cuMemFreeHost(void *p) {
   }
   if (owned) {
     if (owned_mmap) {
-      munmap(p, storage_size);
+      if (io_alias != nullptr) {
+        lupine_release_shared_views(p, io_alias, storage_size);
+      } else {
+        munmap(p, storage_size);
+      }
     } else {
       free(p);
     }
@@ -1797,6 +1999,11 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
     if (it != lupine_mutable_host_allocations_locked().end()) {
       known_allocation = true;
       if (it->second.device_ptr != 0) {
+        it->second.device_mapping_used = true;
+        if (!it->second.tracking_enabled) {
+          __atomic_store_n(&it->second.eager_flush_pending, 1,
+                           __ATOMIC_RELEASE);
+        }
         uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
         uintptr_t addr = reinterpret_cast<uintptr_t>(p);
         *pdptr = it->second.device_ptr + (addr - base);
@@ -1982,11 +2189,9 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
   }
 
   size_t page_size = lupine_page_size();
-  // The mprotect-based mirror can only track pages the registration owns
-  // outright. An unaligned DEVICEMAP registration would force us to protect
-  // the caller's neighbouring memory (e.g. a live stack page), so the
-  // driver-faithful "accept it" behaviour is unsupportable here; reject it as
-  // the pre-mirror code did and let callers such as NPP fall back.
+  // Eager synchronization owns the whole registered page range. An unaligned
+  // device mapping would include unrelated bytes on its edge pages, so retain
+  // the existing rejection and let callers use their fallback path.
   if (lupine_host_flags_request_mapping(Flags) &&
       ((reinterpret_cast<uintptr_t>(p) % page_size) != 0 ||
        (bytesize % page_size) != 0)) {
@@ -2032,29 +2237,9 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
   allocation.client_to_server_only = client_to_server_only;
   allocation.server_host_ptr = reinterpret_cast<CUdeviceptr>(server_host);
   allocation.device_ptr = device_ptr;
+  allocation.host_base = covering_base;
   allocation.route_id = lupine_route_identity(route);
-  auto inserted = allocations.emplace(tracked, std::move(allocation));
-  if (!lupine_enable_dirty_tracking_locked(tracked, &inserted.first->second)) {
-    allocations.erase(inserted.first);
-    if (server_host != nullptr) {
-      lupine_remote_cuMemFreeHost(server_host, route);
-    }
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  if (inserted.first->second.tracking_enabled) {
-    int route_id = inserted.first->second.route_id;
-    if (route_id < 0 ||
-        route_id >= static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
-      lupine_disable_dirty_tracking(tracked, inserted.first->second);
-      allocations.erase(inserted.first);
-      lupine_remote_cuMemFreeHost(server_host, route);
-      return CUDA_ERROR_INVALID_VALUE;
-    }
-    __atomic_store_n(&inserted.first->second.full_dirty, 1, __ATOMIC_RELEASE);
-    __atomic_store_n(
-        &lupine_dirty_host_range_queues[route_id].full_dirty_pending, 1,
-        __ATOMIC_RELEASE);
-  }
+  allocations.emplace(tracked, std::move(allocation));
   if (server_host != nullptr) {
     lupine_note_deviceptr_allocation_route(
         reinterpret_cast<CUdeviceptr>(server_host), covering_size, route);
@@ -2186,17 +2371,10 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
   CUdeviceptr device_ptr = device_alloc_base;
   lupine_note_deviceptr_allocation_route(device_alloc_base, backing_size,
                                          route);
-  void *ptr = MAP_FAILED;
-#ifdef MAP_FIXED_NOREPLACE
-  ptr = mmap(reinterpret_cast<void *>(device_ptr), storage_size,
-             PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-#endif
-  if (ptr == MAP_FAILED) {
-    ptr = mmap(nullptr, storage_size, PROT_READ | PROT_WRITE,
-               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  }
-  if (ptr == MAP_FAILED) {
+  void *ptr = nullptr;
+  void *io_alias = nullptr;
+  if (!lupine_create_shared_views(conn, device_ptr, storage_size, &ptr,
+                                  &io_alias)) {
     cuMemFree_v2(device_alloc_base);
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -2211,6 +2389,7 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
     allocation.flags = flags;
     allocation.owned = true;
     allocation.owned_mmap = true;
+    allocation.io_alias = io_alias;
     allocation.managed = true;
     allocation.server_host_ptr = device_ptr;
     allocation.device_ptr = device_ptr;
@@ -2219,13 +2398,13 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
     auto inserted = lupine_mutable_host_allocations_locked().emplace(
         ptr, std::move(allocation));
     if (!inserted.second) {
-      munmap(ptr, storage_size);
+      lupine_release_shared_views(ptr, io_alias, storage_size);
       cuMemFree_v2(device_alloc_base);
       return CUDA_ERROR_INVALID_VALUE;
     }
     if (!lupine_enable_dirty_tracking_locked(ptr, &inserted.first->second)) {
       lupine_mutable_host_allocations_locked().erase(inserted.first);
-      munmap(ptr, storage_size);
+      lupine_release_shared_views(ptr, io_alias, storage_size);
       cuMemFree_v2(device_alloc_base);
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
@@ -2252,7 +2431,7 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
     if (it != lupine_mutable_host_allocations_locked().end() &&
         reinterpret_cast<void *>(dptr) == it->first && it->second.managed) {
       __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
-    lupine_pointer_attribute_cache_clear();
+      lupine_pointer_attribute_cache_clear();
       lupine_disable_dirty_tracking(it->first, it->second);
       retiring_allocation = &it->second;
       found = true;
@@ -2313,7 +2492,12 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
   lupine_forget_deviceptr_owner(allocation.server_host_ptr);
   lupine_forget_deviceptr_owner(allocation.device_ptr);
   if (allocation.owned_mmap && host != nullptr) {
-    munmap(host, allocation.storage_size);
+    if (allocation.io_alias != nullptr) {
+      lupine_release_shared_views(host, allocation.io_alias,
+                                  allocation.storage_size);
+    } else {
+      munmap(host, allocation.storage_size);
+    }
   } else if (allocation.owned && host != nullptr) {
     free(host);
   }
@@ -2464,10 +2648,10 @@ static libcuckoo::cuckoohash_map<lupine_pointer_attribute_cache_key,
                                  std::vector<std::vector<unsigned char>>,
                                  lupine_pointer_attribute_cache_key_hash> &
 lupine_pointer_attribute_cache() {
-  static auto *cache = new libcuckoo::cuckoohash_map<
-      lupine_pointer_attribute_cache_key,
-      std::vector<std::vector<unsigned char>>,
-      lupine_pointer_attribute_cache_key_hash>();
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<lupine_pointer_attribute_cache_key,
+                                    std::vector<std::vector<unsigned char>>,
+                                    lupine_pointer_attribute_cache_key_hash>();
   return *cache;
 }
 
@@ -2610,8 +2794,8 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   conn_t *conn = lupine_route_remote_conn(route);
   if (rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
-      rpc_write(conn, attributes,
-                numAttributes * sizeof(CUpointer_attribute)) < 0 ||
+      rpc_write(conn, attributes, numAttributes * sizeof(CUpointer_attribute)) <
+          0 ||
       rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

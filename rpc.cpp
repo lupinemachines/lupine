@@ -1,4 +1,5 @@
 #include "rpc.h"
+#include "address_space.h"
 #include "lupine_log.h"
 #include <algorithm>
 #include <atomic>
@@ -13,6 +14,7 @@
 
 #ifndef _WIN32
 #include <netdb.h>
+#include <sys/mman.h>
 #endif
 
 // lupine_tcp_connect only resolves and dials; the caller owns TLS setup and
@@ -210,8 +212,10 @@ void rpc_conn_destroy(conn_t *conn) {
   }
   rpc_close_transport_socket(conn);
   rpc_http2_destroy(conn);
+  lupine_va_destroy(conn);
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
+  std::vector<rpc_mirror_write>().swap(conn->mirror_writes);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
 }
@@ -380,10 +384,81 @@ int rpc_read_start(conn_t *conn, int write_id) {
   return 0;
 }
 
-int rpc_read(conn_t *conn, void *data, size_t size) {
+static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
+                                 int (*read)(conn_t *, void *, size_t)) {
+  void *destination = data;
+  bool mirror = false;
+  uintptr_t address = reinterpret_cast<uintptr_t>(data);
+  if (conn->va_size != 0 && conn->w_offset != 0 &&
+      lupine_va_contains(conn, address, size)) {
+    destination = reinterpret_cast<void *>(address + conn->w_offset);
+    mirror = true;
+  } else if (conn->va_size == 0 && conn->r_offset != conn->w_offset) {
+    uintptr_t read_base = LUPINE_MIRROR_SERVER_BASE + conn->r_offset;
+    if (address >= read_base && size <= LUPINE_MIRROR_WINDOW_SIZE &&
+        address - read_base <= LUPINE_MIRROR_WINDOW_SIZE - size) {
+      uintptr_t server_address = address - conn->r_offset;
+      destination = reinterpret_cast<void *>(server_address + conn->w_offset);
+      mirror = true;
+    }
+  }
+  int result = read(conn, destination, size);
+  if (result < 0 || !mirror) {
+    return result;
+  }
+
+  size_t written = static_cast<size_t>(result);
+  if (pthread_mutex_lock(&conn->write_mutex) != 0) {
+    return -1;
+  }
+  uintptr_t start = reinterpret_cast<uintptr_t>(data);
+  try {
+    if (!conn->mirror_writes.empty() &&
+        conn->mirror_writes.back().start + conn->mirror_writes.back().size ==
+            start) {
+      conn->mirror_writes.back().size += written;
+    } else {
+      conn->mirror_writes.push_back({start, written});
+    }
+  } catch (const std::bad_alloc &) {
+    pthread_mutex_unlock(&conn->write_mutex);
+    return -1;
+  }
+  if (pthread_mutex_unlock(&conn->write_mutex) != 0) {
+    return -1;
+  }
+  if (written != 0) {
+    long configured_page_size = sysconf(_SC_PAGESIZE);
+    uintptr_t page_size = configured_page_size > 0
+                              ? static_cast<uintptr_t>(configured_page_size)
+                              : static_cast<uintptr_t>(4096);
+    uintptr_t page_start = start & ~(page_size - 1);
+    uintptr_t page_end = (start + written + page_size - 1) & ~(page_size - 1);
+    if (mprotect(reinterpret_cast<void *>(page_start), page_end - page_start,
+                 PROT_READ) < 0) {
+      return -1;
+    }
+  }
+  return result;
+}
+
+static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
   int32_t stream_id = rpc_current_http2_stream(conn);
   return stream_id < 0 ? -1
                        : rpc_http2_read_stream(conn, stream_id, data, size);
+}
+
+static int rpc_read_framed_payload(conn_t *conn, void *data, size_t size) {
+  return rpc_read_payload_part(conn, lupine_payload_framed(conn, size), data,
+                               size);
+}
+
+int rpc_read(conn_t *conn, void *data, size_t size) {
+  return rpc_read_into_context(conn, data, size, rpc_read_http2);
+}
+
+int rpc_read_payload(conn_t *conn, void *data, size_t size) {
+  return rpc_read_into_context(conn, data, size, rpc_read_framed_payload);
 }
 
 int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
@@ -589,9 +664,8 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
 
 // Rows are queued, not copied, so the caller's buffer must stay valid until
 // the surrounding rpc_write_end.
-int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
-                      size_t rows, size_t row_stride, size_t slices,
-                      size_t slice_stride) {
+int rpc_write_pitched(conn_t *conn, const void *data, size_t width, size_t rows,
+                      size_t row_stride, size_t slices, size_t slice_stride) {
   for (size_t z = 0; z < slices; ++z) {
     const char *slice = (const char *)data + z * slice_stride;
     for (size_t row = 0; row < rows; ++row) {

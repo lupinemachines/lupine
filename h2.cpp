@@ -1,3 +1,4 @@
+#include "address_space.h"
 #include "lupine_log.h"
 #include "rpc.h"
 
@@ -52,6 +53,8 @@ struct h2_stream {
   bool response_received = false;
   bool response_sent = false;
   int response_status = 0;
+  std::string requested_va_base;
+  std::string requested_va_size;
   bool window_hold = false;
   uint64_t window_hold_bytes = 0;
 };
@@ -85,6 +88,11 @@ struct h2_transport {
   std::string peer_cuda_version;
   std::string server_version;
   std::string session_id;
+  std::string peer_va_base;
+  std::string peer_va_size;
+  std::string local_va_base;
+  std::string local_va_size;
+  conn_t *conn = nullptr;
 };
 
 h2_stream &h2_get_stream(h2_transport *transport, int32_t stream_id) {
@@ -428,6 +436,29 @@ constexpr char kLupineCompressHeader[] = "x-lupine-compress";
 constexpr char kLupineCompressLz4[] = "lz4";
 constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
+constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
+constexpr char kLupineVaSizeHeader[] = "x-lupine-va-size";
+
+std::string h2_hex(uintptr_t value) {
+  std::ostringstream result;
+  result << std::hex << value;
+  return result.str();
+}
+
+bool h2_parse_hex(const std::string &value, uintptr_t *parsed) {
+  if (value.empty() || parsed == nullptr) {
+    return false;
+  }
+  char *end = nullptr;
+  errno = 0;
+  unsigned long long number = strtoull(value.c_str(), &end, 16);
+  if (errno != 0 || end == value.c_str() || *end != '\0' ||
+      number > UINTPTR_MAX) {
+    return false;
+  }
+  *parsed = static_cast<uintptr_t>(number);
+  return true;
+}
 
 bool lupine_h2_debug_enabled() {
   const char *debug = getenv("LUPINE_DEBUG");
@@ -438,12 +469,27 @@ bool lupine_h2_debug_enabled() {
 }
 
 int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
-                              bool end_stream) {
+                              int status, bool end_stream) {
   h2_stream &stream = h2_get_stream(transport, stream_id);
-  std::vector<nghttp2_nv> headers = {h2_nv(":status", "200")};
+  const char *status_text = "400";
+  if (status == 200) {
+    status_text = "200";
+  } else if (status == 409) {
+    status_text = "409";
+  }
+  std::vector<nghttp2_nv> headers = {h2_nv(":status", status_text)};
   if (!transport->server_version.empty()) {
     headers.push_back(
         h2_nv(kLupineCudaVersionHeader, transport->server_version.c_str()));
+  }
+  if (status == 200 && transport->conn != nullptr &&
+      transport->conn->va_size != 0) {
+    transport->local_va_base = h2_hex(transport->conn->va_base);
+    transport->local_va_size = h2_hex(transport->conn->va_size);
+    headers.push_back(
+        h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str()));
+    headers.push_back(
+        h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str()));
   }
   uint8_t flags = end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
   if (nghttp2_submit_headers(transport->session, flags, stream_id, nullptr,
@@ -482,15 +528,32 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
     transport->request_received = true;
     bool probe = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-    bool dispatch = !probe && transport->dispatch_stream_id < 0;
-    transport->request_handled = probe;
+    int status = 200;
+    bool has_va_base = !stream.requested_va_base.empty();
+    bool has_va_size = !stream.requested_va_size.empty();
+    if (!probe && (has_va_base || has_va_size)) {
+      uintptr_t base = 0;
+      uintptr_t size = 0;
+      if (!has_va_base || !has_va_size ||
+          !h2_parse_hex(stream.requested_va_base, &base) ||
+          !h2_parse_hex(stream.requested_va_size, &size) || size > SIZE_MAX) {
+        status = 400;
+      } else if (lupine_va_reserve_server(transport->conn, base,
+                                          static_cast<size_t>(size)) < 0) {
+        status = 409;
+      }
+    }
+    bool dispatch =
+        status == 200 && !probe && transport->dispatch_stream_id < 0;
+    transport->request_handled = probe || status != 200;
     if (dispatch) {
       transport->dispatch_stream_id = frame->hd.stream_id;
     } else if (!probe) {
       transport->incoming_streams.push_back(frame->hd.stream_id);
     }
     if (!stream.response_sent &&
-        h2_submit_server_response(transport, frame->hd.stream_id, probe) < 0) {
+        h2_submit_server_response(transport, frame->hd.stream_id, status,
+                                  probe || status != 200) < 0) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
   } else if (!transport->server && frame->hd.type == NGHTTP2_HEADERS &&
@@ -541,6 +604,14 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
                  memcmp(name, kLupineSessionHeader, namelen) == 0) {
         transport->session_id.assign(reinterpret_cast<const char *>(value),
                                      valuelen);
+      } else if (namelen == strlen(kLupineVaBaseHeader) &&
+                 memcmp(name, kLupineVaBaseHeader, namelen) == 0) {
+        stream.requested_va_base.assign(reinterpret_cast<const char *>(value),
+                                        valuelen);
+      } else if (namelen == strlen(kLupineVaSizeHeader) &&
+                 memcmp(name, kLupineVaSizeHeader, namelen) == 0) {
+        stream.requested_va_size.assign(reinterpret_cast<const char *>(value),
+                                        valuelen);
       }
     }
     return 0;
@@ -552,6 +623,18 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
       memcmp(name, kLupineCudaVersionHeader, namelen) == 0) {
     transport->peer_cuda_version.assign(reinterpret_cast<const char *>(value),
                                         valuelen);
+    return 0;
+  }
+  if (namelen == strlen(kLupineVaBaseHeader) &&
+      memcmp(name, kLupineVaBaseHeader, namelen) == 0) {
+    transport->peer_va_base.assign(reinterpret_cast<const char *>(value),
+                                   valuelen);
+    return 0;
+  }
+  if (namelen == strlen(kLupineVaSizeHeader) &&
+      memcmp(name, kLupineVaSizeHeader, namelen) == 0) {
+    transport->peer_va_size.assign(reinterpret_cast<const char *>(value),
+                                   valuelen);
     return 0;
   }
   if (namelen != 7 || memcmp(name, ":status", namelen) != 0) {
@@ -663,6 +746,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
                    const rpc_http2_server_metadata *metadata = nullptr) {
   auto *transport = new h2_transport();
   transport->netfd = conn->connfd;
+  transport->conn = conn;
   transport->tls = conn->tls_session;
   transport->server = server;
   if (metadata != nullptr && metadata->backend_version != nullptr) {
@@ -742,6 +826,14 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
         headers.push_back(h2_nv(kLupineSessionHeader, session_id));
       }
       transport->compress_lz4 = true;
+      if (conn->va_size != 0) {
+        transport->local_va_base = h2_hex(conn->va_base);
+        transport->local_va_size = h2_hex(conn->va_size);
+        headers.push_back(
+            h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str()));
+        headers.push_back(
+            h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str()));
+      }
     }
     uint8_t flags = probe ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
     int32_t stream_id =
@@ -1105,7 +1197,27 @@ void rpc_http2_window_release(conn_t *conn, rpc_http2_window_credit credit) {
 }
 
 int rpc_http2_client_init(conn_t *conn) {
-  return h2_init_direct(conn, false, false);
+  if (h2_init_direct(conn, false, false) < 0) {
+    return -1;
+  }
+  if (conn->va_size == 0) {
+    return 0;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  h2_stream &stream = h2_get_stream(transport, transport->dispatch_stream_id);
+  while (!stream.response_received && !transport->transport_failed) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+  }
+  uintptr_t peer_base = 0;
+  uintptr_t peer_size = 0;
+  bool accepted = stream.response_received && stream.response_status == 200 &&
+                  h2_parse_hex(transport->peer_va_base, &peer_base) &&
+                  h2_parse_hex(transport->peer_va_size, &peer_size) &&
+                  peer_base == conn->va_base && peer_size == conn->va_size;
+  bool conflict = stream.response_received && stream.response_status == 409;
+  pthread_mutex_unlock(&transport->session_mutex);
+  return accepted ? 0 : conflict ? LUPINE_RPC_HTTP2_VA_CONFLICT : -1;
 }
 
 void rpc_http2_client_start_heartbeat(conn_t *conn) {

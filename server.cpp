@@ -29,6 +29,7 @@
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include "checkpoint.h"
 #include "copy_pipeline.h"
+#include "cuda_server.h"
 #include "server_checkpoint.h"
 #endif
 
@@ -256,6 +257,7 @@ int client_handler(lupine_socket_t connfd) {
   // Finish checkpointing before releasing per-connection CUDA resources.
   checkpoint_result = lupine_server_checkpoint_child_finish();
   lupine_server_cleanup_connection(&conn);
+  lupine_server_cleanup_va_allocations(&conn);
 #endif
   rpc_conn_destroy(&conn);
   return checkpoint_result;

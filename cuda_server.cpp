@@ -37,6 +37,7 @@
 
 #include "cuda_compat.h"
 
+#include "address_space.h"
 #include "cache.h"
 #include "codegen/gen_rpc_ids.h"
 #include "copy_pipeline.h"
@@ -142,8 +143,8 @@ static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
       std::malloc(jit->num_options * sizeof(*jit->options)));
   jit->option_values = static_cast<void **>(
       std::malloc(jit->num_options * sizeof(*jit->option_values)));
-  if (rpc_read(conn, jit->options,
-               jit->num_options * sizeof(*jit->options)) < 0 ||
+  if (rpc_read(conn, jit->options, jit->num_options * sizeof(*jit->options)) <
+          0 ||
       rpc_read(conn, jit->option_values,
                jit->num_options * sizeof(*jit->option_values)) < 0) {
     return -1;
@@ -2115,8 +2116,7 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
   return 0;
 }
 
-static int handle_cuMemcpy2D_common(conn_t *conn, bool async,
-                                           bool unaligned) {
+static int handle_cuMemcpy2D_common(conn_t *conn, bool async, bool unaligned) {
   CUDA_MEMCPY2D copy = {};
   size_t src_host_size = 0;
   size_t dst_host_size = 0;
@@ -3478,8 +3478,8 @@ int handle_lupineEventQueryBatch(conn_t *conn) {
   uint32_t count = 0;
   if (rpc_read(conn, &count, sizeof(count)) < 0 || count == 0 ||
       count > kEventQueryBatchMax) {
-    LUPINE_LOG_ERROR("cuEventQuery RPC failed while reading count: count="
-                     << count);
+    LUPINE_LOG_ERROR(
+        "cuEventQuery RPC failed while reading count: count=" << count);
     return -1;
   }
   CUevent events[kEventQueryBatchMax];
@@ -3955,6 +3955,8 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
+static bool lupine_server_managed_va_range(const void *pointer, size_t size);
+
 // Fire-and-forget: connection ordering already guarantees the flush is
 // applied before any later request, so no response is sent.
 int handle_lupineManagedHostFlush(conn_t *conn) {
@@ -3968,8 +3970,27 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
     void *server_host_ptr = nullptr;
     size_t bytes = 0;
     if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
-        rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
-        rpc_read(conn, server_host_ptr, bytes) < 0) {
+        rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
+      return -1;
+    }
+    if (!lupine_server_managed_va_range(server_host_ptr, bytes)) {
+      if (rpc_read(conn, server_host_ptr, bytes) < 0) {
+        return -1;
+      }
+      continue;
+    }
+    void *staging = nullptr;
+    if (cuMemAllocHost(&staging, bytes) != CUDA_SUCCESS) {
+      return -1;
+    }
+    int read_result = rpc_read(conn, staging, bytes);
+    CUresult copy_result = CUDA_ERROR_UNKNOWN;
+    if (read_result >= 0) {
+      copy_result = cuMemcpyHtoD_v2(
+          reinterpret_cast<CUdeviceptr>(server_host_ptr), staging, bytes);
+    }
+    cuMemFreeHost(staging);
+    if (read_result < 0 || copy_result != CUDA_SUCCESS) {
       return -1;
     }
   }
@@ -4235,9 +4256,352 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   return 0;
 }
 
+namespace {
+
+enum class lupine_server_va_kind { host, managed };
+
+struct lupine_server_va_allocation {
+  conn_t *conn = nullptr;
+  size_t size = 0;
+  unsigned int flags = 0;
+  lupine_server_va_kind kind = lupine_server_va_kind::host;
+};
+
+// Large address hints are reliably honored by CUDA VMM while allocation-sized
+// hints are not. A backend therefore claims one coarse subarena from the
+// connection and suballocates it locally. HIP can claim a different subarena
+// from the same connection without teaching the transport about either
+// backend.
+static constexpr size_t LUPINE_CUDA_VA_SUBARENA_SIZE = UINT64_C(0x004000000000);
+
+struct lupine_cuda_va_arena {
+  uintptr_t base = 0;
+  size_t size = 0;
+  std::map<uintptr_t, size_t> free_ranges;
+};
+
+std::mutex &lupine_server_va_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::unordered_map<uintptr_t, lupine_server_va_allocation> &
+lupine_server_va_allocations() {
+  static std::unordered_map<uintptr_t, lupine_server_va_allocation> allocations;
+  return allocations;
+}
+
+std::unordered_map<conn_t *, lupine_cuda_va_arena> &lupine_cuda_va_arenas() {
+  static std::unordered_map<conn_t *, lupine_cuda_va_arena> arenas;
+  return arenas;
+}
+
+size_t lupine_round_up_va(size_t size, size_t alignment) {
+  if (alignment == 0 || size > SIZE_MAX - (alignment - 1)) {
+    return 0;
+  }
+  return (size + alignment - 1) & ~(alignment - 1);
+}
+
+bool lupine_record_server_va(uintptr_t address,
+                             const lupine_server_va_allocation &allocation) {
+  std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+  try {
+    return lupine_server_va_allocations().emplace(address, allocation).second;
+  } catch (const std::bad_alloc &) {
+    return false;
+  }
+}
+
+void lupine_cuda_va_insert_free(lupine_cuda_va_arena &arena, uintptr_t address,
+                                size_t size) {
+  auto next = arena.free_ranges.lower_bound(address);
+  if (next != arena.free_ranges.begin()) {
+    auto previous = std::prev(next);
+    if (previous->first + previous->second == address) {
+      address = previous->first;
+      size += previous->second;
+      arena.free_ranges.erase(previous);
+    }
+  }
+  next = arena.free_ranges.lower_bound(address);
+  if (next != arena.free_ranges.end() && address + size == next->first) {
+    size += next->second;
+    arena.free_ranges.erase(next);
+  }
+  arena.free_ranges.emplace(address, size);
+}
+
+CUresult lupine_cuda_va_allocate(conn_t *conn, size_t size, size_t alignment,
+                                 uintptr_t *address) {
+  std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+  auto &arenas = lupine_cuda_va_arenas();
+  auto arena_it = arenas.find(conn);
+  if (arena_it == arenas.end()) {
+    uintptr_t base = 0;
+    CUdeviceptr reserved = 0;
+    CUresult result = CUDA_ERROR_OUT_OF_MEMORY;
+    std::vector<uintptr_t> rejected;
+    for (;;) {
+      base = lupine_va_allocate(conn, LUPINE_CUDA_VA_SUBARENA_SIZE,
+                                LUPINE_CUDA_VA_SUBARENA_SIZE);
+      if (base == 0) {
+        break;
+      }
+      reserved = 0;
+      result = cuMemAddressReserve(&reserved, LUPINE_CUDA_VA_SUBARENA_SIZE,
+                                   alignment, base, 0);
+      if (result == CUDA_SUCCESS && reserved == base) {
+        break;
+      }
+      if (result == CUDA_SUCCESS) {
+        cuMemAddressFree(reserved, LUPINE_CUDA_VA_SUBARENA_SIZE);
+      }
+      try {
+        rejected.push_back(base);
+      } catch (const std::bad_alloc &) {
+        result = CUDA_ERROR_OUT_OF_MEMORY;
+        break;
+      }
+    }
+    for (uintptr_t rejected_base : rejected) {
+      lupine_va_release(conn, rejected_base, LUPINE_CUDA_VA_SUBARENA_SIZE);
+    }
+    if (result != CUDA_SUCCESS || reserved != base) {
+      if (base != 0 &&
+          std::find(rejected.begin(), rejected.end(), base) == rejected.end()) {
+        lupine_va_release(conn, base, LUPINE_CUDA_VA_SUBARENA_SIZE);
+      }
+      return result == CUDA_SUCCESS ? CUDA_ERROR_OUT_OF_MEMORY : result;
+    }
+    try {
+      lupine_cuda_va_arena arena;
+      arena.base = base;
+      arena.size = LUPINE_CUDA_VA_SUBARENA_SIZE;
+      arena.free_ranges.emplace(base, arena.size);
+      arena_it = arenas.emplace(conn, std::move(arena)).first;
+    } catch (const std::bad_alloc &) {
+      cuMemAddressFree(reserved, LUPINE_CUDA_VA_SUBARENA_SIZE);
+      lupine_va_release(conn, base, LUPINE_CUDA_VA_SUBARENA_SIZE);
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  auto &arena = arena_it->second;
+  for (auto it = arena.free_ranges.begin(); it != arena.free_ranges.end();
+       ++it) {
+    uintptr_t start = it->first;
+    size_t available = it->second;
+    uintptr_t aligned = (start + alignment - 1) & ~(alignment - 1);
+    if (aligned < start || aligned - start > available ||
+        size > available - (aligned - start)) {
+      continue;
+    }
+    uintptr_t end = aligned + size;
+    uintptr_t free_end = start + available;
+    arena.free_ranges.erase(it);
+    if (aligned != start) {
+      arena.free_ranges.emplace(start, aligned - start);
+    }
+    if (end != free_end) {
+      arena.free_ranges.emplace(end, free_end - end);
+    }
+    *address = aligned;
+    return CUDA_SUCCESS;
+  }
+  return CUDA_ERROR_OUT_OF_MEMORY;
+}
+
+bool lupine_cuda_va_release_locked(conn_t *conn, uintptr_t address,
+                                   size_t size) {
+  auto arena_it = lupine_cuda_va_arenas().find(conn);
+  if (arena_it == lupine_cuda_va_arenas().end() ||
+      !lupine_va_contains(conn, address, size) ||
+      size > arena_it->second.size || address < arena_it->second.base ||
+      address - arena_it->second.base > arena_it->second.size - size) {
+    return false;
+  }
+  lupine_cuda_va_insert_free(arena_it->second, address, size);
+  return true;
+}
+
+CUresult lupine_server_host_alloc(conn_t *conn, void **pointer,
+                                  CUdeviceptr *device_pointer, size_t bytes,
+                                  unsigned int flags) {
+  if (conn->va_size == 0) {
+    CUresult result = cuMemHostAlloc(pointer, bytes, flags);
+    if (result == CUDA_SUCCESS && (flags & CU_MEMHOSTALLOC_DEVICEMAP) != 0 &&
+        cuMemHostGetDevicePointer(device_pointer, *pointer, 0) !=
+            CUDA_SUCCESS) {
+      *device_pointer = 0;
+    }
+    return result;
+  }
+#if !defined(__linux__)
+  return CUDA_ERROR_NOT_SUPPORTED;
+#else
+  long configured_page_size = sysconf(_SC_PAGESIZE);
+  size_t page_size = configured_page_size > 0
+                         ? static_cast<size_t>(configured_page_size)
+                         : static_cast<size_t>(4096);
+  size_t storage_size = lupine_round_up_va(bytes, page_size);
+  uintptr_t address = lupine_va_allocate(conn, storage_size, page_size);
+  if (address == 0) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  int map_flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#ifdef MAP_FIXED_NOREPLACE
+  map_flags |= MAP_FIXED_NOREPLACE;
+#else
+  map_flags |= MAP_FIXED;
+#endif
+  void *mapping = mmap(reinterpret_cast<void *>(address), storage_size,
+                       PROT_READ | PROT_WRITE, map_flags, -1, 0);
+  if (mapping == MAP_FAILED || mapping != reinterpret_cast<void *>(address)) {
+    if (mapping != MAP_FAILED) {
+      munmap(mapping, storage_size);
+    }
+    lupine_va_release(conn, address, storage_size);
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  unsigned int register_flags = CU_MEMHOSTREGISTER_DEVICEMAP;
+  if ((flags & CU_MEMHOSTALLOC_PORTABLE) != 0) {
+    register_flags |= CU_MEMHOSTREGISTER_PORTABLE;
+  }
+  CUresult result = cuMemHostRegister_v2(mapping, storage_size, register_flags);
+  bool registered = result == CUDA_SUCCESS;
+  CUdeviceptr mapped_device_pointer = 0;
+  if (registered) {
+    result = cuMemHostGetDevicePointer(&mapped_device_pointer, mapping, 0);
+  }
+  // Pointer-rich mapped memory requires the CPU and GPU views to use the same
+  // numeric address. Do not silently create an allocation that violates the
+  // connection invariant on systems without identical host UVA aliases.
+  if (result == CUDA_SUCCESS && mapped_device_pointer != address) {
+    result = CUDA_ERROR_NOT_SUPPORTED;
+  }
+  if (result != CUDA_SUCCESS ||
+      !lupine_record_server_va(
+          address, {conn, storage_size, flags, lupine_server_va_kind::host})) {
+    if (registered) {
+      cuMemHostUnregister(mapping);
+    }
+    munmap(mapping, storage_size);
+    lupine_va_release(conn, address, storage_size);
+    return result == CUDA_SUCCESS ? CUDA_ERROR_OUT_OF_MEMORY : result;
+  }
+  *pointer = mapping;
+  *device_pointer = mapped_device_pointer;
+  return CUDA_SUCCESS;
+#endif
+}
+
+CUresult lupine_server_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
+                                     size_t bytes, unsigned int flags) {
+  if (conn->va_size == 0) {
+    return cuMemAllocManaged(pointer, bytes, flags);
+  }
+#if !defined(__linux__)
+  return CUDA_ERROR_NOT_SUPPORTED;
+#else
+  CUdevice device = 0;
+  CUresult result = cuCtxGetDevice(&device);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  CUmemAllocationProp properties = {};
+  properties.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  properties.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  properties.location.id = device;
+  size_t granularity = 0;
+  result = cuMemGetAllocationGranularity(&granularity, &properties,
+                                         CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  size_t storage_size = lupine_round_up_va(bytes, granularity);
+  uintptr_t target = 0;
+  result = lupine_cuda_va_allocate(conn, storage_size, granularity, &target);
+  CUmemGenericAllocationHandle handle = 0;
+  bool mapped = false;
+  if (result == CUDA_SUCCESS) {
+    result = cuMemCreate(&handle, storage_size, &properties, 0);
+  }
+  if (result == CUDA_SUCCESS) {
+    result = cuMemMap(target, storage_size, 0, handle, 0);
+    mapped = result == CUDA_SUCCESS;
+  }
+  CUmemAccessDesc access = {};
+  access.location = properties.location;
+  access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  if (result == CUDA_SUCCESS) {
+    result = cuMemSetAccess(target, storage_size, &access, 1);
+  }
+  if (handle != 0) {
+    cuMemRelease(handle);
+  }
+  if (result != CUDA_SUCCESS ||
+      !lupine_record_server_va(target, {conn, storage_size, flags,
+                                        lupine_server_va_kind::managed})) {
+    if (mapped) {
+      cuMemUnmap(target, storage_size);
+    }
+    {
+      std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+      lupine_cuda_va_release_locked(conn, target, storage_size);
+    }
+    return result == CUDA_SUCCESS ? CUDA_ERROR_OUT_OF_MEMORY : result;
+  }
+  *pointer = target;
+  return CUDA_SUCCESS;
+#endif
+}
+
+CUresult
+lupine_free_server_va_locked(uintptr_t address,
+                             const lupine_server_va_allocation &allocation) {
+  CUresult result = CUDA_SUCCESS;
+  if (allocation.kind == lupine_server_va_kind::host) {
+    result = cuMemHostUnregister(reinterpret_cast<void *>(address));
+#if defined(__linux__)
+    if (result == CUDA_SUCCESS &&
+        munmap(reinterpret_cast<void *>(address), allocation.size) != 0) {
+      result = CUDA_ERROR_UNKNOWN;
+    }
+#endif
+    if (result == CUDA_SUCCESS &&
+        !lupine_va_release(allocation.conn, address, allocation.size)) {
+      result = CUDA_ERROR_UNKNOWN;
+    }
+  } else {
+    result = cuMemUnmap(address, allocation.size);
+    if (result == CUDA_SUCCESS &&
+        !lupine_cuda_va_release_locked(allocation.conn, address,
+                                       allocation.size)) {
+      result = CUDA_ERROR_UNKNOWN;
+    }
+  }
+  return result;
+}
+
+} // namespace
+
+static bool lupine_server_managed_va_range(const void *pointer, size_t size) {
+  uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
+  std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+  for (const auto &entry : lupine_server_va_allocations()) {
+    if (entry.second.kind != lupine_server_va_kind::managed ||
+        size > entry.second.size || address < entry.first ||
+        address - entry.first > entry.second.size - size) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
 // Resolve the device alias here so the client does not need a second round
-// trip for it. A mapped allocation whose alias cannot be resolved still
-// succeeds; the 0 tells the client to query it on first use instead.
+// trip for it.
 int handle_cuMemHostAlloc(conn_t *conn) {
   void *pp = nullptr;
   size_t bytesize = 0;
@@ -4252,11 +4616,8 @@ int handle_cuMemHostAlloc(conn_t *conn) {
     return -1;
   }
   CUdeviceptr device_ptr = 0;
-  CUresult result = cuMemHostAlloc(&pp, bytesize, flags);
-  if (result == CUDA_SUCCESS && (flags & CU_MEMHOSTALLOC_DEVICEMAP) != 0 &&
-      cuMemHostGetDevicePointer(&device_ptr, pp, 0) != CUDA_SUCCESS) {
-    device_ptr = 0;
-  }
+  CUresult result =
+      lupine_server_host_alloc(conn, &pp, &device_ptr, bytesize, flags);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pp, sizeof(pp)) < 0 ||
       rpc_write(conn, &device_ptr, sizeof(device_ptr)) < 0 ||
@@ -4277,13 +4638,131 @@ int handle_cuMemHostGetFlags(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  CUresult result = cuMemHostGetFlags(&flags, p);
+  CUresult result = CUDA_SUCCESS;
+  {
+    std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+    auto it =
+        lupine_server_va_allocations().find(reinterpret_cast<uintptr_t>(p));
+    if (it != lupine_server_va_allocations().end() &&
+        it->second.kind == lupine_server_va_kind::host) {
+      flags = it->second.flags;
+    } else {
+      result = cuMemHostGetFlags(&flags, p);
+    }
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
+}
+
+int handle_cuMemFreeHost(conn_t *conn) {
+  void *pointer = nullptr;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result = CUDA_SUCCESS;
+  {
+    std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+    auto &allocations = lupine_server_va_allocations();
+    auto it = allocations.find(reinterpret_cast<uintptr_t>(pointer));
+    if (it == allocations.end() ||
+        it->second.kind != lupine_server_va_kind::host) {
+      result = cuMemFreeHost(pointer);
+    } else {
+      result = lupine_free_server_va_locked(it->first, it->second);
+      if (result == CUDA_SUCCESS) {
+        allocations.erase(it);
+      }
+    }
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cuMemAllocManaged(conn_t *conn) {
+  CUdeviceptr pointer = 0;
+  size_t bytes = 0;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result = lupine_server_managed_alloc(conn, &pointer, bytes, flags);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cuMemFree_v2(conn_t *conn) {
+  CUdeviceptr pointer = 0;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result = CUDA_SUCCESS;
+  {
+    std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+    auto &allocations = lupine_server_va_allocations();
+    auto it = allocations.find(pointer);
+    if (it == allocations.end() ||
+        it->second.kind != lupine_server_va_kind::managed) {
+      result = cuMemFree_v2(pointer);
+    } else {
+      result = lupine_free_server_va_locked(it->first, it->second);
+      if (result == CUDA_SUCCESS) {
+        allocations.erase(it);
+      }
+    }
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+void lupine_server_cleanup_va_allocations(conn_t *conn) {
+  std::lock_guard<std::mutex> lock(lupine_server_va_mutex());
+  auto &allocations = lupine_server_va_allocations();
+  for (auto it = allocations.begin(); it != allocations.end();) {
+    if (it->second.conn != conn) {
+      ++it;
+      continue;
+    }
+    (void)lupine_free_server_va_locked(it->first, it->second);
+    it = allocations.erase(it);
+  }
+  auto &arenas = lupine_cuda_va_arenas();
+  auto arena_it = arenas.find(conn);
+  if (arena_it != arenas.end()) {
+    if (cuMemAddressFree(arena_it->second.base, arena_it->second.size) ==
+        CUDA_SUCCESS) {
+      (void)lupine_va_release(conn, arena_it->second.base,
+                              arena_it->second.size);
+    }
+    arenas.erase(arena_it);
+  }
 }
 
 int handle_cuCtxSynchronize(conn_t *conn) {
@@ -4564,9 +5043,9 @@ int handle_cuTensorMapEncodeTiled(conn_t *conn) {
   CUtensorMap tensor_map{};
   CUresult result = cuTensorMapEncodeTiled(
       &tensor_map, tensor_data_type, tensor_rank, global_address,
-      global_dim.data(),
-      stride_bytes == 0 ? nullptr : global_strides.data(), box_dim.data(),
-      element_strides.data(), interleave, swizzle, l2_promotion, oob_fill);
+      global_dim.data(), stride_bytes == 0 ? nullptr : global_strides.data(),
+      box_dim.data(), element_strides.data(), interleave, swizzle, l2_promotion,
+      oob_fill);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &tensor_map, sizeof(tensor_map)) < 0 ||
