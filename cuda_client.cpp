@@ -3987,6 +3987,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
     }
     lupine_mark_host_range_clean(dst, bytes);
   }
+  lupine_note_async_dtoh_drained(copy_count);
   return 0;
 }
 
@@ -4130,9 +4131,6 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   if (!lupine_event_query_needed(hEvent, &recorded)) {
     return lupine_sync_mapped_device_to_host();
   }
-  // Sampled before the request so a copy issued while it is in flight is not
-  // mistaken for one the server already drained.
-  uint64_t drained = lupine_async_dtoh_issued_count();
   CUresult result = CUDA_ERROR_UNKNOWN;
   if (rpc_write_start_request(conn, RPC_cuEventQuery) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
@@ -4145,7 +4143,6 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
 
   return_value = result;
   if (return_value == CUDA_SUCCESS) {
-    lupine_note_async_dtoh_drained(drained);
     return_value = lupine_sync_mapped_device_to_host();
   }
   lupine_prefetch_event_queries(hEvent, conn);
@@ -5250,7 +5247,6 @@ extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
 
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
-  lupine_note_async_dtoh_copy();
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoHAsync_v2) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
@@ -5259,6 +5255,9 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (ByteCount != 0) {
+    lupine_note_async_dtoh_copy();
   }
   return CUDA_SUCCESS;
 }

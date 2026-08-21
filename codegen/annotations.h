@@ -3623,8 +3623,10 @@ CUresult cuEventQuery(CUevent hEvent);
 CUresult cuEventSynchronize(CUevent hEvent);
 /**
  * @disabled client
+ * @disabled server - manual server clears deferred-copy event bookkeeping
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
+ * @server CUDA
  */
 CUresult cuEventDestroy_v2(CUevent hEvent);
 /**
