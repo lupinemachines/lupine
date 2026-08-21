@@ -543,13 +543,14 @@ struct lupine_pending_dtoh_copy {
   bool pinned = false;
 };
 
-struct lupine_event_dtoh_fence {
-  conn_t *conn = nullptr;
-  CUstream stream = nullptr;
-  uint64_t sequence = 0;
-};
-
 struct lupine_graph_resources;
+
+struct lupine_event_metadata {
+  lupine_graph_resources *capture_resources = nullptr;
+  conn_t *dtoh_conn = nullptr;
+  CUstream dtoh_stream = nullptr;
+  uint64_t dtoh_sequence = 0;
+};
 
 struct lupine_host_callback_data {
   conn_t *conn = nullptr;
@@ -674,11 +675,11 @@ lupine_stream_capture_resource_map() {
   return *resources;
 }
 
-static libcuckoo::cuckoohash_map<CUevent, lupine_graph_resources *> &
-lupine_event_capture_resource_map() {
-  static auto *resources =
-      new libcuckoo::cuckoohash_map<CUevent, lupine_graph_resources *>();
-  return *resources;
+static libcuckoo::cuckoohash_map<CUevent, lupine_event_metadata> &
+lupine_event_metadata_map() {
+  static auto *events =
+      new libcuckoo::cuckoohash_map<CUevent, lupine_event_metadata>();
+  return *events;
 }
 
 using lupine_pending_dtoh_streams =
@@ -694,12 +695,6 @@ lupine_pending_dtoh_copies() {
 static std::atomic<uint64_t> &lupine_pending_dtoh_sequence() {
   static std::atomic<uint64_t> sequence{0};
   return sequence;
-}
-
-static libcuckoo::cuckoohash_map<CUevent, lupine_event_dtoh_fence> &
-lupine_event_dtoh_fences() {
-  static libcuckoo::cuckoohash_map<CUevent, lupine_event_dtoh_fence> fences;
-  return fences;
 }
 
 static lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
@@ -969,22 +964,24 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
   return copies;
 }
 
-static void lupine_note_event_dtoh_fence(conn_t *conn, CUevent event,
-                                         CUstream stream) {
-  lupine_event_dtoh_fences().insert_or_assign(
-      event, lupine_event_dtoh_fence{conn, stream,
-                                     lupine_pending_dtoh_sequence().load(
-                                         std::memory_order_acquire)});
+static void
+lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream,
+                         lupine_graph_resources *capture_resources) {
+  lupine_event_metadata_map().insert_or_assign(
+      event, lupine_event_metadata{capture_resources, conn, stream,
+                                   lupine_pending_dtoh_sequence().load(
+                                       std::memory_order_acquire)});
 }
 
 static std::vector<lupine_pending_dtoh_copy>
 lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
-  lupine_event_dtoh_fence fence;
-  if (!lupine_event_dtoh_fences().find(event, fence) || fence.conn != conn) {
+  lupine_event_metadata metadata;
+  if (!lupine_event_metadata_map().find(event, metadata) ||
+      metadata.dtoh_conn != conn) {
     return {};
   }
-  return lupine_detach_pending_dtoh_copies(conn, fence.stream, false,
-                                           fence.sequence);
+  return lupine_detach_pending_dtoh_copies(conn, metadata.dtoh_stream, false,
+                                           metadata.dtoh_sequence);
 }
 
 static int lupine_write_pending_dtoh_copies(
@@ -3385,14 +3382,12 @@ static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
   }
 
   lupine_graph_resources *resources = nullptr;
-  if (lupine_stream_capture_resource_map().find(stream, resources)) {
-    lupine_event_capture_resource_map().insert_or_assign(event, resources);
-  }
+  (void)lupine_stream_capture_resource_map().find(stream, resources);
 
   CUresult result = with_flags ? cuEventRecordWithFlags(event, stream, flags)
                                : cuEventRecord(event, stream);
   if (result == CUDA_SUCCESS) {
-    lupine_note_event_dtoh_fence(conn, event, stream);
+    lupine_note_event_record(conn, event, stream, resources);
   }
   return 0;
 }
@@ -3417,8 +3412,7 @@ int handle_cuEventDestroy_v2(conn_t *conn) {
 
   CUresult result = cuEventDestroy_v2(event);
   if (result == CUDA_SUCCESS) {
-    lupine_event_dtoh_fences().erase(event);
-    lupine_event_capture_resource_map().erase(event);
+    lupine_event_metadata_map().erase(event);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -3508,9 +3502,11 @@ int handle_cuStreamWaitEvent(conn_t *conn) {
     return -1;
   }
 
-  lupine_graph_resources *event_resources = nullptr;
-  if (lupine_event_capture_resource_map().find(event, event_resources)) {
-    lupine_stream_capture_resource_map().insert(stream, event_resources);
+  lupine_event_metadata metadata;
+  if (lupine_event_metadata_map().find(event, metadata) &&
+      metadata.capture_resources != nullptr) {
+    lupine_stream_capture_resource_map().insert(stream,
+                                                metadata.capture_resources);
   }
 
   result = cuStreamWaitEvent(stream, event, flags);
