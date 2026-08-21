@@ -33,21 +33,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: cuda13-0
-            name: CUDA 13.0
-            client_image: nvidia/cuda:13.0.2-devel-ubuntu24.04
-            samples_ref: v13.0
-            pytorch_index_url: https://download.pytorch.org/whl/cu128
+          - label: cuda13-3
+            name: CUDA 13.3
+            client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
+            samples_ref: v13.3
+            pytorch_index_url: https://download.pytorch.org/whl/cu132
+            cuda_compat_deb_url: >-
+              https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
+            cuda_compat_deb_sha256: 5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4
+            server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4
             name: CUDA 12.4
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
             pytorch_index_url: https://download.pytorch.org/whl/cu124
+            cuda_compat_deb_url: ""
+            cuda_compat_deb_sha256: ""
+            server_ld_library_path: ""
           - label: cuda11-8
             name: CUDA 11.8
             client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
             samples_ref: v11.8
             pytorch_index_url: https://download.pytorch.org/whl/cu118
+            cuda_compat_deb_url: ""
+            cuda_compat_deb_sha256: ""
+            server_ld_library_path: ""
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -75,6 +85,9 @@ jobs:
       CUDA_SAMPLE_JOBS: 4
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
+      CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
+      CUDA_COMPAT_DEB_SHA256: ${{ matrix.cuda_compat_deb_sha256 }}
+      SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
       VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
@@ -158,8 +171,22 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates docker.io libnghttp2-14
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io libnghttp2-14
+          SCRIPT
+
+          if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
+            printf 'curl --fail --location --retry 5 --output /tmp/cuda-compat.deb %q\n' \
+              "$CUDA_COMPAT_DEB_URL" >> "$startup_script"
+            printf 'printf "%%s  /tmp/cuda-compat.deb\\n" %q | sha256sum --check\n' \
+              "$CUDA_COMPAT_DEB_SHA256" >> "$startup_script"
+            printf '%s\n' \
+              'apt-get install -y --no-install-recommends /tmp/cuda-compat.deb' \
+              'rm -f /tmp/cuda-compat.deb' >> "$startup_script"
+          fi
+
+          cat >> "$startup_script" <<'SCRIPT'
           rm -rf /var/lib/apt/lists/*
+          touch /var/lib/lupine-startup-complete
           SCRIPT
 
           # shellcheck disable=SC2206
@@ -341,9 +368,14 @@ jobs:
             done
 
             deadline=$((SECONDS + 300))
-            until command -v docker >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; do
+            until command -v docker >/dev/null 2>&1 &&
+              sudo docker info >/dev/null 2>&1 &&
+              test -f /var/lib/lupine-startup-complete; do
               if [ "$SECONDS" -ge "$deadline" ]; then
-                echo "Docker did not become ready before the timeout" >&2
+                echo "VM startup did not become ready before the timeout" >&2
+                sudo systemctl status --no-pager google-startup-scripts.service || true
+                sudo journalctl --no-pager -n 100 \
+                  -u google-startup-scripts.service || true
                 exit 1
               fi
               sleep 5
@@ -422,7 +454,7 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
@@ -433,6 +465,7 @@ jobs:
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
+            -e SERVER_LD_LIBRARY_PATH="$SERVER_LD_LIBRARY_PATH" \
             -e SERVER_HOST=host.docker.internal \
             -e SERVER_USER=gha \
             -e SERVER_SSH_TARGET=gha@host.docker.internal \

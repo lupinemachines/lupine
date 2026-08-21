@@ -11,6 +11,13 @@ sidecar = pytest.importorskip("lupine.sidecar")
 tensor_support = pytest.importorskip("lupine.tensor")
 
 
+def test_sidecar_defaults_to_latest_cuda_worker():
+    assert (
+        sidecar.DEFAULT_IMAGE
+        == "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.3.1"
+    )
+
+
 def _mock_httpx_client(monkeypatch, headers):
     calls = {}
 
@@ -105,6 +112,8 @@ def test_sidecar_discovers_cuda_worker_images_from_registry(monkeypatch):
         return {
             "tags": [
                 "cuda-12.8.1",
+                "cuda-13.3.1",
+                "cuda-13.3.1-arm64",
                 "cuda-13.1.0",
                 "cuda-13.1.0-amd64",
                 "cuda-13.0",
@@ -115,6 +124,10 @@ def test_sidecar_discovers_cuda_worker_images_from_registry(monkeypatch):
     monkeypatch.setattr(sidecar, "_registry_json", fake_registry_json)
 
     assert sidecar._worker_images() == (
+        (
+            Version("13.3.1"),
+            "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.3.1",
+        ),
         (
             Version("13.1.0"),
             "ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-13.1.0",
@@ -134,6 +147,7 @@ def test_sidecar_discovers_cuda_worker_images_from_registry(monkeypatch):
 @pytest.mark.parametrize(
     ("server_version", "image"),
     [
+        ("13.3.90", "cuda-13.3.1"),
         ("13.1.80", "cuda-13.1.0"),
         ("13.0.96", "cuda-13.0.2"),
         ("12.9.86", "cuda-12.9.1"),
@@ -153,7 +167,14 @@ def test_sidecar_selects_newest_compatible_worker(monkeypatch, server_version, i
                 Version(version),
                 f"ghcr.io/lupinemachines/lupine-pytorch-worker:cuda-{version}",
             )
-            for version in ("13.1.0", "13.0.2", "12.9.1", "12.8.1", "12.6.2")
+            for version in (
+                "13.3.1",
+                "13.1.0",
+                "13.0.2",
+                "12.9.1",
+                "12.8.1",
+                "12.6.2",
+            )
         ),
     )
 

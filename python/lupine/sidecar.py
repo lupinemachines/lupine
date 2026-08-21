@@ -35,7 +35,7 @@ from .tensor import (
 _WORKER_REGISTRY_HOST = "ghcr.io"
 _WORKER_REPOSITORY = "lupinemachines/lupine-pytorch-worker"
 _WORKER_IMAGE_REPOSITORY = f"{_WORKER_REGISTRY_HOST}/{_WORKER_REPOSITORY}"
-DEFAULT_IMAGE = f"{_WORKER_IMAGE_REPOSITORY}:cuda-13.1.0"
+DEFAULT_IMAGE = f"{_WORKER_IMAGE_REPOSITORY}:cuda-13.3.1"
 _CUDA_VERSION_HEADER = "x-lupine-cuda-version"
 _SESSION_HEADER = "x-lupine-session"
 
