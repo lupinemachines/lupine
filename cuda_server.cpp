@@ -683,27 +683,6 @@ static bool lupine_is_event_dtoh_marker(const lupine_pending_dtoh_item &item,
   return item.event != nullptr && item.event == event;
 }
 
-static bool lupine_is_legacy_default_stream(CUstream stream) {
-  return stream == nullptr || stream == CU_STREAM_LEGACY;
-}
-
-static CUstream lupine_canonical_dtoh_stream(CUstream stream) {
-  return lupine_is_legacy_default_stream(stream) ? nullptr : stream;
-}
-
-static bool lupine_stream_orders_with_legacy_default(CUstream stream) {
-  stream = lupine_canonical_dtoh_stream(stream);
-  if (stream == nullptr) {
-    return true;
-  }
-  if (stream == CU_STREAM_PER_THREAD) {
-    return false;
-  }
-  unsigned int flags = CU_STREAM_NON_BLOCKING;
-  return cuStreamGetFlags(stream, &flags) == CUDA_SUCCESS &&
-         (flags & CU_STREAM_NON_BLOCKING) == 0;
-}
-
 static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies() {
   static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams>
@@ -1000,32 +979,33 @@ lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
 
 static void lupine_note_event_record(conn_t *conn, CUevent event,
                                      CUstream stream) {
-  bool legacy_default = lupine_is_legacy_default_stream(stream);
-  stream = lupine_canonical_dtoh_stream(stream);
   lupine_pending_dtoh_streams initial;
   initial[stream].push_back({event});
   lupine_pending_dtoh_copies().upsert(
       conn,
-      [event, stream, legacy_default](lupine_pending_dtoh_streams &streams,
-                                      libcuckoo::UpsertContext) {
+      [event, stream](lupine_pending_dtoh_streams &streams,
+                      libcuckoo::UpsertContext) {
         lupine_remove_event_dtoh_markers(&streams, event);
-        if (!legacy_default) {
+        if (stream != nullptr) {
           streams[stream].push_back({event});
           return;
         }
 
-        // An operation in the legacy default stream waits for all previously
-        // submitted work in blocking streams. Mark every such DtoH queue so
-        // synchronizing this event returns all copies the event completed.
-        // Non-blocking and per-thread streams do not participate in the
-        // implicit dependency and must remain pending.
+        // The legacy default stream orders this event after every blocking
+        // stream's prior work. The null queue is its sentinel.
+        streams.try_emplace(nullptr);
         for (auto &entry : streams) {
-          if (lupine_stream_orders_with_legacy_default(entry.first)) {
-            entry.second.push_back({event});
+          if (entry.first != nullptr) {
+            if (entry.first == CU_STREAM_PER_THREAD) {
+              continue;
+            }
+            unsigned int flags = 0;
+            if (cuStreamGetFlags(entry.first, &flags) != CUDA_SUCCESS ||
+                (flags & CU_STREAM_NON_BLOCKING) != 0) {
+              continue;
+            }
           }
-        }
-        if (streams.find(nullptr) == streams.end()) {
-          streams[nullptr].push_back({event});
+          entry.second.push_back({event});
         }
       },
       std::move(initial));
@@ -4246,8 +4226,6 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   if (rpc_read_end(conn) < 0) {
     return -1;
   }
-
-  stream = lupine_canonical_dtoh_stream(stream);
 
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (stream != nullptr) {
