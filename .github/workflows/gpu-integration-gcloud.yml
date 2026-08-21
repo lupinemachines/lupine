@@ -31,21 +31,25 @@ jobs:
             client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
             samples_ref: v13.3
             pytorch_index_url: https://download.pytorch.org/whl/cu132
-            cuda_compat_package: cuda-compat-13-3
+            cuda_compat_deb_url: >-
+              https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
+            cuda_compat_deb_sha256: 5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4
             server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4
             name: CUDA 12.4
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
             pytorch_index_url: https://download.pytorch.org/whl/cu124
-            cuda_compat_package: ""
+            cuda_compat_deb_url: ""
+            cuda_compat_deb_sha256: ""
             server_ld_library_path: ""
           - label: cuda11-8
             name: CUDA 11.8
             client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
             samples_ref: v11.8
             pytorch_index_url: https://download.pytorch.org/whl/cu118
-            cuda_compat_package: ""
+            cuda_compat_deb_url: ""
+            cuda_compat_deb_sha256: ""
             server_ld_library_path: ""
 
     env:
@@ -74,7 +78,8 @@ jobs:
       CUDA_SAMPLE_JOBS: 4
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
-      CUDA_COMPAT_PACKAGE: ${{ matrix.cuda_compat_package }}
+      CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
+      CUDA_COMPAT_DEB_SHA256: ${{ matrix.cuda_compat_deb_sha256 }}
       SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
@@ -159,12 +164,17 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates docker.io libnghttp2-14
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io libnghttp2-14
           SCRIPT
 
-          if [[ -n "$CUDA_COMPAT_PACKAGE" ]]; then
-            printf 'apt-get install -y --no-install-recommends %q\n' \
-              "$CUDA_COMPAT_PACKAGE" >> "$startup_script"
+          if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
+            printf 'curl --fail --location --retry 5 --output /tmp/cuda-compat.deb %q\n' \
+              "$CUDA_COMPAT_DEB_URL" >> "$startup_script"
+            printf 'printf "%%s  /tmp/cuda-compat.deb\\n" %q | sha256sum --check\n' \
+              "$CUDA_COMPAT_DEB_SHA256" >> "$startup_script"
+            printf '%s\n' \
+              'apt-get install -y --no-install-recommends /tmp/cuda-compat.deb' \
+              'rm -f /tmp/cuda-compat.deb' >> "$startup_script"
           fi
 
           cat >> "$startup_script" <<'SCRIPT'
@@ -388,7 +398,10 @@ jobs:
               sudo docker info >/dev/null 2>&1 &&
               test -f /var/lib/lupine-startup-complete; do
               if [ "$SECONDS" -ge "$deadline" ]; then
-                echo "Docker did not become ready before the timeout" >&2
+                echo "VM startup did not become ready before the timeout" >&2
+                sudo systemctl status --no-pager google-startup-scripts.service || true
+                sudo journalctl --no-pager -n 100 \
+                  -u google-startup-scripts.service || true
                 exit 1
               fi
               sleep 5
