@@ -942,12 +942,6 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
 
 
 def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMetadata):
-    if function.name.format() == "cuDriverGetVersion":
-        f.write("    if (driverVersion != nullptr) {\n")
-        f.write("        const char *override_version = getenv(\"LUPINE_DRIVER_VERSION_OVERRIDE\");\n")
-        f.write("        if (override_version != nullptr) *driverVersion = atoi(override_version);\n")
-        f.write("    }\n")
-
     for owner in metadata.record_owners:
         f.write(client_record_owner_stmt(owner))
 

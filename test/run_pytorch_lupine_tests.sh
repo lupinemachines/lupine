@@ -15,6 +15,7 @@ SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-pytorch-${USER:-lupine}-$$}"
 SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
+SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:-}"
 PYTORCH_SKIP_LIST="${PYTORCH_SKIP_LIST:-}"
 
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
@@ -121,6 +122,11 @@ for i in "${!TESTS[@]}"; do
   server_log="/tmp/lupine-pytorch-$port.log"
   pidfile="/tmp/lupine-pytorch-$port.pid"
   test_start_seconds="$SECONDS"
+  server_environment="LUPINE_PORT=$port"
+  if [[ -n "$SERVER_LD_LIBRARY_PATH" ]]; then
+    printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
+      "$SERVER_LD_LIBRARY_PATH" "$server_environment"
+  fi
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] PyTorch test $((i + 1))/${#TESTS[@]}: $test_name" >&2
 
   if test_disabled "$test_name"; then
@@ -134,7 +140,7 @@ for i in "${!TESTS[@]}"; do
   stop_remote_server "$pidfile" "$server_log"
 
   ssh_with_timeout \
-    "rm -f '$server_log' '$pidfile'; LUPINE_PORT=$port nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
+    "rm -f '$server_log' '$pidfile'; $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
 
   set +e
   timeout --kill-after=5s "$TEST_TIMEOUT" env \

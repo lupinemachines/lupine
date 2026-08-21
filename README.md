@@ -18,17 +18,19 @@ GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f
 
 ## Mac Demo
 
-LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to a Linux GPU server.
+The `lupine` Python package bundles native client shims (CUDA driver API, CUDA runtime API, and NVML) for Linux, macOS, and Windows, so PyTorch runs against a remote GPU with no NVIDIA software — or container — on the client:
 
 ```sh
-% uname -mors 
+% uname -mors
 Darwin 25.5.0 arm64
-% uv run https://raw.githubusercontent.com/lupinemachines/lupine/main/python/examples/tensor.py
-LUPINE server host: 100.106.167.98  <-- the ip of a machine with the LUPINE server running
-LUPINE server port [14833]: 
-cuda available: True
-device: lupine:0
-count: 1
+% uv run --with numpy --with torch --with lupine python -c "
+import lupine
+with lupine.connect(host='100.106.167.98:14833') as s:
+    import torch
+    x = torch.arange(8, device=s.device(), dtype=torch.float32)
+    print('gpu:', torch.cuda.get_device_properties(0).name)
+    print('result:', (x * 2).cpu().tolist())
+"
 gpu: NVIDIA GeForce RTX 4090
 result: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
 ```
@@ -255,7 +257,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --break-system-packages \
-    --index-url https://download.pytorch.org/whl/cu130 \
+    --index-url https://download.pytorch.org/whl/cu132 \
     torch
 
 COPY test/pytorch_lupine_tests.py /opt/lupine/test/pytorch_lupine_tests.py

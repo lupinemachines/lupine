@@ -23,9 +23,9 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
-          cuda: "13.1.0"
+          cuda: "13.3.1"
           method: network
           sub-packages: '["nvcc"]'
 

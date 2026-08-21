@@ -219,7 +219,6 @@
 #define RPC_cuLaunchKernel 732897317
 #define RPC_cuLaunchKernelEx 1100221233
 #define RPC_cuLaunchCooperativeKernel 1003615807
-#define RPC_cuLaunchCooperativeKernelMultiDevice 671220858
 #define RPC_cuLaunchHostFunc 1459790768
 #define RPC_cuFuncSetBlockShape 1591448334
 #define RPC_cuFuncSetSharedSize 1705340648
@@ -229,6 +228,7 @@
 #define RPC_cuLaunch 1255109853
 #define RPC_cuLaunchGrid 1405072590
 #define RPC_cuLaunchGridAsync 251399172
+#define RPC_cuLaunchCooperativeKernelMultiDevice 671220858
 #define RPC_cuParamSetTexRef 811842488
 #define RPC_cuFuncSetSharedMemConfig 1389123837
 #define RPC_cuGraphCreate 1807883684

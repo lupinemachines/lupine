@@ -2043,6 +2043,7 @@ CUresult cuGetErrorName(CUresult error, const char **pStr);
  */
 CUresult cuInit(unsigned int Flags);
 /**
+ * @disabled client - manual client negotiates every available route
  * @param driverVersion RECV_ONLY
  */
 CUresult cuDriverGetVersion(int *driverVersion);

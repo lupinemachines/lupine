@@ -48,9 +48,10 @@
 #include "cache.h"
 #include "checkpoint.h"
 #include "client_routing.h"
-#include "codegen/gen_rpc_ids.h"
 #include "codegen/gen_cuda_client.h"
+#include "codegen/gen_rpc_ids.h"
 #include "cuda_profiler_compat.h"
+#include "driver_version.h"
 #include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
@@ -96,7 +97,69 @@ static void lupine_install_rpc_lifecycle_hooks() {
   }
 }
 
+extern int rpc_size();
+extern int rpc_open();
+extern conn_t *rpc_client_get_connection(unsigned int index);
+extern void rpc_close(conn_t *conn);
+
 static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags);
+
+static CUresult lupine_remote_cuDriverGetVersion(conn_t *conn,
+                                                 int *driver_version) {
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (conn == nullptr || driver_version == nullptr ||
+      rpc_write_start_request(conn, RPC_cuDriverGetVersion) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, driver_version, sizeof(*driver_version)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
+extern "C" CUresult cuDriverGetVersion(int *driverVersion) {
+  if (driverVersion == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  std::vector<int> route_versions;
+  CUresult first_error = CUDA_ERROR_DEVICE_UNAVAILABLE;
+
+  using cuDriverGetVersion_fn = CUresult (*)(int *);
+  auto local_get_version =
+      lupine_real_cuda_fn<cuDriverGetVersion_fn>("cuDriverGetVersion");
+  if (local_get_version != nullptr) {
+    int local_version = 0;
+    CUresult result = local_get_version(&local_version);
+    if (result == CUDA_SUCCESS) {
+      route_versions.push_back(local_version);
+    } else {
+      first_error = result;
+    }
+  }
+
+  if (rpc_open() == 0) {
+    for (int index = 0; index < rpc_size(); ++index) {
+      int remote_version = 0;
+      CUresult result = lupine_remote_cuDriverGetVersion(
+          rpc_client_get_connection(static_cast<unsigned int>(index)),
+          &remote_version);
+      if (result == CUDA_SUCCESS) {
+        route_versions.push_back(remote_version);
+      } else if (first_error == CUDA_ERROR_DEVICE_UNAVAILABLE) {
+        first_error = result;
+      }
+    }
+  }
+
+  int negotiated = lupine_highest_common_driver_version(
+      CUDA_VERSION, route_versions.data(), route_versions.size());
+  if (negotiated == 0) {
+    return first_error;
+  }
+  *driverVersion = negotiated;
+  return CUDA_SUCCESS;
+}
 
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
@@ -141,11 +204,6 @@ static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
                                                std::vector<size_t> *sizes);
 static CUresult lupine_warm_func_param_info(CUfunction function);
 static CUresult lupine_warm_kernel_param_info(CUkernel kernel);
-
-extern int rpc_size();
-extern int rpc_open();
-extern conn_t *rpc_client_get_connection(unsigned int index);
-extern void rpc_close(conn_t *conn);
 
 static bool lupine_stub_missing_enabled() {
   static bool enabled = [] {
