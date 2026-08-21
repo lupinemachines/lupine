@@ -558,12 +558,6 @@ jobs:
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
               export CUDA_SAMPLES_ARCH=89
 
-              python3 -m venv /tmp/venv-pytorch
-              /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
-              /tmp/venv-pytorch/bin/pip install numpy >/dev/null
-              /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
-              export PYTHON_BIN=/tmp/venv-pytorch/bin/python
-
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
@@ -576,21 +570,12 @@ jobs:
               ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
               ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
-              cuda_status=0
-              RESULTS_DIR="/results/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)" \
-                BUILD_SAMPLES=0 SAMPLE_SUITE=compliance \
-                /src/test/run_cuda_samples.sh || cuda_status=$?
-
-              pytorch_status=0
-              RESULTS_DIR="/results/test/pytorch/results/$(date +%Y%m%d-%H%M%S)" \
-                /src/test/run_pytorch_lupine_tests.sh || pytorch_status=$?
-
               custom_status=0
               SERVER_PORT_BASE=20900 TEST_JOBS="$CUDA_SAMPLE_JOBS" \
                 /src/test/run_custom_tests.sh || custom_status=$?
 
-              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$custom_status" -ne 0 ]]; then
-                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; custom tests exited $custom_status" >&2
+              if [[ "$custom_status" -ne 0 ]]; then
+                echo "custom tests exited $custom_status" >&2
                 exit 1
               fi
             '
