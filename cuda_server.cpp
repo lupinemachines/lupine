@@ -518,6 +518,7 @@ struct lupine_host_callback_data {
   CUhostFn fn = nullptr;
   void *userData = nullptr;
   lupine_graph_resources *resources = nullptr;
+  bool notify_only = false;
 };
 
 struct lupine_stream_callback_data {
@@ -2478,6 +2479,17 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
   return 0;
 }
 
+// A client round trip must never run on a CUDA callback thread: the driver
+// serializes context work behind an executing callback, so a trampoline that
+// waits for the client wedges the very lane workers this connection needs to
+// keep reading, the reply can then never arrive, and the dead-peer timer
+// kills the connection. Stream and host-func callbacks are therefore
+// delivered as one-way notifications; the stream does not wait for the
+// client-side callback to finish. The client compensates by holding its
+// explicit synchronization calls until every notified callback has run.
+// Graph host nodes keep the blocking round trip: a relaunchable graph cannot
+// be re-armed per execution, and graph launches do not pipeline the way the
+// direct APIs do.
 static void CUDA_CB lupine_graph_host_callback(void *userData) {
   auto *callback = static_cast<lupine_host_callback_data *>(userData);
   if (callback == nullptr || callback->conn == nullptr) {
@@ -2503,10 +2515,18 @@ static void CUDA_CB lupine_graph_host_callback(void *userData) {
   }
   CUhostFn fn = callback->fn;
   void *client_user_data = callback->userData;
+  uint32_t needs_response = callback->notify_only ? 0 : 1;
   void *response = nullptr;
   if (rpc_write(conn, &fn, sizeof(fn)) < 0 ||
       rpc_write(conn, &client_user_data, sizeof(client_user_data)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, &needs_response, sizeof(needs_response)) < 0) {
+    return;
+  }
+  if (callback->notify_only) {
+    rpc_write_end(conn);
+    return;
+  }
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &response, sizeof(response)) < 0 ||
       rpc_read_end(conn) < 0) {
     return;
@@ -2525,7 +2545,6 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   conn_t *conn = callback->conn;
   void *fn = reinterpret_cast<void *>(callback->callback);
   void *client_user_data = callback->userData;
-  void *response = nullptr;
   auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false);
   if (rpc_write_start_request(conn, 2) >= 0 &&
       rpc_copy_alloc(conn, sizeof(uint32_t)) >= 0 &&
@@ -2533,10 +2552,8 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
       rpc_write(conn, &stream, sizeof(stream)) >= 0 &&
       rpc_write(conn, &status, sizeof(status)) >= 0 &&
       rpc_write(conn, &fn, sizeof(fn)) >= 0 &&
-      rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
-      rpc_wait_for_response(conn) >= 0) {
-    rpc_read(conn, &response, sizeof(response));
-    rpc_read_end(conn);
+      rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0) {
+    rpc_write_end(conn);
   }
   lupine_cleanup_pending_dtoh_copies(&pending);
   delete callback;
@@ -3279,6 +3296,7 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
 
   auto *resources = lupine_get_stream_resources(stream);
   auto *callback = new lupine_host_callback_data{conn, fn, userData, resources};
+  callback->notify_only = true;
   result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||

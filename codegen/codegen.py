@@ -970,6 +970,16 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
     # Record the global's size so offset pointers into it route by range.
     if function.name.format() in {"cuModuleGetGlobal_v2", "cuLibraryGetGlobal", "cuLibraryGetManaged"}:
         f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr) lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);\n")
+    # Stream and host-func callbacks are delivered as one-way notifications
+    # (see lupine_stream_callback); explicit synchronization waits until the
+    # client has run every notified callback so "sync implies callbacks done"
+    # still holds.
+    if function.name.format() in {
+        "cuStreamSynchronize",
+        "cuCtxSynchronize",
+        "cuEventSynchronize",
+    }:
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_wait_for_server_callbacks();\n")
     if metadata.synchronize:
         f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
 
@@ -1503,7 +1513,8 @@ def main():
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
-            'extern "C" void lupine_ensure_mapped_host_readable(const void *host, size_t size);\n\n'
+            'extern "C" void lupine_ensure_mapped_host_readable(const void *host, size_t size);\n'
+            'extern "C" void lupine_wait_for_server_callbacks();\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled

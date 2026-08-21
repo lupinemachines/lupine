@@ -87,6 +87,7 @@ extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" void lupine_ensure_mapped_host_readable(const void *host,
                                                    size_t size);
+extern "C" void lupine_wait_for_server_callbacks();
 
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
@@ -411,6 +412,8 @@ CUresult cuCtxSynchronize() {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxSynchronize",
                                                   &return_value)) {
     if (return_value == CUDA_SUCCESS)
+      lupine_wait_for_server_callbacks();
+    if (return_value == CUDA_SUCCESS)
       return_value = lupine_sync_mapped_device_to_host();
     return return_value;
   }
@@ -422,6 +425,8 @@ CUresult cuCtxSynchronize() {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_wait_for_server_callbacks();
   if (return_value == CUDA_SUCCESS)
     return_value = lupine_sync_mapped_device_to_host();
   return return_value;
@@ -2860,6 +2865,8 @@ CUresult cuStreamSynchronize(CUstream hStream) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuStreamSynchronize",
                                                   &return_value, hStream)) {
     if (return_value == CUDA_SUCCESS)
+      lupine_wait_for_server_callbacks();
+    if (return_value == CUDA_SUCCESS)
       return_value = lupine_sync_mapped_device_to_host();
     return return_value;
   }
@@ -2872,6 +2879,8 @@ CUresult cuStreamSynchronize(CUstream hStream) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_wait_for_server_callbacks();
   if (return_value == CUDA_SUCCESS)
     return_value = lupine_sync_mapped_device_to_host();
   return return_value;
@@ -3004,6 +3013,8 @@ CUresult cuEventSynchronize(CUevent hEvent) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuEventSynchronize",
                                                   &return_value, hEvent)) {
     if (return_value == CUDA_SUCCESS)
+      lupine_wait_for_server_callbacks();
+    if (return_value == CUDA_SUCCESS)
       return_value = lupine_sync_mapped_device_to_host();
     return return_value;
   }
@@ -3016,6 +3027,8 @@ CUresult cuEventSynchronize(CUevent hEvent) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_wait_for_server_callbacks();
   if (return_value == CUDA_SUCCESS)
     return_value = lupine_sync_mapped_device_to_host();
   return return_value;

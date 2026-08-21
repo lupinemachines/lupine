@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <cuda.h>
@@ -63,7 +64,16 @@
 
 void *rpc_client_dispatch_thread(void *arg);
 
+static void lupine_note_server_callback_registered(conn_t *conn);
+static void lupine_note_server_callback_ran(conn_t *conn);
+static void lupine_forget_server_callbacks(conn_t *conn);
+
 static void lupine_cuda_transport_connection_changed(conn_t *) {
+  lupine_invalidate_current_context_cache();
+}
+
+static void lupine_cuda_transport_connection_closed(conn_t *conn) {
+  lupine_forget_server_callbacks(conn);
   lupine_invalidate_current_context_cache();
 }
 
@@ -72,7 +82,7 @@ static const lupine_client_transport_config &lupine_cuda_transport_config() {
     lupine_client_transport_config config;
     config.dispatch = rpc_client_dispatch_thread;
     config.connection_opened = lupine_cuda_transport_connection_changed;
-    config.connection_closed = lupine_cuda_transport_connection_changed;
+    config.connection_closed = lupine_cuda_transport_connection_closed;
     return config;
   }();
   return config;
@@ -6706,6 +6716,9 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_note_server_callback_registered(conn);
+  }
   return return_value;
 }
 
@@ -6736,6 +6749,9 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_note_server_callback_registered(conn);
   }
   return return_value;
 }
@@ -8210,9 +8226,70 @@ __attribute__((destructor)) static void lupine_rpc_destructor() {
 }
 #endif
 
+// Server stream and host-func callbacks arrive as one-way notifications; the
+// server-side stream no longer waits for the client to run them (a blocked
+// CUDA callback thread wedges the whole context, see lupine_stream_callback).
+// This ledger restores the observable ordering: explicit synchronization
+// calls wait here until every notified callback has finished running.
+struct lupine_server_callback_ledger {
+  std::mutex mutex;
+  std::condition_variable cond;
+  // Signed: a notification can be processed before the registering call's
+  // response lands, so a count may transiently dip below zero.
+  std::unordered_map<conn_t *, long> pending;
+};
+
+static lupine_server_callback_ledger &lupine_server_callbacks() {
+  static lupine_server_callback_ledger ledger;
+  return ledger;
+}
+
+static void lupine_note_server_callback_registered(conn_t *conn) {
+  auto &ledger = lupine_server_callbacks();
+  std::lock_guard<std::mutex> lock(ledger.mutex);
+  ledger.pending[conn] += 1;
+}
+
+static void lupine_note_server_callback_ran(conn_t *conn) {
+  auto &ledger = lupine_server_callbacks();
+  std::lock_guard<std::mutex> lock(ledger.mutex);
+  ledger.pending[conn] -= 1;
+  ledger.cond.notify_all();
+}
+
+// A closed connection delivers no more notifications; drop its slice of the
+// ledger so waiters do not hang on callbacks that will never run.
+static void lupine_forget_server_callbacks(conn_t *conn) {
+  auto &ledger = lupine_server_callbacks();
+  std::lock_guard<std::mutex> lock(ledger.mutex);
+  ledger.pending.erase(conn);
+  ledger.cond.notify_all();
+}
+
+// Set on the dispatch thread: a user callback that itself synchronizes
+// (already undefined behavior under CUDA) must not wait on the very callback
+// it is running inside of.
+static thread_local bool lupine_on_dispatch_thread = false;
+
+extern "C" void lupine_wait_for_server_callbacks() {
+  if (lupine_on_dispatch_thread) {
+    return;
+  }
+  auto &ledger = lupine_server_callbacks();
+  std::unique_lock<std::mutex> lock(ledger.mutex);
+  ledger.cond.wait(lock, [&ledger] {
+    long total = 0;
+    for (const auto &entry : ledger.pending) {
+      total += entry.second;
+    }
+    return total <= 0;
+  });
+}
+
 void *rpc_client_dispatch_thread(void *arg) {
   conn_t *conn = (conn_t *)arg;
   int op;
+  lupine_on_dispatch_thread = true;
 
   while (true) {
     op = rpc_dispatch(conn, 1);
@@ -8261,8 +8338,10 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       CUhostFn callback = nullptr;
       void *user_data = nullptr;
+      uint32_t needs_response = 0;
       if (rpc_read(conn, &callback, sizeof(callback)) < 0 ||
-          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
+          rpc_read(conn, &user_data, sizeof(user_data)) < 0 ||
+          rpc_read(conn, &needs_response, sizeof(needs_response)) < 0) {
         LUPINE_LOG_ERROR("Failed to read host callback request.");
         goto close_connection;
       }
@@ -8279,12 +8358,16 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       callback(user_data);
 
-      void *res = nullptr;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &res, sizeof(void *)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
-        goto close_connection;
+      if (needs_response == 0) {
+        lupine_note_server_callback_ran(conn);
+      } else {
+        void *res = nullptr;
+        if (rpc_write_start_response(conn, request_id) < 0 ||
+            rpc_write(conn, &res, sizeof(void *)) < 0 ||
+            rpc_write_end(conn) < 0) {
+          LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
+          goto close_connection;
+        }
       }
     } else if (op == 2) {
       CUstream stream = nullptr;
@@ -8300,8 +8383,7 @@ void *rpc_client_dispatch_thread(void *arg) {
         break;
       }
 
-      int request_id = rpc_read_end(conn);
-      if (request_id < 0) {
+      if (rpc_read_end(conn) < 0) {
         break;
       }
 
@@ -8309,13 +8391,7 @@ void *rpc_client_dispatch_thread(void *arg) {
         callback(stream, status, user_data);
       }
 
-      void *res = nullptr;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &res, sizeof(void *)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
-        break;
-      }
+      lupine_note_server_callback_ran(conn);
     } else if (op < 0 || conn->closed) {
       break;
     }
