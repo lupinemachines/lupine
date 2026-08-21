@@ -92,6 +92,37 @@ static constexpr size_t lupine_attribute_copy_size() {
          2 * sizeof(int);
 }
 
+static constexpr size_t lupine_attribute_snapshot_copy_size() {
+  return sizeof(uint32_t) + static_cast<size_t>(CU_FUNC_ATTRIBUTE_MAX) *
+                                lupine_attribute_copy_size();
+}
+
+template <typename Query>
+static int lupine_write_attribute_snapshot(conn_t *conn, Query query) {
+  auto *count = static_cast<uint32_t *>(
+      rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t)));
+  if (count == nullptr) {
+    return -1;
+  }
+  *count = static_cast<uint32_t>(CU_FUNC_ATTRIBUTE_MAX);
+
+  for (int attribute = 0; attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
+    auto *result = static_cast<CUresult *>(
+        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
+    auto *wire_attribute =
+        static_cast<int *>(rpc_write_buffer(conn, sizeof(int), alignof(int)));
+    auto *value =
+        static_cast<int *>(rpc_write_buffer(conn, sizeof(int), alignof(int)));
+    if (result == nullptr || wire_attribute == nullptr || value == nullptr) {
+      return -1;
+    }
+    *wire_attribute = attribute;
+    *value = 0;
+    *result = query(value, static_cast<CUfunction_attribute>(attribute));
+  }
+  return 0;
+}
+
 struct lupine_jit_state {
   unsigned int num_options = 0;
   CUjit_option *options = nullptr;
@@ -1073,23 +1104,14 @@ int handle_lupineFunctionAttributeSnapshot(conn_t *conn) {
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_copy_alloc(conn, static_cast<size_t>(CU_FUNC_ATTRIBUTE_MAX + 1) *
-                               lupine_attribute_copy_size()) < 0) {
+      rpc_copy_alloc(conn, lupine_attribute_snapshot_copy_size()) < 0) {
     return -1;
   }
-  for (int attribute = 0;; ++attribute) {
-    auto *result = static_cast<CUresult *>(
-        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-    auto *wire_attribute =
-        static_cast<int *>(rpc_write_buffer(conn, sizeof(int), alignof(int)));
-    auto *value =
-        static_cast<int *>(rpc_write_buffer(conn, sizeof(int), alignof(int)));
-    *wire_attribute = attribute;
-    *result = cuFuncGetAttribute(
-        value, static_cast<CUfunction_attribute>(attribute), function);
-    if (*result == CUDA_ERROR_INVALID_VALUE) {
-      break;
-    }
+  if (lupine_write_attribute_snapshot(
+          conn, [function](int *value, CUfunction_attribute attribute) {
+            return cuFuncGetAttribute(value, attribute, function);
+          }) < 0) {
+    return -1;
   }
   return rpc_write_end(conn);
 }
@@ -1297,13 +1319,11 @@ int handle_lupineLibraryAttributeSnapshot(conn_t *conn) {
         kernels.data(), snapshot_kernel_count, library);
   }
 
-  size_t copy_size =
-      enumerate_result == CUDA_SUCCESS
-          ? static_cast<size_t>(snapshot_kernel_count) *
-                (lupine_cuda_value_copy_size<CUfunction>() +
-                 2 * static_cast<size_t>(CU_FUNC_ATTRIBUTE_MAX + 1) *
-                     lupine_attribute_copy_size())
-          : 0;
+  size_t copy_size = enumerate_result == CUDA_SUCCESS
+                         ? static_cast<size_t>(snapshot_kernel_count) *
+                               (lupine_cuda_value_copy_size<CUfunction>() +
+                                2 * lupine_attribute_snapshot_copy_size())
+                         : 0;
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write(conn, &device_result, sizeof(device_result)) < 0 ||
@@ -1340,35 +1360,20 @@ int handle_lupineLibraryAttributeSnapshot(conn_t *conn) {
         rpc_write_buffer(conn, sizeof(CUfunction), alignof(CUfunction)));
     *function_result = cuKernelGetFunction(function, kernel);
     if (*function_result == CUDA_SUCCESS) {
-      for (int attribute = 0;; ++attribute) {
-        auto *result = static_cast<CUresult *>(
-            rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-        auto *wire_attribute = static_cast<int *>(
-            rpc_write_buffer(conn, sizeof(int), alignof(int)));
-        auto *value = static_cast<int *>(
-            rpc_write_buffer(conn, sizeof(int), alignof(int)));
-        *wire_attribute = attribute;
-        *result = cuFuncGetAttribute(
-            value, static_cast<CUfunction_attribute>(attribute), *function);
-        if (*result == CUDA_ERROR_INVALID_VALUE) {
-          break;
-        }
+      if (lupine_write_attribute_snapshot(
+              conn, [function](int *value, CUfunction_attribute attribute) {
+                return cuFuncGetAttribute(value, attribute, *function);
+              }) < 0) {
+        return -1;
       }
     }
-    for (int attribute = 0;; ++attribute) {
-      auto *result = static_cast<CUresult *>(
-          rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-      auto *wire_attribute =
-          static_cast<int *>(rpc_write_buffer(conn, sizeof(int), alignof(int)));
-      auto *value =
-          static_cast<int *>(rpc_write_buffer(conn, sizeof(int), alignof(int)));
-      *wire_attribute = attribute;
-      *result = cuKernelGetAttribute(
-          value, static_cast<CUfunction_attribute>(attribute), kernel,
-          snapshot_device);
-      if (*result == CUDA_ERROR_INVALID_VALUE) {
-        break;
-      }
+    if (lupine_write_attribute_snapshot(
+            conn, [kernel, snapshot_device](int *value,
+                                            CUfunction_attribute attribute) {
+              return cuKernelGetAttribute(value, attribute, kernel,
+                                          snapshot_device);
+            }) < 0) {
+      return -1;
     }
   }
 #else

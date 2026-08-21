@@ -29,52 +29,16 @@ jobs:
             cuda: 13.1.0
             ubuntu: "24.04"
           - component: client
-            cuda: 13.0.2
-            ubuntu: "24.04"
-          - component: server
-            cuda: 13.0.2
-            ubuntu: "24.04"
-          - component: client
             cuda: 12.9.1
             ubuntu: "24.04"
           - component: server
             cuda: 12.9.1
             ubuntu: "24.04"
           - component: client
-            cuda: 12.8.1
-            ubuntu: "24.04"
-          - component: server
-            cuda: 12.8.1
-            ubuntu: "24.04"
-          - component: client
-            cuda: 12.6.2
-            ubuntu: "24.04"
-          - component: server
-            cuda: 12.6.2
-            ubuntu: "24.04"
-          - component: client
-            cuda: 12.5.1
-            ubuntu: "22.04"
-          - component: server
-            cuda: 12.5.1
-            ubuntu: "22.04"
-          - component: client
-            cuda: 12.4.1
-            ubuntu: "22.04"
-          - component: server
-            cuda: 12.4.1
-            ubuntu: "22.04"
-          - component: client
             cuda: 11.8.0
             ubuntu: "22.04"
           - component: server
             cuda: 11.8.0
-            ubuntu: "22.04"
-          - component: client
-            cuda: 11.7.1
-            ubuntu: "22.04"
-          - component: server
-            cuda: 11.7.1
             ubuntu: "22.04"
 
     steps:
