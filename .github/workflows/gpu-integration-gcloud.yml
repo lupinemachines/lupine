@@ -35,6 +35,7 @@ jobs:
               https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
             cuda_compat_deb_sha256: 5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4
             cuda_sample_jobs: 4
+            custom_test_jobs: 1
             server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4
             name: CUDA 12.4
@@ -44,6 +45,7 @@ jobs:
             cuda_compat_deb_url: ""
             cuda_compat_deb_sha256: ""
             cuda_sample_jobs: 4
+            custom_test_jobs: 4
             server_ld_library_path: ""
           - label: cuda11-8
             name: CUDA 11.8
@@ -53,6 +55,7 @@ jobs:
             cuda_compat_deb_url: ""
             cuda_compat_deb_sha256: ""
             cuda_sample_jobs: 4
+            custom_test_jobs: 4
             server_ld_library_path: ""
 
     env:
@@ -76,6 +79,7 @@ jobs:
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
       CUDA_SAMPLE_JOBS: ${{ matrix.cuda_sample_jobs }}
+      CUSTOM_TEST_JOBS: ${{ matrix.custom_test_jobs }}
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
       CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
@@ -510,11 +514,12 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUSTOM_TEST_JOBS='$CUSTOM_TEST_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
             -e CUDA_SAMPLE_JOBS="$CUDA_SAMPLE_JOBS" \
+            -e CUSTOM_TEST_JOBS="$CUSTOM_TEST_JOBS" \
             -e CUDA_SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT" \
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
             -e SSH_COMMAND_TIMEOUT="$SSH_COMMAND_TIMEOUT" \
@@ -600,7 +605,7 @@ jobs:
                 /src/test/run_pytorch_lupine_tests.sh || pytorch_status=$?
 
               custom_status=0
-              SERVER_PORT_BASE=20900 TEST_JOBS="$CUDA_SAMPLE_JOBS" \
+              SERVER_PORT_BASE=20900 TEST_JOBS="$CUSTOM_TEST_JOBS" \
                 /src/test/run_custom_tests.sh || custom_status=$?
 
               if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$custom_status" -ne 0 ]]; then
