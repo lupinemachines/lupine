@@ -170,6 +170,7 @@
 #define RPC_cuMemPoolExportPointer 858999363
 #define RPC_cuMemPoolImportPointer 1026713940
 #define RPC_cuMemPrefetchAsync_v2 199313298
+#define RPC_cuMemAdvise_v2 1952016083
 #define RPC_cuMemRangeGetAttributes 694140572
 #define RPC_cuPointerSetAttribute 749063765
 #define RPC_cuPointerGetAttributes 1948058610
@@ -219,7 +220,6 @@
 #define RPC_cuLaunchKernel 732897317
 #define RPC_cuLaunchKernelEx 1100221233
 #define RPC_cuLaunchCooperativeKernel 1003615807
-#define RPC_cuLaunchCooperativeKernelMultiDevice 671220858
 #define RPC_cuLaunchHostFunc 1459790768
 #define RPC_cuFuncSetBlockShape 1591448334
 #define RPC_cuFuncSetSharedSize 1705340648
@@ -229,6 +229,7 @@
 #define RPC_cuLaunch 1255109853
 #define RPC_cuLaunchGrid 1405072590
 #define RPC_cuLaunchGridAsync 251399172
+#define RPC_cuLaunchCooperativeKernelMultiDevice 671220858
 #define RPC_cuParamSetTexRef 811842488
 #define RPC_cuFuncSetSharedMemConfig 1389123837
 #define RPC_cuGraphCreate 1807883684
@@ -359,7 +360,9 @@
 #define RPC_cuGraphicsUnmapResources 121118754
 #define RPC_cuGetProcAddress_v2 1976428842
 #define RPC_cuGetExportTable 2020229241
+#define RPC_cuGreenCtxGetDevResource 1557019419
 #define RPC_cuStreamGetGreenCtx 1723357044
+#define RPC_cuGreenCtxStreamCreate 1433266945
 #define RPC_cuCtxCreate_v2 804269166
 #define RPC_cuCtxCreate_v3 1492589816
 #define RPC_cuDeviceGetGraphMemAttribute 622504442
@@ -369,7 +372,7 @@
 #define RPC_cuGraphNodeGetDependencies_v2 773232156
 #define RPC_cuGraphNodeGetDependentNodes_v2 310507977
 #define RPC_cuGraphRemoveDependencies_v2 1606074400
-#define RPC_cuMemAdvise_v2 1952016083
+#define RPC_cuMemAdvise 2001260778
 #define RPC_cuMemGetHandleForAddressRange 835443611
 #define RPC_cuMemHostRegister_v2 590145791
 #define RPC_cuMemHostUnregister 983276883

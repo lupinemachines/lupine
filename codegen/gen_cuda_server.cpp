@@ -19,6 +19,12 @@ extern "C" CUresult CUDAAPI cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
                                                CUdevice dstDevice,
                                                CUstream hStream);
 
+#ifdef cuMemAdvise
+#undef cuMemAdvise
+#endif
+extern "C" CUresult CUDAAPI cuMemAdvise(CUdeviceptr devPtr, size_t count,
+                                        CUmem_advise advice, CUdevice device);
+
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;
   int request_id;
@@ -3323,6 +3329,37 @@ ERROR_0:
 
 #endif
 
+#if CUDA_VERSION >= 12020
+int handle_cuMemAdvise_v2(conn_t *conn) {
+  CUdeviceptr devPtr;
+  size_t count;
+  CUmem_advise advice;
+  CUmemLocation location;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &advice, sizeof(CUmem_advise)) < 0 ||
+      rpc_read(conn, &location, sizeof(CUmemLocation)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuMemAdvise_v2(devPtr, count, advice, location);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 int handle_cuMemRangeGetAttributes(conn_t *conn) {
   void *data;
   size_t dataSizes;
@@ -4304,34 +4341,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuLaunchCooperativeKernelMultiDevice(conn_t *conn) {
-  CUDA_LAUNCH_PARAMS launchParamsList;
-  unsigned int numDevices;
-  unsigned int flags;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
-      rpc_read(conn, &numDevices, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuLaunchCooperativeKernelMultiDevice(
-      &launchParamsList, numDevices, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuFuncSetBlockShape(conn_t *conn) {
   CUfunction hfunc;
   int x;
@@ -4528,6 +4537,34 @@ int handle_cuLaunchGridAsync(conn_t *conn) {
       cuLaunchGridAsync(f, grid_width, grid_height, hStream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuLaunchCooperativeKernelMultiDevice(conn_t *conn) {
+  CUDA_LAUNCH_PARAMS launchParamsList;
+  unsigned int numDevices;
+  unsigned int flags;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
+      rpc_read(conn, &numDevices, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuLaunchCooperativeKernelMultiDevice(
+      &launchParamsList, numDevices, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7784,6 +7821,35 @@ ERROR_0:
 }
 
 #if CUDA_VERSION >= 12040
+int handle_cuGreenCtxGetDevResource(conn_t *conn) {
+  CUgreenCtx hCtx;
+  CUdevResource resource;
+  CUdevResourceType type;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_read(conn, &type, sizeof(CUdevResourceType)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGreenCtxGetDevResource(hCtx, &resource, type);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &resource, sizeof(CUdevResource)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
 int handle_cuStreamGetGreenCtx(conn_t *conn) {
   CUstream hStream;
   CUgreenCtx phCtx;
@@ -7799,6 +7865,38 @@ int handle_cuStreamGetGreenCtx(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12050
+int handle_cuGreenCtxStreamCreate(conn_t *conn) {
+  CUstream phStream;
+  CUgreenCtx greenCtx;
+  unsigned int flags;
+  int priority;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &greenCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &priority, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuGreenCtxStreamCreate(&phStream, greenCtx, flags, priority);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &phStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7828,6 +7926,34 @@ int handle_cuMemPrefetchAsync(conn_t *conn) {
     goto ERROR_0;
   lupine_intercept_result =
       cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemAdvise(conn_t *conn) {
+  CUdeviceptr devPtr;
+  size_t count;
+  CUmem_advise advice;
+  CUdevice device;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &advice, sizeof(CUmem_advise)) < 0 ||
+      rpc_read(conn, &device, sizeof(CUdevice)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuMemAdvise(devPtr, count, advice, device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||

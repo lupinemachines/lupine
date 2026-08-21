@@ -67,6 +67,9 @@
 #ifdef cuMemPrefetchAsync_ptsz
 #undef cuMemPrefetchAsync_ptsz
 #endif
+#ifdef cuMemAdvise
+#undef cuMemAdvise
+#endif
 
 void *rpc_client_dispatch_thread(void *arg);
 
@@ -3756,6 +3759,54 @@ extern "C" CUresult cuMemPrefetchAsync_ptsz(CUdeviceptr devPtr, size_t count,
   return cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
 }
 
+extern "C" CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count,
+                                CUmem_advise advice, CUdevice device) {
+  CUdeviceptr translated = devPtr;
+  bool managed_alias = false;
+  CUresult prepare_result =
+      lupine_prepare_prefetch_ptr(devPtr, &translated, &managed_alias);
+  if (prepare_result != CUDA_SUCCESS) {
+    return prepare_result;
+  }
+
+  CUdevice route_device = device;
+  lupine_route route;
+  if (device != CU_DEVICE_CPU) {
+    route = lupine_route_for_device(&route_device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+      return CUDA_ERROR_INVALID_DEVICE;
+    }
+  } else {
+    route = lupine_route_for_deviceptr(translated);
+  }
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUdeviceptr, size_t, CUmem_advise, CUdevice);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemAdvise");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(translated, count, advice, route_device);
+  }
+  // Identity-VA managed allocations are device VMM mappings on the server,
+  // not native managed allocations. The advice cannot be applied there, but
+  // it is only a performance hint, so match the prefetch shim and accept it.
+  if (managed_alias) {
+    return CUDA_SUCCESS;
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (rpc_write_start_request(conn, RPC_cuMemAdvise) < 0 ||
+      rpc_write(conn, &translated, sizeof(translated)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &advice, sizeof(advice)) < 0 ||
+      rpc_write(conn, &route_device, sizeof(route_device)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
 #if CUDA_VERSION >= 12020
 extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                           CUmemLocation location,
@@ -3809,6 +3860,55 @@ extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
       rpc_write(conn, &route_location, sizeof(route_location)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count,
+                                   CUmem_advise advice,
+                                   CUmemLocation location) {
+  CUdeviceptr translated = devPtr;
+  bool managed_alias = false;
+  CUresult prepare_result =
+      lupine_prepare_prefetch_ptr(devPtr, &translated, &managed_alias);
+  if (prepare_result != CUDA_SUCCESS) {
+    return prepare_result;
+  }
+
+  CUmemLocation route_location = location;
+  lupine_route route;
+  if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+    CUdevice route_device = location.id;
+    route = lupine_route_for_device(&route_device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+      return CUDA_ERROR_INVALID_DEVICE;
+    }
+    route_location.id = route_device;
+  } else {
+    route = lupine_route_for_deviceptr(translated);
+  }
+  if (lupine_route_is_local(route)) {
+    using real_fn_t =
+        CUresult (*)(CUdeviceptr, size_t, CUmem_advise, CUmemLocation);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemAdvise_v2");
+    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                           : real(translated, count, advice, route_location);
+  }
+  if (managed_alias) {
+    return CUDA_SUCCESS;
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (rpc_write_start_request(conn, RPC_cuMemAdvise_v2) < 0 ||
+      rpc_write(conn, &translated, sizeof(translated)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &advice, sizeof(advice)) < 0 ||
+      rpc_write(conn, &route_location, sizeof(route_location)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -8223,7 +8323,6 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3D)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3DAsync)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3DPeer)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3DPeerAsync)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemAdvise)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemRangeGetAttribute)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorString)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorName)
@@ -8251,9 +8350,7 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxFromGreenCtx)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxDestroy)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxGetDevResource)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxGetDevResource)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxGetId)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxStreamCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuStreamGetDevResource)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxRecordEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxWaitEvent)
@@ -8348,7 +8445,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuMemcpy3DAsync),
       LUPINE_STUB_ENTRY(cuMemcpy3DPeer),
       LUPINE_STUB_ENTRY(cuMemcpy3DPeerAsync),
-      LUPINE_STUB_ENTRY(cuMemAdvise),
       LUPINE_STUB_ENTRY(cuMemRangeGetAttribute),
       LUPINE_STUB_ENTRY(cuGetErrorString),
       LUPINE_STUB_ENTRY(cuGetErrorName),
@@ -8376,9 +8472,7 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuGreenCtxCreate),
       LUPINE_STUB_ENTRY(cuGreenCtxDestroy),
       LUPINE_STUB_ENTRY(cuCtxGetDevResource),
-      LUPINE_STUB_ENTRY(cuGreenCtxGetDevResource),
       LUPINE_STUB_ENTRY(cuGreenCtxGetId),
-      LUPINE_STUB_ENTRY(cuGreenCtxStreamCreate),
       LUPINE_STUB_ENTRY(cuStreamGetDevResource),
       LUPINE_STUB_ENTRY(cuCtxRecordEvent),
       LUPINE_STUB_ENTRY(cuCtxWaitEvent),
@@ -8676,6 +8770,14 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     }
     return CUDA_SUCCESS;
   }
+  if (symbol != nullptr && cudaVersion >= 12020 &&
+      strcmp(symbol, "cuMemAdvise") == 0) {
+    *pfn = reinterpret_cast<void *>(&cuMemAdvise_v2);
+    if (symbolStatus != nullptr) {
+      *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
+    }
+    return CUDA_SUCCESS;
+  }
 #endif
 
   auto it = get_function_pointer(symbol);
@@ -8920,6 +9022,7 @@ lupine_manual_function_map() {
       {"cuMemHostUnregister", (void *)cuMemHostUnregister},
       {"cuMemGetAddressRange", (void *)cuMemGetAddressRange},
       {"cuMemGetInfo", (void *)cuMemGetInfo},
+      {"cuMemAdvise", (void *)cuMemAdvise},
       {"cuMemPrefetchAsync", (void *)cuMemPrefetchAsync},
       {"cuMemPrefetchAsync_ptsz", (void *)cuMemPrefetchAsync_ptsz},
       {"cuArrayCreate", (void *)cuArrayCreate_v2},

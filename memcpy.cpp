@@ -1090,6 +1090,9 @@ static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
 }
 
 static bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
+  if (lupine_translate_managed_host_ptr(ptr, nullptr)) {
+    return false;
+  }
   if (lupine_host_ptr_is_tracked(ptr)) {
     return true;
   }
@@ -1489,7 +1492,12 @@ extern "C" const void *lupine_mapped_host_read_source(const void *host,
 
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
   for (const auto &mapping : lupine_mapped_host_snapshots()) {
-    if (mapping.size == 0 || !mapping.device_mapping_used) {
+    // Managed allocations can be modified by driver APIs and libraries whose
+    // argument payloads are opaque to the client (for example, cuBLAS). At a
+    // CUDA synchronization point, conservatively invalidate their mirrors
+    // even when no kernel launch explicitly marked the allocation as used.
+    if (mapping.size == 0 ||
+        (!mapping.device_mapping_used && !mapping.managed)) {
       continue;
     }
     // Invalidate instead of copying back; the fault handler fetches on touch.
@@ -2541,6 +2549,13 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
     return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
                            : real(data, attribute, query_ptr);
   }
+  // Identity-VA managed allocations use device VMM on the server, so the
+  // server has no host alias to report. Return the client mirror instead.
+  if (managed_alias && attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+    void *host = reinterpret_cast<void *>(ptr);
+    memcpy(data, &host, sizeof(host));
+    return CUDA_SUCCESS;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   if (rpc_write_start_request(conn, RPC_cuPointerGetAttribute) < 0 ||
@@ -2791,10 +2806,23 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     }
   }
 
+  std::vector<CUpointer_attribute> request_attributes;
+  const CUpointer_attribute *rpc_attributes = attributes;
+  if (managed_alias) {
+    request_attributes.assign(attributes, attributes + numAttributes);
+    for (auto &attribute : request_attributes) {
+      if (attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+        attribute = CU_POINTER_ATTRIBUTE_DEVICE_POINTER;
+      }
+    }
+    rpc_attributes = request_attributes.data();
+  }
+
   conn_t *conn = lupine_route_remote_conn(route);
   if (rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
-      rpc_write(conn, attributes, numAttributes * sizeof(CUpointer_attribute)) <
+      rpc_write(conn, rpc_attributes,
+                numAttributes * sizeof(CUpointer_attribute)) <
           0 ||
       rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
       rpc_wait_for_response(conn) < 0) {
