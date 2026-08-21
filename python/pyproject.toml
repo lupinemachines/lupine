@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lupine"
-version = "1.0.0"
-description = "Small PyTorch adapter helpers for LUPINE-backed CUDA devices"
+version = "2.0.0"
+description = "CUDA on any host: bundled LUPINE driver/runtime shims plus PyTorch adapter"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["httpx[http2]>=0.28", "packaging>=24"]
+dependencies = []
 
 [project.optional-dependencies]
 torch = ["torch"]
@@ -19,3 +19,11 @@ dev = ["pytest>=8.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["lupine"]
+# lupine/_libs/<platform-tag>/ native shims are copied in by CI before
+# building (see build.py). They match root .gitignore patterns
+# (*.so), so declare them as artifacts to force inclusion.
+artifacts = ["lupine/_libs/**"]
+
+[tool.hatch.build.targets.sdist]
+# Native libraries never enter the sdist; build wheels from a checkout.
+exclude = ["lupine/_libs"]
