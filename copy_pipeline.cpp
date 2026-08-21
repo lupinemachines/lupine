@@ -10,8 +10,8 @@
 
 #include "client_routing.h"
 
-extern "C" void lupine_ensure_mapped_host_readable(const void *host,
-                                                   size_t size);
+extern "C" const void *lupine_mapped_host_read_source(const void *host,
+                                                      size_t size);
 extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
                                                   CUdeviceptr *translated);
@@ -92,7 +92,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   if (ByteCount != 0 && srcHost == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  lupine_ensure_mapped_host_readable(srcHost, ByteCount);
+  srcHost = lupine_mapped_host_read_source(srcHost, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
   CUdeviceptr dst_rpc = dstDevice;
   if (lupine_translate_managed_host_ptr(dstDevice, &dst_rpc)) {

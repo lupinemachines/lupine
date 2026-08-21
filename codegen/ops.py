@@ -195,9 +195,10 @@ class ArrayOperation:
             )
         )
         if self.compressible:
-            # Refresh stale mapped mirrors before the connection is held.
+            # Refresh stale mapped mirrors and select their permanent R/W
+            # source before the connection is held.
             f.write(
-                "    lupine_ensure_mapped_host_readable({param_name}, {size});\n".format(
+                "    {param_name} = lupine_mapped_host_read_source({param_name}, {size});\n".format(
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )

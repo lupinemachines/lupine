@@ -83,8 +83,8 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
-extern "C" void lupine_ensure_mapped_host_readable(const void *host,
-                                                   size_t size);
+extern "C" const void *lupine_mapped_host_read_source(const void *host,
+                                                      size_t size);
 
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
@@ -1369,7 +1369,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   conn_t *conn = lupine_route_remote_conn(route);
   if (ByteCount != 0 && srcHost == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  lupine_ensure_mapped_host_readable(srcHost, ByteCount);
+  srcHost = lupine_mapped_host_read_source(srcHost, ByteCount);
   if (rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||

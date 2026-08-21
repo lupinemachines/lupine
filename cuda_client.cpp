@@ -8909,6 +8909,7 @@ lupine_manual_function_map() {
       {"cuMemAllocHost", (void *)cuMemAllocHost_v2},
       {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
       {"cuMemFree", (void *)cuMemFree_v2},
+      {"cuMemFree_v2", (void *)cuMemFree_v2},
       {"cuMemFreeHost", (void *)cuMemFreeHost},
       {"cuMemHostAlloc", (void *)cuMemHostAlloc},
       {"cuMemHostGetDevicePointer", (void *)cuMemHostGetDevicePointer_v2},

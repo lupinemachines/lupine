@@ -1,8 +1,10 @@
 // Checks mapped host memory emulation against the driver's registration
-// semantics: unaligned registration, overlapping re-registration, reported
-// flags, unregister of allocated memory, and zero byte allocation.
+// semantics: unaligned registration, overlapping re-registration, RPC writes
+// into registered memory, direct device access, reported flags, unregister of
+// allocated memory, and zero byte allocation.
 
 #include <cuda.h>
+#include <cuda_runtime.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -26,6 +28,12 @@ static bool cu_is(CUresult status, CUresult expected, const char *call) {
   std::fprintf(stderr, "%s returned %d, expected %d\n", call,
                static_cast<int>(status), static_cast<int>(expected));
   return false;
+}
+
+__global__ void increment_byte(unsigned char *value) {
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    ++*value;
+  }
 }
 
 int main() {
@@ -61,25 +69,35 @@ int main() {
     std::fprintf(stderr, "aligned_alloc failed\n");
     return 1;
   }
-  // The mprotect-based mirror cannot track pages the registration does not own
-  // outright, so an unaligned DEVICEMAP registration is rejected rather than
-  // silently protecting the caller's neighbouring memory.
   unsigned char *unaligned = block + 64;
-  if (!cu_is(cuMemHostRegister(unaligned, page_size * 2 + 17,
+  if (!cu_ok(cuMemHostRegister(unaligned, page_size * 2 + 17,
                                CU_MEMHOSTREGISTER_DEVICEMAP),
-             CUDA_ERROR_INVALID_VALUE, "unaligned cuMemHostRegister")) {
+             "unaligned cuMemHostRegister") ||
+      !cu_ok(cuMemHostUnregister(unaligned), "unaligned cuMemHostUnregister")) {
     return 1;
   }
 
   unsigned char *aligned = block + page_size;
-  if (!cu_ok(cuMemHostRegister(aligned, page_size, CU_MEMHOSTREGISTER_DEVICEMAP),
-             "cuMemHostRegister")) {
+  if (!cu_ok(
+          cuMemHostRegister(aligned, page_size, CU_MEMHOSTREGISTER_DEVICEMAP),
+          "cuMemHostRegister")) {
     return 1;
   }
-  if (!cu_is(cuMemHostRegister(aligned, page_size,
-                               CU_MEMHOSTREGISTER_DEVICEMAP),
-             CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED,
-             "overlapping cuMemHostRegister")) {
+  if (!cu_is(
+          cuMemHostRegister(aligned, page_size, CU_MEMHOSTREGISTER_DEVICEMAP),
+          CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED,
+          "overlapping cuMemHostRegister")) {
+    return 1;
+  }
+
+  CUdeviceptr scratch = 0;
+  unsigned char expected = 37;
+  if (!cu_ok(cuMemAlloc(&scratch, 1), "cuMemAlloc") ||
+      !cu_ok(cuMemcpyHtoD(scratch, &expected, 1), "cuMemcpyHtoD") ||
+      !cu_ok(cuMemcpyDtoH(aligned, scratch, 1),
+             "cuMemcpyDtoH into registered memory") ||
+      aligned[0] != expected) {
+    std::fprintf(stderr, "RPC write into registered memory was not visible\n");
     return 1;
   }
 
@@ -92,8 +110,17 @@ int main() {
     std::fprintf(stderr, "cuMemHostGetDevicePointer returned a null pointer\n");
     return 1;
   }
+  aligned[0] = 41;
+  increment_byte<<<1, 1>>>(reinterpret_cast<unsigned char *>(mapped));
+  if (cudaGetLastError() != cudaSuccess ||
+      cudaDeviceSynchronize() != cudaSuccess || aligned[0] != 42) {
+    std::fprintf(stderr, "direct device access produced %u, expected 42\n",
+                 static_cast<unsigned int>(aligned[0]));
+    return 1;
+  }
 
-  if (!cu_ok(cuMemHostUnregister(aligned), "cuMemHostUnregister")) {
+  if (!cu_ok(cuMemFree(scratch), "cuMemFree") ||
+      !cu_ok(cuMemHostUnregister(aligned), "cuMemHostUnregister")) {
     return 1;
   }
   std::free(block);
@@ -105,9 +132,8 @@ int main() {
     return 1;
   }
   if ((flags & CU_MEMHOSTALLOC_DEVICEMAP) == 0) {
-    std::fprintf(stderr,
-                 "cuMemHostGetFlags reported 0x%x, expected DEVICEMAP\n",
-                 flags);
+    std::fprintf(
+        stderr, "cuMemHostGetFlags reported 0x%x, expected DEVICEMAP\n", flags);
     return 1;
   }
 
