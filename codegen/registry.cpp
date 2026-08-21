@@ -462,8 +462,16 @@ LUPINE_DECLARE_HANDLER(RPC_cuMemPrefetchAsync_v2, handle_cuMemPrefetchAsync_v2,
                        rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12040
+LUPINE_DECLARE_HANDLER(RPC_cuGreenCtxGetDevResource,
+                       handle_cuGreenCtxGetDevResource, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12040
 LUPINE_DECLARE_HANDLER(RPC_cuStreamGetGreenCtx, handle_cuStreamGetGreenCtx,
                        rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12050
+LUPINE_DECLARE_HANDLER(RPC_cuGreenCtxStreamCreate,
+                       handle_cuGreenCtxStreamCreate, rpc_backend::cuda)
 #endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
@@ -498,13 +506,26 @@ const rpc_handler_registry &lupine_rpc_handlers() {
                                               rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12040
-                          LUPINE_REGISTER_HANDLER(RPC_cuStreamGetGreenCtx,
-                                                  handle_cuStreamGetGreenCtx,
-                                                  rpc_backend::cuda)
+                          LUPINE_REGISTER_HANDLER(
+                              RPC_cuGreenCtxGetDevResource,
+                              handle_cuGreenCtxGetDevResource,
+                              rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12040
+                              LUPINE_REGISTER_HANDLER(
+                                  RPC_cuStreamGetGreenCtx,
+                                  handle_cuStreamGetGreenCtx, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12050
+                                  LUPINE_REGISTER_HANDLER(
+                                      RPC_cuGreenCtxStreamCreate,
+                                      handle_cuGreenCtxStreamCreate,
+                                      rpc_backend::cuda)
 #endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
-                              LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+                                      LUPINE_NVML_RPC_HANDLERS(
+                                          LUPINE_REGISTER_HANDLER)
 
 #endif
   };

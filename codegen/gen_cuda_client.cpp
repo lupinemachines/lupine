@@ -6403,6 +6403,32 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
 }
 
 #if CUDA_VERSION >= 12040
+CUresult cuGreenCtxGetDevResource(CUgreenCtx hCtx, CUdevResource *resource,
+                                  CUdevResourceType type) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUgreenCtx, CUdevResource *, CUdevResourceType);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGreenCtxGetDevResource", &return_value, hCtx, resource,
+          type)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuGreenCtxGetDevResource) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, resource, sizeof(CUdevResource)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
 CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
@@ -6420,6 +6446,38 @@ CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12050
+CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
+                                unsigned int flags, int priority) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUstream *, CUgreenCtx, unsigned int, int);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGreenCtxStreamCreate", &return_value, phStream, greenCtx,
+          flags, priority)) {
+    if (return_value == CUDA_SUCCESS && phStream != nullptr) {
+      lupine_note_stream_owner_route(*phStream, route);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuGreenCtxStreamCreate) < 0 ||
+      rpc_write(conn, &greenCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &priority, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phStream, sizeof(CUstream)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && phStream != nullptr) {
+    lupine_note_stream_owner_route(*phStream, route);
+  }
   return return_value;
 }
 
@@ -7131,7 +7189,13 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphicsMapResources", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources", (void *)cuGraphicsUnmapResources},
 #if CUDA_VERSION >= 12040
+    {"cuGreenCtxGetDevResource", (void *)cuGreenCtxGetDevResource},
+#endif
+#if CUDA_VERSION >= 12040
     {"cuStreamGetGreenCtx", (void *)cuStreamGetGreenCtx},
+#endif
+#if CUDA_VERSION >= 12050
+    {"cuGreenCtxStreamCreate", (void *)cuGreenCtxStreamCreate},
 #endif
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},

@@ -8251,9 +8251,7 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxFromGreenCtx)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxDestroy)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxGetDevResource)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxGetDevResource)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxGetId)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxStreamCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuStreamGetDevResource)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxRecordEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxWaitEvent)
@@ -8376,9 +8374,7 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuGreenCtxCreate),
       LUPINE_STUB_ENTRY(cuGreenCtxDestroy),
       LUPINE_STUB_ENTRY(cuCtxGetDevResource),
-      LUPINE_STUB_ENTRY(cuGreenCtxGetDevResource),
       LUPINE_STUB_ENTRY(cuGreenCtxGetId),
-      LUPINE_STUB_ENTRY(cuGreenCtxStreamCreate),
       LUPINE_STUB_ENTRY(cuStreamGetDevResource),
       LUPINE_STUB_ENTRY(cuCtxRecordEvent),
       LUPINE_STUB_ENTRY(cuCtxWaitEvent),

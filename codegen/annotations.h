@@ -3493,6 +3493,26 @@ CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
  */
 CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx);
 /**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey CURRENT_CONTEXT
+ * @param hCtx SEND_ONLY
+ * @param resource RECV_ONLY
+ * @param type SEND_ONLY
+ */
+CUresult cuGreenCtxGetDevResource(CUgreenCtx hCtx, CUdevResource *resource,
+                                  CUdevResourceType type);
+/**
+ * @guard CUDA_VERSION >= 12050
+ * @routingkey CURRENT_CONTEXT
+ * @recordowner STREAM phStream
+ * @param phStream RECV_ONLY
+ * @param greenCtx SEND_ONLY
+ * @param flags SEND_ONLY
+ * @param priority SEND_ONLY
+ */
+CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
+                                unsigned int flags, int priority);
+/**
  * @disabled - manual client handles cross-server event waits
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY

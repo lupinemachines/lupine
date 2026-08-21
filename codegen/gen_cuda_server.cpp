@@ -7784,6 +7784,35 @@ ERROR_0:
 }
 
 #if CUDA_VERSION >= 12040
+int handle_cuGreenCtxGetDevResource(conn_t *conn) {
+  CUgreenCtx hCtx;
+  CUdevResource resource;
+  CUdevResourceType type;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_read(conn, &type, sizeof(CUdevResourceType)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGreenCtxGetDevResource(hCtx, &resource, type);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &resource, sizeof(CUdevResource)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
 int handle_cuStreamGetGreenCtx(conn_t *conn) {
   CUstream hStream;
   CUgreenCtx phCtx;
@@ -7799,6 +7828,38 @@ int handle_cuStreamGetGreenCtx(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12050
+int handle_cuGreenCtxStreamCreate(conn_t *conn) {
+  CUstream phStream;
+  CUgreenCtx greenCtx;
+  unsigned int flags;
+  int priority;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &greenCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &priority, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuGreenCtxStreamCreate(&phStream, greenCtx, flags, priority);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &phStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
