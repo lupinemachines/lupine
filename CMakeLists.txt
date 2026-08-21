@@ -315,6 +315,11 @@ if(LUPINE_BUILD_SERVER)
 endif()
 
 if(BUILD_TESTING AND NOT WIN32)
+    add_executable(driver_version_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/driver_version_test.cpp)
+    target_include_directories(driver_version_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+
     add_executable(h2_test ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
     target_include_directories(h2_test PRIVATE ${NGHTTP2_INCLUDE_DIR})
     if(CUDAToolkit_VERSION)
@@ -376,6 +381,8 @@ if(BUILD_TESTING AND NOT WIN32)
         ${CMAKE_DL_LIBS} Threads::Threads)
     lupine_apply_sanitizer(server_checkpoint_test)
 
+    add_test(NAME driver_version_test COMMAND driver_version_test)
+    set_tests_properties(driver_version_test PROPERTIES TIMEOUT 10)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 30)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})

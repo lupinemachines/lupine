@@ -22,8 +22,6 @@
 #include <utility>
 #include <vector>
 
-extern void *_rpc_read_id_dispatch(void *);
-
 namespace {
 
 template <typename T, typename = void>
@@ -63,8 +61,6 @@ void require(bool condition, const char *message) {
   }
 }
 
-void init_rpc_read(conn_t *conn);
-void init_rpc_write(conn_t *conn);
 void init_pair_sockets(h2_pair *pair);
 void exchange_settings(h2_pair *pair);
 
@@ -80,40 +76,10 @@ h2_pair make_pair() {
 void init_pair_sockets(h2_pair *pair) {
   int fds[2] = {-1, -1};
   require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
-  pair->client.connfd = fds[0];
-  pair->server.connfd = fds[1];
-  init_rpc_read(&pair->client);
-  init_rpc_write(&pair->client);
-  require(pthread_mutex_init(&pair->client.call_mutex, nullptr) == 0,
-          "client call mutex init failed");
-  init_rpc_read(&pair->server);
-  init_rpc_write(&pair->server);
-  require(pthread_mutex_init(&pair->server.call_mutex, nullptr) == 0,
-          "server call mutex init failed");
-}
-
-void init_rpc_read(conn_t *conn) {
-  require(pthread_mutex_init(&conn->read_mutex, nullptr) == 0,
-          "read mutex init failed");
-  require(pthread_cond_init(&conn->read_cond, nullptr) == 0,
-          "read cond init failed");
-}
-
-void init_rpc_write(conn_t *conn) {
-  require(pthread_mutex_init(&conn->write_mutex, nullptr) == 0,
-          "write mutex init failed");
-}
-
-void read_rpc_prefix(conn_t *conn) {
-  require(pthread_mutex_lock(&conn->read_mutex) == 0,
-          "prefix read mutex lock failed");
-  require(rpc_read(conn, &conn->read_id, sizeof(conn->read_id)) ==
-              static_cast<int>(sizeof(conn->read_id)),
-          "prefix request id read failed");
-  require(pthread_cond_broadcast(&conn->read_cond) == 0,
-          "prefix cond broadcast failed");
-  require(pthread_mutex_unlock(&conn->read_mutex) == 0,
-          "prefix read mutex unlock failed");
+  require(rpc_conn_init(&pair->client, fds[0], 0) == 0,
+          "client RPC init failed");
+  require(rpc_conn_init(&pair->server, fds[1], 1) == 0,
+          "server RPC init failed");
 }
 
 void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
@@ -128,6 +94,12 @@ void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
 int write_bytes(conn_t *conn, const void *data, size_t size) {
   std::vector<rpc_write_cursor> cursors = {rpc_write_cursor::plain(data, size)};
   return rpc_http2_write(conn, cursors);
+}
+
+int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
+                       size_t size) {
+  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor::plain(data, size)};
+  return rpc_http2_write_stream(conn, stream_id, cursors);
 }
 
 std::string read_string(conn_t *conn, size_t size) {
@@ -176,9 +148,32 @@ bool raw_read_exact(lupine_socket_t socket, unsigned char *data, size_t size) {
   return true;
 }
 
+bool raw_read_frame(lupine_socket_t socket,
+                    std::array<unsigned char, 9> *header) {
+  if (!raw_read_exact(socket, header->data(), header->size())) {
+    return false;
+  }
+  size_t size = (static_cast<size_t>((*header)[0]) << 16) |
+                (static_cast<size_t>((*header)[1]) << 8) | (*header)[2];
+  std::vector<unsigned char> payload(size);
+  return raw_read_exact(socket, payload.data(), payload.size());
+}
+
+void init_raw_server_peer(h2_pair *pair) {
+  init_pair_sockets(pair);
+  require(rpc_http2_client_init(&pair->client) == 0, "client h2 init failed");
+  constexpr char preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+  std::array<unsigned char, sizeof(preface) - 1> received = {};
+  require(
+      raw_read_exact(pair->server.connfd, received.data(), received.size()) &&
+          memcmp(received.data(), preface, received.size()) == 0,
+      "client HTTP/2 preface missing");
+}
+
 void test_response_wait_sends_transport_heartbeat() {
-  h2_pair pair = make_pair();
-  exchange_settings(&pair);
+  h2_pair pair;
+  init_raw_server_peer(&pair);
+  rpc_http2_client_start_heartbeat(&pair.client);
 
   rpc_http2_response_wait_begin(&pair.client);
   bool received_ping = false;
@@ -187,13 +182,8 @@ void test_response_wait_sends_transport_heartbeat() {
     require(poll(&descriptor, 1, 1000) > 0,
             "response wait did not emit an HTTP/2 frame");
     std::array<unsigned char, 9> header = {};
-    require(raw_read_exact(pair.server.connfd, header.data(), header.size()),
-            "heartbeat frame header read failed");
-    size_t payload_size = (static_cast<size_t>(header[0]) << 16) |
-                          (static_cast<size_t>(header[1]) << 8) | header[2];
-    std::vector<unsigned char> payload(payload_size);
-    require(raw_read_exact(pair.server.connfd, payload.data(), payload.size()),
-            "heartbeat frame payload read failed");
+    require(raw_read_frame(pair.server.connfd, &header),
+            "heartbeat frame read failed");
     received_ping =
         header[3] == NGHTTP2_PING && (header[4] & NGHTTP2_FLAG_ACK) == 0;
   }
@@ -295,6 +285,7 @@ void test_fragmented_frames_direct() {
   std::string received;
   std::thread reader(
       [&] { received = read_string(&pair.server, expected.size()); });
+  usleep(20 * 1000);
   write_all(&pair.client, {"fragment"});
   write_all(&pair.client, {"ed"});
   write_all(&pair.client, {"-data"});
@@ -324,6 +315,7 @@ void test_partial_read_stages_only_overflow() {
                 static_cast<int>(received.size() - 7),
             "partial suffix read failed");
   });
+  usleep(20 * 1000);
   write_all(&pair.client, {payload});
   reader.join();
   require(received == payload, "partial read payload mismatch");
@@ -350,6 +342,7 @@ void test_truncated_read_clears_direct_destination() {
   std::thread reader([&] {
     read_result = rpc_http2_read(&pair.server, guarded.data() + 8, 32);
   });
+  usleep(20 * 1000);
   write_all(&pair.client, {prefix});
   require(shutdown(pair.client.connfd, SHUT_WR) == 0,
           "truncated writer shutdown failed");
@@ -467,74 +460,96 @@ void test_abort_failed_transport_with_queued_data() {
   close(listener);
 }
 
-void test_concurrent_response_lanes() {
+void test_independent_stream_lanes() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
 
-  constexpr int kFirstId = 200;
-  constexpr int kSecondId = 202;
-  std::vector<unsigned char> first(1024 * 1024);
-  std::vector<unsigned char> second(1024 * 1024);
-  for (size_t i = 0; i < first.size(); ++i) {
-    first[i] = static_cast<unsigned char>(i & 0xff);
-    second[i] = static_cast<unsigned char>((i * 17 + 3) & 0xff);
+  int32_t client_first = rpc_http2_lane_stream(&pair.client, 101);
+  int32_t client_second = rpc_http2_lane_stream(&pair.client, 202);
+  require(client_first > 0 && client_second > 0 &&
+              client_first != client_second,
+          "client lanes did not get distinct HTTP/2 streams");
+  int32_t server_first = rpc_http2_accept_stream(&pair.server);
+  int32_t server_second = rpc_http2_accept_stream(&pair.server);
+  require(server_first == client_first && server_second == client_second,
+          "server accepted the wrong HTTP/2 lane streams");
+
+  const std::string blocked_request = "leave this lane unread";
+  const std::string independent_request = "second lane still progresses";
+  require(write_stream_bytes(&pair.client, client_first, blocked_request.data(),
+                             blocked_request.size()) == 0,
+          "first lane request write failed");
+  require(write_stream_bytes(&pair.client, client_second,
+                             independent_request.data(),
+                             independent_request.size()) == 0,
+          "second lane request write failed");
+  std::string received_request(independent_request.size(), '\0');
+  require(rpc_http2_read_stream(&pair.server, server_second,
+                                received_request.data(),
+                                received_request.size()) ==
+              static_cast<int>(received_request.size()),
+          "second lane request was blocked by the first lane");
+  require(received_request == independent_request,
+          "second lane request payload mismatch");
+
+  const std::string blocked_response = "leave this response unread";
+  const std::string independent_response = "second response still progresses";
+  require(write_stream_bytes(&pair.server, server_first,
+                             blocked_response.data(),
+                             blocked_response.size()) == 0,
+          "first lane response write failed");
+  require(write_stream_bytes(&pair.server, server_second,
+                             independent_response.data(),
+                             independent_response.size()) == 0,
+          "second lane response write failed");
+  std::string received_response(independent_response.size(), '\0');
+  require(rpc_http2_read_stream(&pair.client, client_second,
+                                received_response.data(),
+                                received_response.size()) ==
+              static_cast<int>(received_response.size()),
+          "second lane response was blocked by the first lane");
+  require(received_response == independent_response,
+          "second lane response payload mismatch");
+}
+
+void test_socket_reader_hands_off_between_streams() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  int32_t client_lane = rpc_http2_lane_stream(&pair.client, 404);
+  int32_t server_lane = rpc_http2_accept_stream(&pair.server);
+  require(client_lane > 0 && server_lane == client_lane,
+          "reader handoff lane setup failed");
+
+  char dispatch_value = '\0';
+  char lane_value = '\0';
+  std::atomic<bool> lane_done{false};
+  std::thread dispatch_reader([&] {
+    require(rpc_http2_read(&pair.client, &dispatch_value, 1) == 1,
+            "dispatch stream handoff read failed");
+  });
+  usleep(20 * 1000);
+  std::thread lane_reader([&] {
+    require(rpc_http2_read_stream(&pair.client, client_lane, &lane_value, 1) ==
+                1,
+            "lane handoff read failed");
+    lane_done.store(true, std::memory_order_release);
+  });
+  usleep(20 * 1000);
+
+  require(write_stream_bytes(&pair.server, server_lane, "l", 1) == 0,
+          "lane handoff write failed");
+  for (int i = 0; i < 100 && !lane_done.load(std::memory_order_acquire); ++i) {
+    usleep(10 * 1000);
   }
-  std::vector<unsigned char> received_first(first.size());
-  std::vector<unsigned char> received_second(second.size());
+  bool handed_off = lane_done.load(std::memory_order_acquire);
 
-  pthread_t dispatcher = {};
-  require(pthread_create(&dispatcher, nullptr, _rpc_read_id_dispatch,
-                         &pair.client) == 0,
-          "response dispatcher start failed");
-  pair.client.rpc_thread = dispatcher;
-  int first_result = -1;
-  int second_result = -1;
-  std::thread first_reader([&] {
-    if (rpc_read_start(&pair.client, kFirstId) == 0 &&
-        rpc_read(&pair.client, received_first.data(), received_first.size()) ==
-            static_cast<int>(received_first.size())) {
-      first_result = rpc_read_end(&pair.client);
-    }
-  });
-  std::thread second_reader([&] {
-    if (rpc_read_start(&pair.client, kSecondId) == 0 &&
-        rpc_read(&pair.client, received_second.data(),
-                 received_second.size()) ==
-            static_cast<int>(received_second.size())) {
-      second_result = rpc_read_end(&pair.client);
-    }
-  });
-
-  const rpc_http2_read_stats before = read_stats(&pair.client);
-  pair.server.read_lane_id = 2;
-  require(rpc_write_start_response(&pair.server, kSecondId) == 0,
-          "second response start failed");
-  require(rpc_write(&pair.server, second.data(), second.size()) == 0,
-          "second response payload failed");
-  require(rpc_write_end(&pair.server) == kSecondId,
-          "second response end failed");
-  pair.server.read_lane_id = 1;
-  require(rpc_write_start_response(&pair.server, kFirstId) == 0,
-          "first response start failed");
-  require(rpc_write(&pair.server, first.data(), first.size()) == 0,
-          "first response payload failed");
-  require(rpc_write_end(&pair.server) == kFirstId, "first response end failed");
-
-  first_reader.join();
-  second_reader.join();
-  require(first_result == kFirstId && second_result == kSecondId,
-          "concurrent response id mismatch");
-  require(received_first == first && received_second == second,
-          "concurrent response payload mismatch");
-  const rpc_http2_read_stats after = read_stats(&pair.client);
-  require(after.direct_bytes > before.direct_bytes,
-          "concurrent responses did not use direct receive");
-  require(after.peak_staged_bytes <= 64 * 1024,
-          "concurrent response read-ahead was not bounded");
-
-  shutdown(pair.client.connfd, SHUT_RDWR);
-  pthread_join(dispatcher, nullptr);
-  pair.client.rpc_thread = 0;
+  write_all(&pair.server, {"d"});
+  lane_reader.join();
+  dispatch_reader.join();
+  require(handed_off, "socket reader reclaimed recv ahead of a waiting lane");
+  require(lane_value == 'l' && dispatch_value == 'd',
+          "reader handoff payload mismatch");
 }
 
 void exchange_settings(h2_pair *pair) {
@@ -636,7 +651,7 @@ void test_server_window_hold_caps_and_releases() {
   constexpr size_t kBurst = LUPINE_FF_STAGING_WINDOW_BYTES;
   std::vector<char> payload(kBurst, 'h');
   std::vector<char> received(kBurst, '\0');
-  uint64_t held = 0;
+  rpc_http2_window_credit held;
 
   // As on a production connection, the client's dispatch thread is what applies
   // the server's WINDOW_UPDATE frames; it releases when the server replies.
@@ -656,8 +671,39 @@ void test_server_window_hold_caps_and_releases() {
           "held write failed");
   reader.join();
   require(received == payload, "held payload mismatch");
-  require(held == LUPINE_FF_STAGING_WINDOW_BYTES / 2,
+  require(held.bytes == LUPINE_FF_STAGING_WINDOW_BYTES / 2,
           "held bytes did not saturate at the cap");
+
+  // The cap is connection-wide, not per stream: otherwise enough busy lanes
+  // could consume the connection window and starve control traffic.
+  constexpr size_t kSecondLaneBurst = 1024 * 1024;
+  int32_t client_lane = rpc_http2_lane_stream(&pair.client, 303);
+  int32_t server_lane = rpc_http2_accept_stream(&pair.server);
+  require(client_lane > 0 && server_lane == client_lane,
+          "second held lane setup failed");
+  std::vector<char> second_payload(kSecondLaneBurst, 'i');
+  std::vector<char> second_received(kSecondLaneBurst, '\0');
+  rpc_http2_window_credit second_held;
+  std::thread second_reader([&] {
+    require(rpc_bind_http2_stream(&pair.server, server_lane) == 0,
+            "second held lane bind failed");
+    rpc_http2_window_hold_begin(&pair.server);
+    require(rpc_http2_read_stream(&pair.server, server_lane,
+                                  second_received.data(),
+                                  second_received.size()) ==
+                static_cast<int>(second_received.size()),
+            "second held lane read failed");
+    second_held = rpc_http2_window_hold_end(&pair.server);
+    rpc_unbind_http2_stream(&pair.server);
+  });
+  require(write_stream_bytes(&pair.client, client_lane, second_payload.data(),
+                             second_payload.size()) == 0,
+          "second held lane write failed");
+  second_reader.join();
+  require(second_received == second_payload,
+          "second held lane payload mismatch");
+  require(second_held.bytes == 0,
+          "window hold cap was incorrectly applied per stream");
 
   // Still holding: the uncapped remainder must have been credited, so another
   // window's worth of payload still flows.
@@ -686,20 +732,8 @@ void test_server_window_hold_caps_and_releases() {
 }
 
 void test_reset_wakes_flow_controlled_writer() {
-  h2_pair pair = make_pair();
-  exchange_settings(&pair);
-
-  // Flush the client's acknowledgement of the server's initial SETTINGS and
-  // consume it through the server session before switching this test to raw
-  // HTTP/2 control frames.
-  write_all(&pair.client, {"m"});
-  require(read_string(&pair.server, 1) == "m",
-          "failed to drain initial SETTINGS acknowledgement");
-
-  std::thread client_control_reader([&] {
-    unsigned char unused = 0;
-    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
-  });
+  h2_pair pair;
+  init_raw_server_peer(&pair);
 
   // Shrink the peer's stream window so the writer pauses after 64 KiB rather
   // than requiring another multi-gigabyte test payload.
@@ -710,14 +744,14 @@ void test_reset_wakes_flow_controlled_writer() {
   settings[13] = settings[14] = 0xff;
   require(raw_write_all(pair.server.connfd, settings.data(), settings.size()),
           "failed to send reduced-window SETTINGS");
-  std::array<unsigned char, 9> settings_ack = {};
-  require(raw_read_exact(pair.server.connfd, settings_ack.data(),
-                         settings_ack.size()),
-          "failed to read SETTINGS acknowledgement");
-  require(settings_ack[0] == 0 && settings_ack[1] == 0 &&
-              settings_ack[2] == 0 && settings_ack[3] == NGHTTP2_SETTINGS &&
-              (settings_ack[4] & NGHTTP2_FLAG_ACK) != 0,
-          "invalid SETTINGS acknowledgement");
+  bool received_ack = false;
+  while (!received_ack) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read SETTINGS acknowledgement");
+    received_ack =
+        header[3] == NGHTTP2_SETTINGS && (header[4] & NGHTTP2_FLAG_ACK) != 0;
+  }
 
   std::atomic<bool> reset_failed{false};
   std::thread server_reset([&] {
@@ -758,7 +792,6 @@ void test_reset_wakes_flow_controlled_writer() {
   shutdown(pair.client.connfd, SHUT_RDWR);
   shutdown(pair.server.connfd, SHUT_RDWR);
   server_reset.join();
-  client_control_reader.join();
 
   require(write_result < 0,
           "reset flow-controlled write unexpectedly succeeded");
@@ -823,10 +856,9 @@ void test_rpc_write_queue_grows() {
           "zero-length write consumed a queue entry");
 
   h2_pair pair = make_pair();
-  init_rpc_write(&pair.client);
-  init_rpc_read(&pair.server);
 
   constexpr int kCount = 300;
+  constexpr int kOp = 77;
   std::vector<int> values(kCount);
   for (int i = 0; i < kCount; ++i) {
     values[i] = i;
@@ -834,27 +866,29 @@ void test_rpc_write_queue_grows() {
 
   std::vector<int> received(kCount, -1);
   std::thread reader([&] {
-    read_rpc_prefix(&pair.server);
-    require(pair.server.read_id == 17, "large queue request id mismatch");
-    require(rpc_read_start(&pair.server, 17) == 0,
-            "large queue read start failed");
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "large queue stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp,
+            "large queue dispatch failed");
     for (int i = 0; i < kCount; ++i) {
       require(rpc_read(&pair.server, &received[i], sizeof(received[i])) ==
                   static_cast<int>(sizeof(received[i])),
               "large queue payload read failed");
     }
-    require(rpc_read_end(&pair.server) == 17, "large queue read_end failed");
+    require(rpc_read_end(&pair.server) > 0, "large queue read_end failed");
+    rpc_unbind_http2_stream(&pair.server);
   });
 
-  require(rpc_write_start_response(&pair.client, 17) == 0,
-          "large queue response start failed");
+  require(rpc_write_start_request(&pair.client, kOp) == 0,
+          "large queue request start failed");
   for (int i = 0; i < kCount; ++i) {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
             "large queue rpc_write failed");
   }
-  require(pair.client.write_queue.size() == kCount + 3,
+  require(pair.client.write_queue.size() == kCount + 2,
           "large queue count mismatch");
-  require(rpc_write_end(&pair.client) == 17, "large queue write_end failed");
+  require(rpc_write_end(&pair.client) > 0, "large queue write_end failed");
   reader.join();
   require(received == values, "large queue payload mismatch");
 }
@@ -887,20 +921,20 @@ void test_rpc_write_buffer_uses_fixed_allocation() {
   *direct = third;
   require(rpc_write_buffer(&pair.client, 1, alignof(uint8_t)) == nullptr,
           "rpc_write_buffer exceeded its fixed allocation");
-  require(pair.client.write_queue.size() == 6,
+  require(pair.client.write_queue.size() == 5,
           "fixed copy queue count mismatch");
   require(pair.client.write_copy_offset == 20, "fixed copy cursor mismatch");
-  require(pair.client.write_queue[3].data == pair.client.write_copy_buffer &&
-              pair.client.write_queue[4].data ==
+  require(pair.client.write_queue[2].data == pair.client.write_copy_buffer &&
+              pair.client.write_queue[3].data ==
                   pair.client.write_copy_buffer + 8 &&
-              pair.client.write_queue[5].data ==
+              pair.client.write_queue[4].data ==
                   pair.client.write_copy_buffer + 16,
           "fixed copy queued the wrong spans");
-  require(*pair.client.write_queue[3].data == first &&
+  require(*pair.client.write_queue[2].data == first &&
               *reinterpret_cast<const uint64_t *>(
-                  pair.client.write_queue[4].data) == second &&
+                  pair.client.write_queue[3].data) == second &&
               *reinterpret_cast<const uint32_t *>(
-                  pair.client.write_queue[5].data) == third,
+                  pair.client.write_queue[4].data) == third,
           "fixed copy changed buffered values");
   require(rpc_write_end(&pair.client) == 21, "fixed response write end failed");
   require(pair.client.write_copy_buffer == nullptr,
@@ -929,8 +963,7 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
         rpc_write_buffer(&pair.client, sizeof(value), alignof(int)));
     require(buffer != nullptr, "failed transport buffer allocation failed");
     *buffer = value;
-    close(pair.client.connfd);
-    pair.client.connfd = -1;
+    rpc_close_transport_socket(&pair.client);
     require(rpc_write_end(&pair.client) < 0,
             "failed transport unexpectedly sent copied data");
     require(pair.client.write_copy_buffer == nullptr,
@@ -938,11 +971,8 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
   }
 
   conn_t conn = {};
-  conn.connfd = -1;
-  init_rpc_read(&conn);
-  init_rpc_write(&conn);
-  require(pthread_mutex_init(&conn.call_mutex, nullptr) == 0,
-          "destroy call mutex init failed");
+  require(rpc_conn_init(&conn, LUPINE_INVALID_SOCKET, 0) == 0,
+          "destroy connection init failed");
   require(rpc_copy_alloc(&conn, 64) == 0, "destroy copy allocation failed");
   rpc_conn_destroy(&conn);
   require(conn.write_copy_buffer == nullptr && conn.write_copy_capacity == 0 &&
@@ -952,11 +982,10 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
 
 void test_rpc_lz4_payload_round_trip() {
   h2_pair pair = make_pair();
-  init_rpc_write(&pair.client);
-  init_rpc_read(&pair.server);
 
   std::string prefix = "before";
   std::string suffix = "after";
+  constexpr int kOp = 79;
   std::vector<char> payload(LUPINE_COMPRESS_BLOCK_BYTES + 128 * 1024);
   for (size_t i = 0; i < payload.size(); ++i) {
     payload[i] = static_cast<char>(i % 13);
@@ -967,10 +996,11 @@ void test_rpc_lz4_payload_round_trip() {
   std::vector<char> received(payload.size());
   const rpc_http2_read_stats before = read_stats(&pair.server);
   std::thread reader([&] {
-    read_rpc_prefix(&pair.server);
-    require(pair.server.read_id == 23, "lz4 payload request id mismatch");
-    require(rpc_read_start(&pair.server, 23) == 0,
-            "lz4 payload read start failed");
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "lz4 payload stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp,
+            "lz4 payload dispatch failed");
     require(rpc_read(&pair.server, received_prefix.data(),
                      received_prefix.size()) ==
                 static_cast<int>(received_prefix.size()),
@@ -982,18 +1012,19 @@ void test_rpc_lz4_payload_round_trip() {
                      received_suffix.size()) ==
                 static_cast<int>(received_suffix.size()),
             "lz4 payload suffix read failed");
-    require(rpc_read_end(&pair.server) == 23, "lz4 payload read_end failed");
+    require(rpc_read_end(&pair.server) > 0, "lz4 payload read_end failed");
+    rpc_unbind_http2_stream(&pair.server);
   });
 
-  require(rpc_write_start_response(&pair.client, 23) == 0,
-          "lz4 payload response start failed");
+  require(rpc_write_start_request(&pair.client, kOp) == 0,
+          "lz4 payload request start failed");
   require(rpc_write(&pair.client, prefix.data(), prefix.size()) == 0,
           "lz4 payload prefix write failed");
   require(rpc_write_payload(&pair.client, payload.data(), payload.size()) == 0,
           "lz4 payload payload write failed");
   require(rpc_write(&pair.client, suffix.data(), suffix.size()) == 0,
           "lz4 payload suffix write failed");
-  require(rpc_write_end(&pair.client) == 23, "lz4 payload write_end failed");
+  require(rpc_write_end(&pair.client) > 0, "lz4 payload write_end failed");
   reader.join();
 
   require(received_prefix == prefix, "lz4 payload prefix mismatch");
@@ -1002,6 +1033,61 @@ void test_rpc_lz4_payload_round_trip() {
   const rpc_http2_read_stats after = read_stats(&pair.server);
   require(after.direct_bytes > before.direct_bytes,
           "lz4 payload did not use direct receive");
+}
+
+void test_rpc_repeated_responses_on_lane() {
+  h2_pair pair = make_pair();
+
+  constexpr int kOp = 81;
+  constexpr int kChunkCount = 2;
+  std::vector<char> payload(LUPINE_COMPRESS_BLOCK_BYTES, '\0');
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = static_cast<char>(i % 17);
+  }
+
+  std::thread server([&] {
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "repeated response stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp,
+            "repeated response dispatch failed");
+    int request_id = rpc_read_end(&pair.server);
+    require(request_id > 0, "repeated response request end failed");
+
+    for (int chunk = 0; chunk < kChunkCount; ++chunk) {
+      require(rpc_write_start_response(&pair.server, request_id) == 0,
+              "repeated response start failed");
+      require(rpc_write(&pair.server, &chunk, sizeof(chunk)) == 0,
+              "repeated response index write failed");
+      require(rpc_write_payload(&pair.server, payload.data(), payload.size()) ==
+                  0,
+              "repeated response payload write failed");
+      require(rpc_write_end(&pair.server) == request_id,
+              "repeated response write end failed");
+    }
+    rpc_unbind_http2_stream(&pair.server);
+  });
+
+  require(rpc_write_start_request(&pair.client, kOp) == 0,
+          "repeated response request start failed");
+  int request_id = rpc_write_end(&pair.client);
+  require(request_id > 0, "repeated response request write failed");
+  for (int expected = 0; expected < kChunkCount; ++expected) {
+    require(rpc_read_start(&pair.client, request_id) == 0,
+            "repeated response read start failed");
+    int chunk = -1;
+    std::vector<char> received(payload.size());
+    require(rpc_read(&pair.client, &chunk, sizeof(chunk)) == sizeof(chunk),
+            "repeated response index read failed");
+    require(rpc_read_payload(&pair.client, received.data(), received.size()) ==
+                static_cast<int>(received.size()),
+            "repeated response payload read failed");
+    require(rpc_read_end(&pair.client) == request_id,
+            "repeated response read end failed");
+    require(chunk == expected, "repeated response index mismatch");
+    require(received == payload, "repeated response payload mismatch");
+  }
+  server.join();
 }
 
 // Handlers start request chains without their own null checks; an unreachable
@@ -1027,6 +1113,7 @@ int main() {
   test_rpc_write_buffer_uses_fixed_allocation();
   test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
   test_rpc_lz4_payload_round_trip();
+  test_rpc_repeated_responses_on_lane();
   test_response_wait_sends_transport_heartbeat();
   test_client_to_server();
   test_server_receives_session_id();
@@ -1038,7 +1125,8 @@ int main() {
   test_truncated_read_clears_direct_destination();
   test_close_already_failed_transport_socket();
   test_abort_failed_transport_with_queued_data();
-  test_concurrent_response_lanes();
+  test_independent_stream_lanes();
+  test_socket_reader_hands_off_between_streams();
   test_large_payload();
   test_framed_payload_round_trip();
   test_payload_larger_than_flow_control_window();

@@ -12,6 +12,13 @@
 
 #include "rpc.h"
 
+#ifdef cuMemPrefetchAsync
+#undef cuMemPrefetchAsync
+#endif
+extern "C" CUresult CUDAAPI cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
+                                               CUdevice dstDevice,
+                                               CUstream hStream);
+
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;
   int request_id;
@@ -612,6 +619,33 @@ int handle_cuCtxGetDevice(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+#if CUDA_VERSION >= 13000
+int handle_cuCtxGetDevice_v2(conn_t *conn) {
+  CUdevice device;
+  CUcontext ctx;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuCtxGetDevice_v2(&device, ctx);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
 
 int handle_cuCtxGetFlags(conn_t *conn) {
   unsigned int flags;
@@ -3326,6 +3360,40 @@ ERROR_0:
   return -1;
 }
 
+#if CUDA_VERSION >= 12020
+int handle_cuMemPrefetchAsync_v2(conn_t *conn) {
+  CUdeviceptr devPtr;
+  size_t count;
+  CUmemLocation location;
+  unsigned int flags;
+  CUstream hStream;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &location, sizeof(CUmemLocation)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 int handle_cuMemRangeGetAttributes(conn_t *conn) {
   void *data;
   size_t dataSizes;
@@ -3730,28 +3798,6 @@ int handle_cuEventCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phEvent, sizeof(CUevent)) < 0 ||
-      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cuEventDestroy_v2(conn_t *conn) {
-  CUevent hEvent;
-  int request_id;
-  CUresult lupine_intercept_result;
-  if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-  lupine_intercept_result = cuEventDestroy_v2(hEvent);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7834,3 +7880,32 @@ ERROR_0:
 }
 
 #endif
+
+int handle_cuMemPrefetchAsync(conn_t *conn) {
+  CUdeviceptr devPtr;
+  size_t count;
+  CUdevice dstDevice;
+  CUstream hStream;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &dstDevice, sizeof(CUdevice)) < 0 ||
+      rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}

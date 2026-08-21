@@ -35,8 +35,7 @@ struct lupine_event_table {
   std::mutex mutex;
   lupine_event_slot slots[kLupineEventQueryBatch] = {};
   std::atomic<uint64_t> record_seq{0};
-  std::atomic<uint64_t> dtoh_issued{0};
-  std::atomic<uint64_t> dtoh_drained{0};
+  std::atomic<uint64_t> dtoh_pending{0};
 };
 
 typedef conn_t *(*lupine_event_conn_resolver)(CUevent event);
@@ -53,9 +52,7 @@ void lupine_event_note_query_results(lupine_event_table *table,
                                      const uint64_t *recorded,
                                      const CUresult *results, uint32_t count);
 void lupine_event_note_async_dtoh(lupine_event_table *table);
-uint64_t lupine_event_dtoh_issued(lupine_event_table *table);
-void lupine_event_note_dtoh_drained(lupine_event_table *table,
-                                    uint64_t drained);
+void lupine_event_note_dtoh_drained(lupine_event_table *table, uint64_t count);
 
 void lupine_note_event_recorded(CUevent event);
 void lupine_note_event_destroyed(CUevent event);
@@ -68,5 +65,4 @@ void lupine_note_event_query_results(const CUevent *events,
                                      const uint64_t *recorded,
                                      const CUresult *results, uint32_t count);
 void lupine_note_async_dtoh_copy();
-uint64_t lupine_async_dtoh_issued_count();
-void lupine_note_async_dtoh_drained(uint64_t drained);
+void lupine_note_async_dtoh_drained(uint64_t count);

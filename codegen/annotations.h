@@ -2043,6 +2043,7 @@ CUresult cuGetErrorName(CUresult error, const char **pStr);
  */
 CUresult cuInit(unsigned int Flags);
 /**
+ * @disabled client - manual client negotiates every available route
  * @param driverVersion RECV_ONLY
  */
 CUresult cuDriverGetVersion(int *driverVersion);
@@ -2192,6 +2193,7 @@ CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
  */
 CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev);
 /**
+ * @disabled - manual client and server maintain context ownership state
  * @recordowner CONTEXT pctx
  * @param pctx RECV_ONLY
  * @param flags SEND_ONLY
@@ -2240,6 +2242,14 @@ CUresult cuCtxGetCurrent(CUcontext *pctx);
  */
 CUresult cuCtxGetDevice(CUdevice *device);
 /**
+ * @guard CUDA_VERSION >= 13000
+ * @disabled client - manual client resolves the device of the supplied context
+ * @routingkey CONTEXT ctx
+ * @param device RECV_ONLY
+ * @param ctx SEND_ONLY
+ */
+CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx);
+/**
  * @param flags RECV_ONLY
  */
 CUresult cuCtxGetFlags(unsigned int *flags);
@@ -2255,6 +2265,15 @@ CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
  * @server CUDA
  */
 CUresult cuCtxSynchronize();
+/**
+ * @guard CUDA_VERSION >= 13000
+ * @disabled server
+ * @synchronize DEFERRED_DTOH STDOUT
+ * @routingkey CONTEXT ctx
+ * @param ctx SEND_ONLY
+ * @server CUDA
+ */
+CUresult cuCtxSynchronize_v2(CUcontext ctx);
 /**
  * @param limit SEND_ONLY
  * @param value SEND_ONLY
@@ -3347,15 +3366,30 @@ CUresult cuMemPoolImportPointer(CUdeviceptr *ptr_out, CUmemoryPool pool,
  */
 CUresult cuPointerGetAttribute(void *data, CUpointer_attribute attribute,
                                CUdeviceptr ptr);
+#ifdef cuMemPrefetchAsync
+#undef cuMemPrefetchAsync
+#endif
 /**
+ * @disabled client - manual client handles managed-pointer and target routing
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param dstDevice SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
                             CUdevice dstDevice, CUstream hStream);
+/**
+ * @guard CUDA_VERSION >= 12020
+ * @disabled client - manual client handles managed-pointer and target routing
+ * @param devPtr SEND_ONLY
+ * @param count SEND_ONLY
+ * @param location SEND_ONLY
+ * @param flags SEND_ONLY
+ * @param hStream SEND_ONLY
+ */
+CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
+                               CUmemLocation location, unsigned int flags,
+                               CUstream hStream);
 /**
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
@@ -3623,8 +3657,10 @@ CUresult cuEventQuery(CUevent hEvent);
 CUresult cuEventSynchronize(CUevent hEvent);
 /**
  * @disabled client
+ * @disabled server - manual server clears deferred-copy event bookkeeping
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
+ * @server CUDA
  */
 CUresult cuEventDestroy_v2(CUevent hEvent);
 /**
@@ -4834,7 +4870,7 @@ CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
  * @param l2Promotion SEND_ONLY
  * @param oobFill SEND_ONLY
  * @server CUDA
- * @serverguard CUDA_VERSION >= 12000
+ * @guard CUDA_VERSION >= 12000
  */
 CUresult cuTensorMapEncodeTiled(
     CUtensorMap *tensorMap, CUtensorMapDataType tensorDataType,

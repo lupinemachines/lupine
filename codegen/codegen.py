@@ -184,7 +184,6 @@ PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
     "cuGraphConditionalHandleCreate",
-    "cuMemPrefetchAsync",
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",
     "cuStreamGetCaptureInfo_v3",
@@ -290,18 +289,12 @@ def parse_server_binding(name: str, annotation: str) -> Optional[ServerBinding]:
                 raise RuntimeError(f"Unknown RPC server backend {backend}")
             if len(parts) == 3:
                 handler = parts[2]
-        elif parts[0] == "@serverguard":
+        elif parts[0] == "@guard":
             if guard is not None or len(parts) < 2:
-                raise RuntimeError(
-                    f"Invalid @serverguard annotation for {name}"
-                )
-            guard = directive.removeprefix("@serverguard").strip()
+                raise RuntimeError(f"Invalid @guard annotation for {name}")
+            guard = directive.removeprefix("@guard").strip()
 
     if backend is None:
-        if guard is not None:
-            raise RuntimeError(
-                f"@serverguard without @server for {name}"
-            )
         return None
 
     if handler is None:
@@ -949,12 +942,6 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
 
 
 def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMetadata):
-    if function.name.format() == "cuDriverGetVersion":
-        f.write("    if (driverVersion != nullptr) {\n")
-        f.write("        const char *override_version = getenv(\"LUPINE_DRIVER_VERSION_OVERRIDE\");\n")
-        f.write("        if (override_version != nullptr) *driverVersion = atoi(override_version);\n")
-        f.write("    }\n")
-
     for owner in metadata.record_owners:
         f.write(client_record_owner_stmt(owner))
 
@@ -1370,6 +1357,49 @@ def main():
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
         )
+
+    # cuda.h hides some legacy ABI entry points behind macros. When such an
+    # entry point is explicitly declared in annotations.h, keep its manual
+    # client while generating the ordinary server marshalling from that
+    # declaration.
+    server_functions_with_annotations = list(functions_with_annotations)
+    server_function_names = {
+        function.name.format()
+        for function, _, _, _ in server_functions_with_annotations
+    }
+    annotation_only_server_functions = []
+    for annotation in annotations.namespace.functions:
+        name = annotation.name.format()
+        if (
+            len(name) <= 2
+            or not name.startswith("cu")
+            or not name[2].isupper()
+            or name in server_function_names
+        ):
+            continue
+        directives = annotation_directives(annotation.doxygen)
+        if not any(
+            directive.startswith("@disabled client")
+            for directive in directives
+        ):
+            continue
+        if any(
+            directive == "@disabled"
+            or directive.startswith("@disabled server")
+            for directive in directives
+        ):
+            continue
+        metadata = parse_annotation(annotation.doxygen, annotation.parameters)
+        validate_async_annotation(annotation, metadata)
+        annotated_function = (
+            annotation,
+            annotation,
+            metadata.operations,
+            metadata,
+        )
+        server_functions_with_annotations.append(annotated_function)
+        annotation_only_server_functions.append(annotated_function)
+        server_function_names.add(name)
 
     nvml_functions_with_annotations = collect_nvml_functions(
         annotations, server_bindings
@@ -1879,7 +1909,22 @@ def main():
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
         )
-        for function, annotation, operations, metadata in functions_with_annotations:
+        for function, _, _, _ in annotation_only_server_functions:
+            name = function.name.format()
+            f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
+            f.write(
+                'extern "C" {return_type} CUDAAPI {name}({params});\n\n'.format(
+                    return_type=function.return_type.format(),
+                    name=name,
+                    params=", ".join(format_function_params(function)),
+                )
+            )
+        for (
+            function,
+            annotation,
+            operations,
+            metadata,
+        ) in server_functions_with_annotations:
             if (
                 metadata.disabled_server
                 or function.name.format() in server_bindings
@@ -1992,7 +2037,7 @@ def main():
             f"handle_{function.name.format()}",
             metadata.guard,
         )
-        for function, _, _, metadata in functions_with_annotations
+        for function, _, _, metadata in server_functions_with_annotations
         if not metadata.disabled_server
         and function.name.format() not in server_bindings
     ]

@@ -88,34 +88,6 @@ extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" void lupine_ensure_mapped_host_readable(const void *host,
                                                    size_t size);
 
-CUresult cuDriverGetVersion(int *driverVersion) {
-  lupine_route route = lupine_route_for_default();
-  CUresult return_value;
-  using real_fn_t = CUresult (*)(int *);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuDriverGetVersion", &return_value, driverVersion)) {
-    if (driverVersion != nullptr) {
-      const char *override_version = getenv("LUPINE_DRIVER_VERSION_OVERRIDE");
-      if (override_version != nullptr)
-        *driverVersion = atoi(override_version);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuDriverGetVersion) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, driverVersion, sizeof(int)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (driverVersion != nullptr) {
-    const char *override_version = getenv("LUPINE_DRIVER_VERSION_OVERRIDE");
-    if (override_version != nullptr)
-      *driverVersion = atoi(override_version);
-  }
-  return return_value;
-}
-
 CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
                          CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
@@ -426,6 +398,37 @@ CUresult cuCtxSynchronize() {
     return_value = lupine_sync_mapped_device_to_host();
   return return_value;
 }
+
+#if CUDA_VERSION >= 13000
+CUresult cuCtxSynchronize_v2(CUcontext ctx) {
+  CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
+  if (lupine_sync_result != CUDA_SUCCESS) {
+    return lupine_sync_result;
+  }
+  lupine_route route = lupine_route_for_context(ctx);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUcontext);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuCtxSynchronize_v2",
+                                                  &return_value, ctx)) {
+    if (return_value == CUDA_SUCCESS)
+      return_value = lupine_sync_mapped_device_to_host();
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuCtxSynchronize_v2) < 0 ||
+      rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      lupine_forward_remote_stdout(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    return_value = lupine_sync_mapped_device_to_host();
+  return return_value;
+}
+
+#endif
 
 CUresult cuCtxSetLimit(CUlimit limit, size_t value) {
   lupine_route route = lupine_route_for_default();
@@ -6793,9 +6796,15 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuCtxSetCurrent", (void *)cuCtxSetCurrent},
     {"cuCtxGetCurrent", (void *)cuCtxGetCurrent},
     {"cuCtxGetDevice", (void *)cuCtxGetDevice},
+#if CUDA_VERSION >= 13000
+    {"cuCtxGetDevice_v2", (void *)cuCtxGetDevice_v2},
+#endif
     {"cuCtxGetFlags", (void *)cuCtxGetFlags},
     {"cuCtxGetId", (void *)cuCtxGetId},
     {"cuCtxSynchronize", (void *)cuCtxSynchronize},
+#if CUDA_VERSION >= 13000
+    {"cuCtxSynchronize_v2", (void *)cuCtxSynchronize_v2},
+#endif
     {"cuCtxSetLimit", (void *)cuCtxSetLimit},
     {"cuCtxGetLimit", (void *)cuCtxGetLimit},
     {"cuCtxGetCacheConfig", (void *)cuCtxGetCacheConfig},
@@ -6906,6 +6915,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemAllocFromPoolAsync", (void *)cuMemAllocFromPoolAsync},
     {"cuMemPoolExportPointer", (void *)cuMemPoolExportPointer},
     {"cuMemPoolImportPointer", (void *)cuMemPoolImportPointer},
+#if CUDA_VERSION >= 12020
+    {"cuMemPrefetchAsync_v2", (void *)cuMemPrefetchAsync_v2},
+#endif
     {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
     {"cuPointerGetAttributes", (void *)cuPointerGetAttributes},
     {"cuStreamCreate", (void *)cuStreamCreate},
@@ -6930,7 +6942,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuEventRecord", (void *)cuEventRecord},
     {"cuEventRecordWithFlags", (void *)cuEventRecordWithFlags},
     {"cuEventSynchronize", (void *)cuEventSynchronize},
-    {"cuEventDestroy_v2", (void *)cuEventDestroy_v2},
     {"cuEventElapsedTime_v2", (void *)cuEventElapsedTime_v2},
     {"cuImportExternalMemory", (void *)cuImportExternalMemory},
     {"cuExternalMemoryGetMappedBuffer",

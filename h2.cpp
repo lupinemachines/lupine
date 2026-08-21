@@ -17,6 +17,7 @@
 #include <string.h>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -42,25 +43,33 @@ struct h2_buffer {
   size_t offset = 0;
 };
 
+struct h2_stream {
+  std::deque<h2_buffer> local_out;
+  unsigned char *read_destination = nullptr;
+  size_t read_remaining = 0;
+  bool closed = false;
+  bool remote_end = false;
+  bool response_received = false;
+  bool response_sent = false;
+  int response_status = 0;
+  bool window_hold = false;
+  uint64_t window_hold_bytes = 0;
+};
+
 struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
   bool request_received = false;
   bool request_handled = false;
-  bool response_received = false;
-  bool response_sent = false;
   bool compress_lz4 = false;
-  int32_t stream_id = 1;
-  int response_status = 0;
+  int32_t dispatch_stream_id = -1;
   nghttp2_session *session = nullptr;
-  std::deque<h2_buffer> local_out;
-  unsigned char *read_destination = nullptr;
-  size_t read_remaining = 0;
+  std::unordered_map<int32_t, h2_stream> streams;
+  std::deque<int32_t> incoming_streams;
+  std::unordered_map<uint64_t, int32_t> local_lanes;
   rpc_http2_read_stats read_stats = {};
   uint64_t staged_bytes = 0;
-  bool window_hold = false;
-  uint64_t window_hold_bytes = 0;
   uint64_t window_held = 0;
   // Reusable scratch holding the one LZ4-framed payload block currently in
   // flight (see h2_materialize_block). Writes are serialized per connection,
@@ -69,15 +78,18 @@ struct h2_transport {
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
+  pthread_t read_thread = {};
   pthread_t heartbeat_thread = {};
   int response_waiters = 0;
   bool transport_failed = false;
-  std::string request_method;
-  std::string request_path;
   std::string peer_cuda_version;
   std::string server_version;
   std::string session_id;
 };
+
+h2_stream &h2_get_stream(h2_transport *transport, int32_t stream_id) {
+  return transport->streams.try_emplace(stream_id).first->second;
+}
 
 struct h2_write_source {
   std::vector<rpc_write_cursor> &cursors;
@@ -93,16 +105,17 @@ struct h2_write_source {
   }
 };
 
-void receive_bytes(h2_transport *transport, const unsigned char *data,
-                   size_t len) {
+void receive_bytes(h2_transport *transport, int32_t stream_id,
+                   const unsigned char *data, size_t len) {
   if (len == 0) {
     return;
   }
-  size_t direct = std::min(len, transport->read_remaining);
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  size_t direct = std::min(len, stream.read_remaining);
   if (direct != 0) {
-    memcpy(transport->read_destination, data, direct);
-    transport->read_destination += direct;
-    transport->read_remaining -= direct;
+    memcpy(stream.read_destination, data, direct);
+    stream.read_destination += direct;
+    stream.read_remaining -= direct;
     transport->read_stats.direct_bytes += direct;
     data += direct;
     len -= direct;
@@ -112,7 +125,7 @@ void receive_bytes(h2_transport *transport, const unsigned char *data,
   }
   h2_buffer buffer;
   buffer.data.assign(data, data + len);
-  transport->local_out.push_back(std::move(buffer));
+  stream.local_out.push_back(std::move(buffer));
   transport->read_stats.staged_bytes += len;
   ++transport->read_stats.staged_buffers;
   transport->staged_bytes += len;
@@ -385,23 +398,22 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t,
                                    int32_t stream_id, const uint8_t *data,
                                    size_t len, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  if (stream_id != transport->stream_id) {
-    return NGHTTP2_ERR_CALLBACK_FAILURE;
-  }
+  h2_stream &stream = h2_get_stream(transport, stream_id);
   if (transport->server) {
     size_t held = 0;
-    if (transport->window_hold && transport->window_held < kH2MaxHeldBytes) {
+    if (stream.window_hold && transport->window_held < kH2MaxHeldBytes) {
       held = std::min<size_t>(
           len, static_cast<size_t>(kH2MaxHeldBytes - transport->window_held));
       transport->window_held += held;
-      transport->window_hold_bytes += held;
+      stream.window_hold_bytes += held;
     }
     if (len > held &&
         nghttp2_session_consume(session, stream_id, len - held) != 0) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
   }
-  receive_bytes(transport, data, len);
+  receive_bytes(transport, stream_id, data, len);
+  pthread_cond_broadcast(&transport->session_progress);
   return 0;
 }
 
@@ -425,19 +437,20 @@ bool lupine_h2_debug_enabled() {
   return lupine_trace_stream() != nullptr;
 }
 
-int h2_submit_server_response(h2_transport *transport, bool end_stream) {
+int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
+                              bool end_stream) {
+  h2_stream &stream = h2_get_stream(transport, stream_id);
   std::vector<nghttp2_nv> headers = {h2_nv(":status", "200")};
   if (!transport->server_version.empty()) {
     headers.push_back(
         h2_nv(kLupineCudaVersionHeader, transport->server_version.c_str()));
   }
   uint8_t flags = end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
-  if (nghttp2_submit_headers(transport->session, flags, transport->stream_id,
-                             nullptr, headers.data(), headers.size(),
-                             nullptr) != 0) {
+  if (nghttp2_submit_headers(transport->session, flags, stream_id, nullptr,
+                             headers.data(), headers.size(), nullptr) != 0) {
     return -1;
   }
-  transport->response_sent = true;
+  stream.response_sent = true;
   return 0;
 }
 
@@ -466,28 +479,45 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   }
   if (transport->server && frame->hd.type == NGHTTP2_HEADERS &&
       frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
-    transport->stream_id = frame->hd.stream_id;
+    h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
     transport->request_received = true;
-    transport->request_handled =
-        transport->request_method == "HEAD" && transport->request_path == "/";
-    if (!transport->response_sent &&
-        h2_submit_server_response(transport, transport->request_handled) < 0) {
+    bool probe = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
+    bool dispatch = !probe && transport->dispatch_stream_id < 0;
+    transport->request_handled = probe;
+    if (dispatch) {
+      transport->dispatch_stream_id = frame->hd.stream_id;
+    } else if (!probe) {
+      transport->incoming_streams.push_back(frame->hd.stream_id);
+    }
+    if (!stream.response_sent &&
+        h2_submit_server_response(transport, frame->hd.stream_id, probe) < 0) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
   } else if (!transport->server && frame->hd.type == NGHTTP2_HEADERS &&
              frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-    transport->response_received = true;
+    h2_get_stream(transport, frame->hd.stream_id).response_received = true;
   }
+  if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) &&
+      (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
+    h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
+    stream.remote_end = true;
+    if (frame->hd.stream_id == transport->dispatch_stream_id) {
+      transport->transport_failed = true;
+    }
+  }
+  pthread_cond_broadcast(&transport->session_progress);
   return 0;
 }
 
 int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
                                 void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  if (stream_id == transport->stream_id) {
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  stream.closed = true;
+  if (stream_id == transport->dispatch_stream_id) {
     transport->transport_failed = true;
-    pthread_cond_broadcast(&transport->session_progress);
   }
+  pthread_cond_broadcast(&transport->session_progress);
   return 0;
 }
 
@@ -499,18 +529,13 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   if (frame->hd.type != NGHTTP2_HEADERS) {
     return 0;
   }
+  h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
   if (transport->server) {
     if (frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
-      if (namelen == 7 && memcmp(name, ":method", namelen) == 0) {
-        transport->request_method.assign(reinterpret_cast<const char *>(value),
-                                         valuelen);
-      } else if (namelen == 5 && memcmp(name, ":path", namelen) == 0) {
-        transport->request_path.assign(reinterpret_cast<const char *>(value),
-                                       valuelen);
-      } else if (namelen == strlen(kLupineCompressHeader) &&
-                 memcmp(name, kLupineCompressHeader, namelen) == 0 &&
-                 valuelen == strlen(kLupineCompressLz4) &&
-                 memcmp(value, kLupineCompressLz4, valuelen) == 0) {
+      if (namelen == strlen(kLupineCompressHeader) &&
+          memcmp(name, kLupineCompressHeader, namelen) == 0 &&
+          valuelen == strlen(kLupineCompressLz4) &&
+          memcmp(value, kLupineCompressLz4, valuelen) == 0) {
         transport->compress_lz4 = true;
       } else if (namelen == strlen(kLupineSessionHeader) &&
                  memcmp(name, kLupineSessionHeader, namelen) == 0) {
@@ -533,13 +558,13 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
     return 0;
   }
 
-  transport->response_status = 0;
+  stream.response_status = 0;
   for (size_t i = 0; i < valuelen; ++i) {
     if (value[i] < '0' || value[i] > '9') {
       return 0;
     }
-    transport->response_status =
-        transport->response_status * 10 + static_cast<int>(value[i] - '0');
+    stream.response_status =
+        stream.response_status * 10 + static_cast<int>(value[i] - '0');
   }
   return 0;
 }
@@ -579,89 +604,59 @@ void *h2_heartbeat_main(void *arg) {
   return nullptr;
 }
 
-int h2_flush_session(h2_transport *transport) {
-  pthread_mutex_lock(&transport->session_mutex);
-  int result = h2_flush_session_locked(transport);
-  pthread_mutex_unlock(&transport->session_mutex);
-  return result;
-}
-
-void h2_mark_transport_failed(h2_transport *transport) {
-  pthread_mutex_lock(&transport->session_mutex);
-  transport->transport_failed = true;
-  pthread_cond_broadcast(&transport->session_progress);
-  pthread_mutex_unlock(&transport->session_mutex);
-}
-
-int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
-                     size_t read_capacity, size_t *direct_bytes) {
-  if (direct_bytes == nullptr) {
-    return -1;
-  }
-  *direct_bytes = 0;
-  unsigned char buffer[64 * 1024];
-  ssize_t n = 0;
+ssize_t h2_read_socket(h2_transport *transport, unsigned char *buffer,
+                       size_t size) {
 #ifdef LUPINE_TLS_OPENSSL
   if (transport->tls != nullptr) {
     SSL *ssl = static_cast<SSL *>(transport->tls);
     for (;;) {
-      int r = SSL_read(ssl, buffer, sizeof(buffer));
+      int r = SSL_read(ssl, buffer, static_cast<int>(size));
       if (r > 0) {
-        n = r;
-        break;
+        return r;
       }
       int err = SSL_get_error(ssl, r);
       if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         continue;
       }
-      h2_mark_transport_failed(transport);
       return -1;
     }
-  } else
+  }
 #endif
-  {
-    do {
-      n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
-    } while (n < 0 && lupine_socket_error_is_intr());
-  }
-  if (n <= 0) {
-    h2_mark_transport_failed(transport);
-    return -1;
-  }
+  ssize_t n;
+  do {
+    n = lupine_socket_recv(transport->netfd, buffer, size);
+  } while (n < 0 && lupine_socket_error_is_intr());
+  return n;
+}
 
-  size_t offset = 0;
-  pthread_mutex_lock(&transport->session_mutex);
-  if (transport->read_destination != nullptr) {
-    transport->transport_failed = true;
+void *h2_read_main(void *arg) {
+  auto *transport = static_cast<h2_transport *>(arg);
+  unsigned char buffer[64 * 1024];
+  for (;;) {
+    ssize_t received = h2_read_socket(transport, buffer, sizeof(buffer));
+    pthread_mutex_lock(&transport->session_mutex);
+    size_t offset = 0;
+    while (received > 0 && offset < static_cast<size_t>(received)) {
+      ssize_t consumed =
+          nghttp2_session_mem_recv(transport->session, buffer + offset,
+                                   static_cast<size_t>(received) - offset);
+      if (consumed <= 0) {
+        received = -1;
+        break;
+      }
+      offset += static_cast<size_t>(consumed);
+    }
+    if (received <= 0 || h2_flush_session_locked(transport) < 0) {
+      transport->transport_failed = true;
+      pthread_cond_broadcast(&transport->session_progress);
+      pthread_mutex_unlock(&transport->session_mutex);
+      return nullptr;
+    }
+    // Wake stream readers, acceptors, and flow-controlled writers after the
+    // callbacks have applied this batch of connection events.
     pthread_cond_broadcast(&transport->session_progress);
     pthread_mutex_unlock(&transport->session_mutex);
-    return -1;
   }
-  transport->read_destination = read_destination;
-  transport->read_remaining = read_capacity;
-  int result = 0;
-  while (offset < static_cast<size_t>(n)) {
-    ssize_t consumed = nghttp2_session_mem_recv(
-        transport->session, buffer + offset, static_cast<size_t>(n) - offset);
-    if (consumed <= 0) {
-      result = -1;
-      break;
-    }
-    offset += static_cast<size_t>(consumed);
-  }
-  if (result == 0) {
-    result = h2_flush_session_locked(transport);
-  }
-  *direct_bytes = read_capacity - transport->read_remaining;
-  transport->read_destination = nullptr;
-  transport->read_remaining = 0;
-  if (result < 0) {
-    transport->transport_failed = true;
-  }
-  // A writer may be waiting for this thread to apply WINDOW_UPDATE frames.
-  pthread_cond_broadcast(&transport->session_progress);
-  pthread_mutex_unlock(&transport->session_mutex);
-  return result;
 }
 
 int h2_init_direct(conn_t *conn, bool server, bool probe,
@@ -757,11 +752,16 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
       delete transport;
       return -1;
     }
-    transport->stream_id = stream_id;
+    transport->dispatch_stream_id = stream_id;
+    h2_get_stream(transport, stream_id);
   }
 
   conn->http2 = transport;
-  if (h2_flush_session(transport) < 0) {
+  pthread_mutex_lock(&transport->session_mutex);
+  int flush_result = h2_flush_session_locked(transport);
+  pthread_mutex_unlock(&transport->session_mutex);
+  if (flush_result < 0 || pthread_create(&transport->read_thread, nullptr,
+                                         h2_read_main, transport) != 0) {
     conn->http2 = nullptr;
     nghttp2_session_del(transport->session);
     delete transport;
@@ -772,42 +772,68 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
 
 } // namespace
 
-int rpc_http2_read(conn_t *conn, void *data, size_t size) {
+int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
+                          size_t size) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   auto *out = static_cast<unsigned char *>(data);
   size_t copied = 0;
-  while (copied < size) {
-    while (!transport->local_out.empty() && copied < size) {
-      h2_buffer &front = transport->local_out.front();
-      size_t available = front.data.size() - front.offset;
-      size_t chunk = std::min(available, size - copied);
-      memcpy(out + copied, front.data.data() + front.offset, chunk);
-      front.offset += chunk;
-      copied += chunk;
-      transport->read_stats.staged_read_bytes += chunk;
-      transport->staged_bytes -= chunk;
-      if (front.offset == front.data.size()) {
-        transport->local_out.pop_front();
-      }
-    }
-    if (copied == size) {
-      return static_cast<int>(size);
-    }
-    if (transport->response_status != 0 && transport->response_status != 200) {
-      return -1;
-    }
-    size_t direct_bytes = 0;
-    int read_result =
-        h2_read_from_net(transport, out + copied, size - copied, &direct_bytes);
-    copied += direct_bytes;
-    if (read_result < 0) {
-      return -1;
+  pthread_mutex_lock(&transport->session_mutex);
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  while (!stream.local_out.empty() && copied < size) {
+    h2_buffer &front = stream.local_out.front();
+    size_t available = front.data.size() - front.offset;
+    size_t chunk = std::min(available, size - copied);
+    memcpy(out + copied, front.data.data() + front.offset, chunk);
+    front.offset += chunk;
+    copied += chunk;
+    transport->read_stats.staged_read_bytes += chunk;
+    transport->staged_bytes -= chunk;
+    if (front.offset == front.data.size()) {
+      stream.local_out.pop_front();
     }
   }
-  return static_cast<int>(size);
+  if (copied == size) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return static_cast<int>(size);
+  }
+  if (stream.read_destination != nullptr ||
+      (stream.response_status != 0 && stream.response_status != 200)) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return -1;
+  }
+  if (transport->transport_failed || stream.closed || stream.remote_end) {
+    int result = stream.remote_end ? LUPINE_RPC_HTTP2_STREAM_END : -1;
+    pthread_mutex_unlock(&transport->session_mutex);
+    return result;
+  }
+
+  stream.read_destination = out + copied;
+  stream.read_remaining = size - copied;
+  while (stream.read_remaining != 0 && !transport->transport_failed &&
+         !stream.closed && !stream.remote_end &&
+         (stream.response_status == 0 || stream.response_status == 200)) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+  }
+  bool complete = stream.read_remaining == 0;
+  stream.read_destination = nullptr;
+  stream.read_remaining = 0;
+  int result = -1;
+  if (complete) {
+    result = static_cast<int>(size);
+  } else if (stream.remote_end) {
+    result = LUPINE_RPC_HTTP2_STREAM_END;
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result;
 }
 
-int rpc_http2_write(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
+int rpc_http2_read(conn_t *conn, void *data, size_t size) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  return rpc_http2_read_stream(conn, transport->dispatch_stream_id, data, size);
+}
+
+int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
+                           std::vector<rpc_write_cursor> &cursors) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   h2_write_source source{cursors};
   if (source.remaining() == 0) {
@@ -819,7 +845,7 @@ int rpc_http2_write(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
   provider.read_callback = h2_data_source_read_callback;
   pthread_mutex_lock(&transport->session_mutex);
   int result = nghttp2_submit_data(transport->session, NGHTTP2_FLAG_NONE,
-                                   transport->stream_id, &provider);
+                                   stream_id, &provider);
   // nghttp2 retains provider.source.ptr until the provider reaches EOF, so the
   // stack-backed source must stay alive while flow control pauses the stream.
   // Waiting releases session_mutex so the RPC read thread can apply the peer's
@@ -851,6 +877,131 @@ int rpc_http2_write(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
   return result == 0 ? 0 : -1;
 }
 
+int rpc_http2_write(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  return rpc_http2_write_stream(conn, transport->dispatch_stream_id, cursors);
+}
+
+int32_t rpc_http2_dispatch_stream(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  int32_t stream_id = transport->dispatch_stream_id;
+  pthread_mutex_unlock(&transport->session_mutex);
+  return stream_id;
+}
+
+int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  if (transport->server) {
+    int32_t stream_id = transport->dispatch_stream_id;
+    pthread_mutex_unlock(&transport->session_mutex);
+    return stream_id;
+  }
+  auto existing = transport->local_lanes.find(lane_id);
+  if (existing != transport->local_lanes.end()) {
+    int32_t stream_id = existing->second;
+    pthread_mutex_unlock(&transport->session_mutex);
+    return stream_id;
+  }
+  if (transport->transport_failed) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return -1;
+  }
+
+  std::array<nghttp2_nv, 4> headers = {
+      h2_nv(":method", "POST"),
+      h2_nv(":scheme", "http"),
+      h2_nv(":path", "/"),
+      h2_nv(":authority", "lupine"),
+  };
+  int32_t stream_id =
+      nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1, nullptr,
+                             headers.data(), headers.size(), nullptr);
+  if (stream_id >= 0) {
+    h2_get_stream(transport, stream_id);
+    transport->local_lanes.emplace(lane_id, stream_id);
+    if (h2_flush_session_locked(transport) < 0) {
+      stream_id = -1;
+      transport->transport_failed = true;
+    }
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return stream_id;
+}
+
+namespace {
+
+ssize_t h2_end_stream_read_callback(nghttp2_session *, int32_t, uint8_t *,
+                                    size_t, uint32_t *data_flags,
+                                    nghttp2_data_source *, void *) {
+  *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+  return 0;
+}
+
+int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
+  nghttp2_data_provider provider = {};
+  provider.read_callback = h2_end_stream_read_callback;
+  int result = nghttp2_submit_data(transport->session, NGHTTP2_FLAG_NONE,
+                                   stream_id, &provider);
+  return result == 0 ? h2_flush_session_locked(transport) : result;
+}
+
+} // namespace
+
+int rpc_http2_end_stream(conn_t *conn, int32_t stream_id) {
+  if (conn == nullptr || conn->http2 == nullptr || stream_id < 0) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  int result = h2_end_stream_locked(transport, stream_id);
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result == 0 ? 0 : -1;
+}
+
+int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
+  if (conn == nullptr || conn->closed || conn->http2 == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  auto lane = transport->local_lanes.find(lane_id);
+  if (lane == transport->local_lanes.end()) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return 0;
+  }
+  int32_t stream_id = lane->second;
+  transport->local_lanes.erase(lane);
+  int result = h2_end_stream_locked(transport, stream_id);
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result == 0 ? 0 : -1;
+}
+
+int32_t rpc_http2_accept_stream(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  while (transport->incoming_streams.empty() && !transport->transport_failed) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+  }
+  int32_t stream_id = -1;
+  if (!transport->incoming_streams.empty()) {
+    stream_id = transport->incoming_streams.front();
+    transport->incoming_streams.pop_front();
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return stream_id;
+}
+
 int rpc_http2_compress_lz4(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   return transport != nullptr && transport->compress_lz4 ? 1 : 0;
@@ -870,7 +1021,9 @@ int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
   *stats = transport->read_stats;
+  pthread_mutex_unlock(&transport->session_mutex);
   return 0;
 }
 
@@ -907,23 +1060,27 @@ void rpc_http2_window_hold_begin(conn_t *conn) {
     return;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  int32_t stream_id = rpc_current_http2_stream(conn);
   pthread_mutex_lock(&transport->session_mutex);
-  transport->window_hold = true;
-  transport->window_hold_bytes = 0;
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  stream.window_hold = true;
+  stream.window_hold_bytes = 0;
   pthread_mutex_unlock(&transport->session_mutex);
 }
 
-uint64_t rpc_http2_window_hold_end(conn_t *conn) {
+rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
-    return 0;
+    return {};
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  int32_t stream_id = rpc_current_http2_stream(conn);
   pthread_mutex_lock(&transport->session_mutex);
-  uint64_t held = transport->window_hold_bytes;
-  transport->window_hold = false;
-  transport->window_hold_bytes = 0;
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  rpc_http2_window_credit credit{stream_id, stream.window_hold_bytes};
+  stream.window_hold = false;
+  stream.window_hold_bytes = 0;
   pthread_mutex_unlock(&transport->session_mutex);
-  return held;
+  return credit;
 }
 
 // Whichever thread retires the staging emits the credit itself, under
@@ -932,15 +1089,16 @@ uint64_t rpc_http2_window_hold_end(conn_t *conn) {
 // never queued behind the release that would feed it. kH2MaxHeldBytes closes
 // the other half of the cycle -- staging that never retires cannot shut the
 // window on the reads that would retire it.
-void rpc_http2_window_release(conn_t *conn, uint64_t bytes) {
-  if (conn == nullptr || conn->http2 == nullptr || bytes == 0) {
+void rpc_http2_window_release(conn_t *conn, rpc_http2_window_credit credit) {
+  if (conn == nullptr || conn->http2 == nullptr || credit.bytes == 0 ||
+      credit.stream_id < 0) {
     return;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
-  transport->window_held -= std::min(bytes, transport->window_held);
-  if (nghttp2_session_consume(transport->session, transport->stream_id,
-                              bytes) == 0) {
+  transport->window_held -= std::min(credit.bytes, transport->window_held);
+  if (nghttp2_session_consume(transport->session, credit.stream_id,
+                              credit.bytes) == 0) {
     (void)h2_flush_session_locked(transport);
   }
   pthread_mutex_unlock(&transport->session_mutex);
@@ -970,17 +1128,18 @@ const char *rpc_http2_client_probe(conn_t *conn) {
     return nullptr;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  while (!transport->response_received && !transport->transport_failed) {
-    size_t direct_bytes = 0;
-    if (h2_read_from_net(transport, nullptr, 0, &direct_bytes) < 0) {
-      return nullptr;
-    }
+  pthread_mutex_lock(&transport->session_mutex);
+  h2_stream &stream = h2_get_stream(transport, transport->dispatch_stream_id);
+  while (!stream.response_received && !transport->transport_failed) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
   }
-  if (!transport->response_received || transport->response_status != 200 ||
-      transport->peer_cuda_version.empty()) {
-    return nullptr;
+  const char *version = nullptr;
+  if (stream.response_received && stream.response_status == 200 &&
+      !transport->peer_cuda_version.empty()) {
+    version = transport->peer_cuda_version.c_str();
   }
-  return transport->peer_cuda_version.c_str();
+  pthread_mutex_unlock(&transport->session_mutex);
+  return version;
 }
 
 int rpc_http2_server_init(conn_t *conn) {
@@ -993,16 +1152,16 @@ int rpc_http2_server_init_with_metadata(
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
   while (!transport->request_received && !transport->transport_failed) {
-    size_t direct_bytes = 0;
-    if (h2_read_from_net(transport, nullptr, 0, &direct_bytes) < 0) {
-      return -1;
-    }
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
   }
-  if (!transport->request_received) {
-    return -1;
+  int result = -1;
+  if (transport->request_received) {
+    result = transport->request_handled ? 1 : 0;
   }
-  return transport->request_handled ? 1 : 0;
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result;
 }
 
 void rpc_http2_destroy(conn_t *conn) {
@@ -1011,13 +1170,24 @@ void rpc_http2_destroy(conn_t *conn) {
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   conn->http2 = nullptr;
+#ifdef _WIN32
+  (void)shutdown(transport->netfd, SD_RECEIVE);
+#else
+  (void)shutdown(transport->netfd, SHUT_RD);
+#endif
   pthread_mutex_lock(&transport->session_mutex);
   transport->response_waiters = -1;
+  transport->transport_failed = true;
   pthread_cond_broadcast(&transport->heartbeat_progress);
+  pthread_cond_broadcast(&transport->session_progress);
   pthread_mutex_unlock(&transport->session_mutex);
   if (transport->heartbeat_thread != 0) {
     pthread_join(transport->heartbeat_thread, nullptr);
     transport->heartbeat_thread = 0;
+  }
+  if (transport->read_thread != 0) {
+    pthread_join(transport->read_thread, nullptr);
+    transport->read_thread = 0;
   }
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);
