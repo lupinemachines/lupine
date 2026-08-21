@@ -34,7 +34,7 @@ jobs:
             cuda_compat_deb_url: >-
               https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
             cuda_compat_deb_sha256: 5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4
-            cuda_sample_jobs: 1
+            cuda_sample_jobs: 4
             server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4
             name: CUDA 12.4
@@ -75,8 +75,6 @@ jobs:
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      # CUDA 13.3 uses a forward-compatibility driver stack that cannot sustain
-      # the same independent-context fan-out as the native CUDA 11/12 lanes.
       CUDA_SAMPLE_JOBS: ${{ matrix.cuda_sample_jobs }}
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
