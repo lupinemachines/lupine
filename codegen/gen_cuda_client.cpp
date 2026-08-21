@@ -79,8 +79,6 @@ extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
                                                     CUkernel kernel, int attrib,
                                                     int dev);
 extern "C" void lupine_invalidate_function_attribute_cache();
-extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
-
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
@@ -398,10 +396,6 @@ CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId) {
 }
 
 CUresult cuCtxSynchronize() {
-  CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
-  if (lupine_sync_result != CUDA_SUCCESS) {
-    return lupine_sync_result;
-  }
   lupine_route route = lupine_route_for_current_context();
   CUresult return_value;
   using real_fn_t = CUresult (*)();
@@ -2785,14 +2779,7 @@ CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags) {
   CUdeviceptr dptr_rpc = dptr;
-  bool dptr_is_managed_host =
-      lupine_translate_managed_host_ptr(dptr, &dptr_rpc);
-  if (dptr_is_managed_host) {
-    CUresult managed_result = lupine_flush_dirty_host_pages_to_server();
-    if (managed_result != CUDA_SUCCESS) {
-      return managed_result;
-    }
-  }
+  lupine_translate_managed_host_ptr(dptr, &dptr_rpc);
   lupine_route route =
       (hStream != nullptr ? lupine_route_for_stream(hStream)
                           : lupine_route_for_deviceptr(dptr_rpc));
@@ -2817,10 +2804,6 @@ CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
 }
 
 CUresult cuStreamQuery(CUstream hStream) {
-  CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
-  if (lupine_sync_result != CUDA_SUCCESS) {
-    return lupine_sync_result;
-  }
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
   CUresult return_value;
@@ -2844,10 +2827,6 @@ CUresult cuStreamQuery(CUstream hStream) {
 }
 
 CUresult cuStreamSynchronize(CUstream hStream) {
-  CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
-  if (lupine_sync_result != CUDA_SUCCESS) {
-    return lupine_sync_result;
-  }
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
   CUresult return_value;
@@ -2989,10 +2968,6 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
 }
 
 CUresult cuEventSynchronize(CUevent hEvent) {
-  CUresult lupine_sync_result = lupine_flush_dirty_host_pages_to_server();
-  if (lupine_sync_result != CUDA_SUCCESS) {
-    return lupine_sync_result;
-  }
   lupine_route route = lupine_route_for_event(hEvent);
   CUresult return_value;
   using real_fn_t = CUresult (*)(CUevent);

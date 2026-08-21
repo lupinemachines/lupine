@@ -538,6 +538,9 @@ int rpc_wait_for_response(conn_t *conn) {
 // only one request can be active at a time, so this function will take the
 // request lock from the connection.
 int rpc_write_start_request(conn_t *conn, const int op) {
+  if (hooks.before_request != nullptr) {
+    hooks.before_request();
+  }
   if (conn == nullptr || conn->closed) {
     return -1;
   }

@@ -85,12 +85,17 @@ extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
 
 // Client-side memory-coherence hooks, registered once by the CUDA client so
 // reads into tracked host mappings carry their own demand-fetch bookkeeping
-// (make-writable before, mark-current after). The hooks run on every read
-// and no-op for untracked memory; nested invocations are balanced, so the
-// primitives call them unconditionally. The server never registers them.
-// Write-side refreshes stay at the call sites: they can fetch, which needs
-// the connection, so they must run before the request holds it.
+// (make-writable before, mark-current after) and dirty client pages are
+// flushed before any request the server could act on. The hooks run on every
+// read and request and no-op when there is nothing tracked; nested
+// invocations are balanced, so the primitives call them unconditionally.
+// before_request runs at the top of rpc_write_start_request, before the
+// connection is held, because the flush needs a connection of its own. The
+// server never registers the hooks. Read-side refreshes stay at the call
+// sites for the same reason: a demand fetch cannot run once the request
+// holds the connection.
 struct rpc_hooks {
+  void (*before_request)();
   void (*before_read_into)(void *data, size_t size);
   void (*after_read_into)(void *data, size_t size);
 };
