@@ -7,25 +7,7 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
-#ifdef cuMemPrefetchAsync
-#undef cuMemPrefetchAsync
-#endif
-
 struct rpc_write_cursor;
-#ifdef cuMemPrefetchAsync_ptsz
-#undef cuMemPrefetchAsync_ptsz
-#endif
-
-extern "C" CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
-                                       CUdevice dstDevice, CUstream hStream);
-extern "C" CUresult cuMemPrefetchAsync_ptsz(CUdeviceptr devPtr, size_t count,
-                                            CUdevice dstDevice,
-                                            CUstream hStream);
-#if CUDA_VERSION >= 12020
-extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
-                                          CUmemLocation location,
-                                          unsigned int flags, CUstream hStream);
-#endif
 
 extern "C" void lupine_mark_host_range_clean(void *host, size_t size);
 extern "C" void lupine_prepare_host_range_write(void *host, size_t size);
