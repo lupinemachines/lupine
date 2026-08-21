@@ -136,8 +136,8 @@ void free_tls(conn_t *conn) {
 }
 
 void reset_connection(conn_t *conn) {
-  free_tls(conn);
   rpc_conn_destroy(conn);
+  free_tls(conn);
   *conn = {};
   conn->connfd = LUPINE_INVALID_SOCKET;
 }

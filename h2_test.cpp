@@ -148,9 +148,32 @@ bool raw_read_exact(lupine_socket_t socket, unsigned char *data, size_t size) {
   return true;
 }
 
+bool raw_read_frame(lupine_socket_t socket,
+                    std::array<unsigned char, 9> *header) {
+  if (!raw_read_exact(socket, header->data(), header->size())) {
+    return false;
+  }
+  size_t size = (static_cast<size_t>((*header)[0]) << 16) |
+                (static_cast<size_t>((*header)[1]) << 8) | (*header)[2];
+  std::vector<unsigned char> payload(size);
+  return raw_read_exact(socket, payload.data(), payload.size());
+}
+
+void init_raw_server_peer(h2_pair *pair) {
+  init_pair_sockets(pair);
+  require(rpc_http2_client_init(&pair->client) == 0, "client h2 init failed");
+  constexpr char preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+  std::array<unsigned char, sizeof(preface) - 1> received = {};
+  require(
+      raw_read_exact(pair->server.connfd, received.data(), received.size()) &&
+          memcmp(received.data(), preface, received.size()) == 0,
+      "client HTTP/2 preface missing");
+}
+
 void test_response_wait_sends_transport_heartbeat() {
-  h2_pair pair = make_pair();
-  exchange_settings(&pair);
+  h2_pair pair;
+  init_raw_server_peer(&pair);
+  rpc_http2_client_start_heartbeat(&pair.client);
 
   rpc_http2_response_wait_begin(&pair.client);
   bool received_ping = false;
@@ -159,13 +182,8 @@ void test_response_wait_sends_transport_heartbeat() {
     require(poll(&descriptor, 1, 1000) > 0,
             "response wait did not emit an HTTP/2 frame");
     std::array<unsigned char, 9> header = {};
-    require(raw_read_exact(pair.server.connfd, header.data(), header.size()),
-            "heartbeat frame header read failed");
-    size_t payload_size = (static_cast<size_t>(header[0]) << 16) |
-                          (static_cast<size_t>(header[1]) << 8) | header[2];
-    std::vector<unsigned char> payload(payload_size);
-    require(raw_read_exact(pair.server.connfd, payload.data(), payload.size()),
-            "heartbeat frame payload read failed");
+    require(raw_read_frame(pair.server.connfd, &header),
+            "heartbeat frame read failed");
     received_ping =
         header[3] == NGHTTP2_PING && (header[4] & NGHTTP2_FLAG_ACK) == 0;
   }
@@ -267,6 +285,7 @@ void test_fragmented_frames_direct() {
   std::string received;
   std::thread reader(
       [&] { received = read_string(&pair.server, expected.size()); });
+  usleep(20 * 1000);
   write_all(&pair.client, {"fragment"});
   write_all(&pair.client, {"ed"});
   write_all(&pair.client, {"-data"});
@@ -296,6 +315,7 @@ void test_partial_read_stages_only_overflow() {
                 static_cast<int>(received.size() - 7),
             "partial suffix read failed");
   });
+  usleep(20 * 1000);
   write_all(&pair.client, {payload});
   reader.join();
   require(received == payload, "partial read payload mismatch");
@@ -322,6 +342,7 @@ void test_truncated_read_clears_direct_destination() {
   std::thread reader([&] {
     read_result = rpc_http2_read(&pair.server, guarded.data() + 8, 32);
   });
+  usleep(20 * 1000);
   write_all(&pair.client, {prefix});
   require(shutdown(pair.client.connfd, SHUT_WR) == 0,
           "truncated writer shutdown failed");
@@ -711,20 +732,8 @@ void test_server_window_hold_caps_and_releases() {
 }
 
 void test_reset_wakes_flow_controlled_writer() {
-  h2_pair pair = make_pair();
-  exchange_settings(&pair);
-
-  // Flush the client's acknowledgement of the server's initial SETTINGS and
-  // consume it through the server session before switching this test to raw
-  // HTTP/2 control frames.
-  write_all(&pair.client, {"m"});
-  require(read_string(&pair.server, 1) == "m",
-          "failed to drain initial SETTINGS acknowledgement");
-
-  std::thread client_control_reader([&] {
-    unsigned char unused = 0;
-    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
-  });
+  h2_pair pair;
+  init_raw_server_peer(&pair);
 
   // Shrink the peer's stream window so the writer pauses after 64 KiB rather
   // than requiring another multi-gigabyte test payload.
@@ -735,14 +744,14 @@ void test_reset_wakes_flow_controlled_writer() {
   settings[13] = settings[14] = 0xff;
   require(raw_write_all(pair.server.connfd, settings.data(), settings.size()),
           "failed to send reduced-window SETTINGS");
-  std::array<unsigned char, 9> settings_ack = {};
-  require(raw_read_exact(pair.server.connfd, settings_ack.data(),
-                         settings_ack.size()),
-          "failed to read SETTINGS acknowledgement");
-  require(settings_ack[0] == 0 && settings_ack[1] == 0 &&
-              settings_ack[2] == 0 && settings_ack[3] == NGHTTP2_SETTINGS &&
-              (settings_ack[4] & NGHTTP2_FLAG_ACK) != 0,
-          "invalid SETTINGS acknowledgement");
+  bool received_ack = false;
+  while (!received_ack) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read SETTINGS acknowledgement");
+    received_ack =
+        header[3] == NGHTTP2_SETTINGS && (header[4] & NGHTTP2_FLAG_ACK) != 0;
+  }
 
   std::atomic<bool> reset_failed{false};
   std::thread server_reset([&] {
@@ -783,7 +792,6 @@ void test_reset_wakes_flow_controlled_writer() {
   shutdown(pair.client.connfd, SHUT_RDWR);
   shutdown(pair.server.connfd, SHUT_RDWR);
   server_reset.join();
-  client_control_reader.join();
 
   require(write_result < 0,
           "reset flow-controlled write unexpectedly succeeded");
@@ -955,8 +963,7 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
         rpc_write_buffer(&pair.client, sizeof(value), alignof(int)));
     require(buffer != nullptr, "failed transport buffer allocation failed");
     *buffer = value;
-    close(pair.client.connfd);
-    pair.client.connfd = -1;
+    rpc_close_transport_socket(&pair.client);
     require(rpc_write_end(&pair.client) < 0,
             "failed transport unexpectedly sent copied data");
     require(pair.client.write_copy_buffer == nullptr,

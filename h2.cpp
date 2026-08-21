@@ -45,6 +45,8 @@ struct h2_buffer {
 
 struct h2_stream {
   std::deque<h2_buffer> local_out;
+  unsigned char *read_destination = nullptr;
+  size_t read_remaining = 0;
   bool closed = false;
   bool remote_end = false;
   bool response_received = false;
@@ -66,11 +68,6 @@ struct h2_transport {
   std::unordered_map<int32_t, h2_stream> streams;
   std::deque<int32_t> incoming_streams;
   std::unordered_map<uint64_t, int32_t> local_lanes;
-  uint64_t next_read_ticket = 0;
-  uint64_t serving_read_ticket = 0;
-  int32_t read_stream_id = -1;
-  unsigned char *read_destination = nullptr;
-  size_t read_remaining = 0;
   rpc_http2_read_stats read_stats = {};
   uint64_t staged_bytes = 0;
   uint64_t window_held = 0;
@@ -81,6 +78,7 @@ struct h2_transport {
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
+  pthread_t read_thread = {};
   pthread_t heartbeat_thread = {};
   int response_waiters = 0;
   bool transport_failed = false;
@@ -113,13 +111,11 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
     return;
   }
   h2_stream &stream = h2_get_stream(transport, stream_id);
-  size_t direct = stream_id == transport->read_stream_id
-                      ? std::min(len, transport->read_remaining)
-                      : 0;
+  size_t direct = std::min(len, stream.read_remaining);
   if (direct != 0) {
-    memcpy(transport->read_destination, data, direct);
-    transport->read_destination += direct;
-    transport->read_remaining -= direct;
+    memcpy(stream.read_destination, data, direct);
+    stream.read_destination += direct;
+    stream.read_remaining -= direct;
     transport->read_stats.direct_bytes += direct;
     data += direct;
     len -= direct;
@@ -608,85 +604,59 @@ void *h2_heartbeat_main(void *arg) {
   return nullptr;
 }
 
-void h2_mark_transport_failed(h2_transport *transport) {
-  pthread_mutex_lock(&transport->session_mutex);
-  transport->transport_failed = true;
-  pthread_cond_broadcast(&transport->session_progress);
-  pthread_mutex_unlock(&transport->session_mutex);
-}
-
-int h2_read_from_net(h2_transport *transport, unsigned char *read_destination,
-                     size_t read_capacity, int32_t read_stream_id,
-                     size_t *direct_bytes) {
-  if (direct_bytes == nullptr) {
-    return -1;
-  }
-  *direct_bytes = 0;
-  unsigned char buffer[64 * 1024];
-  ssize_t n = 0;
+ssize_t h2_read_socket(h2_transport *transport, unsigned char *buffer,
+                       size_t size) {
 #ifdef LUPINE_TLS_OPENSSL
   if (transport->tls != nullptr) {
     SSL *ssl = static_cast<SSL *>(transport->tls);
     for (;;) {
-      int r = SSL_read(ssl, buffer, sizeof(buffer));
+      int r = SSL_read(ssl, buffer, static_cast<int>(size));
       if (r > 0) {
-        n = r;
-        break;
+        return r;
       }
       int err = SSL_get_error(ssl, r);
       if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
         continue;
       }
-      h2_mark_transport_failed(transport);
       return -1;
     }
-  } else
+  }
 #endif
-  {
-    do {
-      n = lupine_socket_recv(transport->netfd, buffer, sizeof(buffer));
-    } while (n < 0 && lupine_socket_error_is_intr());
-  }
-  if (n <= 0) {
-    h2_mark_transport_failed(transport);
-    return -1;
-  }
+  ssize_t n;
+  do {
+    n = lupine_socket_recv(transport->netfd, buffer, size);
+  } while (n < 0 && lupine_socket_error_is_intr());
+  return n;
+}
 
-  size_t offset = 0;
-  pthread_mutex_lock(&transport->session_mutex);
-  if (transport->read_destination != nullptr) {
-    transport->transport_failed = true;
+void *h2_read_main(void *arg) {
+  auto *transport = static_cast<h2_transport *>(arg);
+  unsigned char buffer[64 * 1024];
+  for (;;) {
+    ssize_t received = h2_read_socket(transport, buffer, sizeof(buffer));
+    pthread_mutex_lock(&transport->session_mutex);
+    size_t offset = 0;
+    while (received > 0 && offset < static_cast<size_t>(received)) {
+      ssize_t consumed =
+          nghttp2_session_mem_recv(transport->session, buffer + offset,
+                                   static_cast<size_t>(received) - offset);
+      if (consumed <= 0) {
+        received = -1;
+        break;
+      }
+      offset += static_cast<size_t>(consumed);
+    }
+    if (received <= 0 || h2_flush_session_locked(transport) < 0) {
+      transport->transport_failed = true;
+      pthread_cond_broadcast(&transport->session_progress);
+      pthread_mutex_unlock(&transport->session_mutex);
+      return nullptr;
+    }
+    // Wake stream readers, acceptors, and flow-controlled writers after the
+    // callbacks have applied this batch of connection events.
     pthread_cond_broadcast(&transport->session_progress);
     pthread_mutex_unlock(&transport->session_mutex);
-    return -1;
   }
-  transport->read_stream_id = read_stream_id;
-  transport->read_destination = read_destination;
-  transport->read_remaining = read_capacity;
-  int result = 0;
-  while (offset < static_cast<size_t>(n)) {
-    ssize_t consumed = nghttp2_session_mem_recv(
-        transport->session, buffer + offset, static_cast<size_t>(n) - offset);
-    if (consumed <= 0) {
-      result = -1;
-      break;
-    }
-    offset += static_cast<size_t>(consumed);
-  }
-  if (result == 0) {
-    result = h2_flush_session_locked(transport);
-  }
-  *direct_bytes = read_capacity - transport->read_remaining;
-  transport->read_stream_id = -1;
-  transport->read_destination = nullptr;
-  transport->read_remaining = 0;
-  if (result < 0) {
-    transport->transport_failed = true;
-  }
-  // A writer may be waiting for this thread to apply WINDOW_UPDATE frames.
-  pthread_cond_broadcast(&transport->session_progress);
-  pthread_mutex_unlock(&transport->session_mutex);
-  return result;
 }
 
 int h2_init_direct(conn_t *conn, bool server, bool probe,
@@ -790,7 +760,8 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   pthread_mutex_lock(&transport->session_mutex);
   int flush_result = h2_flush_session_locked(transport);
   pthread_mutex_unlock(&transport->session_mutex);
-  if (flush_result < 0) {
+  if (flush_result < 0 || pthread_create(&transport->read_thread, nullptr,
+                                         h2_read_main, transport) != 0) {
     conn->http2 = nullptr;
     nghttp2_session_del(transport->session);
     delete transport;
@@ -806,71 +777,54 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
   auto *transport = static_cast<h2_transport *>(conn->http2);
   auto *out = static_cast<unsigned char *>(data);
   size_t copied = 0;
-  while (copied < size) {
-    pthread_mutex_lock(&transport->session_mutex);
-    h2_stream &stream = h2_get_stream(transport, stream_id);
-    while (!stream.local_out.empty() && copied < size) {
-      h2_buffer &front = stream.local_out.front();
-      size_t available = front.data.size() - front.offset;
-      size_t chunk = std::min(available, size - copied);
-      memcpy(out + copied, front.data.data() + front.offset, chunk);
-      front.offset += chunk;
-      copied += chunk;
-      transport->read_stats.staged_read_bytes += chunk;
-      transport->staged_bytes -= chunk;
-      if (front.offset == front.data.size()) {
-        stream.local_out.pop_front();
-      }
-    }
-    if (copied == size) {
-      pthread_mutex_unlock(&transport->session_mutex);
-      return static_cast<int>(size);
-    }
-    if (stream.response_status != 0 && stream.response_status != 200) {
-      pthread_mutex_unlock(&transport->session_mutex);
-      return -1;
-    }
-    if (transport->transport_failed || stream.closed || stream.remote_end) {
-      int result = stream.remote_end ? LUPINE_RPC_HTTP2_STREAM_END : -1;
-      pthread_mutex_unlock(&transport->session_mutex);
-      return result;
-    }
-    uint64_t ticket = transport->next_read_ticket++;
-    while (ticket != transport->serving_read_ticket &&
-           !transport->transport_failed) {
-      pthread_cond_wait(&transport->session_progress,
-                        &transport->session_mutex);
-    }
-    if (transport->transport_failed) {
-      pthread_mutex_unlock(&transport->session_mutex);
-      return -1;
-    }
-    // Another reader may have staged this stream while this caller waited for
-    // its turn at the socket. Let the caller consume that data before it risks
-    // blocking in recv again.
-    h2_stream &ready = h2_get_stream(transport, stream_id);
-    if (!ready.local_out.empty() || ready.closed || ready.remote_end ||
-        (ready.response_status != 0 && ready.response_status != 200)) {
-      ++transport->serving_read_ticket;
-      pthread_cond_broadcast(&transport->session_progress);
-      pthread_mutex_unlock(&transport->session_mutex);
-      continue;
-    }
-    pthread_mutex_unlock(&transport->session_mutex);
-
-    size_t direct_bytes = 0;
-    int read_result = h2_read_from_net(transport, out + copied, size - copied,
-                                       stream_id, &direct_bytes);
-    copied += direct_bytes;
-    pthread_mutex_lock(&transport->session_mutex);
-    ++transport->serving_read_ticket;
-    pthread_cond_broadcast(&transport->session_progress);
-    pthread_mutex_unlock(&transport->session_mutex);
-    if (read_result < 0) {
-      return -1;
+  pthread_mutex_lock(&transport->session_mutex);
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  while (!stream.local_out.empty() && copied < size) {
+    h2_buffer &front = stream.local_out.front();
+    size_t available = front.data.size() - front.offset;
+    size_t chunk = std::min(available, size - copied);
+    memcpy(out + copied, front.data.data() + front.offset, chunk);
+    front.offset += chunk;
+    copied += chunk;
+    transport->read_stats.staged_read_bytes += chunk;
+    transport->staged_bytes -= chunk;
+    if (front.offset == front.data.size()) {
+      stream.local_out.pop_front();
     }
   }
-  return static_cast<int>(size);
+  if (copied == size) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return static_cast<int>(size);
+  }
+  if (stream.read_destination != nullptr ||
+      (stream.response_status != 0 && stream.response_status != 200)) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return -1;
+  }
+  if (transport->transport_failed || stream.closed || stream.remote_end) {
+    int result = stream.remote_end ? LUPINE_RPC_HTTP2_STREAM_END : -1;
+    pthread_mutex_unlock(&transport->session_mutex);
+    return result;
+  }
+
+  stream.read_destination = out + copied;
+  stream.read_remaining = size - copied;
+  while (stream.read_remaining != 0 && !transport->transport_failed &&
+         !stream.closed && !stream.remote_end &&
+         (stream.response_status == 0 || stream.response_status == 200)) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+  }
+  bool complete = stream.read_remaining == 0;
+  stream.read_destination = nullptr;
+  stream.read_remaining = 0;
+  int result = -1;
+  if (complete) {
+    result = static_cast<int>(size);
+  } else if (stream.remote_end) {
+    result = LUPINE_RPC_HTTP2_STREAM_END;
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result;
 }
 
 int rpc_http2_read(conn_t *conn, void *data, size_t size) {
@@ -1035,46 +989,17 @@ int32_t rpc_http2_accept_stream(conn_t *conn) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  for (;;) {
-    pthread_mutex_lock(&transport->session_mutex);
-    if (!transport->incoming_streams.empty()) {
-      int32_t stream_id = transport->incoming_streams.front();
-      transport->incoming_streams.pop_front();
-      pthread_mutex_unlock(&transport->session_mutex);
-      return stream_id;
-    }
-    if (transport->transport_failed) {
-      pthread_mutex_unlock(&transport->session_mutex);
-      return -1;
-    }
-    uint64_t ticket = transport->next_read_ticket++;
-    while (ticket != transport->serving_read_ticket &&
-           !transport->transport_failed) {
-      pthread_cond_wait(&transport->session_progress,
-                        &transport->session_mutex);
-    }
-    if (transport->transport_failed) {
-      pthread_mutex_unlock(&transport->session_mutex);
-      return -1;
-    }
-    if (!transport->incoming_streams.empty()) {
-      ++transport->serving_read_ticket;
-      pthread_cond_broadcast(&transport->session_progress);
-      pthread_mutex_unlock(&transport->session_mutex);
-      continue;
-    }
-    pthread_mutex_unlock(&transport->session_mutex);
-
-    size_t direct_bytes = 0;
-    int result = h2_read_from_net(transport, nullptr, 0, -1, &direct_bytes);
-    pthread_mutex_lock(&transport->session_mutex);
-    ++transport->serving_read_ticket;
-    pthread_cond_broadcast(&transport->session_progress);
-    pthread_mutex_unlock(&transport->session_mutex);
-    if (result < 0) {
-      return -1;
-    }
+  pthread_mutex_lock(&transport->session_mutex);
+  while (transport->incoming_streams.empty() && !transport->transport_failed) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
   }
+  int32_t stream_id = -1;
+  if (!transport->incoming_streams.empty()) {
+    stream_id = transport->incoming_streams.front();
+    transport->incoming_streams.pop_front();
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return stream_id;
 }
 
 int rpc_http2_compress_lz4(conn_t *conn) {
@@ -1096,7 +1021,9 @@ int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
   *stats = transport->read_stats;
+  pthread_mutex_unlock(&transport->session_mutex);
   return 0;
 }
 
@@ -1201,18 +1128,18 @@ const char *rpc_http2_client_probe(conn_t *conn) {
     return nullptr;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
   h2_stream &stream = h2_get_stream(transport, transport->dispatch_stream_id);
   while (!stream.response_received && !transport->transport_failed) {
-    size_t direct_bytes = 0;
-    if (h2_read_from_net(transport, nullptr, 0, -1, &direct_bytes) < 0) {
-      return nullptr;
-    }
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
   }
-  if (!stream.response_received || stream.response_status != 200 ||
-      transport->peer_cuda_version.empty()) {
-    return nullptr;
+  const char *version = nullptr;
+  if (stream.response_received && stream.response_status == 200 &&
+      !transport->peer_cuda_version.empty()) {
+    version = transport->peer_cuda_version.c_str();
   }
-  return transport->peer_cuda_version.c_str();
+  pthread_mutex_unlock(&transport->session_mutex);
+  return version;
 }
 
 int rpc_http2_server_init(conn_t *conn) {
@@ -1225,16 +1152,16 @@ int rpc_http2_server_init_with_metadata(
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
   while (!transport->request_received && !transport->transport_failed) {
-    size_t direct_bytes = 0;
-    if (h2_read_from_net(transport, nullptr, 0, -1, &direct_bytes) < 0) {
-      return -1;
-    }
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
   }
-  if (!transport->request_received) {
-    return -1;
+  int result = -1;
+  if (transport->request_received) {
+    result = transport->request_handled ? 1 : 0;
   }
-  return transport->request_handled ? 1 : 0;
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result;
 }
 
 void rpc_http2_destroy(conn_t *conn) {
@@ -1250,6 +1177,10 @@ void rpc_http2_destroy(conn_t *conn) {
   if (transport->heartbeat_thread != 0) {
     pthread_join(transport->heartbeat_thread, nullptr);
     transport->heartbeat_thread = 0;
+  }
+  if (transport->read_thread != 0) {
+    pthread_join(transport->read_thread, nullptr);
+    transport->read_thread = 0;
   }
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);
