@@ -1035,6 +1035,61 @@ void test_rpc_lz4_payload_round_trip() {
           "lz4 payload did not use direct receive");
 }
 
+void test_rpc_repeated_responses_on_lane() {
+  h2_pair pair = make_pair();
+
+  constexpr int kOp = 81;
+  constexpr int kChunkCount = 2;
+  std::vector<char> payload(LUPINE_COMPRESS_BLOCK_BYTES, '\0');
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = static_cast<char>(i % 17);
+  }
+
+  std::thread server([&] {
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "repeated response stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp,
+            "repeated response dispatch failed");
+    int request_id = rpc_read_end(&pair.server);
+    require(request_id > 0, "repeated response request end failed");
+
+    for (int chunk = 0; chunk < kChunkCount; ++chunk) {
+      require(rpc_write_start_response(&pair.server, request_id) == 0,
+              "repeated response start failed");
+      require(rpc_write(&pair.server, &chunk, sizeof(chunk)) == 0,
+              "repeated response index write failed");
+      require(rpc_write_payload(&pair.server, payload.data(), payload.size()) ==
+                  0,
+              "repeated response payload write failed");
+      require(rpc_write_end(&pair.server) == request_id,
+              "repeated response write end failed");
+    }
+    rpc_unbind_http2_stream(&pair.server);
+  });
+
+  require(rpc_write_start_request(&pair.client, kOp) == 0,
+          "repeated response request start failed");
+  int request_id = rpc_write_end(&pair.client);
+  require(request_id > 0, "repeated response request write failed");
+  for (int expected = 0; expected < kChunkCount; ++expected) {
+    require(rpc_read_start(&pair.client, request_id) == 0,
+            "repeated response read start failed");
+    int chunk = -1;
+    std::vector<char> received(payload.size());
+    require(rpc_read(&pair.client, &chunk, sizeof(chunk)) == sizeof(chunk),
+            "repeated response index read failed");
+    require(rpc_read_payload(&pair.client, received.data(), received.size()) ==
+                static_cast<int>(received.size()),
+            "repeated response payload read failed");
+    require(rpc_read_end(&pair.client) == request_id,
+            "repeated response read end failed");
+    require(chunk == expected, "repeated response index mismatch");
+    require(received == payload, "repeated response payload mismatch");
+  }
+  server.join();
+}
+
 // Handlers start request chains without their own null checks; an unreachable
 // server (null route conn) or a failed connection must fail the chain here
 // instead of dereferencing the conn.
@@ -1058,6 +1113,7 @@ int main() {
   test_rpc_write_buffer_uses_fixed_allocation();
   test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
   test_rpc_lz4_payload_round_trip();
+  test_rpc_repeated_responses_on_lane();
   test_response_wait_sends_transport_heartbeat();
   test_client_to_server();
   test_server_receives_session_id();

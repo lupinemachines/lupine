@@ -268,7 +268,7 @@ struct rpc_read_frame {
   int request_id = 0;
 };
 
-struct rpc_pending_request {
+struct rpc_response_route {
   int request_id = 0;
   int32_t stream_id = -1;
 };
@@ -278,8 +278,8 @@ struct rpc_thread_io {
   int32_t bound_stream = -1;
   conn_t *read_conn = nullptr;
   rpc_read_frame read;
-  conn_t *pending_conn = nullptr;
-  rpc_pending_request pending;
+  conn_t *response_conn = nullptr;
+  rpc_response_route response;
   conn_t *held_call_lock = nullptr;
 };
 
@@ -358,12 +358,12 @@ int rpc_dispatch(conn_t *conn, int parity) {
 // Once this returns, the matching frame is reserved for the caller until
 // rpc_read_end() completes it.
 int rpc_read_start(conn_t *conn, int write_id) {
-  if (rpc_tls_io.pending_conn != conn ||
-      rpc_tls_io.pending.request_id != write_id) {
+  if (rpc_tls_io.response_conn != conn ||
+      rpc_tls_io.response.request_id != write_id) {
     rpc_release_held_call_lock(conn);
     return -1;
   }
-  int32_t stream_id = rpc_tls_io.pending.stream_id;
+  int32_t stream_id = rpc_tls_io.response.stream_id;
   int request_id = 0;
   int op = 0;
   if (rpc_http2_read_stream(conn, stream_id, &request_id, sizeof(request_id)) !=
@@ -375,8 +375,10 @@ int rpc_read_start(conn_t *conn, int write_id) {
     rpc_release_held_call_lock(conn);
     return -1;
   }
-  rpc_tls_io.pending_conn = nullptr;
-  rpc_tls_io.pending = {};
+  // Keep the request-to-stream association until this thread sends another
+  // request. A single RPC may return several response frames with the same
+  // request id (chunked DtoH does this once per transfer block), and each
+  // frame is entered through rpc_read_start after the previous rpc_read_end.
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, request_id};
   return 0;
@@ -706,8 +708,8 @@ int rpc_write_end(conn_t *conn) {
   pthread_mutex_unlock(&conn->write_mutex);
   if (request) {
     if (result == 0) {
-      rpc_tls_io.pending_conn = conn;
-      rpc_tls_io.pending = {write_id, write_stream_id};
+      rpc_tls_io.response_conn = conn;
+      rpc_tls_io.response = {write_id, write_stream_id};
     }
     // Servers originate RPCs only on the dedicated server-to-client stream.
     // Keep that stream's request/response exchange serialized so a caller can
