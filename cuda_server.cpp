@@ -1855,52 +1855,6 @@ int handle_cuPointerGetAttributes(conn_t *conn) {
   return 0;
 }
 
-int handle_cuMemPrefetchAsync(conn_t *conn) {
-  CUdeviceptr devPtr;
-  size_t count;
-  int location_type;
-  int location_id;
-  unsigned int flags;
-  CUstream hStream;
-  int request_id;
-  CUresult result;
-  if (rpc_read(conn, &devPtr, sizeof(devPtr)) < 0 ||
-      rpc_read(conn, &count, sizeof(count)) < 0 ||
-      rpc_read(conn, &location_type, sizeof(location_type)) < 0 ||
-      rpc_read(conn, &location_id, sizeof(location_id)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(hStream)) < 0) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  CUmemLocation location = {};
-  location.type = static_cast<CUmemLocationType>(location_type);
-  location.id = location_id;
-#if CUDA_VERSION >= 12020
-  result = cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream);
-#else
-  if (flags != 0 || (location.type != CU_MEM_LOCATION_TYPE_DEVICE &&
-                     location.type != LUPINE_CU_MEM_LOCATION_TYPE_HOST)) {
-    result = CUDA_ERROR_INVALID_VALUE;
-  } else {
-    CUdevice dstDevice = location.type == CU_MEM_LOCATION_TYPE_DEVICE
-                             ? location.id
-                             : CU_DEVICE_CPU;
-    result = cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
-  }
-#endif
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_cuLinkCreate_v2(conn_t *conn) {
   auto link_state = std::make_unique<lupine_link_state>();
   CUlinkState client_state = nullptr;
@@ -4351,6 +4305,32 @@ int handle_cuCtxSynchronize(conn_t *conn) {
   lupine_cleanup_pending_dtoh_copies(&pending);
   return failed ? -1 : 0;
 }
+
+#if CUDA_VERSION >= 13000
+int handle_cuCtxSynchronize_v2(conn_t *conn) {
+  CUcontext ctx = nullptr;
+  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  lupine_captured_stdout capture;
+  lupine_start_stdout_capture(&capture);
+  CUresult result = cuCtxSynchronize_v2(ctx);
+  lupine_finish_stdout_capture(&capture);
+  auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+  bool failed = rpc_write_start_response(conn, request_id) < 0 ||
+                rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
+                lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+                lupine_write_captured_stdout(conn, capture) < 0 ||
+                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write_end(conn) < 0;
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return failed ? -1 : 0;
+}
+#endif
 
 int handle_cuStreamSynchronize(conn_t *conn) {
   CUstream stream = nullptr;

@@ -32,9 +32,11 @@
 #define RPC_cuCtxSetCurrent 1801040174
 #define RPC_cuCtxGetCurrent 1159499964
 #define RPC_cuCtxGetDevice 1876605837
+#define RPC_cuCtxGetDevice_v2 566885354
 #define RPC_cuCtxGetFlags 492061685
 #define RPC_cuCtxGetId 1704852972
 #define RPC_cuCtxSynchronize 484046796
+#define RPC_cuCtxSynchronize_v2 357846365
 #define RPC_cuCtxSetLimit 288806398
 #define RPC_cuCtxGetLimit 1774709295
 #define RPC_cuCtxGetCacheConfig 1342146307
@@ -167,6 +169,7 @@
 #define RPC_cuMemPoolImportFromShareableHandle 1891033213
 #define RPC_cuMemPoolExportPointer 858999363
 #define RPC_cuMemPoolImportPointer 1026713940
+#define RPC_cuMemPrefetchAsync_v2 199313298
 #define RPC_cuMemRangeGetAttributes 694140572
 #define RPC_cuPointerSetAttribute 749063765
 #define RPC_cuPointerGetAttributes 1948058610
@@ -372,7 +375,7 @@
 #define RPC_cuMemHostUnregister 983276883
 #define RPC_cuMemPoolGetAttribute 830843819
 #define RPC_cuMemPoolSetAttribute 1050377512
-#define RPC_cuMemPrefetchAsync_v2 199313298
+#define RPC_cuMemPrefetchAsync 596440383
 #define RPC_cuMemRangeGetAttribute 1819983801
 #define RPC_cuMemRetainAllocationHandle 1903553150
 #define RPC_cuMemcpyAtoHAsync_v2 1591028942
@@ -451,7 +454,6 @@
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphAddNode_v2 1958016248
 #define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620
-#define LUPINE_RPC_cuMemPrefetchAsync 596440383
 #define LUPINE_RPC_cuPrivateGetModuleNode 1986234018
 #define LUPINE_RPC_cuStreamBeginCaptureToGraph 1423223781
 #define LUPINE_RPC_cuStreamGetCaptureInfo_v3 1793131524

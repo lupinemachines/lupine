@@ -2668,17 +2668,79 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   return return_value;
 }
 
-static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
-                                                   size_t count,
-                                                   CUmemLocation location,
-                                                   unsigned int flags,
-                                                   CUstream hStream) {
+static CUresult lupine_prepare_prefetch_ptr(CUdeviceptr devPtr,
+                                            CUdeviceptr *translated) {
+  *translated = devPtr;
+  if (!lupine_translate_managed_host_ptr(devPtr, translated)) {
+    return CUDA_SUCCESS;
+  }
+  return lupine_flush_dirty_host_pages_to_server();
+}
+
+extern "C" CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
+                                       CUdevice dstDevice, CUstream hStream) {
   CUdeviceptr translated = devPtr;
-  if (lupine_translate_managed_host_ptr(devPtr, &translated)) {
-    CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-    if (flush_result != CUDA_SUCCESS) {
-      return flush_result;
+  CUresult prepare_result = lupine_prepare_prefetch_ptr(devPtr, &translated);
+  if (prepare_result != CUDA_SUCCESS) {
+    return prepare_result;
+  }
+
+  CUdevice route_device = dstDevice;
+  lupine_route route;
+  if (dstDevice != CU_DEVICE_CPU) {
+    route = lupine_route_for_device(&route_device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+      return CUDA_ERROR_INVALID_DEVICE;
     }
+  } else {
+    route = hStream != nullptr ? lupine_route_for_stream(hStream)
+                               : lupine_route_for_deviceptr(translated);
+  }
+  if (hStream != nullptr) {
+    lupine_route stream_route = lupine_route_for_stream(hStream);
+    if (!lupine_routes_share_server(route, stream_route)) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+  }
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUdeviceptr, size_t, CUdevice, CUstream);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemPrefetchAsync");
+    if (real == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return real(translated, count, route_device, hStream);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (rpc_write_start_request(conn, RPC_cuMemPrefetchAsync) < 0 ||
+      rpc_write(conn, &translated, sizeof(translated)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &route_device, sizeof(route_device)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuMemPrefetchAsync_ptsz(CUdeviceptr devPtr, size_t count,
+                                            CUdevice dstDevice,
+                                            CUstream hStream) {
+  return cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
+}
+
+#if CUDA_VERSION >= 12020
+extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
+                                          CUmemLocation location,
+                                          unsigned int flags,
+                                          CUstream hStream) {
+  CUdeviceptr translated = devPtr;
+  CUresult prepare_result = lupine_prepare_prefetch_ptr(devPtr, &translated);
+  if (prepare_result != CUDA_SUCCESS) {
+    return prepare_result;
   }
 
   CUmemLocation route_location = location;
@@ -2701,7 +2763,6 @@ static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
     }
   }
   if (lupine_route_is_local(route)) {
-#if CUDA_VERSION >= 12020
     using real_fn_t = CUresult (*)(CUdeviceptr, size_t, CUmemLocation,
                                    unsigned int, CUstream);
     auto real = lupine_real_cuda_fn<real_fn_t>("cuMemPrefetchAsync_v2");
@@ -2709,32 +2770,14 @@ static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     return real(translated, count, route_location, flags, hStream);
-#else
-    if (flags != 0 ||
-        (route_location.type != CU_MEM_LOCATION_TYPE_DEVICE &&
-         route_location.type != LUPINE_CU_MEM_LOCATION_TYPE_HOST)) {
-      return CUDA_ERROR_INVALID_VALUE;
-    }
-    using real_fn_t = CUresult (*)(CUdeviceptr, size_t, CUdevice, CUstream);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemPrefetchAsync");
-    if (real == nullptr) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    CUdevice dstDevice = route_location.type == CU_MEM_LOCATION_TYPE_DEVICE
-                             ? route_location.id
-                             : CU_DEVICE_CPU;
-    return real(translated, count, dstDevice, hStream);
-#endif
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  int location_type = static_cast<int>(route_location.type);
   CUresult return_value;
-  if (rpc_write_start_request(conn, LUPINE_RPC_cuMemPrefetchAsync) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuMemPrefetchAsync_v2) < 0 ||
       rpc_write(conn, &translated, sizeof(translated)) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, &location_type, sizeof(location_type)) < 0 ||
-      rpc_write(conn, &route_location.id, sizeof(route_location.id)) < 0 ||
+      rpc_write(conn, &route_location, sizeof(route_location)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2744,27 +2787,4 @@ static CUresult lupine_cuMemPrefetchAsync_location(CUdeviceptr devPtr,
   }
   return return_value;
 }
-
-extern "C" CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
-                                       CUdevice dstDevice, CUstream hStream) {
-  CUmemLocation location = {};
-  location.type = dstDevice == CU_DEVICE_CPU ? LUPINE_CU_MEM_LOCATION_TYPE_HOST
-                                             : CU_MEM_LOCATION_TYPE_DEVICE;
-  location.id = dstDevice == CU_DEVICE_CPU ? 0 : dstDevice;
-  return lupine_cuMemPrefetchAsync_location(devPtr, count, location, 0,
-                                            hStream);
-}
-
-extern "C" CUresult cuMemPrefetchAsync_ptsz(CUdeviceptr devPtr, size_t count,
-                                            CUdevice dstDevice,
-                                            CUstream hStream) {
-  return cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
-}
-
-extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
-                                          CUmemLocation location,
-                                          unsigned int flags,
-                                          CUstream hStream) {
-  return lupine_cuMemPrefetchAsync_location(devPtr, count, location, flags,
-                                            hStream);
-}
+#endif

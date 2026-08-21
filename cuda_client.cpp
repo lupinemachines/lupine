@@ -3587,6 +3587,50 @@ extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
   return return_value;
 }
 
+#if CUDA_VERSION >= 13000
+extern "C" CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx) {
+  if (device == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
+  if (ctx == nullptr) {
+    return cuCtxGetDevice(device);
+  }
+
+  lupine_route route = lupine_route_for_context(ctx);
+  if (lupine_route_is_local(route)) {
+    using real_fn_t = CUresult (*)(CUdevice *, CUcontext);
+    auto real = lupine_real_cuda_fn<real_fn_t>("cuCtxGetDevice_v2");
+    if (real == nullptr) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return real(device, ctx);
+  }
+  if (lupine_current_context_device_cache_lookup(ctx, device)) {
+    return CUDA_SUCCESS;
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdevice remote_device = 0;
+  CUresult return_value;
+  if (rpc_write_start_request(conn, RPC_cuCtxGetDevice_v2) < 0 ||
+      rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    *device = lupine_local_device_for_remote(conn, remote_device);
+    lupine_current_context_device_cache_insert(ctx, *device);
+  }
+  return return_value;
+}
+#endif
+
 extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
                                           CUmemPool_attribute attr,
                                           void *value) {
@@ -8433,6 +8477,25 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
   // without changing the name and must also use the requested API version.
   (void)flags;
 
+#if CUDA_VERSION >= 13000
+  if (symbol != nullptr && cudaVersion >= 13000 &&
+      strcmp(symbol, "cuCtxGetDevice") == 0) {
+    *pfn = reinterpret_cast<void *>(&cuCtxGetDevice_v2);
+    if (symbolStatus != nullptr) {
+      *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
+    }
+    return CUDA_SUCCESS;
+  }
+  if (symbol != nullptr && cudaVersion >= 13000 &&
+      strcmp(symbol, "cuCtxSynchronize") == 0) {
+    *pfn = reinterpret_cast<void *>(&cuCtxSynchronize_v2);
+    if (symbolStatus != nullptr) {
+      *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
+    }
+    return CUDA_SUCCESS;
+  }
+#endif
+
   if (strcmp(symbol, "cuFuncGetAttribute") == 0) {
     *pfn = reinterpret_cast<void *>(&lupine_cuFuncGetAttribute_safe);
     if (symbolStatus != nullptr) {
@@ -8466,6 +8529,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     }
     return CUDA_SUCCESS;
   }
+#if CUDA_VERSION >= 12020
   if (symbol != nullptr && cudaVersion >= 12020 &&
       (strcmp(symbol, "cuMemPrefetchAsync") == 0 ||
        strcmp(symbol, "cuMemPrefetchAsync_ptsz") == 0)) {
@@ -8475,6 +8539,7 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     }
     return CUDA_SUCCESS;
   }
+#endif
 
   auto it = get_function_pointer(symbol);
   if (it != nullptr) {
@@ -8719,7 +8784,6 @@ lupine_manual_function_map() {
       {"cuMemGetInfo", (void *)cuMemGetInfo},
       {"cuMemPrefetchAsync", (void *)cuMemPrefetchAsync},
       {"cuMemPrefetchAsync_ptsz", (void *)cuMemPrefetchAsync_ptsz},
-      {"cuMemPrefetchAsync_v2", (void *)cuMemPrefetchAsync_v2},
       {"cuArrayCreate", (void *)cuArrayCreate_v2},
       {"cuArrayCreate_v2", (void *)cuArrayCreate_v2},
       {"cuArray3DCreate", (void *)cuArray3DCreate_v2},
