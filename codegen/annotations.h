@@ -2632,7 +2632,9 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
                             unsigned int ElementSizeBytes);
 /**
  * @disabled client - manual client handles managed host alias
+ * @disabled server - manual server releases identity-mapped allocations
  * @param dptr SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemFree_v2(CUdeviceptr dptr);
 /**
@@ -2651,7 +2653,9 @@ CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
 CUresult cuMemAllocHost_v2(void **pp, size_t bytesize);
 /**
  * @disabled client - manual client frees the substituted local address
+ * @disabled server - manual server releases identity-mapped allocations
  * @param p SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemFreeHost(void *p);
 /**
@@ -2680,9 +2684,11 @@ CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
 CUresult cuMemHostGetFlags(unsigned int *pFlags, void *p);
 /**
  * @disabled client - manual client creates managed host alias
+ * @disabled server - manual server allocates in the negotiated VA arena
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  * @param flags SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
                            unsigned int flags);
@@ -3564,7 +3570,7 @@ CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
  * @routingkey STREAM hStream
  * @routingfallback DEVICEPTR dptr
  * @param hStream SEND_ONLY
- * @param dptr SEND_ONLY
+ * @param dptr SEND_ONLY TRANSLATE_DEVICEPTR
  * @param length SEND_ONLY
  * @param flags SEND_ONLY
  */

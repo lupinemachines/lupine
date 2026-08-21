@@ -125,6 +125,7 @@ endif()
 
 # Accelerator-neutral wire protocol, HTTP/2, compression, and platform IPC.
 add_library(lupine_rpc_core STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/address_space.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
@@ -327,6 +328,11 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
 
+    add_executable(address_space_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/address_space_test.cpp)
+    target_link_libraries(address_space_test PRIVATE lupine_rpc_core)
+    lupine_apply_sanitizer(address_space_test)
+
     add_executable(h2_unknown_cuda_version_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
     target_include_directories(h2_unknown_cuda_version_test PRIVATE
@@ -379,6 +385,10 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 30)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
+    add_test(NAME address_space_test COMMAND address_space_test)
+    lupine_scaled_timeout(address_space_timeout 30)
+    set_tests_properties(address_space_test PROPERTIES
+        TIMEOUT ${address_space_timeout})
     add_test(NAME h2_unknown_cuda_version_test
         COMMAND h2_unknown_cuda_version_test)
     lupine_scaled_timeout(h2u_timeout 10)

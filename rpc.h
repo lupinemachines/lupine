@@ -80,6 +80,9 @@ struct conn_t {
   int closed;
   void *http2;
   void *tls_session; // SSL* for https:// client connections; otherwise null.
+  uintptr_t va_base;
+  size_t va_size;
+  void *va_space;
   intptr_t r_offset;
   intptr_t w_offset;
 };
@@ -162,6 +165,7 @@ extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
                                           unsigned int max_retries = 5);
 
 constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
+constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);

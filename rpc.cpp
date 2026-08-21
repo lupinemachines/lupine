@@ -1,4 +1,5 @@
 #include "rpc.h"
+#include "address_space.h"
 #include "lupine_log.h"
 #include <algorithm>
 #include <atomic>
@@ -211,6 +212,7 @@ void rpc_conn_destroy(conn_t *conn) {
   }
   rpc_close_transport_socket(conn);
   rpc_http2_destroy(conn);
+  lupine_va_destroy(conn);
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
   std::vector<rpc_mirror_write>().swap(conn->mirror_writes);
@@ -386,9 +388,13 @@ static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
                                  int (*read)(conn_t *, void *, size_t)) {
   void *destination = data;
   bool mirror = false;
-  if (conn->r_offset != conn->w_offset) {
+  uintptr_t address = reinterpret_cast<uintptr_t>(data);
+  if (conn->va_size != 0 && conn->w_offset != 0 &&
+      lupine_va_contains(conn, address, size)) {
+    destination = reinterpret_cast<void *>(address + conn->w_offset);
+    mirror = true;
+  } else if (conn->va_size == 0 && conn->r_offset != conn->w_offset) {
     uintptr_t read_base = LUPINE_MIRROR_SERVER_BASE + conn->r_offset;
-    uintptr_t address = reinterpret_cast<uintptr_t>(data);
     if (address >= read_base && size <= LUPINE_MIRROR_WINDOW_SIZE &&
         address - read_base <= LUPINE_MIRROR_WINDOW_SIZE - size) {
       uintptr_t server_address = address - conn->r_offset;

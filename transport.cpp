@@ -1,5 +1,6 @@
 #include "transport.h"
 
+#include "address_space.h"
 #include "lupine_log.h"
 
 #include <algorithm>
@@ -156,27 +157,50 @@ int connect_endpoint(client_transport_state &state,
                      const lupine_client_endpoint &endpoint,
                      unsigned int index) {
   conn_t *conn = &state.connections[index];
-  *conn = {};
-  unsigned int retries =
-      state.config.dial_policy == lupine_client_dial_policy::bounded_retry
-          ? kBoundedRetryCount
-          : 0;
-  lupine_socket_t connfd =
-      lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), retries);
-  if (connfd == LUPINE_INVALID_SOCKET) {
-    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
-                                      << endpoint.port << " failed");
-    return -1;
-  }
-  if (rpc_conn_init(conn, connfd, 0) < 0) {
-    return -1;
-  }
-  conn->logical_index = static_cast<int>(index);
-  conn->r_offset = state.config.r_offset;
-  conn->w_offset = state.config.w_offset;
-  if (initialize_tls(conn, endpoint) < 0 || rpc_http2_client_init(conn) < 0) {
-    reset_connection(conn);
-    return -1;
+  unsigned int min_slot = 0;
+  for (;;) {
+    *conn = {};
+    unsigned int retries =
+        state.config.dial_policy == lupine_client_dial_policy::bounded_retry
+            ? kBoundedRetryCount
+            : 0;
+    lupine_socket_t connfd = lupine_tcp_connect(endpoint.host.c_str(),
+                                                endpoint.port.c_str(), retries);
+    if (connfd == LUPINE_INVALID_SOCKET) {
+      LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
+                                        << endpoint.port << " failed");
+      return -1;
+    }
+    if (rpc_conn_init(conn, connfd, 0) < 0) {
+      return -1;
+    }
+    conn->logical_index = static_cast<int>(index);
+    conn->r_offset = state.config.r_offset;
+    conn->w_offset = state.config.w_offset;
+    unsigned int slot = min_slot;
+    if (state.config.identity_va) {
+      int reserve_result = lupine_va_reserve_client(conn, min_slot, &slot);
+      if (reserve_result < 0) {
+        reset_connection(conn);
+        return -1;
+      }
+    }
+    if (initialize_tls(conn, endpoint) < 0) {
+      reset_connection(conn);
+      return -1;
+    }
+    int http2_result = rpc_http2_client_init(conn);
+    if (http2_result == LUPINE_RPC_HTTP2_VA_CONFLICT && conn->va_size != 0 &&
+        slot + 1 < LUPINE_VA_ARENA_COUNT) {
+      min_slot = slot + 1;
+      reset_connection(conn);
+      continue;
+    }
+    if (http2_result < 0) {
+      reset_connection(conn);
+      return -1;
+    }
+    break;
   }
 
   state.endpoints[index] = endpoint;

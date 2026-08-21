@@ -27,6 +27,7 @@ from ops import (
     Operation,
     OwnerAnnotation,
     CrossServerCopyAnnotation,
+    DevicePtrTranslationAnnotation,
     FunctionAnnotationMetadata,
     RoutingFallbackAnnotation,
     SynchronizeAnnotation,
@@ -507,6 +508,10 @@ def parse_annotation(
             send = parts[2] == "SEND_ONLY" or parts[2] == "SEND_RECV"
             recv = parts[2] == "RECV_ONLY" or parts[2] == "SEND_RECV"
 
+            if "TRANSLATE_DEVICEPTR" in args:
+                metadata.translate_deviceptrs.append(
+                    DevicePtrTranslationAnnotation(parameter=param)
+                )
             # if there's a length or size arg, use the type, otherwise use the ptr_to type
             length_arg = next((arg for arg in args if arg.startswith("LENGTH:")), None)
 
@@ -814,11 +819,15 @@ def parse_annotation(
     return metadata
 
 
-def param_is_scalar_deviceptr(param: Parameter) -> bool:
-    return not isinstance(param.type, Pointer) and param.type.format() == "CUdeviceptr"
+def client_translated_deviceptr_names(
+    metadata: FunctionAnnotationMetadata,
+) -> set[str]:
+    return {translation.parameter.name for translation in metadata.translate_deviceptrs}
 
 
 def client_param_expr(metadata: FunctionAnnotationMetadata, param: Parameter) -> str:
+    if param.name in client_translated_deviceptr_names(metadata):
+        return f"{param.name}_rpc"
     return param.name
 
 
@@ -884,7 +893,7 @@ def write_client_rpc_write(f, operation: Operation, metadata: FunctionAnnotation
     if (
         isinstance(operation, OpaqueTypeOperation)
         and operation.send
-        and param_is_scalar_deviceptr(operation.parameter)
+        and operation.parameter.name in client_translated_deviceptr_names(metadata)
     ):
         f.write(
             "        rpc_write(conn, &{param_name}_rpc, sizeof({param_type})) < 0 ||\n".format(
@@ -1518,6 +1527,7 @@ def main():
             'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
+            'extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr, CUdeviceptr *translated);\n'
             'extern "C" CUresult lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice,\n'
             '                                                   CUdeviceptr srcDevice,\n'
             '                                                   size_t ByteCount,\n'
@@ -1563,6 +1573,28 @@ def main():
                     "        return lupine_sync_result;\n"
                     "    }\n"
                 )
+
+            for translation in metadata.translate_deviceptrs:
+                name = translation.parameter.name
+                f.write(f"    CUdeviceptr {name}_rpc = {name};\n")
+                f.write(
+                    f"    bool {name}_is_managed_host = "
+                    f"lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n"
+                )
+            if metadata.translate_deviceptrs:
+                translated_condition = " || ".join(
+                    f"{item.parameter.name}_is_managed_host"
+                    for item in metadata.translate_deviceptrs
+                )
+                f.write(f"    if ({translated_condition}) {{\n")
+                f.write(
+                    "        CUresult managed_result = "
+                    "lupine_flush_dirty_host_pages_to_server();\n"
+                )
+                f.write("        if (managed_result != CUDA_SUCCESS) {\n")
+                f.write("            return managed_result;\n")
+                f.write("        }\n")
+                f.write("    }\n")
 
             all_output = metadata.routing_parameter
             if metadata.routing_kind == "ALL":
@@ -1675,25 +1707,6 @@ def main():
             f.write("        return return_value;\n")
             f.write("    }\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-
-            deviceptrs = [
-                param
-                for param in function.parameters
-                if param.name and param_is_scalar_deviceptr(param)
-            ]
-            for param in deviceptrs:
-                f.write(
-                    f"    CUdeviceptr {param.name}_rpc = "
-                    f"{param.name} - conn->r_offset;\n"
-                )
-            if deviceptrs:
-                f.write(
-                    "    CUresult managed_result = "
-                    "lupine_flush_dirty_host_pages_to_server();\n"
-                )
-                f.write("    if (managed_result != CUDA_SUCCESS) {\n")
-                f.write("        return managed_result;\n")
-                f.write("    }\n")
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
