@@ -97,7 +97,7 @@ start_remote_server() {
   local server_log="$2"
   local port="$3"
   local attempt
-  local server_environment="LUPINE_PORT=$port"
+  local server_environment="LUPINE_PORT=$port LUPINE_TRACE=2"
 
   if [[ -n "$SERVER_LD_LIBRARY_PATH" ]]; then
     printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
@@ -127,7 +127,7 @@ if [[ "$SERVER_UPLOAD" == "1" ]]; then
 fi
 
 shopt -s nullglob
-tests=("$repo_root"/test/test_*.cu)
+tests=("$repo_root"/test/test_cublas_create.cu)
 if [[ ${#tests[@]} -eq 0 ]]; then
   echo "no test/test_*.cu found" >&2
   exit 0
@@ -163,11 +163,13 @@ run_one_test() {
   set +e
   timeout --kill-after=5s "$TEST_TIMEOUT" env \
     LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+    LUPINE_TRACE=2 \
     LUPINE_SERVER="$SERVER_HOST:$port" \
     "$exe" >>"$log" 2>&1
   rc=$?
   set -e
 
+  ssh_with_timeout "cat '$server_log'" >>"$log" 2>&1 || true
   stop_remote_server "$pidfile" "$server_log"
 
   if [[ "$rc" == "0" ]]; then

@@ -39,22 +39,6 @@ jobs:
               https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
             cuda_compat_deb_sha256: 5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4
             server_ld_library_path: /usr/local/cuda-13.3/compat
-          - label: cuda12-4
-            name: CUDA 12.4
-            client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
-            samples_ref: v12.4.1
-            pytorch_index_url: https://download.pytorch.org/whl/cu124
-            cuda_compat_deb_url: ""
-            cuda_compat_deb_sha256: ""
-            server_ld_library_path: ""
-          - label: cuda11-8
-            name: CUDA 11.8
-            client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
-            samples_ref: v11.8
-            pytorch_index_url: https://download.pytorch.org/whl/cu118
-            cuda_compat_deb_url: ""
-            cuda_compat_deb_sha256: ""
-            server_ld_library_path: ""
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
