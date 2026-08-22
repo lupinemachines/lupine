@@ -1,0 +1,32 @@
+name: Build HIP
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hip-only:
+    name: HIP client + server (ROCm SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build and test HIP-only image
+        run: docker build -f Dockerfile.hip -t lupine-hip .
+
+      - name: Verify HIP artifacts
+        run: |
+          docker run --rm --entrypoint bash lupine-hip -lc '
+            set -euo pipefail
+            test -x /opt/lupine/build/lupine_driver_server
+            test -e /opt/lupine/build/libamdhip64.so.1
+          '

@@ -4,7 +4,7 @@ project(LupineProject LANGUAGES C CXX)
 
 option(LUPINE_BUILD_CUDA "Build the CUDA client and server backend" ON)
 option(LUPINE_BUILD_NVML "Build the NVML client and server backend" ON)
-option(LUPINE_BUILD_HIP "Build the HIP client and server backend when present" ON)
+option(LUPINE_BUILD_HIP "Build the HIP client and server backend (requires HIP SDK)" ON)
 if(APPLE)
     set(LUPINE_BUILD_SERVER_DEFAULT OFF)
 else()
@@ -70,16 +70,20 @@ if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
     endif()
 endif()
 
-if(LUPINE_BUILD_SERVER AND NOT (LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML))
+if(LUPINE_BUILD_SERVER AND
+   NOT (LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML OR LUPINE_BUILD_HIP))
     message(FATAL_ERROR
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
-# HIP implementation sources arrive in the final #487 rebase. Keeping the
-# option default-on here makes that backend part of the normal build as soon as
-# those sources are present, rather than introducing a hidden opt-in later.
 if(LUPINE_BUILD_HIP)
-    message(STATUS "HIP backend requested; implementation is supplied by PR #487")
+    find_path(LUPINE_HIP_INCLUDE_DIR hip/hip_runtime_api.h
+        HINTS
+            $ENV{HIP_PATH}/include
+            $ENV{ROCM_PATH}/include
+            /opt/rocm/include
+        REQUIRED)
+    message(STATUS "Found HIP SDK headers: ${LUPINE_HIP_INCLUDE_DIR}")
 endif()
 
 function(lupine_internal_target target)
@@ -259,6 +263,26 @@ if(LUPINE_BUILD_NVML)
     add_custom_target(lupine_nvml DEPENDS lupine_nvml_client)
 endif()
 
+if(NOT WIN32 AND LUPINE_BUILD_HIP)
+    add_library(lupine_hip_client SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/hip_client.cpp)
+    target_include_directories(lupine_hip_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${LUPINE_HIP_INCLUDE_DIR})
+    target_compile_definitions(lupine_hip_client PRIVATE
+        __HIP_PLATFORM_AMD__)
+    target_link_libraries(lupine_hip_client PRIVATE lupine_client_transport)
+    target_link_options(lupine_hip_client PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/hip.exports")
+    set_target_properties(lupine_hip_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME amdhip64
+        VERSION 1
+        SOVERSION 1)
+    add_custom_target(lupine_hip DEPENDS lupine_hip_client)
+endif()
+
 if(LUPINE_BUILD_SERVER)
     if(LUPINE_BUILD_CUDA)
         add_library(lupine_cuda_server STATIC
@@ -292,6 +316,17 @@ if(LUPINE_BUILD_SERVER)
         target_link_libraries(lupine_nvml_server PRIVATE lupine_server_core)
     endif()
 
+    if(LUPINE_BUILD_HIP)
+        add_library(lupine_hip_server STATIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/hip_server.cpp)
+        lupine_internal_target(lupine_hip_server)
+        target_include_directories(lupine_hip_server PRIVATE
+            ${LUPINE_HIP_INCLUDE_DIR})
+        target_compile_definitions(lupine_hip_server PRIVATE
+            __HIP_PLATFORM_AMD__)
+        target_link_libraries(lupine_hip_server PRIVATE lupine_server_core)
+    endif()
+
     add_executable(lupine_driver_server
         ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/registry.cpp)
@@ -312,6 +347,11 @@ if(LUPINE_BUILD_SERVER)
         target_compile_definitions(lupine_driver_server PRIVATE
             LUPINE_BUILD_NVML_BACKEND)
         target_link_libraries(lupine_driver_server PRIVATE lupine_nvml_server)
+    endif()
+    if(LUPINE_BUILD_HIP)
+        target_compile_definitions(lupine_driver_server PRIVATE
+            LUPINE_BUILD_HIP_BACKEND)
+        target_link_libraries(lupine_driver_server PRIVATE lupine_hip_server)
     endif()
 endif()
 
@@ -425,12 +465,14 @@ if(BUILD_TESTING AND NOT WIN32)
             COMMAND server_sigterm_test $<TARGET_FILE:lupine_driver_server>)
         set_tests_properties(server_sigterm_test PROPERTIES
             TIMEOUT 10 SKIP_RETURN_CODE 77)
-        add_test(NAME server_sigterm_provider_test
-            COMMAND server_sigterm_test
-                    $<TARGET_FILE:lupine_driver_server>
-                    $<TARGET_FILE:test_lupinecr_provider>)
-        set_tests_properties(server_sigterm_provider_test PROPERTIES
-            TIMEOUT 10 SKIP_RETURN_CODE 77)
+        if(TARGET lupine_cuda_server)
+            add_test(NAME server_sigterm_provider_test
+                COMMAND server_sigterm_test
+                        $<TARGET_FILE:lupine_driver_server>
+                        $<TARGET_FILE:test_lupinecr_provider>)
+            set_tests_properties(server_sigterm_provider_test PROPERTIES
+                TIMEOUT 10 SKIP_RETURN_CODE 77)
+        endif()
     endif()
 
     if(TARGET lupine_nvml_client)
@@ -448,6 +490,9 @@ endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
         "Building NVML client: lupine_nvml_client (libnvidia-ml.so.1)")
+endif()
+if(TARGET lupine_hip_client)
+    message(STATUS "Building HIP client: lupine_hip_client (libamdhip64.so.1)")
 endif()
 if(TARGET lupine_driver_server)
     message(STATUS "Building server: lupine_driver_server")

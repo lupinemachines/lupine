@@ -76,6 +76,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DLUPINE_BUILD_HIP=OFF \
             -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk;$(brew --prefix libnghttp2);$(brew --prefix openssl@3)"
 
       - name: Build client dylibs

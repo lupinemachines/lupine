@@ -7,7 +7,7 @@
 
 typedef int (*RequestHandler)(conn_t *conn);
 
-enum class rpc_backend { cuda, nvml };
+enum class rpc_backend { cuda, nvml, hip };
 
 struct rpc_handler {
   RequestHandler handler = nullptr;

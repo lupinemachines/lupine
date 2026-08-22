@@ -30,6 +30,7 @@ COPY . /opt/lupine
 RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -G Ninja \
       -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+      -DLUPINE_BUILD_HIP=OFF \
       -DCMAKE_LIBRARY_PATH="${CUDA_HOME}/lib64/stubs"
 
 FROM builder AS client-build

@@ -97,6 +97,7 @@ jobs:
             -G "Visual Studio 18 2026" `
             -A '${{ matrix.cmake_arch }}' `
             -DLUPINE_BUILD_SERVER=OFF `
+            -DLUPINE_BUILD_HIP=OFF `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_PREFIX_PATH=$PWD/cuda-sdk" `
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
