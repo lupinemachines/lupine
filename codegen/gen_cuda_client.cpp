@@ -1057,14 +1057,14 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  std::uint32_t name_len = 0;
+  std::size_t name_len = 0;
   std::string name_result;
   if (name == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (rpc_write_start_request(conn, RPC_cuKernelGetName) < 0 ||
       rpc_write(conn, &hfunc, sizeof(CUkernel)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
       name_len > (1U << 20) || (name_result.resize(name_len), false) ||
       (name_len != 0 && rpc_read(conn, name_result.data(), name_len) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3574,7 +3574,7 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  std::uint32_t name_len = 0;
+  std::size_t name_len = 0;
   std::string name_result;
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (name == nullptr)
@@ -3582,7 +3582,7 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
   if (rpc_write_start_request(conn, RPC_cuFuncGetName) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
       name_len > (1U << 20) || (name_result.resize(name_len), false) ||
       (name_len != 0 && rpc_read(conn, name_result.data(), name_len) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||

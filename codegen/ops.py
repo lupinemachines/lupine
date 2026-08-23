@@ -786,7 +786,8 @@ class DeepStructOperation:
 @dataclass
 class NullTerminatedOperation:
     """
-    Null terminated operations are operations that are passed as a null terminated string.
+    A null-terminated input string or a driver-owned string returned through
+    ``const char **``.
     """
 
     send: bool
@@ -794,6 +795,13 @@ class NullTerminatedOperation:
     parameter: Parameter
     ptr: Pointer
     length_type: str = "std::size_t"
+
+    def client_declaration(self) -> str:
+        name = self.parameter.name
+        return (
+            f"    {self.length_type} {name}_len = 0;\n"
+            f"    std::string {name}_result;\n"
+        )
 
     def client_rpc_write(self, f):
         if not self.send:
@@ -812,9 +820,19 @@ class NullTerminatedOperation:
 
     @property
     def server_declaration(self) -> str:
+        type_ = self.ptr.ptr_to.format() if self.recv else self.ptr.format()
+        initializer = " = 0" if self.recv else ""
         return (
-            f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
-            + f"    {self.length_type} {self.parameter.name}_len;\n"
+            f"    {type_} {self.parameter.name} = nullptr;\n"
+            + f"    {self.length_type} {self.parameter.name}_len{initializer};\n"
+        )
+
+    def client_preflight(self, f, error_return: str):
+        if not self.recv:
+            return
+        f.write(
+            f"    if ({self.parameter.name} == nullptr)\n"
+            f"        return {error_return};\n"
         )
 
     def client_unified_copy(self, f, direction, error):
@@ -851,86 +869,13 @@ class NullTerminatedOperation:
 
     @property
     def server_reference(self) -> str:
+        if self.recv:
+            return f"&{self.parameter.name}"
         return self.parameter.name
 
     def server_rpc_write(self, f):
         if not self.recv:
             return
-        f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                length_type=self.length_type,
-            )
-        )
-        f.write(
-            "        rpc_write(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name,
-            )
-        )
-
-    def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                length_type=self.length_type,
-            )
-        )
-        f.write(
-            "        rpc_read(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name
-            )
-        )
-
-
-@dataclass
-class ReturnedStringOperation:
-    """A driver-owned null-terminated string returned through ``const char **``.
-
-    The server copies the string as length-prefixed bytes. The generated client
-    interns successful results so the pointer handed to the caller remains
-    valid after the RPC wrapper returns.
-    """
-
-    send: bool
-    recv: bool
-    parameter: Parameter
-    ptr: Pointer
-    length_type: str = "std::uint32_t"
-
-    def client_declaration(self) -> str:
-        name = self.parameter.name
-        return (
-            f"    {self.length_type} {name}_len = 0;\n"
-            f"    std::string {name}_result;\n"
-        )
-
-    def client_preflight(self, f, error_return: str):
-        f.write(
-            f"    if ({self.parameter.name} == nullptr)\n"
-            f"        return {error_return};\n"
-        )
-
-    def client_rpc_write(self, f):
-        return
-
-    @property
-    def server_declaration(self) -> str:
-        name = self.parameter.name
-        return (
-            f"    {self.ptr.ptr_to.format()} {name} = nullptr;\n"
-            f"    {self.length_type} {name}_len = 0;\n"
-        )
-
-    def server_rpc_read(self, f) -> Optional[str]:
-        return None
-
-    @property
-    def server_reference(self) -> str:
-        return f"&{self.parameter.name}"
-
-    def server_rpc_write(self, f):
         name = self.parameter.name
         f.write(
             f"        (({name}_len = {name} != nullptr\n"
@@ -941,6 +886,8 @@ class ReturnedStringOperation:
         )
 
     def client_rpc_read(self, f):
+        if not self.recv:
+            return
         name = self.parameter.name
         f.write(
             f"        rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
@@ -951,6 +898,8 @@ class ReturnedStringOperation:
         )
 
     def client_post_rpc(self, f, success_value: str):
+        if not self.recv:
+            return
         name = self.parameter.name
         f.write(
             f"    if (return_value == {success_value})\n"
@@ -1144,7 +1093,6 @@ Operation = Union[
     NullableOperation,
     ArrayOperation,
     NullTerminatedOperation,
-    ReturnedStringOperation,
     OpaqueTypeOperation,
     DereferenceOperation,
 ]

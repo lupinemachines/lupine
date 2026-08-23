@@ -22,7 +22,6 @@ from ops import (
     NullableArrayOperation,
     DeepStructOperation,
     NullTerminatedOperation,
-    ReturnedStringOperation,
     OpaqueTypeOperation,
     DereferenceOperation,
     Operation,
@@ -616,23 +615,14 @@ def parse_annotation(
                                 "received NULL_TERMINATED parameters must be "
                                 "RECV_ONLY const char **"
                             )
-                        operations.append(
-                            ReturnedStringOperation(
-                                send=send,
-                                recv=recv,
-                                parameter=param,
-                                ptr=param.type,
-                            )
+                    operations.append(
+                        NullTerminatedOperation(
+                            send=send,
+                            recv=recv,
+                            parameter=param,
+                            ptr=param.type,
                         )
-                    else:
-                        operations.append(
-                            NullTerminatedOperation(
-                                send=send,
-                                recv=recv,
-                                parameter=param,
-                                ptr=param.type,
-                            )
-                        )
+                    )
                 elif nullable:
                     # if it's nullable, it's a nullable operation
                     operations.append(
@@ -1720,25 +1710,20 @@ def main():
                     isinstance(operation, InOutCountOperation)
                     or isinstance(operation, NullableArrayOperation)
                     or isinstance(operation, DeepStructOperation)
-                    or isinstance(operation, ReturnedStringOperation)
+                    or (
+                        isinstance(operation, NullTerminatedOperation)
+                        and operation.recv
+                    )
                 ):
                     f.write(operation.client_declaration())
 
-            # compute the strlen's for null-terminated operations.
             for operation in operations:
-                if isinstance(operation, NullTerminatedOperation):
-                    if operation.send:
-                        f.write(
-                            "    std::size_t {param_name}_len = std::strlen({param_name}) + 1;\n".format(
-                                param_name=operation.parameter.name
-                            )
+                if isinstance(operation, NullTerminatedOperation) and operation.send:
+                    f.write(
+                        "    std::size_t {param_name}_len = std::strlen({param_name}) + 1;\n".format(
+                            param_name=operation.parameter.name
                         )
-                    else:
-                        f.write(
-                            "    std::size_t {param_name}_len;\n".format(
-                                param_name=operation.parameter.name
-                            )
-                        )
+                    )
                 if isinstance(operation, NullableOperation) and operation.recv:
                     f.write(
                         "    {server_type} {param_name}_null_check;\n".format(
@@ -1756,7 +1741,10 @@ def main():
                     operation.client_preflight(
                         f, invalid_argument_const(function.return_type.format())
                     )
-                elif isinstance(operation, ReturnedStringOperation):
+                elif (
+                    isinstance(operation, NullTerminatedOperation)
+                    and operation.recv
+                ):
                     operation.client_preflight(
                         f, invalid_argument_const(function.return_type.format())
                     )
@@ -1818,7 +1806,7 @@ def main():
             )
 
             for operation in operations:
-                if isinstance(operation, ReturnedStringOperation):
+                if isinstance(operation, NullTerminatedOperation) and operation.recv:
                     operation.client_post_rpc(f, "CUDA_SUCCESS")
 
             write_client_post_call(f, function, metadata)
@@ -1910,7 +1898,6 @@ def main():
             "#include <cuda.h>\n"
             '#include "cuda_compat.h"\n'
             "\n"
-            "#include <cstdint>\n"
             "#include <cstring>\n"
             "#include <string>\n"
             '#include "gen_rpc_ids.h"\n\n'

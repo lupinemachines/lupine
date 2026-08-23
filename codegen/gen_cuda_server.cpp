@@ -3,7 +3,6 @@
 #include <iostream>
 
 #include "gen_rpc_ids.h"
-#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -1448,7 +1447,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12030
 int handle_cuKernelGetName(conn_t *conn) {
   const char *name = nullptr;
-  std::uint32_t name_len = 0;
+  std::size_t name_len = 0;
   CUkernel hfunc;
   int request_id;
   CUresult lupine_intercept_result;
@@ -1461,11 +1460,10 @@ int handle_cuKernelGetName(conn_t *conn) {
   lupine_intercept_result = cuKernelGetName(&name, hfunc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      ((name_len = name != nullptr
-                       ? static_cast<std::uint32_t>(std::strlen(name))
-                       : 0),
+      ((name_len =
+            name != nullptr ? static_cast<std::size_t>(std::strlen(name)) : 0),
        false) ||
-      rpc_write(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
       (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4349,7 +4347,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12030
 int handle_cuFuncGetName(conn_t *conn) {
   const char *name = nullptr;
-  std::uint32_t name_len = 0;
+  std::size_t name_len = 0;
   CUfunction hfunc;
   int request_id;
   CUresult lupine_intercept_result;
@@ -4362,11 +4360,10 @@ int handle_cuFuncGetName(conn_t *conn) {
   lupine_intercept_result = cuFuncGetName(&name, hfunc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      ((name_len = name != nullptr
-                       ? static_cast<std::uint32_t>(std::strlen(name))
-                       : 0),
+      ((name_len =
+            name != nullptr ? static_cast<std::size_t>(std::strlen(name)) : 0),
        false) ||
-      rpc_write(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
       (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
