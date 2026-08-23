@@ -125,7 +125,6 @@ endif()
 
 # Accelerator-neutral wire protocol, HTTP/2, compression, and platform IPC.
 add_library(lupine_rpc_core STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/address_space.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp

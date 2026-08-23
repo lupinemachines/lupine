@@ -24,7 +24,6 @@
 
 #include <cuda.h>
 
-#include "address_space.h"
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
 #include "lupine_attr_sizes.h"
