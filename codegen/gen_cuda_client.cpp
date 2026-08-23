@@ -72,6 +72,7 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 
 extern "C" void lupine_invalidate_current_context_cache();
 extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
+extern "C" void lupine_mark_context_green(CUcontext ctx);
 extern "C" void lupine_invalidate_function_caches();
 extern "C" void lupine_invalidate_kernel_attribute_cache();
 extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
@@ -6609,6 +6610,142 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
 }
 
 #if CUDA_VERSION >= 12040
+CUresult cuGreenCtxCreate(CUgreenCtx *phCtx, CUdevResourceDesc desc,
+                          CUdevice dev, unsigned int flags) {
+  lupine_route route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUgreenCtx *, CUdevResourceDesc, CUdevice, unsigned int);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGreenCtxCreate", &return_value, phCtx, desc, dev, flags)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuGreenCtxCreate) < 0 ||
+      rpc_write(conn, &desc, sizeof(CUdevResourceDesc)) < 0 ||
+      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+CUresult cuGreenCtxDestroy(CUgreenCtx hCtx) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgreenCtx);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuGreenCtxDestroy",
+                                                  &return_value, hCtx)) {
+    if (return_value == CUDA_SUCCESS)
+      lupine_forget_destroyed_context(reinterpret_cast<CUcontext>(hCtx));
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuGreenCtxDestroy) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_destroyed_context(reinterpret_cast<CUcontext>(hCtx));
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUcontext *, CUgreenCtx);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuCtxFromGreenCtx", &return_value, pContext, hCtx)) {
+    if (return_value == CUDA_SUCCESS && pContext != nullptr) {
+      lupine_note_context_owner_route(*pContext, route);
+    }
+    if (return_value == CUDA_SUCCESS && pContext != nullptr)
+      lupine_mark_context_green(*pContext);
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuCtxFromGreenCtx) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pContext, sizeof(CUcontext)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && pContext != nullptr) {
+    lupine_note_context_owner_route(*pContext, route);
+  }
+  if (return_value == CUDA_SUCCESS && pContext != nullptr)
+    lupine_mark_context_green(*pContext);
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+CUresult cuDeviceGetDevResource(CUdevice device, CUdevResource *resource,
+                                CUdevResourceType type) {
+  lupine_route route = lupine_route_for_device(&device);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUdevice, CUdevResource *, CUdevResourceType);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDeviceGetDevResource", &return_value, device, resource,
+          type)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuDeviceGetDevResource) < 0 ||
+      rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
+      rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, resource, sizeof(CUdevResource)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+CUresult cuCtxGetDevResource(CUcontext hCtx, CUdevResource *resource,
+                             CUdevResourceType type) {
+  lupine_route route = lupine_route_for_context(hCtx);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUcontext, CUdevResource *, CUdevResourceType);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuCtxGetDevResource", &return_value, hCtx, resource, type)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuCtxGetDevResource) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
+      rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, resource, sizeof(CUdevResource)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
 CUresult cuGreenCtxGetDevResource(CUgreenCtx hCtx, CUdevResource *resource,
                                   CUdevResourceType type) {
   lupine_route route = lupine_route_for_current_context();
@@ -6626,6 +6763,124 @@ CUresult cuGreenCtxGetDevResource(CUgreenCtx hCtx, CUdevResource *resource,
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, resource, sizeof(CUdevResource)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+CUresult cuDevSmResourceSplitByCount(
+    CUdevResource *result, unsigned int *nbGroups, const CUdevResource *input,
+    CUdevResource *remainder, unsigned int flags, unsigned int minCount) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUdevResource *, unsigned int *, const CUdevResource *,
+                   CUdevResource *, unsigned int, unsigned int);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevSmResourceSplitByCount", &return_value, result, nbGroups,
+          input, remainder, flags, minCount)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  unsigned int nbGroups_requested = (result != nullptr) ? *nbGroups : 0;
+  uint8_t result_null = result == nullptr ? 1 : 0;
+  CUdevResource *remainder_null_check;
+  if (rpc_write_start_request(conn, RPC_cuDevSmResourceSplitByCount) < 0 ||
+      rpc_write(conn, &nbGroups_requested, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &result_null, sizeof(uint8_t)) < 0 ||
+      rpc_write(conn, input, sizeof(const CUdevResource)) < 0 ||
+      rpc_write(conn, &remainder, sizeof(CUdevResource *)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &minCount, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, nbGroups, sizeof(unsigned int)) < 0 ||
+      (result != nullptr && nbGroups_requested != 0 && *nbGroups != 0 &&
+       rpc_read(
+           conn, result,
+           (*nbGroups < nbGroups_requested ? *nbGroups : nbGroups_requested) *
+               sizeof(CUdevResource)) < 0) ||
+      rpc_read(conn, &remainder_null_check, sizeof(CUdevResource *)) < 0 ||
+      (remainder_null_check &&
+       rpc_read(conn, remainder, sizeof(CUdevResource)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+CUresult cuDevSmResourceSplit(CUdevResource *result, unsigned int nbGroups,
+                              const CUdevResource *input,
+                              CUdevResource *remainder, unsigned int flags,
+                              CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(
+      CUdevResource *, unsigned int, const CUdevResource *, CUdevResource *,
+      unsigned int, CU_DEV_SM_RESOURCE_GROUP_PARAMS *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevSmResourceSplit", &return_value, result, nbGroups, input,
+          remainder, flags, groupParams)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t result_null = result == nullptr ? 1 : 0;
+  CUdevResource *remainder_null_check;
+  if (nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS) != 0 &&
+      groupParams == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (rpc_write_start_request(conn, RPC_cuDevSmResourceSplit) < 0 ||
+      rpc_write(conn, &nbGroups, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &result_null, sizeof(uint8_t)) < 0 ||
+      rpc_write(conn, input, sizeof(const CUdevResource)) < 0 ||
+      rpc_write(conn, &remainder, sizeof(CUdevResource *)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, groupParams,
+                nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (result != nullptr && nbGroups != 0 &&
+       rpc_read(conn, result, nbGroups * sizeof(CUdevResource)) < 0) ||
+      rpc_read(conn, &remainder_null_check, sizeof(CUdevResource *)) < 0 ||
+      (remainder_null_check &&
+       rpc_read(conn, remainder, sizeof(CUdevResource)) < 0) ||
+      (nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS) != 0 &&
+       rpc_read(conn, groupParams,
+                nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+CUresult cuDevResourceGenerateDesc(CUdevResourceDesc *phDesc,
+                                   CUdevResource *resources,
+                                   unsigned int nbResources) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUdevResourceDesc *, CUdevResource *, unsigned int);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuDevResourceGenerateDesc", &return_value, phDesc, resources,
+          nbResources)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (nbResources * sizeof(CUdevResource) != 0 && resources == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (rpc_write_start_request(conn, RPC_cuDevResourceGenerateDesc) < 0 ||
+      rpc_write(conn, &nbResources, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, resources, nbResources * sizeof(CUdevResource)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phDesc, sizeof(CUdevResourceDesc)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6684,6 +6939,32 @@ CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
   if (return_value == CUDA_SUCCESS && phStream != nullptr) {
     lupine_note_stream_owner_route(*phStream, route);
   }
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+CUresult cuStreamGetDevResource(CUstream hStream, CUdevResource *resource,
+                                CUdevResourceType type) {
+  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
+                                           : lupine_route_for_default());
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUstream, CUdevResource *, CUdevResourceType);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuStreamGetDevResource", &return_value, hStream, resource,
+          type)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (rpc_write_start_request(conn, RPC_cuStreamGetDevResource) < 0 ||
+      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, resource, sizeof(CUdevResource)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
 }
 
@@ -7398,13 +7679,40 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphicsMapResources", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources", (void *)cuGraphicsUnmapResources},
 #if CUDA_VERSION >= 12040
+    {"cuGreenCtxCreate", (void *)cuGreenCtxCreate},
+#endif
+#if CUDA_VERSION >= 12040
+    {"cuGreenCtxDestroy", (void *)cuGreenCtxDestroy},
+#endif
+#if CUDA_VERSION >= 12040
+    {"cuCtxFromGreenCtx", (void *)cuCtxFromGreenCtx},
+#endif
+#if CUDA_VERSION >= 12040
+    {"cuDeviceGetDevResource", (void *)cuDeviceGetDevResource},
+#endif
+#if CUDA_VERSION >= 12040
+    {"cuCtxGetDevResource", (void *)cuCtxGetDevResource},
+#endif
+#if CUDA_VERSION >= 12040
     {"cuGreenCtxGetDevResource", (void *)cuGreenCtxGetDevResource},
+#endif
+#if CUDA_VERSION >= 12040
+    {"cuDevSmResourceSplitByCount", (void *)cuDevSmResourceSplitByCount},
+#endif
+#if CUDA_VERSION >= 13010
+    {"cuDevSmResourceSplit", (void *)cuDevSmResourceSplit},
+#endif
+#if CUDA_VERSION >= 12040
+    {"cuDevResourceGenerateDesc", (void *)cuDevResourceGenerateDesc},
 #endif
 #if CUDA_VERSION >= 12040
     {"cuStreamGetGreenCtx", (void *)cuStreamGetGreenCtx},
 #endif
 #if CUDA_VERSION >= 12050
     {"cuGreenCtxStreamCreate", (void *)cuGreenCtxStreamCreate},
+#endif
+#if CUDA_VERSION >= 13010
+    {"cuStreamGetDevResource", (void *)cuStreamGetDevResource},
 #endif
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},

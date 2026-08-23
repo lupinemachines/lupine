@@ -3508,6 +3508,15 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId);
  */
 CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
 /**
+ * @guard CUDA_VERSION >= 13010
+ * @routingkey STREAM hStream
+ * @param hStream SEND_ONLY
+ * @param resource RECV_ONLY
+ * @param type SEND_ONLY
+ */
+CUresult cuStreamGetDevResource(CUstream hStream, CUdevResource *resource,
+                                CUdevResourceType type);
+/**
  * @guard CUDA_VERSION >= 12040
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
@@ -3523,6 +3532,85 @@ CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx);
  */
 CUresult cuGreenCtxGetDevResource(CUgreenCtx hCtx, CUdevResource *resource,
                                   CUdevResourceType type);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @param device SEND_ONLY
+ * @param resource RECV_ONLY
+ * @param type SEND_ONLY
+ */
+CUresult cuDeviceGetDevResource(CUdevice device, CUdevResource *resource,
+                                CUdevResourceType type);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @param hCtx SEND_ONLY
+ * @param resource RECV_ONLY
+ * @param type SEND_ONLY
+ */
+CUresult cuCtxGetDevResource(CUcontext hCtx, CUdevResource *resource,
+                             CUdevResourceType type);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey CURRENT_CONTEXT
+ * @param nbGroups SEND_RECV
+ * @param result RECV_ONLY NULLABLE LENGTH:nbGroups
+ * @param input SEND_ONLY DEREF
+ * @param remainder RECV_ONLY NULLABLE
+ * @param flags SEND_ONLY
+ * @param minCount SEND_ONLY
+ */
+CUresult cuDevSmResourceSplitByCount(CUdevResource *result,
+                                     unsigned int *nbGroups,
+                                     const CUdevResource *input,
+                                     CUdevResource *remainder,
+                                     unsigned int flags,
+                                     unsigned int minCount);
+/**
+ * @guard CUDA_VERSION >= 13010
+ * @routingkey CURRENT_CONTEXT
+ * @param nbGroups SEND_ONLY
+ * @param result RECV_ONLY NULLABLE LENGTH:nbGroups
+ * @param input SEND_ONLY DEREF
+ * @param remainder RECV_ONLY NULLABLE
+ * @param flags SEND_ONLY
+ * @param groupParams SEND_RECV LENGTH:nbGroups
+ */
+CUresult cuDevSmResourceSplit(
+    CUdevResource *result, unsigned int nbGroups,
+    const CUdevResource *input, CUdevResource *remainder, unsigned int flags,
+    CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey CURRENT_CONTEXT
+ * @param nbResources SEND_ONLY
+ * @param resources SEND_ONLY LENGTH:nbResources
+ * @param phDesc RECV_ONLY
+ */
+CUresult cuDevResourceGenerateDesc(CUdevResourceDesc *phDesc,
+                                   CUdevResource *resources,
+                                   unsigned int nbResources);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @param phCtx RECV_ONLY
+ * @param desc SEND_ONLY
+ * @param dev SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+CUresult cuGreenCtxCreate(CUgreenCtx *phCtx, CUdevResourceDesc desc,
+                          CUdevice dev, unsigned int flags);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey CURRENT_CONTEXT
+ * @recordowner CONTEXT pContext
+ * @param pContext RECV_ONLY
+ * @param hCtx SEND_ONLY
+ */
+CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey CURRENT_CONTEXT
+ * @param hCtx SEND_ONLY
+ */
+CUresult cuGreenCtxDestroy(CUgreenCtx hCtx);
 /**
  * @guard CUDA_VERSION >= 12050
  * @routingkey CURRENT_CONTEXT
