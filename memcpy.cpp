@@ -114,8 +114,11 @@ static std::mutex &lupine_host_allocation_mutex() {
   return mutex;
 }
 
+// CUDA libraries can issue teardown requests after function-local statics have
+// started finalizing. Keep the registry alive for those late request flushes.
 static lupine_host_allocation_map &lupine_mutable_host_allocations_locked() {
-  static lupine_host_allocation_map allocations;
+  static lupine_host_allocation_map &allocations =
+      *new lupine_host_allocation_map();
   return allocations;
 }
 
@@ -153,6 +156,10 @@ struct lupine_dirty_host_range_queue {
 
 static lupine_dirty_host_range_queue
     lupine_dirty_host_range_queues[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
+// Keep dirty state visible until a flush completes. A single exchanged boolean
+// would let another request start while the first request is still flushing.
+static uint64_t lupine_dirty_host_epoch = 0;
+static std::atomic<uint64_t> lupine_flushed_host_epoch{0};
 
 struct lupine_fault_entry {
   uintptr_t base = 0;
@@ -418,12 +425,14 @@ static void lupine_queue_dirty_host_range(lupine_host_allocation *allocation,
   if (lupine_reserve_dirty_host_range(queue, &slot)) {
     queue.ranges[slot] = {allocation, start, end};
     __atomic_store_n(&queue.ready[slot], 1, __ATOMIC_RELEASE);
+    __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
     return;
   }
 
   __atomic_sub_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_RELEASE);
   __atomic_store_n(&allocation->full_dirty, 1, __ATOMIC_RELEASE);
   __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
+  __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
 }
 
 static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
@@ -704,8 +713,10 @@ static void lupine_mark_device_mapping_used(void *host, bool managed) {
   auto it = lupine_mutable_host_allocations_locked().find(host);
   if (it != lupine_mutable_host_allocations_locked().end()) {
     it->second.device_mapping_used = true;
-    if (!it->second.tracking_enabled) {
-      __atomic_store_n(&it->second.eager_flush_pending, 1, __ATOMIC_RELEASE);
+    if (!it->second.tracking_enabled &&
+        __atomic_exchange_n(&it->second.eager_flush_pending, 1,
+                            __ATOMIC_ACQ_REL) == 0) {
+      __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
     }
   }
   if (managed) {
@@ -723,6 +734,7 @@ static CUresult lupine_collect_rpc_mirror_writes(conn_t *conn) {
     return CUDA_ERROR_UNKNOWN;
   }
   writes.swap(conn->mirror_writes);
+  __atomic_store_n(&conn->mirror_writes_pending, 0, __ATOMIC_RELEASE);
   if (pthread_mutex_unlock(&conn->write_mutex) != 0) {
     return CUDA_ERROR_UNKNOWN;
   }
@@ -914,6 +926,8 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     if (count == 0) {
       return CUDA_SUCCESS;
     }
+    // This is the flush performed by lupine_cuda_rpc_start(), so it must use
+    // the raw transport primitive.
     if (rpc_write_start_request(conn, LUPINE_RPC_lupineManagedHostFlush) < 0 ||
         rpc_write(conn, &count, sizeof(count)) < 0 ||
         rpc_write_cursors(conn, cursors.data(), count * 2) < 0 ||
@@ -960,7 +974,7 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
   return CUDA_SUCCESS;
 }
 
-extern "C" CUresult lupine_flush_dirty_host_pages_to_server() {
+static CUresult lupine_flush_dirty_host_pages_to_server() {
   for (int route_id = 0; route_id < rpc_size(); ++route_id) {
     CUresult result =
         lupine_flush_dirty_host_pages_to_route(static_cast<size_t>(route_id));
@@ -969,6 +983,27 @@ extern "C" CUresult lupine_flush_dirty_host_pages_to_server() {
     }
   }
   return CUDA_SUCCESS;
+}
+
+extern "C" int lupine_cuda_rpc_start(conn_t *conn, int op) {
+  if (conn == nullptr) {
+    return -1;
+  }
+  if (__atomic_load_n(&conn->mirror_writes_pending, __ATOMIC_ACQUIRE) != 0 &&
+      lupine_collect_rpc_mirror_writes(conn) != CUDA_SUCCESS) {
+    return -1;
+  }
+
+  uint64_t dirty_epoch =
+      __atomic_load_n(&lupine_dirty_host_epoch, __ATOMIC_ACQUIRE);
+  if (dirty_epoch !=
+      lupine_flushed_host_epoch.load(std::memory_order_acquire)) {
+    if (lupine_flush_dirty_host_pages_to_server() != CUDA_SUCCESS) {
+      return -1;
+    }
+    lupine_flushed_host_epoch.store(dirty_epoch, std::memory_order_release);
+  }
+  return rpc_write_start_request(conn, op);
 }
 
 static CUresult
@@ -1227,7 +1262,7 @@ CUresult lupine_sync_mapped_host_to_device_for_launch(
   if (used_managed_mapping != nullptr) {
     *used_managed_mapping = used_managed;
   }
-  return lupine_flush_dirty_host_pages_to_server();
+  return CUDA_SUCCESS;
 }
 
 // Wire-fetch [offset, offset + bytes) of the backing. Handler-safe: must
@@ -1243,6 +1278,8 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   if (allocation->host_base == 0 || bytes == 0 || allocation->device_ptr == 0) {
     return bytes == 0;
   }
+  // Demand fetch can run from the fault handler and must not re-enter the
+  // normal CUDA request-start flush.
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &src, sizeof(src)) < 0 ||
       rpc_write(conn, &bytes, sizeof(bytes)) < 0) {
@@ -1652,7 +1689,7 @@ static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   *remote_host = nullptr;
-  if (rpc_write_start_request(conn, RPC_cuMemHostAlloc) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuMemHostAlloc) < 0 ||
       rpc_write(conn, remote_host, sizeof(*remote_host)) < 0 ||
       rpc_write(conn, &bytesize, sizeof(bytesize)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
@@ -1680,7 +1717,7 @@ static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (rpc_write_start_request(conn, RPC_cuMemFreeHost) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuMemFreeHost) < 0 ||
       rpc_write(conn, &remote_host, sizeof(remote_host)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -1707,7 +1744,7 @@ static CUresult lupine_remote_cuMemHostGetDevicePointer(CUdeviceptr *device_ptr,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   *device_ptr = 0;
-  if (rpc_write_start_request(conn, RPC_cuMemHostGetDevicePointer_v2) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuMemHostGetDevicePointer_v2) < 0 ||
       rpc_write(conn, device_ptr, sizeof(*device_ptr)) < 0 ||
       rpc_write(conn, &remote_host, sizeof(remote_host)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
@@ -1735,7 +1772,7 @@ static CUresult lupine_remote_cuMemHostGetFlags(unsigned int *flags,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (rpc_write_start_request(conn, RPC_cuMemHostGetFlags) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuMemHostGetFlags) < 0 ||
       rpc_write(conn, flags, sizeof(*flags)) < 0 ||
       rpc_write(conn, &remote_host, sizeof(remote_host)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2007,9 +2044,10 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
       known_allocation = true;
       if (it->second.device_ptr != 0) {
         it->second.device_mapping_used = true;
-        if (!it->second.tracking_enabled) {
-          __atomic_store_n(&it->second.eager_flush_pending, 1,
-                           __ATOMIC_RELEASE);
+        if (!it->second.tracking_enabled &&
+            __atomic_exchange_n(&it->second.eager_flush_pending, 1,
+                                __ATOMIC_ACQ_REL) == 0) {
+          __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
         }
         uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
         uintptr_t addr = reinterpret_cast<uintptr_t>(p);
@@ -2363,7 +2401,7 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
   size_t backing_size = std::max(bytesize, LUPINE_MANAGED_ALLOCATION_MIN_BYTES);
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (rpc_write_start_request(conn, RPC_cuMemAllocManaged) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuMemAllocManaged) < 0 ||
       rpc_write(conn, &device_alloc_base, sizeof(device_alloc_base)) < 0 ||
       rpc_write(conn, &backing_size, sizeof(backing_size)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
@@ -2460,7 +2498,7 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
     }
     conn_t *conn = lupine_route_remote_conn(route);
     CUresult return_value;
-    if (rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||
+    if (lupine_cuda_rpc_start(conn, RPC_cuMemFree_v2) < 0 ||
         rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2557,7 +2595,7 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (rpc_write_start_request(conn, RPC_cuPointerGetAttribute) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuPointerGetAttribute) < 0 ||
       rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
       rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
@@ -2621,7 +2659,7 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuPointerSetAttribute) < 0 ||
       rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
       rpc_write(conn, &target_ptr, sizeof(target_ptr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
@@ -2818,11 +2856,10 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
       rpc_write(conn, rpc_attributes,
-                numAttributes * sizeof(CUpointer_attribute)) <
-          0 ||
+                numAttributes * sizeof(CUpointer_attribute)) < 0 ||
       rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

@@ -80,6 +80,7 @@ struct conn_t {
   pthread_mutex_t write_mutex, call_mutex;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_mirror_write> mirror_writes;
+  int mirror_writes_pending;
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
   size_t write_copy_offset;

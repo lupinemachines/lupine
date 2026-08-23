@@ -1175,6 +1175,8 @@ void test_rpc_read_uses_w_offset() {
               pair.client.mirror_writes[0].start == read_address &&
               pair.client.mirror_writes[0].size == expected.size(),
           "alias response write was not tracked");
+  require(pair.client.mirror_writes_pending != 0,
+          "alias response write was not marked pending");
 
   munmap(read_view, page_size);
   munmap(write_view, page_size);

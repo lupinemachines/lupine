@@ -9,7 +9,6 @@
 
 struct rpc_write_cursor;
 
-extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
                                                   CUdeviceptr *translated);
 extern "C" CUresult lupine_sync_mapped_device_to_host();

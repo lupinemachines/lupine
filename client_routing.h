@@ -62,6 +62,7 @@ extern "C" conn_t *lupine_rpc_conn_for_function(CUfunction function);
 extern "C" conn_t *lupine_rpc_conn_for_stream(CUstream stream);
 extern "C" conn_t *lupine_rpc_conn_for_event(CUevent event);
 extern "C" conn_t *lupine_rpc_conn_for_deviceptr(CUdeviceptr ptr);
+extern "C" int lupine_cuda_rpc_start(conn_t *conn, int op);
 
 extern "C" bool lupine_route_is_local(lupine_route route);
 // May return null for local/invalid routes; rpc_write_start_request absorbs
