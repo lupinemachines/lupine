@@ -308,10 +308,7 @@ if(LUPINE_BUILD_SERVER)
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
         target_link_libraries(lupine_driver_server PRIVATE lupine_cuda_server)
         if(NOT WIN32 AND NOT APPLE)
-            target_sources(lupine_driver_server PRIVATE
-                ${CMAKE_CURRENT_SOURCE_DIR}/server_va.cpp)
-            # libcuda's mmap reference must resolve to the executable's scoped
-            # VA interposer.
+            # Export cuda_server.cpp's scoped mmap interposer for libcuda.
             set_target_properties(lupine_driver_server PROPERTIES
                 ENABLE_EXPORTS ON)
         endif()

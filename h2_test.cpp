@@ -1136,7 +1136,6 @@ void test_rpc_read_uses_w_offset() {
           "read view protection failed");
 
   h2_pair pair = make_pair();
-  pair.client.r_offset = LUPINE_MIRROR_R_OFFSET;
   pair.client.w_offset = LUPINE_MIRROR_W_OFFSET;
   constexpr int kOp = 83;
   const std::array<unsigned char, 8> expected = {3, 1, 4, 1, 5, 9, 2, 6};

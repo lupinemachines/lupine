@@ -9,6 +9,7 @@
 #include <errno.h>
 #if defined(__linux__)
 #include <sys/mman.h> // memfd_create
+#include <sys/syscall.h>
 #endif
 #include <future>
 #include <iostream>
@@ -46,9 +47,6 @@
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "rpc.h"
-#if defined(__linux__)
-#include "server_va.h"
-#endif
 
 #ifdef _WIN32
 #include <io.h>
@@ -4260,6 +4258,69 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
 
 namespace {
 
+#if defined(__linux__)
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+
+static constexpr uintptr_t LUPINE_SERVER_VA_ALIGNMENT = UINT64_C(0x200000);
+
+thread_local conn_t *lupine_server_va_connection = nullptr;
+
+void *lupine_system_mmap(void *address, size_t size, int protection, int flags,
+                         int fd, off_t offset) {
+  return reinterpret_cast<void *>(
+      syscall(SYS_mmap, address, size, protection, flags, fd, offset));
+}
+
+uintptr_t lupine_claim_server_va(conn_t *conn, size_t size, size_t alignment) {
+  if (conn == nullptr || conn->va_size == 0 || size == 0 || alignment == 0 ||
+      (alignment & (alignment - 1)) != 0 || size > conn->va_size) {
+    return 0;
+  }
+
+  uintptr_t current = __atomic_load_n(&conn->va_next, __ATOMIC_RELAXED);
+  for (;;) {
+    uintptr_t address = (current + alignment - 1) & ~(alignment - 1);
+    if (address < current || address < conn->va_base ||
+        address - conn->va_base > conn->va_size - size) {
+      return 0;
+    }
+    uintptr_t next = address + size;
+    if (__atomic_compare_exchange_n(&conn->va_next, &current, next, true,
+                                    __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+      return address;
+    }
+  }
+}
+
+void *lupine_map_server_va(conn_t *conn, size_t size, size_t alignment,
+                           int protection, int flags, int fd = -1,
+                           off_t offset = 0) {
+  uintptr_t address = lupine_claim_server_va(conn, size, alignment);
+  if (address == 0) {
+    errno = ENOMEM;
+    return MAP_FAILED;
+  }
+
+  flags &= ~(MAP_FIXED | MAP_FIXED_NOREPLACE);
+  return lupine_system_mmap(reinterpret_cast<void *>(address), size, protection,
+                            flags | MAP_FIXED, fd, offset);
+}
+
+void *lupine_interposed_mmap(void *address, size_t size, int protection,
+                             int flags, int fd, off_t offset) {
+  conn_t *conn = lupine_server_va_connection;
+  if (conn != nullptr && address == nullptr && fd == -1 &&
+      protection == PROT_NONE && (flags & MAP_ANONYMOUS) != 0 &&
+      (flags & MAP_STACK) == 0) {
+    return lupine_map_server_va(conn, size, LUPINE_SERVER_VA_ALIGNMENT,
+                                protection, flags, fd, offset);
+  }
+  return lupine_system_mmap(address, size, protection, flags, fd, offset);
+}
+#endif
+
 enum class lupine_server_allocation_kind { host, managed };
 
 struct lupine_server_allocation {
@@ -4320,8 +4381,9 @@ CUresult lupine_server_host_alloc(conn_t *conn, void **pointer,
   if (storage_size == 0) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
-  void *mapping = lupine_server_va_map(conn, storage_size, page_size,
-                                       PROT_READ | PROT_WRITE, MAP_PRIVATE);
+  void *mapping =
+      lupine_map_server_va(conn, storage_size, page_size,
+                           PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS);
   uintptr_t address = reinterpret_cast<uintptr_t>(mapping);
   if (mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
@@ -4366,7 +4428,10 @@ CUresult lupine_server_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
 #if !defined(__linux__)
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
-  CUresult result = lupine_server_va_alloc_managed(conn, pointer, bytes, flags);
+  conn_t *previous = lupine_server_va_connection;
+  lupine_server_va_connection = conn;
+  CUresult result = cuMemAllocManaged(pointer, bytes, flags);
+  lupine_server_va_connection = previous;
   if (result != CUDA_SUCCESS) {
     return result;
   }
@@ -4401,6 +4466,22 @@ CUresult lupine_free_server_allocation_locked(
 }
 
 } // namespace
+
+#if defined(__linux__)
+extern "C" __attribute__((visibility("default"))) void *
+mmap(void *address, size_t size, int protection, int flags, int fd,
+     off_t offset) {
+  return lupine_interposed_mmap(address, size, protection, flags, fd, offset);
+}
+
+extern "C" __attribute__((visibility("default"))) void *
+mmap64(void *address, size_t size, int protection, int flags, int fd,
+       off64_t offset) {
+  static_assert(sizeof(off_t) == sizeof(off64_t));
+  return lupine_interposed_mmap(address, size, protection, flags, fd,
+                                static_cast<off_t>(offset));
+}
+#endif
 
 static bool lupine_server_managed_range(const void *pointer, size_t size) {
   uintptr_t address = reinterpret_cast<uintptr_t>(pointer);

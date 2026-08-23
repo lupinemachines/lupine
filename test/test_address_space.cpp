@@ -88,7 +88,7 @@ void test_identity_va_handshake() {
   require(lupine_va_reserve_client(&client, 0, &slot) == 0,
           "client arena reservation failed");
   require(rpc_http2_client_init(&client) == 0, "client handshake failed");
-  require(client.r_offset == 0 && client.w_offset == LUPINE_VA_WRITE_OFFSET,
+  require(client.w_offset == LUPINE_VA_WRITE_OFFSET,
           "client did not select identity R and aliased W mappings");
   int32_t lane = rpc_http2_lane_stream(&client, 42);
   const char request = 'x';

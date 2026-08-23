@@ -83,7 +83,6 @@ struct conn_t {
   uintptr_t va_base;
   size_t va_size;
   uintptr_t va_next;
-  intptr_t r_offset;
   intptr_t w_offset;
 };
 

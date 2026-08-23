@@ -76,7 +76,6 @@ int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
     conn->va_size = LUPINE_VA_ARENA_SIZE;
     conn->va_next = 0;
     conn->w_offset = LUPINE_VA_WRITE_OFFSET;
-    conn->r_offset = 0;
     *slot = candidate;
     return 0;
   }

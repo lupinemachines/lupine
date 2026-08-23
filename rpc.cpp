@@ -393,11 +393,11 @@ static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
       lupine_va_contains(conn, address, size)) {
     destination = reinterpret_cast<void *>(address + conn->w_offset);
     mirror = true;
-  } else if (conn->va_size == 0 && conn->r_offset != conn->w_offset) {
-    uintptr_t read_base = LUPINE_MIRROR_SERVER_BASE + conn->r_offset;
+  } else if (conn->va_size == 0 && conn->w_offset != 0) {
+    uintptr_t read_base = LUPINE_MIRROR_SERVER_BASE + LUPINE_MIRROR_R_OFFSET;
     if (address >= read_base && size <= LUPINE_MIRROR_WINDOW_SIZE &&
         address - read_base <= LUPINE_MIRROR_WINDOW_SIZE - size) {
-      uintptr_t server_address = address - conn->r_offset;
+      uintptr_t server_address = address - LUPINE_MIRROR_R_OFFSET;
       destination = reinterpret_cast<void *>(server_address + conn->w_offset);
       mirror = true;
     }
