@@ -252,12 +252,13 @@ jobs:
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
 
+          ARG CUDA_SAMPLES_ARCH
           ENV DEBIAN_FRONTEND=noninteractive \
               CUDA_HOME=/usr/local/cuda \
               CUDA_LIB_DIR=/usr/local/cuda/lib64 \
               CUDA_SAMPLES_DIR=/opt/cuda-samples-src \
               CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build \
-              CUDA_SAMPLES_ARCH=89 \
+              CUDA_SAMPLES_ARCH=${CUDA_SAMPLES_ARCH} \
               CCACHE_DIR=/opt/lupine/ccache \
               CCACHE_BASEDIR=/src \
               CCACHE_COMPILERCHECK=content \
@@ -362,6 +363,11 @@ jobs:
             sudo usermod -aG docker gha
           '
 
+          arch="$("${ssh_base[@]}" 'nvidia-smi --query-gpu=compute_cap --format=csv,noheader' \
+            | tr -d '. ' | sort -u | xargs)"
+          test -n "$arch"
+          echo "CUDA_SAMPLES_ARCH=$arch" >> "$GITHUB_ENV"
+
       - name: Build ${{ matrix.name }} client image on L4 VM
         run: |
           set -euo pipefail
@@ -388,6 +394,7 @@ jobs:
             --file "${RUNNER_TEMP}/gpu-integration.Dockerfile" \
             --tag "$CLIENT_IMAGE" \
             --build-arg "BASE_IMAGE=${{ matrix.client_image }}" \
+            --build-arg "CUDA_SAMPLES_ARCH=$CUDA_SAMPLES_ARCH" \
             .
           echo "Built $CLIENT_IMAGE on L4 VM in $((SECONDS - start))s"
 
@@ -489,7 +496,6 @@ jobs:
               export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
               export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
-              export CUDA_SAMPLES_ARCH=89
 
               python3 -m venv /tmp/venv-pytorch
               /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
