@@ -4266,57 +4266,35 @@ static constexpr uintptr_t LUPINE_SERVER_VA_ALIGNMENT = UINT64_C(0x200000);
 
 thread_local conn_t *lupine_server_va_connection = nullptr;
 
-void *lupine_system_mmap(void *address, size_t size, int protection, int flags,
-                         int fd, off_t offset) {
+void *lupine_server_mmap(conn_t *conn, void *address, size_t size,
+                         size_t alignment, int protection, int flags, int fd,
+                         off_t offset) {
+  if (conn != nullptr) {
+    if (conn->va_size == 0 || size == 0 || alignment == 0 ||
+        (alignment & (alignment - 1)) != 0 || size > conn->va_size) {
+      errno = ENOMEM;
+      return MAP_FAILED;
+    }
+
+    uintptr_t current = __atomic_load_n(&conn->va_next, __ATOMIC_RELAXED);
+    for (;;) {
+      uintptr_t claimed = (current + alignment - 1) & ~(alignment - 1);
+      if (claimed < current || claimed < conn->va_base ||
+          claimed - conn->va_base > conn->va_size - size) {
+        errno = ENOMEM;
+        return MAP_FAILED;
+      }
+      uintptr_t next = claimed + size;
+      if (__atomic_compare_exchange_n(&conn->va_next, &current, next, true,
+                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        address = reinterpret_cast<void *>(claimed);
+        flags = (flags & ~(MAP_FIXED | MAP_FIXED_NOREPLACE)) | MAP_FIXED;
+        break;
+      }
+    }
+  }
   return reinterpret_cast<void *>(
       syscall(SYS_mmap, address, size, protection, flags, fd, offset));
-}
-
-uintptr_t lupine_claim_server_va(conn_t *conn, size_t size, size_t alignment) {
-  if (conn == nullptr || conn->va_size == 0 || size == 0 || alignment == 0 ||
-      (alignment & (alignment - 1)) != 0 || size > conn->va_size) {
-    return 0;
-  }
-
-  uintptr_t current = __atomic_load_n(&conn->va_next, __ATOMIC_RELAXED);
-  for (;;) {
-    uintptr_t address = (current + alignment - 1) & ~(alignment - 1);
-    if (address < current || address < conn->va_base ||
-        address - conn->va_base > conn->va_size - size) {
-      return 0;
-    }
-    uintptr_t next = address + size;
-    if (__atomic_compare_exchange_n(&conn->va_next, &current, next, true,
-                                    __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-      return address;
-    }
-  }
-}
-
-void *lupine_map_server_va(conn_t *conn, size_t size, size_t alignment,
-                           int protection, int flags, int fd = -1,
-                           off_t offset = 0) {
-  uintptr_t address = lupine_claim_server_va(conn, size, alignment);
-  if (address == 0) {
-    errno = ENOMEM;
-    return MAP_FAILED;
-  }
-
-  flags &= ~(MAP_FIXED | MAP_FIXED_NOREPLACE);
-  return lupine_system_mmap(reinterpret_cast<void *>(address), size, protection,
-                            flags | MAP_FIXED, fd, offset);
-}
-
-void *lupine_interposed_mmap(void *address, size_t size, int protection,
-                             int flags, int fd, off_t offset) {
-  conn_t *conn = lupine_server_va_connection;
-  if (conn != nullptr && address == nullptr && fd == -1 &&
-      protection == PROT_NONE && (flags & MAP_ANONYMOUS) != 0 &&
-      (flags & MAP_STACK) == 0) {
-    return lupine_map_server_va(conn, size, LUPINE_SERVER_VA_ALIGNMENT,
-                                protection, flags, fd, offset);
-  }
-  return lupine_system_mmap(address, size, protection, flags, fd, offset);
 }
 #endif
 
@@ -4329,29 +4307,18 @@ struct lupine_server_allocation {
   lupine_server_allocation_kind kind = lupine_server_allocation_kind::host;
 };
 
-std::mutex &lupine_server_allocation_mutex() {
-  static std::mutex mutex;
-  return mutex;
-}
+struct lupine_server_allocation_state {
+  std::mutex mutex;
+  std::unordered_map<uintptr_t, lupine_server_allocation> allocations;
+};
 
-std::unordered_map<uintptr_t, lupine_server_allocation> &
-lupine_server_allocations() {
-  static std::unordered_map<uintptr_t, lupine_server_allocation> allocations;
-  return allocations;
-}
-
-size_t lupine_round_up_va(size_t size, size_t alignment) {
-  if (alignment == 0 || size > SIZE_MAX - (alignment - 1)) {
-    return 0;
-  }
-  return (size + alignment - 1) & ~(alignment - 1);
-}
+lupine_server_allocation_state lupine_server_state;
 
 bool lupine_record_server_allocation(
     uintptr_t address, const lupine_server_allocation &allocation) {
-  std::lock_guard<std::mutex> lock(lupine_server_allocation_mutex());
+  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
   try {
-    return lupine_server_allocations().emplace(address, allocation).second;
+    return lupine_server_state.allocations.emplace(address, allocation).second;
   } catch (const std::bad_alloc &) {
     return false;
   }
@@ -4376,13 +4343,13 @@ CUresult lupine_server_host_alloc(conn_t *conn, void **pointer,
   size_t page_size = configured_page_size > 0
                          ? static_cast<size_t>(configured_page_size)
                          : static_cast<size_t>(4096);
-  size_t storage_size = lupine_round_up_va(bytes, page_size);
-  if (storage_size == 0) {
+  if (bytes > SIZE_MAX - (page_size - 1)) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
-  void *mapping =
-      lupine_map_server_va(conn, storage_size, page_size,
-                           PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS);
+  size_t storage_size = (bytes + page_size - 1) & ~(page_size - 1);
+  void *mapping = lupine_server_mmap(conn, nullptr, storage_size, page_size,
+                                     PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   uintptr_t address = reinterpret_cast<uintptr_t>(mapping);
   if (mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
@@ -4470,22 +4437,28 @@ CUresult lupine_free_server_allocation_locked(
 extern "C" __attribute__((visibility("default"))) void *
 mmap(void *address, size_t size, int protection, int flags, int fd,
      off_t offset) {
-  return lupine_interposed_mmap(address, size, protection, flags, fd, offset);
+  conn_t *conn = lupine_server_va_connection;
+  if (conn == nullptr || address != nullptr || fd != -1 ||
+      protection != PROT_NONE || (flags & MAP_ANONYMOUS) == 0 ||
+      (flags & MAP_STACK) != 0) {
+    conn = nullptr;
+  }
+  return lupine_server_mmap(conn, address, size, LUPINE_SERVER_VA_ALIGNMENT,
+                            protection, flags, fd, offset);
 }
 
 extern "C" __attribute__((visibility("default"))) void *
 mmap64(void *address, size_t size, int protection, int flags, int fd,
        off64_t offset) {
   static_assert(sizeof(off_t) == sizeof(off64_t));
-  return lupine_interposed_mmap(address, size, protection, flags, fd,
-                                static_cast<off_t>(offset));
+  return mmap(address, size, protection, flags, fd, static_cast<off_t>(offset));
 }
 #endif
 
 static bool lupine_server_managed_range(const void *pointer, size_t size) {
   uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
-  std::lock_guard<std::mutex> lock(lupine_server_allocation_mutex());
-  for (const auto &entry : lupine_server_allocations()) {
+  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
+  for (const auto &entry : lupine_server_state.allocations) {
     if (entry.second.kind != lupine_server_allocation_kind::managed ||
         size > entry.second.size || address < entry.first ||
         address - entry.first > entry.second.size - size) {
@@ -4536,9 +4509,10 @@ int handle_cuMemHostGetFlags(conn_t *conn) {
   }
   CUresult result = CUDA_SUCCESS;
   {
-    std::lock_guard<std::mutex> lock(lupine_server_allocation_mutex());
-    auto it = lupine_server_allocations().find(reinterpret_cast<uintptr_t>(p));
-    if (it != lupine_server_allocations().end() &&
+    std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
+    auto it =
+        lupine_server_state.allocations.find(reinterpret_cast<uintptr_t>(p));
+    if (it != lupine_server_state.allocations.end() &&
         it->second.kind == lupine_server_allocation_kind::host) {
       flags = it->second.flags;
     } else {
@@ -4564,8 +4538,8 @@ int handle_cuMemFreeHost(conn_t *conn) {
   }
   CUresult result = CUDA_SUCCESS;
   {
-    std::lock_guard<std::mutex> lock(lupine_server_allocation_mutex());
-    auto &allocations = lupine_server_allocations();
+    std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
+    auto &allocations = lupine_server_state.allocations;
     auto it = allocations.find(reinterpret_cast<uintptr_t>(pointer));
     if (it == allocations.end() ||
         it->second.kind != lupine_server_allocation_kind::host) {
@@ -4617,8 +4591,8 @@ int handle_cuMemFree_v2(conn_t *conn) {
   }
   CUresult result = CUDA_SUCCESS;
   {
-    std::lock_guard<std::mutex> lock(lupine_server_allocation_mutex());
-    auto &allocations = lupine_server_allocations();
+    std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
+    auto &allocations = lupine_server_state.allocations;
     auto it = allocations.find(pointer);
     if (it == allocations.end() ||
         it->second.kind != lupine_server_allocation_kind::managed) {
@@ -4638,8 +4612,8 @@ int handle_cuMemFree_v2(conn_t *conn) {
 }
 
 void lupine_server_cleanup_identity_allocations(conn_t *conn) {
-  std::lock_guard<std::mutex> lock(lupine_server_allocation_mutex());
-  auto &allocations = lupine_server_allocations();
+  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
+  auto &allocations = lupine_server_state.allocations;
   for (auto it = allocations.begin(); it != allocations.end();) {
     if (it->second.conn != conn) {
       ++it;

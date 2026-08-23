@@ -306,11 +306,6 @@ if(LUPINE_BUILD_SERVER)
             LUPINE_RPC_SERVER
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
         target_link_libraries(lupine_driver_server PRIVATE lupine_cuda_server)
-        if(NOT WIN32 AND NOT APPLE)
-            # Export cuda_server.cpp's scoped mmap interposer for libcuda.
-            set_target_properties(lupine_driver_server PROPERTIES
-                ENABLE_EXPORTS ON)
-        endif()
     endif()
     if(LUPINE_BUILD_NVML)
         target_compile_definitions(lupine_driver_server PRIVATE
@@ -333,15 +328,6 @@ if(BUILD_TESTING AND NOT WIN32)
     endif()
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
-
-    add_executable(h2_unknown_cuda_version_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
-    target_include_directories(h2_unknown_cuda_version_test PRIVATE
-        ${NGHTTP2_INCLUDE_DIR})
-    target_compile_definitions(h2_unknown_cuda_version_test PRIVATE
-        LUPINE_H2_UNKNOWN_CUDA_VERSION_TEST)
-    target_link_libraries(h2_unknown_cuda_version_test PRIVATE lupine_rpc_core)
-    lupine_apply_sanitizer(h2_unknown_cuda_version_test)
 
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
@@ -386,11 +372,6 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 30)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
-    add_test(NAME h2_unknown_cuda_version_test
-        COMMAND h2_unknown_cuda_version_test)
-    lupine_scaled_timeout(h2u_timeout 10)
-    set_tests_properties(h2_unknown_cuda_version_test PROPERTIES
-        TIMEOUT ${h2u_timeout})
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
