@@ -39,11 +39,21 @@ nvJPEG/Image-Resize-WaterMark/imageResizeWatermark
 # #598 nvJPEG multiple decoder instances
 nvJPEG/nvJPEG-Decoder-MultipleInstances/nvJPEGDecMultipleInstances
 
-# Fail natively as well (not lupine): block-scaled FP8 / MXFP8 / NVFP4 need
-# Blackwell; the rest error out on the RTX 4090 + RTX 2070 SUPER test host.
+# #576 green contexts (cuDeviceGetDevResource)
+cuBLASLt/LtSgemmGreenContext/sample_cublasLt_LtSgemmGreenCtx
+
+# Fail natively as well (not lupine): block-scaled FP8 / MXFP8 / NVFP4 and the
+# grouped FP8 GEMMs need Hopper/Blackwell; the rest error out on the RTX 4090 +
+# RTX 2070 SUPER test host. MgPotrf passes there but not on the single-GPU L4.
 cuBLASLt/LtBlk128x128Fp8Matmul/sample_cublasLt_LtBlk128x128Fp8Matmul
 cuBLASLt/LtMxfp8Matmul/sample_cublasLt_LtMxfp8Matmul
 cuBLASLt/LtNvfp4Matmul/sample_cublasLt_LtNvfp4Matmul
+cuBLASLt/LtBlk128x128Fp8gemmGroupedSimple/sample_cublasLt_LtBlk128x128Fp8gemmGroupedSimple
+cuBLASLt/LtFp8gemmGroupedSimple/sample_cublasLt_LtFp8gemmGroupedSimple
+cuBLASLt/LtMxfp8gemmGroupedSimple/sample_cublasLt_LtMxfp8gemmGroupedSimple
+cuBLASLt/LtNvfp4gemmGroupedSimple/sample_cublasLt_LtNvfp4gemmGroupedSimple
+cuSOLVER/MgPotrf/cusolver_MgPotrf_example1
+cuSOLVER/MgPotrf/cusolver_MgPotrf_example2
 cuBLASLt/LtHSHgemmGroupedSimple/sample_cublasLt_LtHSHgemmGroupedSimple
 cuSOLVER/gesv/cusolver_irs_expert
 cuSOLVER/gesv/cusolver_irs_lapack
