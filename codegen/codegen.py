@@ -22,6 +22,7 @@ from ops import (
     NullableArrayOperation,
     DeepStructOperation,
     NullTerminatedOperation,
+    ReturnedStringOperation,
     OpaqueTypeOperation,
     DereferenceOperation,
     Operation,
@@ -606,18 +607,32 @@ def parse_annotation(
                     )
                 elif null_terminated:
                     if recv:
-                        raise NotImplementedError(
-                            "NULL_TERMINATED parameters cannot be received; use LENGTH or SIZE for output buffers"
+                        if (
+                            send
+                            or not isinstance(param.type.ptr_to, Pointer)
+                            or param.type.ptr_to.ptr_to.format() != "const char"
+                        ):
+                            raise NotImplementedError(
+                                "received NULL_TERMINATED parameters must be "
+                                "RECV_ONLY const char **"
+                            )
+                        operations.append(
+                            ReturnedStringOperation(
+                                send=send,
+                                recv=recv,
+                                parameter=param,
+                                ptr=param.type,
+                            )
                         )
-                    # if it's null terminated, it's a null terminated operation
-                    operations.append(
-                        NullTerminatedOperation(
-                            send=send,
-                            recv=recv,
-                            parameter=param,
-                            ptr=param.type,
+                    else:
+                        operations.append(
+                            NullTerminatedOperation(
+                                send=send,
+                                recv=recv,
+                                parameter=param,
+                                ptr=param.type,
+                            )
                         )
-                    )
                 elif nullable:
                     # if it's nullable, it's a nullable operation
                     operations.append(
@@ -850,6 +865,8 @@ def client_routing_key_expr(
     if kind == "LIBRARY":
         return f"lupine_route_for_library({name})"
     if kind == "FUNCTION":
+        if param.type.format() == "CUkernel":
+            name = f"reinterpret_cast<CUfunction>({name})"
         return f"lupine_route_for_function({name})"
     if kind == "STREAM":
         if metadata.routing_fallback is not None:
@@ -1493,8 +1510,10 @@ def main():
             "#include <cstdint>\n"
             "#include <cstdio>\n"
             "#include <cstring>\n"
+            "#include <mutex>\n"
             "#include <string>\n"
             "#include <unordered_map>\n"
+            "#include <unordered_set>\n"
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
             '#include "client_routing.h"\n'
@@ -1548,6 +1567,12 @@ def main():
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
             'extern "C" const void *lupine_mapped_host_read_source(const void *host, size_t size);\n\n'
+            'static const char *lupine_intern_returned_string(const std::string &value) {\n'
+            '    static auto *mutex = new std::mutex();\n'
+            '    static auto *strings = new std::unordered_set<std::string>();\n'
+            '    std::lock_guard<std::mutex> lock(*mutex);\n'
+            '    return strings->insert(value).first->c_str();\n'
+            '}\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1695,6 +1720,7 @@ def main():
                     isinstance(operation, InOutCountOperation)
                     or isinstance(operation, NullableArrayOperation)
                     or isinstance(operation, DeepStructOperation)
+                    or isinstance(operation, ReturnedStringOperation)
                 ):
                     f.write(operation.client_declaration())
 
@@ -1727,6 +1753,10 @@ def main():
             # themselves are allowed to fail the builder.
             for operation in operations:
                 if isinstance(operation, ArrayOperation):
+                    operation.client_preflight(
+                        f, invalid_argument_const(function.return_type.format())
+                    )
+                elif isinstance(operation, ReturnedStringOperation):
                     operation.client_preflight(
                         f, invalid_argument_const(function.return_type.format())
                     )
@@ -1786,6 +1816,10 @@ def main():
                     error_return=error_const(function.return_type.format())
                 )
             )
+
+            for operation in operations:
+                if isinstance(operation, ReturnedStringOperation):
+                    operation.client_post_rpc(f, "CUDA_SUCCESS")
 
             write_client_post_call(f, function, metadata)
             f.write("    return return_value;\n")
@@ -1876,6 +1910,7 @@ def main():
             "#include <cuda.h>\n"
             '#include "cuda_compat.h"\n'
             "\n"
+            "#include <cstdint>\n"
             "#include <cstring>\n"
             "#include <string>\n"
             '#include "gen_rpc_ids.h"\n\n'

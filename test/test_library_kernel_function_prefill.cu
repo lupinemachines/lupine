@@ -3,6 +3,7 @@
 #include <cuda.h>
 
 #include <cstdio>
+#include <cstring>
 
 #if !defined(CUDA_VERSION) || CUDA_VERSION < 12040
 int main() {
@@ -56,6 +57,19 @@ int main() {
       !check(cuLibraryGetKernel(&kernel, library, "parameterized"),
              "cuLibraryGetKernel") ||
       !check(cuKernelGetFunction(&function, kernel), "cuKernelGetFunction")) {
+    return 1;
+  }
+
+  const char *kernel_name = nullptr;
+  const char *function_name = nullptr;
+  if (!check(cuKernelGetName(&kernel_name, kernel), "cuKernelGetName") ||
+      !check(cuFuncGetName(&function_name, function), "cuFuncGetName") ||
+      kernel_name == nullptr || function_name == nullptr ||
+      std::strcmp(kernel_name, "parameterized") != 0 ||
+      std::strcmp(function_name, "parameterized") != 0) {
+    std::fprintf(stderr, "unexpected names: kernel=%s, function=%s\n",
+                 kernel_name == nullptr ? "null" : kernel_name,
+                 function_name == nullptr ? "null" : function_name);
     return 1;
   }
 

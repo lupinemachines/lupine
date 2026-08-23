@@ -885,6 +885,80 @@ class NullTerminatedOperation:
 
 
 @dataclass
+class ReturnedStringOperation:
+    """A driver-owned null-terminated string returned through ``const char **``.
+
+    The server copies the string as length-prefixed bytes. The generated client
+    interns successful results so the pointer handed to the caller remains
+    valid after the RPC wrapper returns.
+    """
+
+    send: bool
+    recv: bool
+    parameter: Parameter
+    ptr: Pointer
+    length_type: str = "std::uint32_t"
+
+    def client_declaration(self) -> str:
+        name = self.parameter.name
+        return (
+            f"    {self.length_type} {name}_len = 0;\n"
+            f"    std::string {name}_result;\n"
+        )
+
+    def client_preflight(self, f, error_return: str):
+        f.write(
+            f"    if ({self.parameter.name} == nullptr)\n"
+            f"        return {error_return};\n"
+        )
+
+    def client_rpc_write(self, f):
+        return
+
+    @property
+    def server_declaration(self) -> str:
+        name = self.parameter.name
+        return (
+            f"    {self.ptr.ptr_to.format()} {name} = nullptr;\n"
+            f"    {self.length_type} {name}_len = 0;\n"
+        )
+
+    def server_rpc_read(self, f) -> Optional[str]:
+        return None
+
+    @property
+    def server_reference(self) -> str:
+        return f"&{self.parameter.name}"
+
+    def server_rpc_write(self, f):
+        name = self.parameter.name
+        f.write(
+            f"        (({name}_len = {name} != nullptr\n"
+            f"              ? static_cast<{self.length_type}>(std::strlen({name}))\n"
+            f"              : 0), false) ||\n"
+            f"        rpc_write(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
+            f"        ({name}_len != 0 && rpc_write(conn, {name}, {name}_len) < 0) ||\n"
+        )
+
+    def client_rpc_read(self, f):
+        name = self.parameter.name
+        f.write(
+            f"        rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
+            f"        {name}_len > (1U << 20) ||\n"
+            f"        ({name}_result.resize({name}_len), false) ||\n"
+            f"        ({name}_len != 0 &&\n"
+            f"         rpc_read(conn, {name}_result.data(), {name}_len) < 0) ||\n"
+        )
+
+    def client_post_rpc(self, f, success_value: str):
+        name = self.parameter.name
+        f.write(
+            f"    if (return_value == {success_value})\n"
+            f"        *{name} = lupine_intern_returned_string({name}_result);\n"
+        )
+
+
+@dataclass
 class OpaqueTypeOperation:
     """
     Opaque type operations are operations that are passed as an opaque type. That is, the
@@ -1070,6 +1144,7 @@ Operation = Union[
     NullableOperation,
     ArrayOperation,
     NullTerminatedOperation,
+    ReturnedStringOperation,
     OpaqueTypeOperation,
     DereferenceOperation,
 ]

@@ -2606,6 +2606,13 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
 CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
                                 CUdevice dev);
 /**
+ * @guard CUDA_VERSION >= 12030
+ * @routingkey FUNCTION hfunc
+ * @param name RECV_ONLY NULL_TERMINATED
+ * @param hfunc SEND_ONLY
+ */
+CUresult cuKernelGetName(const char **name, CUkernel hfunc);
+/**
  * @routingkey CURRENT_CONTEXT
  * @param free SEND_RECV
  * @param total SEND_RECV
@@ -3939,6 +3946,13 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config);
  * @param hfunc SEND_ONLY
  */
 CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc);
+/**
+ * @guard CUDA_VERSION >= 12030
+ * @routingkey FUNCTION hfunc
+ * @param name RECV_ONLY NULL_TERMINATED
+ * @param hfunc SEND_ONLY
+ */
+CUresult cuFuncGetName(const char **name, CUfunction hfunc);
 
 /**
  * @disabled

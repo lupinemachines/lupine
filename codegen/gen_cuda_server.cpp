@@ -3,6 +3,7 @@
 #include <iostream>
 
 #include "gen_rpc_ids.h"
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -1443,6 +1444,39 @@ int handle_cuKernelSetCacheConfig(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+#if CUDA_VERSION >= 12030
+int handle_cuKernelGetName(conn_t *conn) {
+  const char *name = nullptr;
+  std::uint32_t name_len = 0;
+  CUkernel hfunc;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hfunc, sizeof(CUkernel)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuKernelGetName(&name, hfunc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      ((name_len = name != nullptr
+                       ? static_cast<std::uint32_t>(std::strlen(name))
+                       : 0),
+       false) ||
+      rpc_write(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
 
 int handle_cuKernelGetParamInfo(conn_t *conn) {
   CUkernel kernel;
@@ -4311,6 +4345,39 @@ int handle_cuFuncGetModule(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+#if CUDA_VERSION >= 12030
+int handle_cuFuncGetName(conn_t *conn) {
+  const char *name = nullptr;
+  std::uint32_t name_len = 0;
+  CUfunction hfunc;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuFuncGetName(&name, hfunc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      ((name_len = name != nullptr
+                       ? static_cast<std::uint32_t>(std::strlen(name))
+                       : 0),
+       false) ||
+      rpc_write(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      (name_len != 0 && rpc_write(conn, name, name_len) < 0) ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
 
 int handle_cuFuncGetParamInfo(conn_t *conn) {
   CUfunction func;

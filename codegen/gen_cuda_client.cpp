@@ -8,8 +8,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "gen_rpc_ids.h"
@@ -84,6 +86,13 @@ extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" const void *lupine_mapped_host_read_source(const void *host,
                                                       size_t size);
+
+static const char *lupine_intern_returned_string(const std::string &value) {
+  static auto *mutex = new std::mutex();
+  static auto *strings = new std::unordered_set<std::string>();
+  std::lock_guard<std::mutex> lock(*mutex);
+  return strings->insert(value).first->c_str();
+}
 
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
@@ -1036,6 +1045,37 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
 }
+
+#if CUDA_VERSION >= 12030
+CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
+  lupine_route route =
+      lupine_route_for_function(reinterpret_cast<CUfunction>(hfunc));
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(const char **, CUkernel);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuKernelGetName",
+                                                  &return_value, name, hfunc)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  std::uint32_t name_len = 0;
+  std::string name_result;
+  if (name == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (rpc_write_start_request(conn, RPC_cuKernelGetName) < 0 ||
+      rpc_write(conn, &hfunc, sizeof(CUkernel)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      name_len > (1U << 20) || (name_result.resize(name_len), false) ||
+      (name_len != 0 && rpc_read(conn, name_result.data(), name_len) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    *name = lupine_intern_returned_string(name_result);
+  return return_value;
+}
+
+#endif
 
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
   lupine_route route = lupine_route_for_current_context();
@@ -3523,6 +3563,37 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc) {
   }
   return return_value;
 }
+
+#if CUDA_VERSION >= 12030
+CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
+  lupine_route route = lupine_route_for_function(hfunc);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(const char **, CUfunction);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuFuncGetName",
+                                                  &return_value, name, hfunc)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  std::uint32_t name_len = 0;
+  std::string name_result;
+  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  if (name == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (rpc_write_start_request(conn, RPC_cuFuncGetName) < 0 ||
+      rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &name_len, sizeof(std::uint32_t)) < 0 ||
+      name_len > (1U << 20) || (name_result.resize(name_len), false) ||
+      (name_len != 0 && rpc_read(conn, name_result.data(), name_len) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    *name = lupine_intern_returned_string(name_result);
+  return return_value;
+}
+
+#endif
 
 CUresult cuFuncSetBlockShape(CUfunction hfunc, int x, int y, int z) {
   lupine_route route = lupine_route_for_function(hfunc);
@@ -7233,6 +7304,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuKernelGetAttribute", (void *)cuKernelGetAttribute},
     {"cuKernelSetAttribute", (void *)cuKernelSetAttribute},
     {"cuKernelSetCacheConfig", (void *)cuKernelSetCacheConfig},
+#if CUDA_VERSION >= 12030
+    {"cuKernelGetName", (void *)cuKernelGetName},
+#endif
     {"cuKernelGetParamInfo", (void *)cuKernelGetParamInfo},
     {"cuMemGetInfo_v2", (void *)cuMemGetInfo_v2},
     {"cuMemAlloc_v2", (void *)cuMemAlloc_v2},
@@ -7356,6 +7430,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuFuncSetAttribute", (void *)cuFuncSetAttribute},
     {"cuFuncSetCacheConfig", (void *)cuFuncSetCacheConfig},
     {"cuFuncGetModule", (void *)cuFuncGetModule},
+#if CUDA_VERSION >= 12030
+    {"cuFuncGetName", (void *)cuFuncGetName},
+#endif
     {"cuFuncGetParamInfo", (void *)cuFuncGetParamInfo},
     {"cuLaunchCooperativeKernel", (void *)cuLaunchCooperativeKernel},
     {"cuFuncSetBlockShape", (void *)cuFuncSetBlockShape},
