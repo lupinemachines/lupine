@@ -592,6 +592,8 @@ jobs:
               echo "### cuda-python (${{ matrix.label }})"
               echo '```'
               cat "$cp/summary.txt"
+              echo '```'
+            fi
             lsd="$(ls -td test/cuda-library-samples/results/*/ 2>/dev/null | head -n1 || true)"
             if [[ -n "${lsd:-}" && -f "$lsd/summary.txt" ]]; then
               echo "### CUDALibrarySamples (${{ matrix.label }})"
