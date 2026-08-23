@@ -72,8 +72,6 @@ jobs:
         northamerica-northeast2-a northamerica-northeast2-b
         europe-west1-b europe-west1-c
       GCP_NETWORK: default
-      # 8 vCPUs halve the CUDA sample compile on the VM; the GPU fan-out below
-      # stays at 4 regardless.
       MACHINE_TYPE: g2-standard-8
       VM_IMAGE_PROJECT: ml-images
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
@@ -81,9 +79,9 @@ jobs:
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      # Higher fan-out runs too many independent CUDA contexts on one L4 and
-      # causes device-unavailable cascades in otherwise passing cuBLAS and
-      # PyTorch tests.
+      # Match the eight vCPUs on g2-standard-8. Higher fan-out runs too many
+      # independent CUDA contexts on one L4 and causes device-unavailable
+      # cascades in otherwise passing cuBLAS and PyTorch tests.
       CUDA_SAMPLE_JOBS: 8
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
@@ -310,7 +308,7 @@ jobs:
               -DENABLE_CUDA_C_LINKING_SAMPLE=1
             cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
           else
-            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)"
+            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
           fi
           SCRIPT
 
