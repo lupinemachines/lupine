@@ -318,6 +318,13 @@ jobs:
           COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh
           RUN LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
                 BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh
+          # test-backend-ops is built once here so the run step only links
+          # against the shim. A lane whose toolkit cannot build it reports
+          # BUILD-FAILED in the run summary instead of failing the image.
+          COPY test/run_llama_backend_ops.sh /opt/lupine/run_llama_backend_ops.sh
+          RUN LLAMA_CPP_DIR=/opt/llama.cpp LLAMA_CPP_ARCH="$CUDA_SAMPLES_ARCH" BUILD_ONLY=1 \
+                bash /opt/lupine/run_llama_backend_ops.sh \
+              || echo "llama.cpp test-backend-ops build failed; the run step will report it"
 
           WORKDIR /src
           COPY . /src
@@ -534,6 +541,10 @@ jobs:
               RESULTS_DIR="/results/test/cuda-python/results/$(date +%Y%m%d-%H%M%S)" \
                 CUDA_PYTHON_DIR=/tmp/cuda-python SERVER_PORT_BASE=20300 \
                 /src/test/run_cuda_python_tests.sh || cuda_python_status=$?
+              llama_status=0
+              RESULTS_DIR="/results/test/llama.cpp/results/$(date +%Y%m%d-%H%M%S)" \
+                LLAMA_CPP_DIR=/opt/llama.cpp BUILD_LLAMA=0 SERVER_PORT_BASE=20500 \
+                /src/test/run_llama_backend_ops.sh || llama_status=$?
 
               library_status=0
               RESULTS_DIR="/results/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)" \
@@ -544,8 +555,8 @@ jobs:
               SERVER_PORT_BASE=20900 TEST_JOBS="$CUDA_SAMPLE_JOBS" \
                 /src/test/run_custom_tests.sh || custom_status=$?
 
-              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$cuda_python_status" -ne 0 || "$library_status" -ne 0 || "$custom_status" -ne 0 ]]; then
-                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; cuda-python exited $cuda_python_status; library samples exited $library_status; custom tests exited $custom_status" >&2
+              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$cuda_python_status" -ne 0 || "$library_status" -ne 0 || "$llama_status" -ne 0 || "$custom_status" -ne 0 ]]; then
+                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; cuda-python exited $cuda_python_status; library samples exited $library_status; llama.cpp exited $llama_status; custom tests exited $custom_status" >&2
                 exit 1
               fi
             '
@@ -569,6 +580,7 @@ jobs:
             test/pytorch/results/
             test/cuda-python/results/
             test/cuda-library-samples/results/
+            test/llama.cpp/results/
           if-no-files-found: ignore
 
       - name: Report sample results
@@ -592,6 +604,13 @@ jobs:
               echo "### cuda-python (${{ matrix.label }})"
               echo '```'
               cat "$cp/summary.txt"
+              echo '```'
+            fi
+            ld="$(ls -td test/llama.cpp/results/*/ 2>/dev/null | head -n1 || true)"
+            if [[ -n "${ld:-}" && -f "$ld/summary.txt" ]]; then
+              echo "### llama.cpp test-backend-ops (${{ matrix.label }})"
+              echo '```'
+              cat "$ld/summary.txt"
               echo '```'
             fi
             lsd="$(ls -td test/cuda-library-samples/results/*/ 2>/dev/null | head -n1 || true)"
