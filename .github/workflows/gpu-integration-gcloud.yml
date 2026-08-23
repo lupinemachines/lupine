@@ -244,21 +244,6 @@ jobs:
             echo "GCP_ZONE=$selected_zone"
           } >> "$GITHUB_ENV"
 
-      - name: Free runner disk
-        run: |
-          set -euo pipefail
-          sudo rm -rf \
-            /opt/ghc \
-            /usr/local/.ghcup \
-            /usr/local/lib/android \
-            /usr/local/share/boost \
-            /usr/share/dotnet \
-            "${AGENT_TOOLSDIRECTORY:-}" || true
-          df -h
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Write inline client image Dockerfile
         run: |
           cat > "${RUNNER_TEMP}/gpu-integration.Dockerfile" <<'EOF'
@@ -304,9 +289,7 @@ jobs:
                 python3-venv \
               && rm -rf /var/lib/apt/lists/*
 
-          # BuildKit exports this expensive layer to the GitHub Actions cache.
-          # Keep it before COPY . so regular Lupine changes do not invalidate it.
-          RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
+          RUN bash <<'SCRIPT'
           set -euo pipefail
 
           git clone --branch "${{ matrix.samples_ref }}" --depth 1 \
@@ -318,19 +301,15 @@ jobs:
               "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
           fi
 
-          export CCACHE_BASEDIR="$CUDA_SAMPLES_DIR"
           export LLVM_HOME=/usr/lib/llvm-14
           if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
             cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" \
               -DCMAKE_BUILD_TYPE=Release \
-              -DENABLE_CUDA_C_LINKING_SAMPLE=1 \
-              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-              -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+              -DENABLE_CUDA_C_LINKING_SAMPLE=1
             cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
           else
             make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)"
           fi
-          ccache --show-stats || true
           SCRIPT
 
           WORKDIR /src
@@ -380,39 +359,37 @@ jobs:
               fi
               sleep 5
             done
+            sudo usermod -aG docker gha
           '
 
-      - name: Build ${{ matrix.name }} client image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ${{ runner.temp }}/gpu-integration.Dockerfile
-          load: true
-          tags: ${{ env.CLIENT_IMAGE }}
-          build-args: |
-            BASE_IMAGE=${{ matrix.client_image }}
-          cache-from: type=gha,scope=gpu-integration-${{ matrix.label }}
-          cache-to: type=gha,mode=max,scope=gpu-integration-${{ matrix.label }}
-
-      - name: Stream ${{ matrix.name }} client image to L4 VM
+      - name: Build ${{ matrix.name }} client image on L4 VM
         run: |
           set -euo pipefail
-          ssh_base=(
-            ssh
-            -i "$SSH_DIR/id_ed25519"
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
-            -o ConnectTimeout=15
-            -o ServerAliveInterval=15
-            -o ServerAliveCountMax=4
-            "gha@$VM_IP"
-          )
+          # The docker CLI reaches the VM daemon over SSH and ships only the
+          # build context, so the multi-GB image never crosses the wire. It
+          # takes SSH options from ~/.ssh/config only.
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          cat >> ~/.ssh/config <<EOF
+          Host lupine-gpu-vm
+            HostName $VM_IP
+            User gha
+            IdentityFile $SSH_DIR/id_ed25519
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile $SSH_DIR/known_hosts
+            ServerAliveInterval 15
+            ServerAliveCountMax 4
+          EOF
 
           start=$SECONDS
-          docker save "$CLIENT_IMAGE" | "${ssh_base[@]}" 'sudo docker load'
-          echo "Streamed $CLIENT_IMAGE to L4 VM in $((SECONDS - start))s"
-          "${ssh_base[@]}" "sudo docker image inspect '$CLIENT_IMAGE' >/dev/null"
+          DOCKER_HOST=ssh://lupine-gpu-vm docker build \
+            --progress=plain \
+            --file "${RUNNER_TEMP}/gpu-integration.Dockerfile" \
+            --tag "$CLIENT_IMAGE" \
+            --build-arg "BASE_IMAGE=${{ matrix.client_image }}" \
+            .
+          echo "Built $CLIENT_IMAGE on L4 VM in $((SECONDS - start))s"
 
       - name: Run ${{ matrix.name }} client inside L4 VM
         run: |
