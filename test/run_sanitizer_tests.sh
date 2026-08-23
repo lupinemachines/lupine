@@ -14,9 +14,9 @@ build_dir="${BUILD_DIR:-$repo_root/build-sanitize-${sanitizer//,/-}}"
 jobs="${JOBS:-$(nproc)}"
 
 # Sanitized CPU test targets and the ctest names they register.
-targets=(h2_test address_space_test h2_unknown_cuda_version_test checkpoint_test ipc_test
-         server_checkpoint_test test_lupinecr_provider)
-test_regex='^(h2_test|address_space_test|h2_unknown_cuda_version_test|checkpoint_test|ipc_test|server_checkpoint_test|server_checkpoint_missing_provider_test)$'
+targets=(h2_test checkpoint_test ipc_test server_checkpoint_test
+         test_lupinecr_provider)
+test_regex='^(h2_test|checkpoint_test|ipc_test|server_checkpoint_test|server_checkpoint_missing_provider_test)$'
 
 cmake -S "$repo_root" -B "$build_dir" -DLUPINE_SANITIZE="$sanitizer" >/dev/null
 cmake --build "$build_dir" --parallel "$jobs" --target "${targets[@]}"

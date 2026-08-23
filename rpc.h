@@ -48,6 +48,14 @@ static constexpr uintptr_t LUPINE_MIRROR_WINDOW_SIZE = UINT64_C(0x100000000000);
 static constexpr intptr_t LUPINE_MIRROR_R_OFFSET = -INT64_C(0x500000000000);
 static constexpr intptr_t LUPINE_MIRROR_W_OFFSET = -INT64_C(0x400000000000);
 
+// Each connection owns a disjoint identity-mapped arena. The client also
+// reserves a writable alias so pointers embedded in mirrored memory retain
+// their server values while transport reads avoid the protected R view.
+static constexpr uintptr_t LUPINE_VA_FIRST_BASE = LUPINE_MIRROR_SERVER_BASE;
+static constexpr size_t LUPINE_VA_ARENA_SIZE = UINT64_C(0x010000000000);
+static constexpr unsigned int LUPINE_VA_ARENA_COUNT = 8;
+static constexpr intptr_t LUPINE_VA_WRITE_OFFSET = -INT64_C(0x200000000000);
+
 struct rpc_mirror_write {
   uintptr_t start;
   size_t size;
@@ -82,10 +90,22 @@ struct conn_t {
   void *tls_session; // SSL* for https:// client connections; otherwise null.
   uintptr_t va_base;
   size_t va_size;
-  void *va_space;
-  intptr_t r_offset;
+  uintptr_t va_next;
   intptr_t w_offset;
 };
+
+static inline bool lupine_va_contains(const conn_t *conn, uintptr_t address,
+                                      size_t size) {
+  return conn != nullptr && conn->va_size != 0 && size <= conn->va_size &&
+         address >= conn->va_base &&
+         address - conn->va_base <= conn->va_size - size;
+}
+
+// Returns 0 with an arena reserved, 1 when unsupported on this platform, and
+// -1 when no candidate remains. min_slot skips ranges rejected by the peer.
+extern int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
+                                    unsigned int *slot);
+extern int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size);
 
 // Backends install these hooks before opening connections. They let the
 // transport report lifecycle changes without depending on backend state.

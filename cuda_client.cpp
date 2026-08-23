@@ -83,8 +83,6 @@ static const lupine_client_transport_config &lupine_cuda_transport_config() {
     config.dispatch = rpc_client_dispatch_thread;
     config.connection_opened = lupine_cuda_transport_connection_changed;
     config.connection_closed = lupine_cuda_transport_connection_changed;
-    config.identity_va = true;
-    config.r_offset = LUPINE_MIRROR_R_OFFSET;
     config.w_offset = LUPINE_MIRROR_W_OFFSET;
     return config;
   }();
