@@ -313,6 +313,12 @@ jobs:
           fi
           SCRIPT
 
+          # CUDALibrarySamples are built once here; samples the lane's toolkit
+          # cannot build are reported as SKIP:build-failed by the run step.
+          COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh
+          RUN LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
+                BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh
+
           WORKDIR /src
           COPY . /src
           EOF
@@ -529,12 +535,17 @@ jobs:
                 CUDA_PYTHON_DIR=/tmp/cuda-python SERVER_PORT_BASE=20300 \
                 /src/test/run_cuda_python_tests.sh || cuda_python_status=$?
 
+              library_status=0
+              RESULTS_DIR="/results/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)" \
+                LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples BUILD_SAMPLES=0 SERVER_PORT_BASE=21000 \
+                /src/test/run_cuda_library_samples.sh || library_status=$?
+
               custom_status=0
               SERVER_PORT_BASE=20900 TEST_JOBS="$CUDA_SAMPLE_JOBS" \
                 /src/test/run_custom_tests.sh || custom_status=$?
 
-              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$cuda_python_status" -ne 0 || "$custom_status" -ne 0 ]]; then
-                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; cuda-python exited $cuda_python_status; custom tests exited $custom_status" >&2
+              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$cuda_python_status" -ne 0 || "$library_status" -ne 0 || "$custom_status" -ne 0 ]]; then
+                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; cuda-python exited $cuda_python_status; library samples exited $library_status; custom tests exited $custom_status" >&2
                 exit 1
               fi
             '
@@ -557,6 +568,7 @@ jobs:
             test/cuda-samples/results/
             test/pytorch/results/
             test/cuda-python/results/
+            test/cuda-library-samples/results/
           if-no-files-found: ignore
 
       - name: Report sample results
@@ -580,6 +592,11 @@ jobs:
               echo "### cuda-python (${{ matrix.label }})"
               echo '```'
               cat "$cp/summary.txt"
+            lsd="$(ls -td test/cuda-library-samples/results/*/ 2>/dev/null | head -n1 || true)"
+            if [[ -n "${lsd:-}" && -f "$lsd/summary.txt" ]]; then
+              echo "### CUDALibrarySamples (${{ matrix.label }})"
+              echo '```'
+              cat "$lsd/summary.txt"
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
