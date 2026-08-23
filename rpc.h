@@ -52,7 +52,7 @@ static constexpr intptr_t LUPINE_MIRROR_W_OFFSET = -INT64_C(0x400000000000);
 // reserves a writable alias so pointers embedded in mirrored memory retain
 // their server values while transport reads avoid the protected R view.
 static constexpr uintptr_t LUPINE_VA_FIRST_BASE = LUPINE_MIRROR_SERVER_BASE;
-static constexpr size_t LUPINE_VA_ARENA_SIZE = LUPINE_MIRROR_WINDOW_SIZE;
+static constexpr size_t LUPINE_VA_ARENA_SIZE = UINT64_C(0x010000000000);
 static constexpr unsigned int LUPINE_VA_ARENA_COUNT = 8;
 static constexpr intptr_t LUPINE_VA_WRITE_OFFSET = -INT64_C(0x200000000000);
 
