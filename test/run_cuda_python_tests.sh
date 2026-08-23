@@ -53,7 +53,8 @@ Environment:
                          major plus pytest into PYTHON_BIN's environment; 0 skips.
   CUDA_PYTHON_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
   CUDA_PYTHON_KNOWN_FAILURES
-                         pytest node ids to --deselect. Default: $CUDA_PYTHON_KNOWN_FAILURES
+                         pytest node ids (relative to the tests or examples
+                         directory) to --deselect. Default: $CUDA_PYTHON_KNOWN_FAILURES
   PYTHON_BIN             Interpreter. Default: $PYTHON_BIN
   SERVER_SSH_TARGET      GPU host. Default: $SERVER_SSH_TARGET
   SERVER_PORT_BASE       First per-unit server port. Default: $SERVER_PORT_BASE
@@ -134,16 +135,25 @@ for d in cuda_bindings/examples examples; do
   fi
 done
 
-# test_cufile needs GPUDirect Storage; test_examples is covered per example
-# below so one wedged example cannot take the whole module down.
+# test_cufile needs GPUDirect Storage; nvvm/nvjitlink/nvfatbin are host-only
+# libraries whose tests track the toolkit minor rather than the driver;
+# test_examples is covered per example below so one wedged example cannot
+# take the whole module down.
 UNITS=()
 while IFS= read -r m; do
   UNITS+=("$m")
-done < <(cd "$tests_dir" && ls test_*.py | grep -vE '^test_(cufile|examples)\.py$' | sort)
+done < <(cd "$tests_dir" && ls test_*.py | grep -vE '^test_(cufile|examples|nvvm|nvjitlink|nvfatbin)\.py$' | sort)
+# Examples are *_test.py pytest files before 13.3 (next to common/ helpers and
+# a numba plugin) and plain scripts from 13.3 on.
 if [[ -n "$examples_dir" ]]; then
+  if compgen -G "$examples_dir/*/*_test.py" >/dev/null; then
+    example_glob='*_test.py'
+  else
+    example_glob='*.py'
+  fi
   while IFS= read -r e; do
     UNITS+=("$e")
-  done < <(cd "$examples_dir" && find . -name '*.py' -not -name conftest.py -not -name '__init__.py' -printf '%P\n' | sort)
+  done < <(cd "$examples_dir" && find . -name "$example_glob" -not -path './common/*' -not -name conftest.py -not -name '__init__.py' -not -name 'numba_*' -printf '%P\n' | sort)
 fi
 if [[ $# -gt 0 ]]; then
   UNITS=("$@")
@@ -248,7 +258,7 @@ for i in "${!UNITS[@]}"; do
     cmd=("${pytest_cmd[@]}" --rootdir "$tests_dir" "${deselect_args[@]}" "$unit")
   elif [[ "$unit" == *_test.py ]]; then
     cwd="$examples_dir"
-    cmd=("${pytest_cmd[@]}" --rootdir "$examples_dir" "$unit")
+    cmd=("${pytest_cmd[@]}" --rootdir "$examples_dir" "${deselect_args[@]}" "$unit")
   else
     cwd="$examples_dir"
     cmd=("$PYTHON_BIN" "$unit")
