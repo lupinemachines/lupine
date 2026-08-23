@@ -72,17 +72,17 @@ jobs:
         northamerica-northeast2-a northamerica-northeast2-b
         europe-west1-b europe-west1-c
       GCP_NETWORK: default
-      MACHINE_TYPE: g2-standard-4
+      MACHINE_TYPE: g2-standard-8
       VM_IMAGE_PROJECT: ml-images
       VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
       VM_MAX_RUN_DURATION: 260m
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      # Match the four vCPUs on g2-standard-4. Higher fan-out runs too many
+      # Match the eight vCPUs on g2-standard-8. Higher fan-out runs too many
       # independent CUDA contexts on one L4 and causes device-unavailable
       # cascades in otherwise passing cuBLAS and PyTorch tests.
-      CUDA_SAMPLE_JOBS: 4
+      CUDA_SAMPLE_JOBS: 8
       SSH_COMMAND_TIMEOUT: 120
       PYTORCH_TEST_TIMEOUT: 180
       CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
@@ -244,21 +244,6 @@ jobs:
             echo "GCP_ZONE=$selected_zone"
           } >> "$GITHUB_ENV"
 
-      - name: Free runner disk
-        run: |
-          set -euo pipefail
-          sudo rm -rf \
-            /opt/ghc \
-            /usr/local/.ghcup \
-            /usr/local/lib/android \
-            /usr/local/share/boost \
-            /usr/share/dotnet \
-            "${AGENT_TOOLSDIRECTORY:-}" || true
-          df -h
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Write inline client image Dockerfile
         run: |
           cat > "${RUNNER_TEMP}/gpu-integration.Dockerfile" <<'EOF'
@@ -267,12 +252,13 @@ jobs:
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
 
+          ARG CUDA_SAMPLES_ARCH
           ENV DEBIAN_FRONTEND=noninteractive \
               CUDA_HOME=/usr/local/cuda \
               CUDA_LIB_DIR=/usr/local/cuda/lib64 \
               CUDA_SAMPLES_DIR=/opt/cuda-samples-src \
               CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build \
-              CUDA_SAMPLES_ARCH=89 \
+              CUDA_SAMPLES_ARCH=${CUDA_SAMPLES_ARCH} \
               CCACHE_DIR=/opt/lupine/ccache \
               CCACHE_BASEDIR=/src \
               CCACHE_COMPILERCHECK=content \
@@ -304,9 +290,7 @@ jobs:
                 python3-venv \
               && rm -rf /var/lib/apt/lists/*
 
-          # BuildKit exports this expensive layer to the GitHub Actions cache.
-          # Keep it before COPY . so regular Lupine changes do not invalidate it.
-          RUN --mount=type=cache,target=/opt/lupine/ccache bash <<'SCRIPT'
+          RUN bash <<'SCRIPT'
           set -euo pipefail
 
           git clone --branch "${{ matrix.samples_ref }}" --depth 1 \
@@ -318,19 +302,15 @@ jobs:
               "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
           fi
 
-          export CCACHE_BASEDIR="$CUDA_SAMPLES_DIR"
           export LLVM_HOME=/usr/lib/llvm-14
           if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
             cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" \
               -DCMAKE_BUILD_TYPE=Release \
-              -DENABLE_CUDA_C_LINKING_SAMPLE=1 \
-              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-              -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+              -DENABLE_CUDA_C_LINKING_SAMPLE=1
             cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
           else
-            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)"
+            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
           fi
-          ccache --show-stats || true
           SCRIPT
 
           WORKDIR /src
@@ -380,39 +360,43 @@ jobs:
               fi
               sleep 5
             done
+            sudo usermod -aG docker gha
           '
 
-      - name: Build ${{ matrix.name }} client image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ${{ runner.temp }}/gpu-integration.Dockerfile
-          load: true
-          tags: ${{ env.CLIENT_IMAGE }}
-          build-args: |
-            BASE_IMAGE=${{ matrix.client_image }}
-          cache-from: type=gha,scope=gpu-integration-${{ matrix.label }}
-          cache-to: type=gha,mode=max,scope=gpu-integration-${{ matrix.label }}
+          arch="$("${ssh_base[@]}" 'nvidia-smi --query-gpu=compute_cap --format=csv,noheader' \
+            | tr -d '. ' | sort -u | xargs)"
+          test -n "$arch"
+          echo "CUDA_SAMPLES_ARCH=$arch" >> "$GITHUB_ENV"
 
-      - name: Stream ${{ matrix.name }} client image to L4 VM
+      - name: Build ${{ matrix.name }} client image on L4 VM
         run: |
           set -euo pipefail
-          ssh_base=(
-            ssh
-            -i "$SSH_DIR/id_ed25519"
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
-            -o ConnectTimeout=15
-            -o ServerAliveInterval=15
-            -o ServerAliveCountMax=4
-            "gha@$VM_IP"
-          )
+          # The docker CLI reaches the VM daemon over SSH and ships only the
+          # build context, so the multi-GB image never crosses the wire. It
+          # takes SSH options from ~/.ssh/config only.
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          cat >> ~/.ssh/config <<EOF
+          Host lupine-gpu-vm
+            HostName $VM_IP
+            User gha
+            IdentityFile $SSH_DIR/id_ed25519
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile $SSH_DIR/known_hosts
+            ServerAliveInterval 15
+            ServerAliveCountMax 4
+          EOF
 
           start=$SECONDS
-          docker save "$CLIENT_IMAGE" | "${ssh_base[@]}" 'sudo docker load'
-          echo "Streamed $CLIENT_IMAGE to L4 VM in $((SECONDS - start))s"
-          "${ssh_base[@]}" "sudo docker image inspect '$CLIENT_IMAGE' >/dev/null"
+          DOCKER_HOST=ssh://lupine-gpu-vm docker build \
+            --progress=plain \
+            --file "${RUNNER_TEMP}/gpu-integration.Dockerfile" \
+            --tag "$CLIENT_IMAGE" \
+            --build-arg "BASE_IMAGE=${{ matrix.client_image }}" \
+            --build-arg "CUDA_SAMPLES_ARCH=$CUDA_SAMPLES_ARCH" \
+            .
+          echo "Built $CLIENT_IMAGE on L4 VM in $((SECONDS - start))s"
 
       - name: Run ${{ matrix.name }} client inside L4 VM
         run: |
@@ -512,7 +496,6 @@ jobs:
               export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
               export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
-              export CUDA_SAMPLES_ARCH=89
 
               python3 -m venv /tmp/venv-pytorch
               /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
