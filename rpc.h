@@ -82,7 +82,7 @@ struct conn_t {
   void *tls_session; // SSL* for https:// client connections; otherwise null.
   uintptr_t va_base;
   size_t va_size;
-  void *va_space;
+  uintptr_t va_next;
   intptr_t r_offset;
   intptr_t w_offset;
 };

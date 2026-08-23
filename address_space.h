@@ -25,13 +25,6 @@ int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
 // the candidate band before any mapping is attempted.
 int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size);
 
-// Server backends claim exact ranges from the negotiated arena. The server
-// preflights the whole range, then tracks ownership logically so CUDA, HIP, or
-// a host mmap can place a mapping there. release returns a claim to the free
-// list.
-uintptr_t lupine_va_allocate(conn_t *conn, size_t size, size_t alignment);
-bool lupine_va_release(conn_t *conn, uintptr_t address, size_t size);
-
 bool lupine_va_contains(const conn_t *conn, uintptr_t address, size_t size);
 void lupine_va_destroy(conn_t *conn);
 

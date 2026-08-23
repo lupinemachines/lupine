@@ -307,6 +307,14 @@ if(LUPINE_BUILD_SERVER)
             LUPINE_RPC_SERVER
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
         target_link_libraries(lupine_driver_server PRIVATE lupine_cuda_server)
+        if(NOT WIN32 AND NOT APPLE)
+            target_sources(lupine_driver_server PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/server_va.cpp)
+            # libcuda's mmap reference must resolve to the executable's scoped
+            # VA interposer.
+            set_target_properties(lupine_driver_server PROPERTIES
+                ENABLE_EXPORTS ON)
+        endif()
     endif()
     if(LUPINE_BUILD_NVML)
         target_compile_definitions(lupine_driver_server PRIVATE
@@ -316,7 +324,9 @@ if(LUPINE_BUILD_SERVER)
 endif()
 
 if(BUILD_TESTING AND NOT WIN32)
-    add_executable(h2_test ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
+    add_executable(h2_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_address_space.cpp)
     target_include_directories(h2_test PRIVATE ${NGHTTP2_INCLUDE_DIR})
     if(CUDAToolkit_VERSION)
         target_compile_definitions(h2_test PRIVATE
@@ -327,11 +337,6 @@ if(BUILD_TESTING AND NOT WIN32)
     endif()
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
-
-    add_executable(address_space_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/address_space_test.cpp)
-    target_link_libraries(address_space_test PRIVATE lupine_rpc_core)
-    lupine_apply_sanitizer(address_space_test)
 
     add_executable(h2_unknown_cuda_version_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
@@ -385,10 +390,6 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 30)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
-    add_test(NAME address_space_test COMMAND address_space_test)
-    lupine_scaled_timeout(address_space_timeout 30)
-    set_tests_properties(address_space_test PROPERTIES
-        TIMEOUT ${address_space_timeout})
     add_test(NAME h2_unknown_cuda_version_test
         COMMAND h2_unknown_cuda_version_test)
     lupine_scaled_timeout(h2u_timeout 10)

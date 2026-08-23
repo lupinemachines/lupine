@@ -1,6 +1,7 @@
 #include "address_space.h"
 #include "rpc.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <iostream>
 
@@ -39,15 +40,31 @@ void test_identity_va_handshake() {
     require(server.va_size == LUPINE_VA_ARENA_SIZE,
             "server did not reserve negotiated arena");
 
+#ifdef MAP_FIXED_NOREPLACE
     const size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
-    uintptr_t first = lupine_va_allocate(&server, page_size, page_size);
-    uintptr_t second = lupine_va_allocate(&server, page_size, page_size);
-    require(first == server.va_base && second == first + page_size,
-            "server arena allocator was not deterministic");
-    require(lupine_va_release(&server, first, page_size),
-            "server arena release failed");
-    require(lupine_va_allocate(&server, page_size, page_size) == first,
-            "server arena did not reuse a released range");
+    errno = 0;
+    void *collision =
+        mmap(reinterpret_cast<void *>(server.va_base), page_size, PROT_NONE,
+             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    require(collision == MAP_FAILED && errno == EEXIST,
+            "server arena was not retained by the kernel");
+
+    uintptr_t replacement_address = server.va_base + page_size;
+    void *replacement = mmap(reinterpret_cast<void *>(replacement_address),
+                             page_size, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    require(replacement == reinterpret_cast<void *>(replacement_address),
+            "failed to replace an owned arena page");
+    *static_cast<unsigned char *>(replacement) = 42;
+
+    errno = 0;
+    collision = mmap(replacement, page_size, PROT_NONE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    require(collision == MAP_FAILED && errno == EEXIST,
+            "replacement page was not retained by the kernel");
+    munmap(replacement, page_size);
+#endif
+
     int32_t lane = rpc_http2_accept_stream(&server);
     char request = '\0';
     require(lane > 0 &&
@@ -139,12 +156,9 @@ void test_identity_va_conflict() {
 
 } // namespace
 
-int main() {
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-  return 0;
-#else
+void test_address_space() {
+#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
   test_identity_va_handshake();
   test_identity_va_conflict();
-  return 0;
 #endif
 }

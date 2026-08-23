@@ -257,7 +257,7 @@ int client_handler(lupine_socket_t connfd) {
   // Finish checkpointing before releasing per-connection CUDA resources.
   checkpoint_result = lupine_server_checkpoint_child_finish();
   lupine_server_cleanup_connection(&conn);
-  lupine_server_cleanup_va_allocations(&conn);
+  lupine_server_cleanup_identity_allocations(&conn);
 #endif
   rpc_conn_destroy(&conn);
   return checkpoint_result;

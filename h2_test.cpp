@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 
+void test_address_space();
+
 namespace {
 
 template <typename T, typename = void>
@@ -1186,6 +1188,7 @@ int main() {
 #ifdef LUPINE_H2_UNKNOWN_CUDA_VERSION_TEST
   test_head_probe_cuda_version_metadata();
 #else
+  test_address_space();
   test_request_start_rejects_null_and_closed_conn();
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__)
   test_rpc_read_uses_w_offset();

@@ -178,7 +178,7 @@ int connect_endpoint(client_transport_state &state,
     conn->r_offset = state.config.r_offset;
     conn->w_offset = state.config.w_offset;
     unsigned int slot = min_slot;
-    if (state.config.identity_va) {
+    if (conn->r_offset != conn->w_offset) {
       int reserve_result = lupine_va_reserve_client(conn, min_slot, &slot);
       if (reserve_result < 0) {
         reset_connection(conn);
