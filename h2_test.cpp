@@ -241,22 +241,32 @@ void test_server_to_client_after_request_headers() {
           "server-to-client payload mismatch");
 }
 
-void test_head_probe_cuda_version_metadata() {
+void test_head_probe_cuda_version_metadata(const char *expected_cuda_version) {
   h2_pair pair;
   init_pair_sockets(&pair);
 
   const char *cuda_version = nullptr;
   std::thread probe(
       [&] { cuda_version = rpc_http2_client_probe(&pair.client); });
-  const rpc_http2_server_metadata metadata = {LUPINE_CUDA_VERSION};
-  int server_result =
-      rpc_http2_server_init_with_metadata(&pair.server, &metadata);
+  int server_result = 0;
+  if (expected_cuda_version != nullptr) {
+    const rpc_http2_server_metadata metadata = {expected_cuda_version};
+    server_result =
+        rpc_http2_server_init_with_metadata(&pair.server, &metadata);
+  } else {
+    server_result = rpc_http2_server_init(&pair.server);
+  }
   probe.join();
 
   require(server_result == 1, "HEAD / was not handled as a metadata request");
-  require(cuda_version != nullptr &&
-              std::string(cuda_version) == LUPINE_CUDA_VERSION,
-          "HEAD / omitted CUDA version");
+  if (expected_cuda_version != nullptr) {
+    require(cuda_version != nullptr &&
+                std::string(cuda_version) == expected_cuda_version,
+            "HEAD / omitted CUDA version");
+  } else {
+    require(cuda_version == nullptr,
+            "HEAD / advertised an unknown CUDA version");
+  }
 }
 
 void test_fragmented_cursors() {
@@ -1187,7 +1197,8 @@ int main() {
   test_client_to_server();
   test_server_receives_session_id();
   test_server_to_client_after_request_headers();
-  test_head_probe_cuda_version_metadata();
+  test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION);
+  test_head_probe_cuda_version_metadata(nullptr);
   test_fragmented_cursors();
   test_fragmented_frames_direct();
   test_partial_read_stages_only_overflow();

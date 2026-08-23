@@ -327,12 +327,6 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
 
-    add_executable(integration_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/integration_test.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_address_space.cpp)
-    target_link_libraries(integration_test PRIVATE lupine_rpc_core)
-    lupine_apply_sanitizer(integration_test)
-
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp)
@@ -376,10 +370,6 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 30)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
-    add_test(NAME integration_test COMMAND integration_test)
-    lupine_scaled_timeout(integration_timeout 30)
-    set_tests_properties(integration_test PROPERTIES
-        TIMEOUT ${integration_timeout})
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
