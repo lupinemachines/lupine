@@ -524,12 +524,17 @@ jobs:
               RESULTS_DIR="/results/test/pytorch/results/$(date +%Y%m%d-%H%M%S)" \
                 /src/test/run_pytorch_lupine_tests.sh || pytorch_status=$?
 
+              cuda_python_status=0
+              RESULTS_DIR="/results/test/cuda-python/results/$(date +%Y%m%d-%H%M%S)" \
+                CUDA_PYTHON_DIR=/tmp/cuda-python SERVER_PORT_BASE=20300 \
+                /src/test/run_cuda_python_tests.sh || cuda_python_status=$?
+
               custom_status=0
               SERVER_PORT_BASE=20900 TEST_JOBS="$CUDA_SAMPLE_JOBS" \
                 /src/test/run_custom_tests.sh || custom_status=$?
 
-              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$custom_status" -ne 0 ]]; then
-                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; custom tests exited $custom_status" >&2
+              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$cuda_python_status" -ne 0 || "$custom_status" -ne 0 ]]; then
+                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; cuda-python exited $cuda_python_status; custom tests exited $custom_status" >&2
                 exit 1
               fi
             '
@@ -551,6 +556,7 @@ jobs:
           path: |
             test/cuda-samples/results/
             test/pytorch/results/
+            test/cuda-python/results/
           if-no-files-found: ignore
 
       - name: Report sample results
@@ -569,6 +575,13 @@ jobs:
             [[ -f "$rd/summary.txt" ]] && cat "$rd/summary.txt"
             [[ -f "$rd/coverage.txt" ]] && { echo; cat "$rd/coverage.txt"; }
             echo '```'
+            cp="$(ls -td test/cuda-python/results/*/ 2>/dev/null | head -n1 || true)"
+            if [[ -n "${cp:-}" && -f "$cp/summary.txt" ]]; then
+              echo "### cuda-python (${{ matrix.label }})"
+              echo '```'
+              cat "$cp/summary.txt"
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ -f "$rd/summary.txt" ]]; then
             awk '{print tolower($1)"="$2}' "$rd/summary.txt" >> "$GITHUB_OUTPUT"

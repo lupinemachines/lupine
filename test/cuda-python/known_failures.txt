@@ -1,0 +1,56 @@
+# pytest node ids (relative to cuda_bindings/tests) that run_cuda_python_tests.sh
+# deselects. One tracking issue per root cause; drop the lines when it closes.
+
+# #576 DevResource / green contexts
+test_cuda.py::test_cuDeviceGetDevResource
+test_cuda.py::test_cuStreamGetDevResource
+test_cuda.py::test_cuDevSmResourceSplit
+test_cudart.py::test_cudaDeviceGetDevResource
+test_cudart.py::test_cudaExecutionCtxGetDevResource
+test_cudart.py::test_cudaStreamGetDevResource
+test_cudart.py::test_cudaDevSmResourceSplit
+test_cudart.py::test_cudaDevSmResourceSplitByCount
+test_cudart.py::test_cudaDevResourceGenerateDesc
+test_cudart.py::test_cudaGreenCtxCreate
+
+# #577 CUDA 13.1 graph identity APIs
+test_cuda.py::test_cuGraphGetId
+test_cuda.py::test_cuGraphExecGetId
+test_cuda.py::test_cuGraphNodeGetLocalId
+test_cuda.py::test_cuGraphNodeGetToolsId
+test_cuda.py::test_cuGraphNodeGetContainingGraph
+test_cudart.py::test_cudaGraphGetId
+test_cudart.py::test_cudaGraphExecGetId
+test_cudart.py::test_cudaGraphNodeGetLocalId
+test_cudart.py::test_cudaGraphNodeGetToolsId
+test_cudart.py::test_cudaGraphNodeGetContainingGraph
+
+# #578 cuGraphGetEdges / cuGraphNodeGetDependencies with edgeData
+test_cuda.py::test_cuGraphGetEdges_edgeData_outlives_call
+test_cuda.py::test_cuGraphNodeGetDependencies_edgeData_outlives_call
+test_cudart.py::test_cudart_cudaGraphGetEdges_edgeData_outlives_call
+test_cudart.py::test_cudart_cudaGraphNodeGetDependencies_edgeData_outlives_call
+
+# #579 cuGraphAddNode
+test_cuda.py::test_graph_poly
+
+# #580 cuMemcpy3DAsync / cuMemcpy3DPeer / cuMemcpy3DPeerAsync
+test_cudart.py::test_cudart_cudaMemcpy3DAsync
+test_cudart.py::test_cudart_cudaMemcpy3DPeer
+test_cudart.py::test_cudart_cudaMemcpy3DPeerAsync
+
+# #581 cuMemRangeGetAttribute
+test_cuda.py::test_cuda_mem_range_attr
+
+# #582 cuPointerSetAttribute(SYNC_MEMOPS)
+test_cuda.py::test_cuda_pointer_attr
+
+# #583 cuCoredumpSetAttributeGlobal
+test_cuda.py::test_cuda_coredump_attr
+
+# #584 cuKernelGetName / cuFuncGetName
+test_cuda.py::test_cuKernelGetName_failure
+test_cuda.py::test_cuFuncGetName_failure
+
+# #585 cudaHostRegister(PORTABLE|DEVICEMAP) sub-range
+test_cudart.py::test_cudart_hostRegister
