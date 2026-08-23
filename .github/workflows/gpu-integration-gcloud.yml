@@ -541,6 +541,7 @@ jobs:
               RESULTS_DIR="/results/test/cuda-python/results/$(date +%Y%m%d-%H%M%S)" \
                 CUDA_PYTHON_DIR=/tmp/cuda-python SERVER_PORT_BASE=20300 \
                 /src/test/run_cuda_python_tests.sh || cuda_python_status=$?
+
               llama_status=0
               RESULTS_DIR="/results/test/llama.cpp/results/$(date +%Y%m%d-%H%M%S)" \
                 LLAMA_CPP_DIR=/opt/llama.cpp BUILD_LLAMA=0 SERVER_PORT_BASE=20500 \

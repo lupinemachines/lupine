@@ -86,10 +86,16 @@ if [[ -z "$LLAMA_CPP_BIN" ]]; then
     # libggml-cuda.so is linked against the libcuda stub, so the executable
     # link must not insist on resolving driver symbols (same as upstream's
     # cuda.Dockerfile).
+    # CUDA 11 toolkits use the v1 cuGraphExecUpdate form, which fails through
+    # the shim (#601); graphs stay off there so the ops still get covered.
+    graphs=ON
+    if [[ "$("$CUDA_HOME/bin/nvcc" --version 2>/dev/null | sed -nE 's/.*release ([0-9]+)\..*/\1/p' | head -n1)" == "11" ]]; then
+      graphs=OFF
+    fi
     # shellcheck disable=SC2086
     cmake -S "$LLAMA_CPP_DIR" -B "$LLAMA_CPP_BUILD_DIR" -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
-      -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DGGML_CUDA_FA=OFF \
+      -DGGML_CUDA=ON -DGGML_NATIVE=OFF -DGGML_CUDA_FA=OFF -DGGML_CUDA_GRAPHS="$graphs" \
       -DCMAKE_CUDA_ARCHITECTURES="$LLAMA_CPP_ARCH" \
       -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
       -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF \
