@@ -17,3 +17,5 @@ Makefile
 __pycache__/
 *.pyc
 build-sanitize-*/
+test/cuda-python/cuda-python/
+test/cuda-python/results/
