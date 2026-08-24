@@ -1,18 +1,6 @@
 # pytest node ids (relative to the tests or examples directory) that run_cuda_python_tests.sh
 # deselects. One tracking issue per root cause; drop the lines when it closes.
 
-# #576 DevResource / green contexts
-test_cuda.py::test_cuDeviceGetDevResource
-test_cuda.py::test_cuStreamGetDevResource
-test_cuda.py::test_cuDevSmResourceSplit
-test_cudart.py::test_cudaDeviceGetDevResource
-test_cudart.py::test_cudaExecutionCtxGetDevResource
-test_cudart.py::test_cudaStreamGetDevResource
-test_cudart.py::test_cudaDevSmResourceSplit
-test_cudart.py::test_cudaDevSmResourceSplitByCount
-test_cudart.py::test_cudaDevResourceGenerateDesc
-test_cudart.py::test_cudaGreenCtxCreate
-
 # #577 CUDA 13.1 graph identity APIs
 test_cuda.py::test_cuGraphGetId
 test_cuda.py::test_cuGraphExecGetId

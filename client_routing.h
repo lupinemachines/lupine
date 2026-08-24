@@ -115,6 +115,8 @@ extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
                                                  conn_t *conn);
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
 extern "C" void lupine_forget_context_owner(CUcontext ctx);
+extern "C" void lupine_mark_context_green(CUcontext ctx);
+extern "C" bool lupine_context_is_green(CUcontext ctx);
 extern "C" void lupine_forget_stream_owner(CUstream stream);
 extern "C" void lupine_forget_event_owner(CUevent event);
 

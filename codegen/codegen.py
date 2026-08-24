@@ -974,6 +974,10 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
 
     if function.name.format() == "cuCtxDestroy_v2":
         f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(ctx);\n")
+    if function.name.format() == "cuCtxFromGreenCtx":
+        f.write("    if (return_value == CUDA_SUCCESS && pContext != nullptr) lupine_mark_context_green(*pContext);\n")
+    if function.name.format() == "cuGreenCtxDestroy":
+        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(reinterpret_cast<CUcontext>(hCtx));\n")
     if function.name.format() in {
         "cuCtxDestroy_v2",
         "cuCtxDetach",
@@ -1535,6 +1539,7 @@ def main():
             '                                                   bool async);\n\n'
             'extern "C" void lupine_invalidate_current_context_cache();\n'
             'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
+            'extern "C" void lupine_mark_context_green(CUcontext ctx);\n'
             'extern "C" void lupine_invalidate_function_caches();\n'
             'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
             'extern "C" void lupine_kernel_attribute_cache_erase(int route_id, CUkernel kernel, int attrib, int dev);\n'

@@ -481,11 +481,12 @@ class ArrayOperation:
 @dataclass
 class InOutCountOperation:
     """
-    A ``size_t *`` count that is simultaneously an input capacity and an output
+    An integer pointer that is simultaneously an input capacity and an output
     count for one or more :class:`NullableArrayOperation` out-arrays -- the
-    cuGraphGetNodes pattern. The client sends the requested capacity (0 when the
-    anchor array is null, which is a count-only query); the server runs the API
-    once with that capacity and returns the actual count.
+    cuGraphGetNodes and cuDevSmResourceSplitByCount patterns. The client sends
+    the requested capacity (0 when the anchor array is null, which is a
+    count-only query); the server runs the API once with that capacity and
+    returns the actual count.
     """
 
     send: bool
@@ -494,32 +495,38 @@ class InOutCountOperation:
     # array param whose presence decides query-vs-fill on the client side.
     anchor: str
 
+    def count_type(self) -> str:
+        return self.parameter.type.ptr_to.format()
+
     @property
     def server_declaration(self) -> str:
         return (
-            f"    size_t {self.parameter.name} = 0;\n"
-            f"    size_t {self.parameter.name}_requested = 0;\n"
+            f"    {self.count_type()} {self.parameter.name} = 0;\n"
+            f"    {self.count_type()} {self.parameter.name}_requested = 0;\n"
         )
 
     def client_declaration(self) -> str:
         return (
-            f"    size_t {self.parameter.name}_requested =\n"
+            f"    {self.count_type()} {self.parameter.name}_requested =\n"
             f"        ({self.anchor} != nullptr) ? *{self.parameter.name} : 0;\n"
         )
 
     def client_rpc_write(self, f):
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}_requested, sizeof(size_t)) < 0 ||\n"
+            f"        rpc_write(conn, &{self.parameter.name}_requested, "
+            f"sizeof({self.count_type()})) < 0 ||\n"
         )
 
     def client_rpc_read(self, f):
         f.write(
-            f"        rpc_read(conn, {self.parameter.name}, sizeof(size_t)) < 0 ||\n"
+            f"        rpc_read(conn, {self.parameter.name}, "
+            f"sizeof({self.count_type()})) < 0 ||\n"
         )
 
     def server_rpc_read(self, f):
         f.write(
-            f"        rpc_read(conn, &{self.parameter.name}_requested, sizeof(size_t)) < 0 ||\n"
+            f"        rpc_read(conn, &{self.parameter.name}_requested, "
+            f"sizeof({self.count_type()})) < 0 ||\n"
         )
         # Seed the count with the requested capacity so a non-null buffer is
         # filled (a null buffer makes the API ignore it and report the total).
@@ -533,17 +540,19 @@ class InOutCountOperation:
 
     def server_rpc_write(self, f):
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}, sizeof(size_t)) < 0 ||\n"
+            f"        rpc_write(conn, &{self.parameter.name}, "
+            f"sizeof({self.count_type()})) < 0 ||\n"
         )
 
 
 @dataclass
 class NullableArrayOperation:
     """
-    A ``NULLABLE LENGTH:<count>`` out-array sized by an in/out
-    :class:`InOutCountOperation`. The array may be null (the caller is querying
-    the count, or does not want this particular array). Several nullable arrays
-    can share one count, e.g. cuGraphGetEdges' from/to/edgeData.
+    A ``NULLABLE LENGTH:<count>`` out-array. Pointer counts are promoted to an
+    :class:`InOutCountOperation`; value counts are fixed capacities. The array
+    may be null (the caller is querying the count, or does not want this
+    particular array). Several nullable arrays can share one count, e.g.
+    cuGraphGetEdges' from/to/edgeData.
     """
 
     parameter: Parameter
@@ -556,6 +565,11 @@ class NullableArrayOperation:
         result = self.ptr.ptr_to.format()
         self.ptr.ptr_to.const = c
         return result
+
+    def requested_count_expr(self) -> str:
+        if isinstance(self.count.type, Pointer):
+            return f"{self.count.name}_requested"
+        return self.count.name
 
     @property
     def server_declaration(self) -> str:
@@ -578,7 +592,7 @@ class NullableArrayOperation:
     def server_rpc_read(self, f) -> Optional[str]:
         elem = self.element_type()
         name = self.parameter.name
-        count = self.count.name
+        requested = self.requested_count_expr()
         f.write(
             f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
         )
@@ -590,7 +604,7 @@ class NullableArrayOperation:
         f.write(f"    if (!{name}_null) {{\n")
         f.write(
             f"        {name} = ({elem} *)malloc(\n"
-            f"            ({count}_requested != 0 ? {count}_requested : 1) * sizeof({elem}));\n"
+            f"            ({requested} != 0 ? {requested} : 1) * sizeof({elem}));\n"
         )
         f.write(f"        if ({name} == nullptr)\n")
         f.write("            goto ERROR_0;\n")
@@ -609,22 +623,40 @@ class NullableArrayOperation:
         # count.
         elem = self.element_type()
         name = self.parameter.name
-        count = self.count.name
+        requested = self.requested_count_expr()
+        returned = self.count.name
+        if not isinstance(self.count.type, Pointer):
+            f.write(
+                f"        (!{name}_null && "
+                f"rpc_write(conn, {name}, {requested} * sizeof({elem})) < 0) ||\n"
+            )
+            return
         f.write(
             f"        (!{name}_null && "
             f"rpc_write(conn, {name}, "
-            f"({count} < {count}_requested ? {count} : {count}_requested)"
+            f"({returned} < {requested} ? {returned} : {requested})"
             f" * sizeof({elem})) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
         elem = self.element_type()
         name = self.parameter.name
-        count = self.count.name
+        requested = self.requested_count_expr()
+        returned = (
+            f"*{self.count.name}"
+            if isinstance(self.count.type, Pointer)
+            else self.count.name
+        )
+        if not isinstance(self.count.type, Pointer):
+            f.write(
+                f"        ({name} != nullptr && {requested} != 0 && "
+                f"rpc_read(conn, {name}, {requested} * sizeof({elem})) < 0) ||\n"
+            )
+            return
         f.write(
-            f"        ({name} != nullptr && {count}_requested != 0 && *{count} != 0 && "
+            f"        ({name} != nullptr && {requested} != 0 && {returned} != 0 && "
             f"rpc_read(conn, {name}, "
-            f"(*{count} < {count}_requested ? *{count} : {count}_requested)"
+            f"({returned} < {requested} ? {returned} : {requested})"
             f" * sizeof({elem})) < 0) ||\n"
         )
 

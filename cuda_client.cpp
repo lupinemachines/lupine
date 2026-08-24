@@ -7969,10 +7969,10 @@ extern "C" CUresult lupine_context_check_unsupported(CUcontext, unsigned int *,
   return CUDA_ERROR_NOT_SUPPORTED;
 }
 
-extern "C" CUresult lupine_context_check(CUcontext, unsigned int *result1,
+extern "C" CUresult lupine_context_check(CUcontext ctx, unsigned int *result1,
                                          const void **result2) {
   if (result1 != nullptr) {
-    *result1 = 0;
+    *result1 = lupine_context_is_green(ctx) ? 1 : 0;
   }
   (void)result2;
   return CUDA_SUCCESS;
@@ -8304,20 +8304,11 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsUnregisterCallback)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsCurrent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsDumpToFile)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsDumpToMemory)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuDeviceGetDevResource)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuDevSmResourceSplitByCount)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuDevResourceGenerateDesc)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxFromGreenCtx)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxCreate)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxDestroy)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxGetDevResource)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxGetId)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuStreamGetDevResource)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxRecordEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxWaitEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxRecordEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxWaitEvent)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuDevSmResourceSplit)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuDeviceGetHostAtomicCapabilities)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuDeviceGetP2PAtomicCapabilities)
 
@@ -8426,20 +8417,11 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuLogsCurrent),
       LUPINE_STUB_ENTRY(cuLogsDumpToFile),
       LUPINE_STUB_ENTRY(cuLogsDumpToMemory),
-      LUPINE_STUB_ENTRY(cuDeviceGetDevResource),
-      LUPINE_STUB_ENTRY(cuDevSmResourceSplitByCount),
-      LUPINE_STUB_ENTRY(cuDevResourceGenerateDesc),
-      LUPINE_STUB_ENTRY(cuCtxFromGreenCtx),
-      LUPINE_STUB_ENTRY(cuGreenCtxCreate),
-      LUPINE_STUB_ENTRY(cuGreenCtxDestroy),
-      LUPINE_STUB_ENTRY(cuCtxGetDevResource),
       LUPINE_STUB_ENTRY(cuGreenCtxGetId),
-      LUPINE_STUB_ENTRY(cuStreamGetDevResource),
       LUPINE_STUB_ENTRY(cuCtxRecordEvent),
       LUPINE_STUB_ENTRY(cuCtxWaitEvent),
       LUPINE_STUB_ENTRY(cuGreenCtxRecordEvent),
       LUPINE_STUB_ENTRY(cuGreenCtxWaitEvent),
-      LUPINE_STUB_ENTRY(cuDevSmResourceSplit),
       LUPINE_STUB_ENTRY(cuDeviceGetHostAtomicCapabilities),
       LUPINE_STUB_ENTRY(cuDeviceGetP2PAtomicCapabilities),
 #undef LUPINE_STUB_ENTRY
