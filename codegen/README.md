@@ -78,6 +78,9 @@ waits, manual client/server wire framing, and server-side deferred-copy queue
 management.
 
 With the annotations in place, `codegen.py` reads in the annotations and generates the RPC server and client.
+Run it through `./codegen/run.sh` from the repository root. The runner uses the
+same pinned CUDA 13.3.1 container as CI so generated output does not depend on
+the host's installed toolkit or Python packages.
 
 The motivation for this approach is grounded in codegen being very good at ensuring that the RPC server and client
 match in behavior but not very good at determining the specifics of what should be sent and received. Humans, on
