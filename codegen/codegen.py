@@ -27,6 +27,8 @@ from ops import (
     Operation,
     OwnerAnnotation,
     RetainAnnotation,
+    ReleaseAnnotation,
+    ParentAnnotation,
     CrossServerCopyAnnotation,
     DevicePtrTranslationAnnotation,
     FunctionAnnotationMetadata,
@@ -481,6 +483,31 @@ def parse_annotation(
                 RetainAnnotation(
                     parameter=annotation_param(params, parts[1]),
                     handle=annotation_param(params, parts[2]),
+                )
+            )
+            continue
+        if line.startswith("@release"):
+            parts = line.split()
+            if len(parts) != 3:
+                raise RuntimeError("@release requires a handle kind and parameter")
+            metadata.releases.append(
+                ReleaseAnnotation(
+                    kind=parts[1].upper(),
+                    parameter=annotation_param(params, parts[2]),
+                )
+            )
+            continue
+        if line.startswith("@recordparent"):
+            parts = line.split()
+            if len(parts) != 4:
+                raise RuntimeError(
+                    "@recordparent requires a parent kind, child, and parent"
+                )
+            metadata.parents.append(
+                ParentAnnotation(
+                    kind=parts[1].upper(),
+                    child=annotation_param(params, parts[2]),
+                    parent=annotation_param(params, parts[3]),
                 )
             )
             continue
@@ -983,6 +1010,30 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
 
     for owner in metadata.record_owners:
         f.write(client_record_owner_stmt(owner))
+    for parent in metadata.parents:
+        if parent.kind != "LIBRARY":
+            raise NotImplementedError(
+                f"Unsupported recorded parent kind: {parent.kind}"
+            )
+        f.write(
+            f"    if (return_value == CUDA_SUCCESS && "
+            f"{parent.child.name} != nullptr) "
+            f"lupine_record_library_module(*{parent.child.name}, "
+            f"{parent.parent.name});\n"
+        )
+    for release in metadata.releases:
+        if release.kind == "MODULE":
+            release_fn = "lupine_release_module_retained_strings"
+        elif release.kind == "LIBRARY":
+            release_fn = "lupine_release_library_retained_strings"
+        else:
+            raise NotImplementedError(
+                f"Unsupported retained-string release kind: {release.kind}"
+            )
+        f.write(
+            f"    if (return_value == CUDA_SUCCESS) "
+            f"{release_fn}({release.parameter.name});\n"
+        )
 
     if function.name.format() == "cuMemAlloc_v2":
         f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);\n")
@@ -1562,6 +1613,9 @@ def main():
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
             'extern "C" void lupine_forget_stream_owner(CUstream stream);\n\n'
             'extern "C" const char *lupine_retain_returned_string(const void *handle, const char *data, size_t size);\n\n'
+            'extern "C" void lupine_release_module_retained_strings(CUmodule module);\n'
+            'extern "C" void lupine_release_library_retained_strings(CUlibrary library);\n\n'
+            'extern "C" void lupine_record_library_module(CUmodule module, CUlibrary library);\n\n'
             'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'

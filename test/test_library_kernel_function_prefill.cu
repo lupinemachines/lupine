@@ -43,9 +43,11 @@ int main() {
   CUcontext context = nullptr;
   CUmodule module = nullptr;
   CUlibrary library = nullptr;
+  CUmodule library_module = nullptr;
   CUkernel kernel = nullptr;
   CUfunction function = nullptr;
   CUfunction module_function = nullptr;
+  CUfunction library_module_function = nullptr;
   if (!check(cuInit(0), "cuInit") ||
       !check(cuDeviceGet(&device, 0), "cuDeviceGet") ||
       !check(cuDevicePrimaryCtxRetain(&context, device),
@@ -56,20 +58,36 @@ int main() {
              "cuLibraryLoadData") ||
       !check(cuLibraryGetKernel(&kernel, library, "parameterized"),
              "cuLibraryGetKernel") ||
-      !check(cuKernelGetFunction(&function, kernel), "cuKernelGetFunction")) {
+      !check(cuKernelGetFunction(&function, kernel), "cuKernelGetFunction") ||
+      !check(cuLibraryGetModule(&library_module, library),
+             "cuLibraryGetModule") ||
+      !check(cuModuleGetFunction(&library_module_function, library_module,
+                                 "parameterized"),
+             "cuModuleGetFunction(library)")) {
     return 1;
   }
 
   const char *kernel_name = nullptr;
   const char *function_name = nullptr;
+  const char *library_module_function_name = nullptr;
   if (!check(cuKernelGetName(&kernel_name, kernel), "cuKernelGetName") ||
       !check(cuFuncGetName(&function_name, function), "cuFuncGetName") ||
+      !check(
+          cuFuncGetName(&library_module_function_name, library_module_function),
+          "cuFuncGetName(library module)") ||
       kernel_name == nullptr || function_name == nullptr ||
+      library_module_function_name == nullptr ||
       std::strcmp(kernel_name, "parameterized") != 0 ||
-      std::strcmp(function_name, "parameterized") != 0) {
-    std::fprintf(stderr, "unexpected names: kernel=%s, function=%s\n",
+      std::strcmp(function_name, "parameterized") != 0 ||
+      std::strcmp(library_module_function_name, "parameterized") != 0) {
+    std::fprintf(stderr,
+                 "unexpected names: kernel=%s, function=%s, library "
+                 "module function=%s\n",
                  kernel_name == nullptr ? "null" : kernel_name,
-                 function_name == nullptr ? "null" : function_name);
+                 function_name == nullptr ? "null" : function_name,
+                 library_module_function_name == nullptr
+                     ? "null"
+                     : library_module_function_name);
     return 1;
   }
 
@@ -91,14 +109,19 @@ int main() {
   }
 
   int module_max_threads = 0;
+  const char *module_function_name = nullptr;
   if (!check(cuModuleLoadData(&module, kParameterizedPtx),
              "cuModuleLoadData") ||
       !check(cuModuleGetFunction(&module_function, module, "parameterized"),
              "cuModuleGetFunction") ||
+      !check(cuFuncGetName(&module_function_name, module_function),
+             "cuFuncGetName(module)") ||
       !check(cuFuncGetAttribute(&module_max_threads,
                                 CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
                                 module_function),
              "cuFuncGetAttribute(module)") ||
+      module_function_name == nullptr ||
+      std::strcmp(module_function_name, "parameterized") != 0 ||
       module_max_threads != function_max_threads) {
     std::fprintf(stderr,
                  "module and library function attributes differ: module=%d, "

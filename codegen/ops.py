@@ -1123,6 +1123,19 @@ class RetainAnnotation:
 
 
 @dataclass
+class ReleaseAnnotation:
+    kind: str
+    parameter: Parameter
+
+
+@dataclass
+class ParentAnnotation:
+    kind: str
+    child: Parameter
+    parent: Parameter
+
+
+@dataclass
 class CrossServerCopyAnnotation:
     dst: Parameter
     src: Parameter
@@ -1164,6 +1177,8 @@ class FunctionAnnotationMetadata:
     routing_fallback: Optional[RoutingFallbackAnnotation] = None
     record_owners: list[OwnerAnnotation] = None
     retains: list[RetainAnnotation] = None
+    releases: list[ReleaseAnnotation] = None
+    parents: list[ParentAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
 
@@ -1172,5 +1187,9 @@ class FunctionAnnotationMetadata:
             self.record_owners = []
         if self.retains is None:
             self.retains = []
+        if self.releases is None:
+            self.releases = []
+        if self.parents is None:
+            self.parents = []
         if self.translate_deviceptrs is None:
             self.translate_deviceptrs = []

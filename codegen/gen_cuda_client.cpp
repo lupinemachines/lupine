@@ -56,6 +56,12 @@ extern "C" const char *lupine_retain_returned_string(const void *handle,
                                                      const char *data,
                                                      size_t size);
 
+extern "C" void lupine_release_module_retained_strings(CUmodule module);
+extern "C" void lupine_release_library_retained_strings(CUlibrary library);
+
+extern "C" void lupine_record_library_module(CUmodule module,
+                                             CUlibrary library);
+
 extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
                                                  CUlibrary library,
                                                  const char *name,
@@ -662,6 +668,8 @@ CUresult cuModuleUnload(CUmodule hmod) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuModuleUnload",
                                                   &return_value, hmod)) {
     if (return_value == CUDA_SUCCESS)
+      lupine_release_module_retained_strings(hmod);
+    if (return_value == CUDA_SUCCESS)
       lupine_invalidate_function_caches();
     return return_value;
   }
@@ -672,6 +680,8 @@ CUresult cuModuleUnload(CUmodule hmod) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_release_module_retained_strings(hmod);
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_function_caches();
   return return_value;
@@ -841,6 +851,8 @@ CUresult cuLibraryUnload(CUlibrary library) {
   if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuLibraryUnload",
                                                   &return_value, library)) {
     if (return_value == CUDA_SUCCESS)
+      lupine_release_library_retained_strings(library);
+    if (return_value == CUDA_SUCCESS)
       lupine_invalidate_function_caches();
     return return_value;
   }
@@ -851,6 +863,8 @@ CUresult cuLibraryUnload(CUlibrary library) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return_value = CUDA_SUCCESS;
+  if (return_value == CUDA_SUCCESS)
+    lupine_release_library_retained_strings(library);
   if (return_value == CUDA_SUCCESS)
     lupine_invalidate_function_caches();
   return return_value;
@@ -865,6 +879,8 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
     if (return_value == CUDA_SUCCESS && pMod != nullptr) {
       lupine_note_module_owner_route(*pMod, route);
     }
+    if (return_value == CUDA_SUCCESS && pMod != nullptr)
+      lupine_record_library_module(*pMod, library);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -878,6 +894,8 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   if (return_value == CUDA_SUCCESS && pMod != nullptr) {
     lupine_note_module_owner_route(*pMod, route);
   }
+  if (return_value == CUDA_SUCCESS && pMod != nullptr)
+    lupine_record_library_module(*pMod, library);
   return return_value;
 }
 
@@ -6527,7 +6545,7 @@ CUresult cuGreenCtxCreate(CUgreenCtx *phCtx, CUdevResourceDesc desc,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuGreenCtxCreate) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuGreenCtxCreate) < 0 ||
       rpc_write(conn, &desc, sizeof(CUdevResourceDesc)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
@@ -6553,7 +6571,7 @@ CUresult cuGreenCtxDestroy(CUgreenCtx hCtx) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuGreenCtxDestroy) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuGreenCtxDestroy) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6581,7 +6599,7 @@ CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuCtxFromGreenCtx) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuCtxFromGreenCtx) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pContext, sizeof(CUcontext)) < 0 ||
@@ -6612,7 +6630,7 @@ CUresult cuDeviceGetDevResource(CUdevice device, CUdevResource *resource,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuDeviceGetDevResource) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuDeviceGetDevResource) < 0 ||
       rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6636,7 +6654,7 @@ CUresult cuCtxGetDevResource(CUcontext hCtx, CUdevResource *resource,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuCtxGetDevResource) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuCtxGetDevResource) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6693,7 +6711,7 @@ CUresult cuDevSmResourceSplitByCount(
   unsigned int nbGroups_requested = (result != nullptr) ? *nbGroups : 0;
   uint8_t result_null = result == nullptr ? 1 : 0;
   CUdevResource *remainder_null_check;
-  if (rpc_write_start_request(conn, RPC_cuDevSmResourceSplitByCount) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuDevSmResourceSplitByCount) < 0 ||
       rpc_write(conn, &nbGroups_requested, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &result_null, sizeof(uint8_t)) < 0 ||
       rpc_write(conn, input, sizeof(const CUdevResource)) < 0 ||
@@ -6739,7 +6757,7 @@ CUresult cuDevSmResourceSplit(CUdevResource *result, unsigned int nbGroups,
   if (nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS) != 0 &&
       groupParams == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  if (rpc_write_start_request(conn, RPC_cuDevSmResourceSplit) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuDevSmResourceSplit) < 0 ||
       rpc_write(conn, &nbGroups, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &result_null, sizeof(uint8_t)) < 0 ||
       rpc_write(conn, input, sizeof(const CUdevResource)) < 0 ||
@@ -6780,7 +6798,7 @@ CUresult cuDevResourceGenerateDesc(CUdevResourceDesc *phDesc,
   conn_t *conn = lupine_route_remote_conn(route);
   if (nbResources * sizeof(CUdevResource) != 0 && resources == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  if (rpc_write_start_request(conn, RPC_cuDevResourceGenerateDesc) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuDevResourceGenerateDesc) < 0 ||
       rpc_write(conn, &nbResources, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, resources, nbResources * sizeof(CUdevResource)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6861,7 +6879,7 @@ CUresult cuStreamGetDevResource(CUstream hStream, CUdevResource *resource,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (rpc_write_start_request(conn, RPC_cuStreamGetDevResource) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuStreamGetDevResource) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||

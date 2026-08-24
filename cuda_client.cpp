@@ -435,6 +435,16 @@ lupine_module_functions() {
   return *functions;
 }
 
+static std::unordered_map<CUfunction, CUlibrary> &lupine_library_functions() {
+  static auto *functions = new std::unordered_map<CUfunction, CUlibrary>();
+  return *functions;
+}
+
+static std::unordered_map<CUmodule, CUlibrary> &lupine_library_modules() {
+  static auto *modules = new std::unordered_map<CUmodule, CUlibrary>();
+  return *modules;
+}
+
 static libcuckoo::cuckoohash_map<lupine_device_attribute_key, int,
                                  lupine_device_attribute_key_hash> &
 lupine_device_attribute_cache() {
@@ -1079,6 +1089,28 @@ extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
     record.kernels_by_route[route_id] = kernel;
   }
   return CUDA_SUCCESS;
+}
+
+static void lupine_record_library_function(CUfunction function,
+                                           CUkernel kernel) {
+  if (function == nullptr || kernel == nullptr) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto kernel_record = lupine_library_kernels().find(kernel);
+  if (kernel_record != lupine_library_kernels().end() &&
+      kernel_record->second.library != nullptr) {
+    lupine_library_functions()[function] = kernel_record->second.library;
+  }
+}
+
+extern "C" void lupine_record_library_module(CUmodule module,
+                                             CUlibrary library) {
+  if (module == nullptr || library == nullptr) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  lupine_library_modules()[module] = library;
 }
 
 extern "C" CUresult lupine_record_module_function(CUfunction function,
@@ -2351,12 +2383,14 @@ extern "C" CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel) {
     CUresult result = real(pFunc, route_kernel);
     if (result == CUDA_SUCCESS) {
       lupine_note_function_owner_route(*pFunc, route);
+      lupine_record_library_function(*pFunc, route_kernel);
     }
     return result;
   }
   lupine_kernel_function_key key{lupine_route_identity(route), current_context,
                                  route_kernel};
   if (lupine_kernel_function_cache().find(key, *pFunc)) {
+    lupine_record_library_function(*pFunc, route_kernel);
     return CUDA_SUCCESS;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -2377,6 +2411,7 @@ extern "C" CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel) {
   if (return_value == CUDA_SUCCESS) {
     lupine_kernel_function_cache().insert_or_assign(key, function);
     *pFunc = function;
+    lupine_record_library_function(function, route_kernel);
   }
   return return_value;
 }
@@ -4781,6 +4816,9 @@ static void lupine_prefill_library_snapshot(CUlibrary library, conn_t *conn) {
     if (lupine_record_library_kernel(record.kernel, library,
                                      record.name.c_str(),
                                      remote_route) == CUDA_SUCCESS) {
+      if (record.function != nullptr) {
+        lupine_record_library_function(record.function, record.kernel);
+      }
       lupine_library_kernel_names().insert_or_assign(
           lupine_library_kernel_name_key{library, record.name}, record.kernel);
     }
@@ -5821,13 +5859,25 @@ lupine_validate_graph_dependencies(const CUgraphNode *dependencies,
 // all deep structs so codegen needs no per-type globals.
 static std::mutex g_deep_cache_mutex;
 static std::map<const void *, std::vector<void *>> g_deep_cache;
+// Release paths acquire the handle-association mutex and this mutex together;
+// no path acquires them separately in the opposite order.
 static std::mutex g_retained_string_mutex;
-static std::unordered_map<const void *, std::vector<char *>>
-    g_retained_strings;
+static std::unordered_map<const void *, std::vector<char *>> g_retained_strings;
+
+static void lupine_release_retained_strings_locked(const void *handle) {
+  auto retained = g_retained_strings.find(handle);
+  if (retained == g_retained_strings.end()) {
+    return;
+  }
+  for (char *string : retained->second) {
+    free(string);
+  }
+  g_retained_strings.erase(retained);
+}
 
 extern "C" const char *lupine_retain_returned_string(const void *handle,
-                                                      const char *data,
-                                                      size_t size) {
+                                                     const char *data,
+                                                     size_t size) {
   if (handle == nullptr || (data == nullptr && size != 0)) {
     return nullptr;
   }
@@ -5849,6 +5899,71 @@ extern "C" const char *lupine_retain_returned_string(const void *handle,
     return nullptr;
   }
   return stored;
+}
+
+extern "C" void lupine_release_module_retained_strings(CUmodule module) {
+  std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
+  lupine_release_retained_strings_locked(
+      reinterpret_cast<const void *>(module));
+  auto &functions = lupine_module_functions();
+  for (auto function = functions.begin(); function != functions.end();) {
+    if (function->second.module != module) {
+      ++function;
+      continue;
+    }
+    lupine_release_retained_strings_locked(
+        reinterpret_cast<const void *>(function->first));
+    function = functions.erase(function);
+  }
+  lupine_library_modules().erase(module);
+}
+
+extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
+  std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
+  lupine_release_retained_strings_locked(
+      reinterpret_cast<const void *>(library));
+  auto &kernels = lupine_library_kernels();
+  for (auto kernel = kernels.begin(); kernel != kernels.end();) {
+    if (kernel->second.library != library) {
+      ++kernel;
+      continue;
+    }
+    lupine_release_retained_strings_locked(
+        reinterpret_cast<const void *>(kernel->first));
+    kernel = kernels.erase(kernel);
+  }
+  auto &module_functions = lupine_module_functions();
+  for (auto function = module_functions.begin();
+       function != module_functions.end();) {
+    auto module = lupine_library_modules().find(function->second.module);
+    if (module == lupine_library_modules().end() || module->second != library) {
+      ++function;
+      continue;
+    }
+    lupine_release_retained_strings_locked(
+        reinterpret_cast<const void *>(function->first));
+    function = module_functions.erase(function);
+  }
+  auto &functions = lupine_library_functions();
+  for (auto function = functions.begin(); function != functions.end();) {
+    if (function->second != library) {
+      ++function;
+      continue;
+    }
+    lupine_release_retained_strings_locked(
+        reinterpret_cast<const void *>(function->first));
+    function = functions.erase(function);
+  }
+  auto &modules = lupine_library_modules();
+  for (auto module = modules.begin(); module != modules.end();) {
+    if (module->second != library) {
+      ++module;
+      continue;
+    }
+    lupine_release_retained_strings_locked(
+        reinterpret_cast<const void *>(module->first));
+    module = modules.erase(module);
+  }
 }
 
 extern "C" void lupine_deep_cache_reset(const void *key) {
