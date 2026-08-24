@@ -712,6 +712,52 @@ static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
   return snapshots;
 }
 
+// #612 removed the launch-time parameter scan because the pointers no longer
+// need translating -- a host allocation is identity mapped, so the client
+// pointer is already the device address. The scan also decided which mirrors a
+// synchronization point owes a readback for, and that part still has no other
+// source: marking every mirror instead invalidates ones the device never
+// touched, which hangs multi-instance workloads and breaks stream capture.
+extern "C" void lupine_mark_kernel_param_mappings(void *const *kernel_params,
+                                                  const size_t *sizes,
+                                                  uint32_t count) {
+  if (kernel_params == nullptr || sizes == nullptr || count == 0) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  for (uint32_t i = 0; i < count; ++i) {
+    if (sizes[i] != sizeof(CUdeviceptr) || kernel_params[i] == nullptr) {
+      continue;
+    }
+    CUdeviceptr arg = 0;
+    memcpy(&arg, kernel_params[i], sizeof(arg));
+    if (arg == 0) {
+      continue;
+    }
+    for (auto &entry : lupine_mutable_host_allocations_locked()) {
+      auto &allocation = entry.second;
+      if (allocation.device_ptr == 0 || allocation.local_cuda ||
+          allocation.device_mapping_used) {
+        continue;
+      }
+      uintptr_t host = reinterpret_cast<uintptr_t>(entry.first);
+      bool hit = (arg >= host && arg < host + allocation.size) ||
+                 (arg >= allocation.device_ptr &&
+                  arg < allocation.device_ptr + allocation.size);
+      if (!hit) {
+        continue;
+      }
+      allocation.device_mapping_used = true;
+      if (!allocation.tracking_enabled &&
+          __atomic_exchange_n(&allocation.eager_flush_pending, 1,
+                              __ATOMIC_ACQ_REL) == 0) {
+        __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
+      }
+      break;
+    }
+  }
+}
+
 static void lupine_mark_device_mapping_used(void *host, bool managed) {
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto it = lupine_mutable_host_allocations_locked().find(host);
