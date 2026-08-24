@@ -2231,14 +2231,6 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
   }
 
   size_t page_size = lupine_page_size();
-  // Eager synchronization owns the whole registered page range. An unaligned
-  // device mapping would include unrelated bytes on its edge pages, so retain
-  // the existing rejection and let callers use their fallback path.
-  if (lupine_host_flags_request_mapping(Flags) &&
-      ((reinterpret_cast<uintptr_t>(p) % page_size) != 0 ||
-       (bytesize % page_size) != 0)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
   void *tracked = reinterpret_cast<void *>(covering_base);
 
   void *server_host = nullptr;
@@ -2320,13 +2312,12 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     auto &allocations = lupine_mutable_host_allocations_locked();
     auto it = lupine_find_host_allocation_locked(p);
-    if (it != allocations.end() && it->second.owned) {
-      // Never registered, so the driver reports an invalid argument.
-      return CUDA_ERROR_INVALID_VALUE;
-    }
-    if (it == allocations.end() ||
-        it->second.user_base != reinterpret_cast<uintptr_t>(p)) {
+    if (it == allocations.end()) {
       return CUDA_ERROR_HOST_MEMORY_NOT_REGISTERED;
+    }
+    if (it->second.owned ||
+        it->second.user_base != reinterpret_cast<uintptr_t>(p)) {
+      return CUDA_ERROR_INVALID_VALUE;
     }
     tracked = it->first;
     local_cuda = it->second.local_cuda;

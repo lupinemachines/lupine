@@ -3722,6 +3722,34 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
 
 #endif
 
+CUresult
+cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
+                                     unsigned int numDevices,
+                                     unsigned int flags) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t =
+      CUresult (*)(CUDA_LAUNCH_PARAMS *, unsigned int, unsigned int);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuLaunchCooperativeKernelMultiDevice", &return_value,
+          launchParamsList, numDevices, flags)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernelMultiDevice) <
+          0 ||
+      rpc_write(conn, launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
+      rpc_write(conn, &numDevices, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
 CUresult cuFuncSetBlockShape(CUfunction hfunc, int x, int y, int z) {
   lupine_route route = lupine_route_for_function(hfunc);
   CUresult return_value;
@@ -3891,34 +3919,6 @@ CUresult cuLaunchGridAsync(CUfunction f, int grid_width, int grid_height,
       rpc_write(conn, &grid_height, sizeof(int)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult
-cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
-                                     unsigned int numDevices,
-                                     unsigned int flags) {
-  lupine_route route = lupine_route_for_default();
-  CUresult return_value;
-  using real_fn_t =
-      CUresult (*)(CUDA_LAUNCH_PARAMS *, unsigned int, unsigned int);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuLaunchCooperativeKernelMultiDevice", &return_value,
-          launchParamsList, numDevices, flags)) {
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernelMultiDevice) <
-          0 ||
-      rpc_write(conn, launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
-      rpc_write(conn, &numDevices, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -7696,6 +7696,8 @@ std::unordered_map<std::string, void *> functionMap = {
 #endif
     {"cuFuncGetParamInfo", (void *)cuFuncGetParamInfo},
     {"cuLaunchCooperativeKernel", (void *)cuLaunchCooperativeKernel},
+    {"cuLaunchCooperativeKernelMultiDevice",
+     (void *)cuLaunchCooperativeKernelMultiDevice},
     {"cuFuncSetBlockShape", (void *)cuFuncSetBlockShape},
     {"cuFuncSetSharedSize", (void *)cuFuncSetSharedSize},
     {"cuParamSetSize", (void *)cuParamSetSize},
@@ -7704,8 +7706,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuLaunch", (void *)cuLaunch},
     {"cuLaunchGrid", (void *)cuLaunchGrid},
     {"cuLaunchGridAsync", (void *)cuLaunchGridAsync},
-    {"cuLaunchCooperativeKernelMultiDevice",
-     (void *)cuLaunchCooperativeKernelMultiDevice},
     {"cuParamSetTexRef", (void *)cuParamSetTexRef},
     {"cuFuncSetSharedMemConfig", (void *)cuFuncSetSharedMemConfig},
     {"cuGraphCreate", (void *)cuGraphCreate},
