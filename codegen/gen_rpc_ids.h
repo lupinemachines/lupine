@@ -77,6 +77,7 @@
 #define RPC_cuKernelGetAttribute 1724498758
 #define RPC_cuKernelSetAttribute 1775703493
 #define RPC_cuKernelSetCacheConfig 1572033421
+#define RPC_cuKernelGetName 1923872670
 #define RPC_cuKernelGetParamInfo 89830551
 #define RPC_cuMemGetInfo_v2 969693882
 #define RPC_cuMemAlloc_v2 892243478
@@ -216,6 +217,7 @@
 #define RPC_cuFuncSetAttribute 1296138514
 #define RPC_cuFuncSetCacheConfig 1688761246
 #define RPC_cuFuncGetModule 1933245726
+#define RPC_cuFuncGetName 1852767197
 #define RPC_cuFuncGetParamInfo 567025728
 #define RPC_cuLaunchKernel 732897317
 #define RPC_cuLaunchKernelEx 1100221233

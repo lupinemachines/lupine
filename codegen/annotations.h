@@ -2365,6 +2365,7 @@ CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
 CUresult cuModuleLoadFatBinary(CUmodule *module, const void *fatCubin);
 /**
  * @routingkey MODULE hmod
+ * @release MODULE hmod
  * @param hmod SEND_ONLY
  */
 CUresult cuModuleUnload(CUmodule hmod);
@@ -2499,6 +2500,7 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
  * @disabled server - manual server keeps the library loaded, see the handler
  * @async
  * @routingkey LIBRARY library
+ * @release LIBRARY library
  * @param library SEND_ONLY
  * @server CUDA
  */
@@ -2515,6 +2517,7 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
 /**
  * @routingkey LIBRARY library
  * @recordowner MODULE pMod
+ * @recordparent LIBRARY pMod library
  * @param pMod RECV_ONLY
  * @param library SEND_ONLY
  * @server CUDA
@@ -2605,6 +2608,14 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
  */
 CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
                                 CUdevice dev);
+/**
+ * @guard CUDA_VERSION >= 12030
+ * @routingkey FUNCTION hfunc
+ * @retain name hfunc
+ * @param name RECV_ONLY NULL_TERMINATED
+ * @param hfunc SEND_ONLY
+ */
+CUresult cuKernelGetName(const char **name, CUkernel hfunc);
 /**
  * @routingkey CURRENT_CONTEXT
  * @param free SEND_RECV
@@ -3939,6 +3950,14 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config);
  * @param hfunc SEND_ONLY
  */
 CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc);
+/**
+ * @guard CUDA_VERSION >= 12030
+ * @routingkey FUNCTION hfunc
+ * @retain name hfunc
+ * @param name RECV_ONLY NULL_TERMINATED
+ * @param hfunc SEND_ONLY
+ */
+CUresult cuFuncGetName(const char **name, CUfunction hfunc);
 
 /**
  * @disabled

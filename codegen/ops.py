@@ -786,7 +786,8 @@ class DeepStructOperation:
 @dataclass
 class NullTerminatedOperation:
     """
-    Null terminated operations are operations that are passed as a null terminated string.
+    A null-terminated input string or a driver-owned string returned through
+    ``const char **``.
     """
 
     send: bool
@@ -794,6 +795,13 @@ class NullTerminatedOperation:
     parameter: Parameter
     ptr: Pointer
     length_type: str = "std::size_t"
+
+    def client_declaration(self) -> str:
+        name = self.parameter.name
+        return (
+            f"    {self.length_type} {name}_len = 0;\n"
+            f"    std::string {name}_result;\n"
+        )
 
     def client_rpc_write(self, f):
         if not self.send:
@@ -812,9 +820,19 @@ class NullTerminatedOperation:
 
     @property
     def server_declaration(self) -> str:
+        type_ = self.ptr.ptr_to.format() if self.recv else self.ptr.format()
+        initializer = " = 0" if self.recv else ""
         return (
-            f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
-            + f"    {self.length_type} {self.parameter.name}_len;\n"
+            f"    {type_} {self.parameter.name} = nullptr;\n"
+            + f"    {self.length_type} {self.parameter.name}_len{initializer};\n"
+        )
+
+    def client_preflight(self, f, error_return: str):
+        if not self.recv:
+            return
+        f.write(
+            f"    if ({self.parameter.name} == nullptr)\n"
+            f"        return {error_return};\n"
         )
 
     def client_unified_copy(self, f, direction, error):
@@ -851,36 +869,53 @@ class NullTerminatedOperation:
 
     @property
     def server_reference(self) -> str:
+        if self.recv:
+            return f"&{self.parameter.name}"
         return self.parameter.name
 
     def server_rpc_write(self, f):
         if not self.recv:
             return
+        name = self.parameter.name
         f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                length_type=self.length_type,
-            )
-        )
-        f.write(
-            "        rpc_write(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name,
-            )
+            f"        (({name}_len = {name} != nullptr\n"
+            f"              ? static_cast<{self.length_type}>(std::strlen({name}))\n"
+            f"              : 0), false) ||\n"
+            f"        rpc_write(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
+            f"        ({name}_len != 0 && rpc_write(conn, {name}, {name}_len) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
         if not self.recv:
             return
+        name = self.parameter.name
         f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                length_type=self.length_type,
-            )
+            f"        rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
+            f"        {name}_len > (1U << 20) ||\n"
+            f"        ({name}_result.resize({name}_len), false) ||\n"
+            f"        ({name}_len != 0 &&\n"
+            f"         rpc_read(conn, {name}_result.data(), {name}_len) < 0) ||\n"
         )
+
+    def client_post_rpc(
+        self,
+        f,
+        success_value: str,
+        allocation_error: str,
+        owner_name: str,
+    ):
+        if not self.recv:
+            return
+        name = self.parameter.name
         f.write(
-            "        rpc_read(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name
-            )
+            f"    if (return_value == {success_value}) {{\n"
+            f"        const char *{name}_stored = lupine_retain_returned_string(\n"
+            f"            reinterpret_cast<const void *>({owner_name}), "
+            f"{name}_result.data(), {name}_result.size());\n"
+            f"        if ({name}_stored == nullptr)\n"
+            f"            return {allocation_error};\n"
+            f"        *{name} = {name}_stored;\n"
+            "    }\n"
         )
 
 
@@ -1082,6 +1117,25 @@ class OwnerAnnotation:
 
 
 @dataclass
+class RetainAnnotation:
+    parameter: Parameter
+    handle: Parameter
+
+
+@dataclass
+class ReleaseAnnotation:
+    kind: str
+    parameter: Parameter
+
+
+@dataclass
+class ParentAnnotation:
+    kind: str
+    child: Parameter
+    parent: Parameter
+
+
+@dataclass
 class CrossServerCopyAnnotation:
     dst: Parameter
     src: Parameter
@@ -1122,11 +1176,20 @@ class FunctionAnnotationMetadata:
     routing_parameter: Optional[Parameter] = None
     routing_fallback: Optional[RoutingFallbackAnnotation] = None
     record_owners: list[OwnerAnnotation] = None
+    retains: list[RetainAnnotation] = None
+    releases: list[ReleaseAnnotation] = None
+    parents: list[ParentAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
+        if self.retains is None:
+            self.retains = []
+        if self.releases is None:
+            self.releases = []
+        if self.parents is None:
+            self.parents = []
         if self.translate_deviceptrs is None:
             self.translate_deviceptrs = []
