@@ -6,15 +6,14 @@ concurrency:
 
 # Expected repository variables:
 #   GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
-# Optional repository variable:
-#   GCP_BUILD_CACHE_BUCKET (a dedicated bucket; this workflow owns its lifecycle)
+# The dedicated integration binary cache is:
+#   gs://kevmo314-lupine-gpu-integration-cache
 #
 # Keep GCP_SERVICE_ACCOUNT on a custom role rather than project Owner/Editor.
 # It should be bound through a Workload Identity Provider condition restricted
 # to this repository's numeric GitHub IDs, this workflow path, and trusted refs.
-# When GCP_BUILD_CACHE_BUCKET is set, the role also needs storage.buckets.get,
-# storage.buckets.update, storage.objects.create, storage.objects.delete,
-# storage.objects.get, and storage.objects.update on that bucket.
+# The service account has bucket-scoped Storage Admin access to the dedicated
+# cache bucket, and this workflow owns that bucket's lifecycle configuration.
 
 on:
   pull_request:
@@ -69,7 +68,7 @@ jobs:
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      GCP_BUILD_CACHE_BUCKET: ${{ vars.GCP_BUILD_CACHE_BUCKET }}
+      GCP_BUILD_CACHE_BUCKET: kevmo314-lupine-gpu-integration-cache
       INTEGRATION_BINARY_CACHE_VERSION: v1
       GCP_ZONE: us-central1-a
       GCP_FALLBACK_ZONES: >-
@@ -120,7 +119,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Configure GCS build cache lifecycle
-        if: github.event_name != 'pull_request' && matrix.label == 'cuda13-3' && env.GCP_BUILD_CACHE_BUCKET != ''
+        if: github.event_name != 'pull_request' && matrix.label == 'cuda13-3'
         run: |
           set -euo pipefail
           bucket_name="${GCP_BUILD_CACHE_BUCKET#gs://}"
@@ -441,44 +440,38 @@ jobs:
           "${ssh_base[@]}" \
             "rm -rf '$remote_cache_dir' '$remote_cache_archive'; mkdir -p '$remote_cache_dir'"
 
-          if [[ -n "$GCP_BUILD_CACHE_BUCKET" ]]; then
-            bucket_name="${GCP_BUILD_CACHE_BUCKET#gs://}"
-            bucket_name="${bucket_name%/}"
-            cache_prefix="gpu-integration/binaries/$INTEGRATION_BINARY_CACHE_VERSION/cuda-${{ matrix.cuda_version }}/sm-$CUDA_SAMPLES_ARCH"
-            cache_uri="gs://$bucket_name/$cache_prefix/inputs-$cache_inputs.tar.gz"
-            expected_sha="$(
-              gcloud storage objects describe "$cache_uri" \
-                --raw \
-                --format='value(metadata.sha256)' 2>/dev/null || true
-            )"
+          cache_prefix="gpu-integration/binaries/$INTEGRATION_BINARY_CACHE_VERSION/cuda-${{ matrix.cuda_version }}/sm-$CUDA_SAMPLES_ARCH"
+          cache_uri="gs://$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz"
+          expected_sha="$(
+            gcloud storage objects describe "$cache_uri" \
+              --raw \
+              --format='value(metadata.sha256)' 2>/dev/null || true
+          )"
 
-            if [[ -n "$expected_sha" ]] && \
-              gcloud storage cp "$cache_uri" - | \
-                "${ssh_base[@]}" "cat > '$remote_cache_archive'"; then
-              actual_sha="$(
-                "${ssh_base[@]}" \
-                  "sha256sum '$remote_cache_archive' | cut -d' ' -f1"
-              )"
-              if [[ "$actual_sha" == "$expected_sha" ]] && \
-                "${ssh_base[@]}" "
-                  set -euo pipefail
-                  tar -xzf '$remote_cache_archive' -C '$remote_cache_dir'
-                  rm -f '$remote_cache_archive'
-                  test -d '$remote_cache_dir/cuda-samples-src'
-                  test -d '$remote_cache_dir/cuda-library-samples'
-                "; then
-                cache_hit=true
-                gcloud storage objects update "$cache_uri" \
-                  --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-                echo "Restored integration binaries from $cache_uri"
-              fi
+          if [[ -n "$expected_sha" ]] && \
+            gcloud storage cp "$cache_uri" - | \
+              "${ssh_base[@]}" "cat > '$remote_cache_archive'"; then
+            actual_sha="$(
+              "${ssh_base[@]}" \
+                "sha256sum '$remote_cache_archive' | cut -d' ' -f1"
+            )"
+            if [[ "$actual_sha" == "$expected_sha" ]] && \
+              "${ssh_base[@]}" "
+                set -euo pipefail
+                tar -xzf '$remote_cache_archive' -C '$remote_cache_dir'
+                rm -f '$remote_cache_archive'
+                test -d '$remote_cache_dir/cuda-samples-src'
+                test -d '$remote_cache_dir/cuda-library-samples'
+              "; then
+              cache_hit=true
+              gcloud storage objects update "$cache_uri" \
+                --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "Restored integration binaries from $cache_uri"
             fi
-          else
-            echo "GCP_BUILD_CACHE_BUCKET is unset; integration binaries will be rebuilt"
           fi
 
           if [[ "$cache_hit" != "true" ]]; then
-            echo "No valid integration binary cache found at ${cache_uri:-<cache disabled>}"
+            echo "No valid integration binary cache found at $cache_uri"
             "${ssh_base[@]}" \
               "rm -rf '$remote_cache_dir' '$remote_cache_archive'; mkdir -p '$remote_cache_dir'"
           fi
@@ -690,7 +683,7 @@ jobs:
           exit "$remote_status"
 
       - name: Refresh Google Cloud credentials for cache upload
-        if: github.event_name != 'pull_request' && env.GCP_BUILD_CACHE_BUCKET != '' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
+        if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
@@ -698,7 +691,7 @@ jobs:
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - name: Save integration binary cache to GCS
-        if: github.event_name != 'pull_request' && env.GCP_BUILD_CACHE_BUCKET != '' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
+        if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
         run: |
           set -euo pipefail
           ssh_base=(
