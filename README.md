@@ -295,27 +295,14 @@ microgpt_train: PASS
 
 ## Local development
 
-Building the binaries requires running codegen first. Lupine codegen reads the cuda dependency header files in order to generate rpc calls.
-
-To ensure codegen works properly, the proper cuda packages need to be installed on your OS. Take a look at our [Dockerfile](./Dockerfile) to see an example.
-
-Take a look [here to install CUDA Toolkit](https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=WSL-Ubuntu&target_version=2.0&target_type=deb_network) (choose your system)
-
-Codegen requires [cuBLAS](https://developer.nvidia.com/hpc-sdk-downloads), [cuDNN](https://developer.nvidia.com/cudnn-downloads?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=24.04&target_type=deb_network), [NVML](https://developer.nvidia.com/management-library-nvml), etc:
-
-```py
-cudnn_graph_header = find_header_file("cudnn_graph.h")
-cudnn_ops_header   = find_header_file("cudnn_ops.h")
-cuda_header        = find_header_file("cuda.h")
-cublas_header      = find_header_file("cublas_api.h")
-cudart_header      = find_header_file("cuda_runtime_api.h")
-annotations_header = find_header_file("annotations.h")
-```
+Building the binaries requires running codegen first. The repository provides a
+containerized runner so local development and CI use the same CUDA headers,
+Python, parser, and formatter versions. Docker is the only host dependency.
 
 ### Run codegen
 
 ```bash
-uv run codegen/codegen.py
+./codegen/run.sh
 ```
 
 Ensure there are no errors in the output of the codegen.
