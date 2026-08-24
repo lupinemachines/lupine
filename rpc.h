@@ -143,6 +143,17 @@ struct rpc_lifecycle_hooks {
   void (*thread_lane_destroyed)(uint64_t lane_id);
 };
 extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
+// A backend whose arenas can only be reserved through its own driver installs
+// this before accepting connections; without one the RPC core reserves with a
+// fixed anonymous mapping. Windows is the case that needs it: WDDM honors a
+// fixed address only through cuMemAddressReserve, and that call lives in the
+// CUDA backend rather than the accelerator-neutral core.
+struct rpc_va_provider {
+  bool (*window)(lupine_va_window *window);
+  int (*reserve)(conn_t *conn, uintptr_t base, size_t size);
+  void (*release)(conn_t *conn);
+};
+extern int rpc_set_va_provider(const rpc_va_provider *provider);
 
 extern int rpc_dispatch(conn_t *conn, int parity);
 // Binds the calling thread to a peer-created HTTP/2 lane. Server lane workers

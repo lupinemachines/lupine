@@ -3799,6 +3799,10 @@ int handle_cuGraphDestroy(conn_t *conn) {
   return 0;
 }
 
+#if defined(_WIN32)
+static bool lupine_server_managed_range(const void *pointer, size_t size);
+#endif
+
 // Fire-and-forget: connection ordering already guarantees the flush is
 // applied before any later request, so no response is sent.
 int handle_lupineManagedHostFlush(conn_t *conn) {
@@ -3811,12 +3815,35 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
   for (uint32_t i = 0; i < count; ++i) {
     void *server_host_ptr = nullptr;
     size_t bytes = 0;
+    if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
+        rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
+      return -1;
+    }
+#if defined(_WIN32)
+    // A Windows arena holds device memory, so these bytes cannot be written
+    // straight into it the way a CPU-accessible mapping takes them.
+    if (lupine_server_managed_range(server_host_ptr, bytes)) {
+      void *staging = nullptr;
+      if (cuMemAllocHost(&staging, bytes) != CUDA_SUCCESS) {
+        return -1;
+      }
+      int read_result = rpc_read(conn, staging, bytes);
+      CUresult copy_result = CUDA_ERROR_UNKNOWN;
+      if (read_result >= 0) {
+        copy_result = cuMemcpyHtoD_v2(
+            reinterpret_cast<CUdeviceptr>(server_host_ptr), staging, bytes);
+      }
+      cuMemFreeHost(staging);
+      if (read_result < 0 || copy_result != CUDA_SUCCESS) {
+        return -1;
+      }
+      continue;
+    }
+#endif
     // Host mappings and native identity-VA managed allocations are both CPU
     // accessible. Reading directly avoids a context-dependent pinned
     // allocation on this fire-and-forget RPC path.
-    if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
-        rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
-        rpc_read(conn, server_host_ptr, bytes) < 0) {
+    if (rpc_read(conn, server_host_ptr, bytes) < 0) {
       return -1;
     }
   }
@@ -4008,6 +4035,189 @@ bool lupine_record_server_allocation(
   }
 }
 
+#if defined(_WIN32)
+// WDDM cannot be steered the way the Linux allocator is: there is no symbol to
+// interpose, and the managed CPU address is assigned in kernel mode. Instead
+// the arena is a CUDA VA reservation and each allocation is physical memory
+// mapped into it, which puts the pointer at an address we chose. Nothing native
+// is lost: WDDM reports concurrentManagedAccess=0 and no pageable access, so
+// migration, advice, and prefetch were never available here.
+//
+// Fixed-address hints are honored only in a low band; above roughly 1 TiB the
+// driver fails, and higher still cuMemAddressReserve does not return at all, so
+// the window is stated rather than discovered.
+static constexpr uintptr_t LUPINE_WIN_VA_BASE = UINT64_C(0x2000000000);
+static constexpr size_t LUPINE_WIN_VA_SIZE = UINT64_C(0x4000000000);
+
+bool lupine_windows_va_window(lupine_va_window *window) {
+  *window = {LUPINE_WIN_VA_BASE, LUPINE_WIN_VA_SIZE};
+  return true;
+}
+
+// The arena is claimed during the HTTP/2 handshake, before any RPC has run, so
+// the server has not touched CUDA yet. Bring up a primary context here rather
+// than reordering server startup around a platform-specific need.
+bool lupine_windows_ensure_context() {
+  static bool ready = [] {
+    if (cuInit(0) != CUDA_SUCCESS) {
+      return false;
+    }
+    CUdevice device = 0;
+    CUcontext context = nullptr;
+    if (cuDeviceGet(&device, 0) != CUDA_SUCCESS ||
+        cuDevicePrimaryCtxRetain(&context, device) != CUDA_SUCCESS) {
+      return false;
+    }
+    return cuCtxSetCurrent(context) == CUDA_SUCCESS;
+  }();
+  CUcontext current = nullptr;
+  if (cuCtxGetCurrent(&current) == CUDA_SUCCESS && current == nullptr) {
+    CUdevice device = 0;
+    CUcontext context = nullptr;
+    if (cuDeviceGet(&device, 0) == CUDA_SUCCESS &&
+        cuDevicePrimaryCtxRetain(&context, device) == CUDA_SUCCESS) {
+      cuCtxSetCurrent(context);
+    }
+  }
+  return ready;
+}
+
+int lupine_windows_va_reserve(conn_t *conn, uintptr_t base, size_t size) {
+  (void)conn;
+  if (!lupine_windows_ensure_context()) {
+    return -1;
+  }
+  CUdeviceptr reserved = 0;
+  if (cuMemAddressReserve(&reserved, size, 0, base, 0) != CUDA_SUCCESS) {
+    return -1;
+  }
+  // The address is a hint. A driver that placed the range elsewhere has not
+  // given us identity, so hand it back and let the peer try another slot.
+  if (reserved != base) {
+    cuMemAddressFree(reserved, size);
+    return -1;
+  }
+  return 0;
+}
+
+void lupine_windows_va_release(conn_t *conn) {
+  cuMemAddressFree(static_cast<CUdeviceptr>(conn->va_base), conn->va_size);
+}
+
+const rpc_va_provider lupine_windows_va_provider = {
+    lupine_windows_va_window,
+    lupine_windows_va_reserve,
+    lupine_windows_va_release,
+};
+
+// Installed at load time: the first connection's handshake already needs it,
+// which is earlier than any server entry point runs.
+const int lupine_windows_va_provider_installed =
+    rpc_set_va_provider(&lupine_windows_va_provider);
+
+size_t lupine_windows_vmm_granularity() {
+  static size_t granularity = [] {
+    CUmemAllocationProp prop = {};
+    prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+    prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    prop.location.id = 0;
+    size_t value = 0;
+    if (cuMemGetAllocationGranularity(&value, &prop,
+                                      CU_MEM_ALLOC_GRANULARITY_RECOMMENDED) !=
+            CUDA_SUCCESS ||
+        value == 0) {
+      value = 2 * 1024 * 1024;
+    }
+    return value;
+  }();
+  return granularity;
+}
+
+// Physical memory mapped at an address the arena picked. Kept per allocation so
+// a free can unmap and release exactly what it created.
+struct lupine_windows_vmm_mapping {
+  CUmemGenericAllocationHandle handle;
+  size_t size;
+};
+std::mutex lupine_windows_vmm_mutex;
+std::unordered_map<uintptr_t, lupine_windows_vmm_mapping> lupine_windows_vmm;
+
+CUresult lupine_windows_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
+                                      size_t bytes) {
+  if (!lupine_windows_ensure_context()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
+  int device = 0;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
+    device = 0;
+  }
+  size_t granularity = lupine_windows_vmm_granularity();
+  if (bytes > SIZE_MAX - (granularity - 1)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  size_t mapped = (bytes + granularity - 1) & ~(granularity - 1);
+  uintptr_t claimed = 0;
+  if (!lupine_va_claim(conn, mapped, granularity, &claimed)) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = device;
+  CUmemGenericAllocationHandle handle = 0;
+  CUresult result = cuMemCreate(&handle, mapped, &prop, 0);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = cuMemMap(static_cast<CUdeviceptr>(claimed), mapped, 0, handle, 0);
+  if (result == CUDA_SUCCESS) {
+    CUmemAccessDesc access = {};
+    access.location = prop.location;
+    access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+    result =
+        cuMemSetAccess(static_cast<CUdeviceptr>(claimed), mapped, &access, 1);
+    if (result != CUDA_SUCCESS) {
+      cuMemUnmap(static_cast<CUdeviceptr>(claimed), mapped);
+    }
+  }
+  if (result != CUDA_SUCCESS) {
+    cuMemRelease(handle);
+    return result;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_windows_vmm_mutex);
+    try {
+      lupine_windows_vmm.emplace(claimed,
+                                 lupine_windows_vmm_mapping{handle, mapped});
+    } catch (const std::bad_alloc &) {
+      cuMemUnmap(static_cast<CUdeviceptr>(claimed), mapped);
+      cuMemRelease(handle);
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+  *pointer = static_cast<CUdeviceptr>(claimed);
+  return CUDA_SUCCESS;
+}
+
+CUresult lupine_windows_managed_free(uintptr_t address) {
+  lupine_windows_vmm_mapping mapping = {};
+  {
+    std::lock_guard<std::mutex> lock(lupine_windows_vmm_mutex);
+    auto it = lupine_windows_vmm.find(address);
+    if (it == lupine_windows_vmm.end()) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+    mapping = it->second;
+    lupine_windows_vmm.erase(it);
+  }
+  CUresult unmap = cuMemUnmap(static_cast<CUdeviceptr>(address), mapping.size);
+  CUresult release = cuMemRelease(mapping.handle);
+  return unmap != CUDA_SUCCESS ? unmap : release;
+}
+
+#endif
+
 CUresult lupine_server_host_alloc(conn_t *conn, void **pointer,
                                   CUdeviceptr *device_pointer, size_t bytes,
                                   unsigned int flags) {
@@ -4020,7 +4230,27 @@ CUresult lupine_server_host_alloc(conn_t *conn, void **pointer,
     }
     return result;
   }
-#if !defined(__linux__)
+#if defined(_WIN32)
+  // cuMemHostRegister always maps into the driver's pinned aperture, so a
+  // caller-chosen host address can never be the device address. cuMemHostAlloc
+  // hands back memory that already satisfies identity, just not inside the
+  // arena; the client mirrors that range on demand instead.
+  {
+    CUresult result = cuMemHostAlloc(pointer, bytes, flags);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    CUdeviceptr mapped = 0;
+    if (cuMemHostGetDevicePointer(&mapped, *pointer, 0) != CUDA_SUCCESS ||
+        mapped != reinterpret_cast<uintptr_t>(*pointer)) {
+      cuMemFreeHost(*pointer);
+      *pointer = nullptr;
+      return CUDA_ERROR_NOT_SUPPORTED;
+    }
+    *device_pointer = mapped;
+    return CUDA_SUCCESS;
+  }
+#elif !defined(__linux__)
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
   long configured_page_size = sysconf(_SC_PAGESIZE);
@@ -4075,7 +4305,21 @@ CUresult lupine_server_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
   if (conn->va_size == 0) {
     return cuMemAllocManaged(pointer, bytes, flags);
   }
-#if !defined(__linux__)
+#if defined(_WIN32)
+  (void)flags;
+  CUresult windows_result = lupine_windows_managed_alloc(conn, pointer, bytes);
+  if (windows_result != CUDA_SUCCESS) {
+    return windows_result;
+  }
+  if (!lupine_record_server_allocation(
+          *pointer,
+          {conn, bytes, flags, lupine_server_allocation_kind::managed})) {
+    lupine_windows_managed_free(*pointer);
+    *pointer = 0;
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  return CUDA_SUCCESS;
+#elif !defined(__linux__)
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
   conn_t *previous = lupine_server_va_connection;
@@ -4110,7 +4354,11 @@ CUresult lupine_free_server_allocation_locked(
     }
 #endif
   } else {
+#if defined(_WIN32)
+    result = lupine_windows_managed_free(address);
+#else
     result = cuMemFree_v2(address);
+#endif
   }
   return result;
 }
@@ -4136,6 +4384,24 @@ mmap64(void *address, size_t size, int protection, int flags, int fd,
        off64_t offset) {
   static_assert(sizeof(off_t) == sizeof(off64_t));
   return mmap(address, size, protection, flags, fd, static_cast<off_t>(offset));
+}
+#endif
+
+#if defined(_WIN32)
+// Consulted only by the Windows flush path, to tell an arena range that needs a
+// copy from a host mapping that can take the bytes directly.
+static bool lupine_server_managed_range(const void *pointer, size_t size) {
+  uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
+  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
+  for (const auto &entry : lupine_server_state.allocations) {
+    if (entry.second.kind != lupine_server_allocation_kind::managed ||
+        size > entry.second.size || address < entry.first ||
+        address - entry.first > entry.second.size - size) {
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 #endif
 
