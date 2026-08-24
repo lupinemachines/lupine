@@ -1042,22 +1042,15 @@ static bool lupine_host_ptr_in_mapping(CUdeviceptr ptr,
   return true;
 }
 
-extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
-                                                  CUdeviceptr *translated) {
+// A managed allocation's client host alias is mapped at the server device VA
+// (identity arenas are reserve-or-fail at connect), so alias addresses go on
+// the wire unchanged; callers only need to know whether ptr is one.
+extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr) {
   void *host = reinterpret_cast<void *>(ptr);
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto it = lupine_find_host_allocation_locked(host);
-  if (it == lupine_mutable_host_allocations_locked().end() ||
-      !it->second.managed) {
-    return false;
-  }
-
-  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
-  uintptr_t addr = reinterpret_cast<uintptr_t>(host);
-  if (translated != nullptr) {
-    *translated = it->second.device_ptr + (addr - base);
-  }
-  return true;
+  return it != lupine_mutable_host_allocations_locked().end() &&
+         it->second.managed;
 }
 
 static bool lupine_translate_client_host_ptr_to_server(
@@ -1124,7 +1117,7 @@ static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
 }
 
 static bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
-  if (lupine_translate_managed_host_ptr(ptr, nullptr)) {
+  if (lupine_is_managed_host_alias(ptr)) {
     return false;
   }
   if (lupine_host_ptr_is_tracked(ptr)) {
@@ -2577,7 +2570,7 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
 
   CUdeviceptr query_ptr = ptr;
-  bool managed_alias = lupine_translate_managed_host_ptr(ptr, &query_ptr);
+  bool managed_alias = lupine_is_managed_host_alias(ptr);
   CUdeviceptr remote_host_base = 0;
   CUdeviceptr remote_device_base = 0;
   bool remote_host_alias = false;
@@ -2642,7 +2635,7 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
   }
 
   CUdeviceptr target_ptr = ptr;
-  if (!lupine_translate_managed_host_ptr(ptr, &target_ptr)) {
+  if (!lupine_is_managed_host_alias(ptr)) {
     lupine_translate_client_host_ptr_to_server(ptr, &target_ptr);
   }
   lupine_route route = lupine_route_for_deviceptr(target_ptr);
@@ -2734,7 +2727,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   }
 
   CUdeviceptr query_ptr = ptr;
-  bool managed_alias = lupine_translate_managed_host_ptr(ptr, &query_ptr);
+  bool managed_alias = lupine_is_managed_host_alias(ptr);
   CUdeviceptr remote_host_base = 0;
   CUdeviceptr remote_device_base = 0;
   bool remote_host_alias = false;

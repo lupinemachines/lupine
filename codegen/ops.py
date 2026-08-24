@@ -1145,11 +1145,6 @@ class CrossServerCopyAnnotation:
 
 
 @dataclass
-class DevicePtrTranslationAnnotation:
-    parameter: Parameter
-
-
-@dataclass
 class RoutingFallbackAnnotation:
     kind: str
     parameter: Parameter
@@ -1180,7 +1175,6 @@ class FunctionAnnotationMetadata:
     releases: list[ReleaseAnnotation] = None
     parents: list[ParentAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
-    translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
@@ -1191,5 +1185,3 @@ class FunctionAnnotationMetadata:
             self.releases = []
         if self.parents is None:
             self.parents = []
-        if self.translate_deviceptrs is None:
-            self.translate_deviceptrs = []
