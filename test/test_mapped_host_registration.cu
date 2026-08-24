@@ -70,9 +70,39 @@ int main() {
     return 1;
   }
   unsigned char *unaligned = block + 64;
-  if (!cu_is(cuMemHostRegister(unaligned, page_size * 2 + 17,
+  if (!cu_ok(cuMemHostRegister(unaligned, page_size * 2 + 17,
+                               CU_MEMHOSTREGISTER_PORTABLE |
+                                   CU_MEMHOSTREGISTER_DEVICEMAP),
+             "unaligned cuMemHostRegister")) {
+    return 1;
+  }
+  if (!cu_is(cuMemHostRegister(block + page_size, page_size,
                                CU_MEMHOSTREGISTER_DEVICEMAP),
-             CUDA_ERROR_INVALID_VALUE, "unaligned cuMemHostRegister")) {
+             CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED,
+             "overlapping unaligned cuMemHostRegister")) {
+    return 1;
+  }
+
+  CUdeviceptr unaligned_mapped = 0;
+  if (!cu_ok(cuMemHostGetDevicePointer(&unaligned_mapped, unaligned, 0),
+             "unaligned cuMemHostGetDevicePointer")) {
+    return 1;
+  }
+  unaligned[0] = 41;
+  increment_byte<<<1, 1>>>(reinterpret_cast<unsigned char *>(unaligned_mapped));
+  if (cudaGetLastError() != cudaSuccess ||
+      cudaDeviceSynchronize() != cudaSuccess || unaligned[0] != 42) {
+    std::fprintf(stderr,
+                 "direct unaligned device access produced %u, expected 42\n",
+                 static_cast<unsigned int>(unaligned[0]));
+    return 1;
+  }
+  if (!cu_is(cuMemHostUnregister(unaligned + page_size),
+             CUDA_ERROR_INVALID_VALUE,
+             "interior unaligned cuMemHostUnregister")) {
+    return 1;
+  }
+  if (!cu_ok(cuMemHostUnregister(unaligned), "unaligned cuMemHostUnregister")) {
     return 1;
   }
 
