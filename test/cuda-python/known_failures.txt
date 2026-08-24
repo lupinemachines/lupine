@@ -40,9 +40,6 @@ test_cuda.py::test_cuda_coredump_attr
 test_cuda.py::test_cuKernelGetName_failure
 test_cuda.py::test_cuFuncGetName_failure
 
-# #585 cudaHostRegister(PORTABLE|DEVICEMAP) sub-range
-test_cudart.py::test_cudart_hostRegister
-
 # #599 CUDA 11 cuGraphInstantiate_v2 with a log buffer (11.8 lane)
 test_cuda.py::test_cuda_graphMem_attr
 test_cudart.py::test_cudart_cudaGraphAddMemcpyNode1D
