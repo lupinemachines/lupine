@@ -187,6 +187,15 @@ extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
 
 constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
 constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
+// Peer was built from a different tree. Retrying another arena slot cannot
+// help, so the dial loop gives up rather than treating this as a VA conflict.
+constexpr int LUPINE_RPC_HTTP2_IDENTITY_MISMATCH = -4;
+// This build's wire identity, and the comparison the preflight applies. An
+// empty side means that peer cannot state what it is, which reads as
+// unverifiable rather than as a match.
+extern const char *lupine_wire_identity(void);
+extern bool lupine_wire_identity_compatible(const char *local,
+                                            const char *peer);
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
@@ -199,6 +208,13 @@ extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
+// Waits for the peer's response headers on the session's own connection and
+// settles the build check and, when one was requested, the arena verdict.
+// rpc_http2_client_init already does this when an arena was requested; callers
+// that requested none run it themselves, and a caller with no live peer skips
+// it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT, or
+// LUPINE_RPC_HTTP2_IDENTITY_MISMATCH.
+extern int rpc_http2_client_await_ready(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
 struct rpc_http2_server_metadata {
@@ -209,6 +225,9 @@ struct rpc_http2_server_metadata {
 // The returned pointer remains valid until rpc_http2_destroy() or
 // rpc_conn_destroy(); the probe connection must not be reused for RPC.
 extern const char *rpc_http2_client_probe(conn_t *conn);
+// Read after the peer's response headers arrive. Valid until the transport is
+// destroyed.
+extern const char *rpc_http2_peer_wire_identity(conn_t *conn);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
 extern int rpc_http2_server_init(conn_t *conn);
