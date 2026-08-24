@@ -5197,6 +5197,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
+  lupine_mark_kernel_param_mappings(kernelParams, param_sizes.data(),
+                                    param_count);
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
   bool sync_after_launch =
@@ -5279,6 +5281,8 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
+  lupine_mark_kernel_param_mappings(kernelParams, param_sizes.data(),
+                                    param_count);
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
   bool sync_after_launch =
@@ -5364,6 +5368,8 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
+  lupine_mark_kernel_param_mappings(kernelParams, param_sizes.data(),
+                                    param_count);
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
 
