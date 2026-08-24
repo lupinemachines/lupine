@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["clang-format==18.1.3", "cxxheaderparser"]
+# dependencies = ["clang-format==18.1.3", "cxxheaderparser==1.9.2"]
 # ///
 from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
