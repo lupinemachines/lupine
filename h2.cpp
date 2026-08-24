@@ -85,6 +85,7 @@ struct h2_transport {
   int response_waiters = 0;
   bool transport_failed = false;
   std::string peer_cuda_version;
+  std::string peer_wire_identity;
   std::string server_version;
   std::string session_id;
   std::string peer_va_base;
@@ -437,6 +438,11 @@ constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
 constexpr char kLupineVaSizeHeader[] = "x-lupine-va-size";
+constexpr char kLupineWireIdentityHeader[] = "x-lupine-wire-identity";
+
+#ifndef LUPINE_WIRE_IDENTITY
+#define LUPINE_WIRE_IDENTITY ""
+#endif
 
 std::string h2_hex(uintptr_t value) {
   std::ostringstream result;
@@ -457,6 +463,14 @@ bool h2_parse_hex(const std::string &value, uintptr_t *parsed) {
   }
   *parsed = static_cast<uintptr_t>(number);
   return true;
+}
+
+// An empty identity on either side means that peer was built without git and
+// cannot state what it is; treat that as unverifiable and let the connection
+// proceed rather than refusing every source-tarball build.
+bool h2_wire_identity_compatible(const std::string &local,
+                                 const std::string &peer) {
+  return local.empty() || peer.empty() || local == peer;
 }
 
 bool lupine_h2_debug_enabled() {
@@ -480,6 +494,9 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   if (!transport->server_version.empty()) {
     headers.push_back(
         h2_nv(kLupineCudaVersionHeader, transport->server_version.c_str()));
+  }
+  if (LUPINE_WIRE_IDENTITY[0] != '\0') {
+    headers.push_back(h2_nv(kLupineWireIdentityHeader, LUPINE_WIRE_IDENTITY));
   }
   if (status == 200 && transport->conn != nullptr &&
       transport->conn->va_size != 0) {
@@ -622,6 +639,12 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
       memcmp(name, kLupineCudaVersionHeader, namelen) == 0) {
     transport->peer_cuda_version.assign(reinterpret_cast<const char *>(value),
                                         valuelen);
+    return 0;
+  }
+  if (namelen == strlen(kLupineWireIdentityHeader) &&
+      memcmp(name, kLupineWireIdentityHeader, namelen) == 0) {
+    transport->peer_wire_identity.assign(reinterpret_cast<const char *>(value),
+                                         valuelen);
     return 0;
   }
   if (namelen == strlen(kLupineVaBaseHeader) &&
@@ -862,6 +885,13 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
 }
 
 } // namespace
+
+const char *lupine_wire_identity(void) { return LUPINE_WIRE_IDENTITY; }
+
+bool lupine_wire_identity_compatible(const char *local, const char *peer) {
+  return h2_wire_identity_compatible(local == nullptr ? "" : local,
+                                     peer == nullptr ? "" : peer);
+}
 
 int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                           size_t size) {
@@ -1202,6 +1232,17 @@ int rpc_http2_client_init(conn_t *conn) {
   if (conn->va_size == 0) {
     return 0;
   }
+  return rpc_http2_client_await_ready(conn);
+}
+
+// The server answers the request headers before any payload flows, so this
+// costs one round trip and settles both the arena request and the build check
+// on the connection that will carry the session. Kept separate from
+// rpc_http2_client_init so a caller with no live peer can skip the wait.
+int rpc_http2_client_await_ready(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return -1;
+  }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
   h2_stream &stream = h2_get_stream(transport, transport->dispatch_stream_id);
@@ -1210,13 +1251,32 @@ int rpc_http2_client_init(conn_t *conn) {
   }
   uintptr_t peer_base = 0;
   uintptr_t peer_size = 0;
-  bool accepted = stream.response_received && stream.response_status == 200 &&
-                  h2_parse_hex(transport->peer_va_base, &peer_base) &&
-                  h2_parse_hex(transport->peer_va_size, &peer_size) &&
-                  peer_base == conn->va_base && peer_size == conn->va_size;
-  bool conflict = stream.response_received && stream.response_status == 409;
+  bool responded = stream.response_received;
+  int status = stream.response_status;
+  bool arena_granted = responded && status == 200 &&
+                       h2_parse_hex(transport->peer_va_base, &peer_base) &&
+                       h2_parse_hex(transport->peer_va_size, &peer_size) &&
+                       peer_base == conn->va_base && peer_size == conn->va_size;
+  std::string peer_identity = transport->peer_wire_identity;
   pthread_mutex_unlock(&transport->session_mutex);
-  return accepted ? 0 : conflict ? LUPINE_RPC_HTTP2_VA_CONFLICT : -1;
+
+  // Check the build before the arena verdict: a mismatch is fatal, so reporting
+  // it as an arena conflict would send the caller off retrying other slots.
+  if (!h2_wire_identity_compatible(LUPINE_WIRE_IDENTITY, peer_identity)) {
+    LUPINE_LOG_ERROR("LUPINE server was built from "
+                     << (peer_identity.empty() ? "an unstated revision"
+                                               : peer_identity.c_str())
+                     << ", this client from " << LUPINE_WIRE_IDENTITY
+                     << "; rebuild both from the same tree");
+    return LUPINE_RPC_HTTP2_IDENTITY_MISMATCH;
+  }
+  if (conn->va_size == 0) {
+    return responded && status == 200 ? 0 : -1;
+  }
+  if (arena_granted) {
+    return 0;
+  }
+  return responded && status == 409 ? LUPINE_RPC_HTTP2_VA_CONFLICT : -1;
 }
 
 void rpc_http2_client_start_heartbeat(conn_t *conn) {
@@ -1251,6 +1311,19 @@ const char *rpc_http2_client_probe(conn_t *conn) {
   }
   pthread_mutex_unlock(&transport->session_mutex);
   return version;
+}
+
+// Valid until the transport is destroyed. A server built without git advertises
+// nothing, so an empty result means "unstated", not "mismatched".
+const char *rpc_http2_peer_wire_identity(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return "";
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  const char *identity = transport->peer_wire_identity.c_str();
+  pthread_mutex_unlock(&transport->session_mutex);
+  return identity;
 }
 
 int rpc_http2_server_init(conn_t *conn) {

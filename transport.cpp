@@ -188,6 +188,11 @@ int connect_endpoint(client_transport_state &state,
       return -1;
     }
     int http2_result = rpc_http2_client_init(conn);
+    // No arena was requested, so client_init returned without waiting. Settle
+    // the build check on this same connection rather than spending a dial.
+    if (http2_result == 0 && conn->va_size == 0) {
+      http2_result = rpc_http2_client_await_ready(conn);
+    }
     if (http2_result == LUPINE_RPC_HTTP2_VA_CONFLICT && conn->va_size != 0 &&
         slot + 1 < LUPINE_VA_ARENA_COUNT) {
       min_slot = slot + 1;
