@@ -1539,7 +1539,6 @@ def main():
             'extern "C" void lupine_invalidate_kernel_attribute_cache();\n'
             'extern "C" void lupine_kernel_attribute_cache_erase(int route_id, CUkernel kernel, int attrib, int dev);\n'
             'extern "C" void lupine_invalidate_function_attribute_cache();\n'
-            'extern "C" CUresult lupine_flush_dirty_host_pages_to_server();\n\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
@@ -1565,36 +1564,12 @@ def main():
             )
             f.write("{\n")
 
-            if metadata.synchronize:
-                f.write(
-                    "    CUresult lupine_sync_result = "
-                    "lupine_flush_dirty_host_pages_to_server();\n"
-                    "    if (lupine_sync_result != CUDA_SUCCESS) {\n"
-                    "        return lupine_sync_result;\n"
-                    "    }\n"
-                )
-
             for translation in metadata.translate_deviceptrs:
                 name = translation.parameter.name
                 f.write(f"    CUdeviceptr {name}_rpc = {name};\n")
                 f.write(
-                    f"    bool {name}_is_managed_host = "
-                    f"lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n"
+                    f"    lupine_translate_managed_host_ptr({name}, &{name}_rpc);\n"
                 )
-            if metadata.translate_deviceptrs:
-                translated_condition = " || ".join(
-                    f"{item.parameter.name}_is_managed_host"
-                    for item in metadata.translate_deviceptrs
-                )
-                f.write(f"    if ({translated_condition}) {{\n")
-                f.write(
-                    "        CUresult managed_result = "
-                    "lupine_flush_dirty_host_pages_to_server();\n"
-                )
-                f.write("        if (managed_result != CUDA_SUCCESS) {\n")
-                f.write("            return managed_result;\n")
-                f.write("        }\n")
-                f.write("    }\n")
 
             all_output = metadata.routing_parameter
             if metadata.routing_kind == "ALL":
@@ -1741,7 +1716,7 @@ def main():
                         )
                     )
 
-            # Reject invalid send buffers before rpc_write_start_request()
+            # Reject invalid send buffers before lupine_cuda_rpc_start()
             # acquires the connection's call/write locks. Conditions in the
             # builder below may skip optional writes, but only rpc_write* calls
             # themselves are allowed to fail the builder.
@@ -1754,7 +1729,7 @@ def main():
             if metadata.async_fire_forget:
                 error_return = error_const(function.return_type.format())
                 f.write(
-                    "    if (rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
+                    "    if (lupine_cuda_rpc_start(conn, RPC_{name}) < 0 ||\n".format(
                         name=function.name.format()
                     )
                 )
@@ -1777,7 +1752,7 @@ def main():
                 continue
 
             f.write(
-                "    if (rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
+                "    if (lupine_cuda_rpc_start(conn, RPC_{name}) < 0 ||\n".format(
                     name=function.name.format()
                 )
             )

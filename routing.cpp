@@ -192,7 +192,7 @@ lupine_route lupine_route_from_known_kernel_deviceptr_args(
 static CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (count == nullptr ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetCount) < 0 ||
+      lupine_cuda_rpc_start(conn, RPC_cuDeviceGetCount) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, count, sizeof(*count)) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -204,7 +204,7 @@ static CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count) {
 static CUresult lupine_remote_cuDeviceGet(conn_t *conn, CUdevice *device,
                                           int ordinal) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (device == nullptr || rpc_write_start_request(conn, RPC_cuDeviceGet) < 0 ||
+  if (device == nullptr || lupine_cuda_rpc_start(conn, RPC_cuDeviceGet) < 0 ||
       rpc_write(conn, &ordinal, sizeof(ordinal)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, device, sizeof(*device)) < 0 ||
@@ -749,7 +749,7 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
     result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(ctx);
   } else {
     conn_t *conn = lupine_route_remote_conn(route);
-    if (rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+    if (lupine_cuda_rpc_start(conn, RPC_cuCtxSetCurrent) < 0 ||
         rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {

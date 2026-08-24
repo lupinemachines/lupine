@@ -529,6 +529,9 @@ static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
+  if (written != 0) {
+    __atomic_store_n(&conn->mirror_writes_pending, 1, __ATOMIC_RELEASE);
+  }
   if (pthread_mutex_unlock(&conn->write_mutex) != 0) {
     return -1;
   }

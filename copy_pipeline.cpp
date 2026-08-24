@@ -12,7 +12,6 @@
 
 extern "C" const void *lupine_mapped_host_read_source(const void *host,
                                                       size_t size);
-extern "C" CUresult lupine_flush_dirty_host_pages_to_server();
 extern "C" bool lupine_translate_managed_host_ptr(CUdeviceptr ptr,
                                                   CUdeviceptr *translated);
 
@@ -28,13 +27,8 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUdeviceptr src_rpc = srcDevice;
-  if (lupine_translate_managed_host_ptr(srcDevice, &src_rpc)) {
-    CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-    if (flush_result != CUDA_SUCCESS) {
-      return flush_result;
-    }
-  }
-  if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
+  lupine_translate_managed_host_ptr(srcDevice, &src_rpc);
+  if (lupine_cuda_rpc_start(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &src_rpc, sizeof(src_rpc)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -95,13 +89,8 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   srcHost = lupine_mapped_host_read_source(srcHost, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
   CUdeviceptr dst_rpc = dstDevice;
-  if (lupine_translate_managed_host_ptr(dstDevice, &dst_rpc)) {
-    CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
-    if (flush_result != CUDA_SUCCESS) {
-      return flush_result;
-    }
-  }
-  if (rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+  lupine_translate_managed_host_ptr(dstDevice, &dst_rpc);
+  if (lupine_cuda_rpc_start(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
       rpc_write(conn, &dst_rpc, sizeof(dst_rpc)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
