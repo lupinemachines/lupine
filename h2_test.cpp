@@ -409,10 +409,11 @@ void test_va_request_reports_unsupported_platform() {
 
   h2_pair pair;
   init_pair_sockets(&pair);
-  pair.client.w_offset = LUPINE_VA_WRITE_OFFSET;
   pair.client.va_base = LUPINE_VA_FIRST_BASE;
   pair.client.va_size = LUPINE_VA_ARENA_SIZE;
   pair.client.va_next = 0;
+  pair.client.w_offset = static_cast<intptr_t>(LUPINE_VA_WRITE_BASE) -
+                         static_cast<intptr_t>(pair.client.va_base);
 
   int client_result = 0;
   std::thread client(
@@ -432,6 +433,66 @@ void test_va_request_reports_unsupported_platform() {
   rpc_http2_destroy(&pair.client);
   rpc_http2_destroy(&pair.server);
   require(unsetenv("LUPINE_IDENTITY_VA") == 0, "env restore failed");
+}
+
+// The client starts from its own window and needs the peer's stated window on
+// the same connection to correct itself when the two differ.
+void test_client_await_ready_reports_va_window() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  lupine_va_window peer = {};
+  bool stated = false;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    require(rpc_http2_client_await_ready(&pair.client) == 0,
+            "client was not accepted");
+    stated = rpc_http2_peer_va_window(&pair.client, &peer);
+  });
+  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
+  client.join();
+
+  const lupine_va_window local = lupine_va_local_window();
+  if (local.arena_size == 0) {
+    require(!stated, "a host with no arena still advertised a window");
+  } else {
+    require(stated, "HEAD / did not carry the arena window");
+    require(peer.base == local.base && peer.arena_size == local.arena_size &&
+                peer.count == local.count,
+            "advertised window did not match the local one");
+  }
+  rpc_http2_destroy(&pair.client);
+  rpc_http2_destroy(&pair.server);
+}
+
+// Every slot the server will accept must be one the client can derive from the
+// advertised window, and the writable alias must stay mappable for each.
+void test_va_window_slots_are_self_consistent() {
+  const lupine_va_window window = lupine_va_local_window();
+  if (window.arena_size == 0) {
+    return;
+  }
+  require(window.count != 0, "a stated window offered no slots");
+  require(window.arena_size <= SIZE_MAX / window.count,
+          "window slots overflow the address space");
+  uintptr_t span = window.arena_size * window.count;
+  require(window.base <= UINTPTR_MAX - span,
+          "window runs past the top of the address space");
+  // Arenas and their aliases are distinct regions; an overlap would let a
+  // transport write land inside the protected read view.
+  uintptr_t alias_end = LUPINE_VA_WRITE_BASE + span;
+  require(LUPINE_VA_WRITE_BASE >= window.base + span ||
+              alias_end <= window.base,
+          "writable aliases overlap the arena window");
+  for (unsigned int slot = 0; slot < window.count; ++slot) {
+    uintptr_t offset = static_cast<uintptr_t>(slot) * window.arena_size;
+    uintptr_t base = window.base + offset;
+    intptr_t w_offset = static_cast<intptr_t>(LUPINE_VA_WRITE_BASE + offset) -
+                        static_cast<intptr_t>(base);
+    require(static_cast<uintptr_t>(static_cast<intptr_t>(base) + w_offset) ==
+                LUPINE_VA_WRITE_BASE + offset,
+            "alias offset did not round-trip for this slot");
+  }
 }
 
 void test_fragmented_cursors() {
@@ -1368,6 +1429,8 @@ int main() {
   test_head_probe_cuda_version_metadata(nullptr);
   test_wire_identity_compatibility_rule();
   test_client_await_ready_reports_wire_identity();
+  test_client_await_ready_reports_va_window();
+  test_va_window_slots_are_self_consistent();
   test_va_claim_bumps_within_arena();
   test_va_claim_is_disjoint_under_contention();
   test_va_request_reports_unsupported_platform();

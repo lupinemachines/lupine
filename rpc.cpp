@@ -22,14 +22,17 @@
 
 namespace {
 
+// Accept only a slot from the window this host advertised, so a request can
+// never steer a reservation somewhere the driver or the loader owns.
 bool lupine_va_candidate_range(uintptr_t base, size_t size) {
-  if (size != LUPINE_VA_ARENA_SIZE || base % LUPINE_VA_ARENA_SIZE != 0 ||
-      base < LUPINE_VA_FIRST_BASE) {
+  const lupine_va_window window = lupine_va_local_window();
+  if (window.arena_size == 0 || size != window.arena_size ||
+      base % window.arena_size != 0 || base < window.base) {
     return false;
   }
-  uintptr_t offset = base - LUPINE_VA_FIRST_BASE;
-  return offset / LUPINE_VA_ARENA_SIZE < LUPINE_VA_ARENA_COUNT &&
-         offset % LUPINE_VA_ARENA_SIZE == 0;
+  uintptr_t offset = base - window.base;
+  return offset / window.arena_size < window.count &&
+         offset % window.arena_size == 0;
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -57,12 +60,15 @@ void lupine_va_destroy(conn_t *conn) {
     return;
   }
 #if !defined(_WIN32) && !defined(__APPLE__)
-  if (conn->w_offset == LUPINE_VA_WRITE_OFFSET) {
-    munmap(reinterpret_cast<void *>(conn->va_base + LUPINE_VA_WRITE_OFFSET),
+  // Only unmap the alias this connection reserved; a w_offset supplied by the
+  // legacy translated path names memory the arena code never mapped.
+  if (conn->va_write_owned) {
+    munmap(reinterpret_cast<void *>(conn->va_base + conn->w_offset),
            conn->va_size);
   }
   munmap(reinterpret_cast<void *>(conn->va_base), conn->va_size);
 #endif
+  conn->va_write_owned = false;
   conn->va_base = 0;
   conn->va_size = 0;
   conn->va_next = 0;
@@ -70,31 +76,43 @@ void lupine_va_destroy(conn_t *conn) {
 
 } // namespace
 
-int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
-                             unsigned int *slot) {
-  if (conn == nullptr || slot == nullptr || conn->va_size != 0) {
+lupine_va_window lupine_va_local_window(void) {
+#if defined(_WIN32) || defined(__APPLE__)
+  // No arena can be hosted here, so state none and let the peer fall back.
+  return {};
+#else
+  return {LUPINE_VA_FIRST_BASE, LUPINE_VA_ARENA_SIZE, LUPINE_VA_ARENA_COUNT};
+#endif
+}
+
+int lupine_va_reserve_client(conn_t *conn, const lupine_va_window &window,
+                             unsigned int min_slot, unsigned int *slot) {
+  if (conn == nullptr || slot == nullptr || conn->va_size != 0 ||
+      window.arena_size == 0) {
     return -1;
   }
 #if defined(_WIN32) || defined(__APPLE__)
   (void)min_slot;
   return 1;
 #else
-  for (unsigned int candidate = min_slot; candidate < LUPINE_VA_ARENA_COUNT;
+  for (unsigned int candidate = min_slot; candidate < window.count;
        ++candidate) {
-    uintptr_t base = LUPINE_VA_FIRST_BASE +
-                     static_cast<uintptr_t>(candidate) * LUPINE_VA_ARENA_SIZE;
-    uintptr_t write_base = base + LUPINE_VA_WRITE_OFFSET;
-    if (lupine_va_reserve_exact(base, LUPINE_VA_ARENA_SIZE) == nullptr) {
+    uintptr_t offset = static_cast<uintptr_t>(candidate) * window.arena_size;
+    uintptr_t base = window.base + offset;
+    uintptr_t write_base = LUPINE_VA_WRITE_BASE + offset;
+    if (lupine_va_reserve_exact(base, window.arena_size) == nullptr) {
       continue;
     }
-    if (lupine_va_reserve_exact(write_base, LUPINE_VA_ARENA_SIZE) == nullptr) {
-      munmap(reinterpret_cast<void *>(base), LUPINE_VA_ARENA_SIZE);
+    if (lupine_va_reserve_exact(write_base, window.arena_size) == nullptr) {
+      munmap(reinterpret_cast<void *>(base), window.arena_size);
       continue;
     }
     conn->va_base = base;
-    conn->va_size = LUPINE_VA_ARENA_SIZE;
+    conn->va_size = window.arena_size;
     conn->va_next = 0;
-    conn->w_offset = LUPINE_VA_WRITE_OFFSET;
+    conn->w_offset =
+        static_cast<intptr_t>(write_base) - static_cast<intptr_t>(base);
+    conn->va_write_owned = true;
     *slot = candidate;
     return 0;
   }

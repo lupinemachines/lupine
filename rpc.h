@@ -54,7 +54,22 @@ static constexpr intptr_t LUPINE_MIRROR_W_OFFSET = -INT64_C(0x400000000000);
 static constexpr uintptr_t LUPINE_VA_FIRST_BASE = LUPINE_MIRROR_SERVER_BASE;
 static constexpr size_t LUPINE_VA_ARENA_SIZE = UINT64_C(0x010000000000);
 static constexpr unsigned int LUPINE_VA_ARENA_COUNT = 8;
-static constexpr intptr_t LUPINE_VA_WRITE_OFFSET = -INT64_C(0x200000000000);
+// The writable alias is client-private and never a device address, so it keeps
+// its own region instead of tracking the arena. Offsetting from the arena base
+// cannot work for every window: a positive offset from a high base leaves
+// canonical user space, and a negative one underflows from a low base.
+static constexpr uintptr_t LUPINE_VA_WRITE_BASE = UINT64_C(0x500000000000);
+
+// Where a peer is able to host arenas. The server's driver decides this, so the
+// server states it and the client picks a slot inside it; the arena base must
+// be a numeric address both ends can hold, which no single constant satisfies
+// across platforms.
+struct lupine_va_window {
+  uintptr_t base;
+  size_t arena_size;
+  unsigned int count;
+};
+extern lupine_va_window lupine_va_local_window(void);
 
 struct rpc_mirror_write {
   uintptr_t start;
@@ -93,6 +108,9 @@ struct conn_t {
   size_t va_size;
   uintptr_t va_next;
   intptr_t w_offset;
+  // True when this connection reserved the writable alias itself, as opposed to
+  // carrying a w_offset that names memory the arena code never mapped.
+  bool va_write_owned;
 };
 
 static inline bool lupine_va_contains(const conn_t *conn, uintptr_t address,
@@ -103,9 +121,11 @@ static inline bool lupine_va_contains(const conn_t *conn, uintptr_t address,
 }
 
 // Returns 0 with an arena reserved, 1 when unsupported on this platform, and
-// -1 when no candidate remains. min_slot skips ranges rejected by the peer.
-extern int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
-                                    unsigned int *slot);
+// -1 when no candidate remains. min_slot skips ranges rejected by the peer, and
+// window is the range the peer said it can host.
+extern int lupine_va_reserve_client(conn_t *conn,
+                                    const lupine_va_window &window,
+                                    unsigned int min_slot, unsigned int *slot);
 extern int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size);
 // False where this platform cannot host an identity arena at all, which is a
 // different answer from "this particular range is taken": no other slot will
@@ -239,6 +259,8 @@ extern const char *rpc_http2_client_probe(conn_t *conn);
 // Read after the peer's response headers arrive. Valid until the transport is
 // destroyed.
 extern const char *rpc_http2_peer_wire_identity(conn_t *conn);
+// The arena window the peer stated it can host. False when it stated none.
+extern bool rpc_http2_peer_va_window(conn_t *conn, lupine_va_window *window);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
 extern int rpc_http2_server_init(conn_t *conn);
