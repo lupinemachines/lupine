@@ -124,8 +124,22 @@ jobs:
           set -euo pipefail
           bucket_name="${GCP_BUILD_CACHE_BUCKET#gs://}"
           bucket_name="${bucket_name%/}"
+          lifecycle_file="$RUNNER_TEMP/gpu-integration-cache-lifecycle.json"
+          cat > "$lifecycle_file" <<'JSON'
+          {
+            "rule": [
+              {
+                "action": { "type": "Delete" },
+                "condition": {
+                  "daysSinceCustomTime": 7,
+                  "matchesPrefix": ["gpu-integration/binaries/"]
+                }
+              }
+            ]
+          }
+          JSON
           gcloud storage buckets update "gs://$bucket_name" \
-            --lifecycle-file=.github/gpu-integration-cache-lifecycle.json
+            --lifecycle-file="$lifecycle_file"
 
       - name: Prepare SSH key and runner allowlist
         run: |
