@@ -22,16 +22,6 @@
 
 namespace {
 
-bool lupine_va_candidate_range(uintptr_t base, size_t size) {
-  if (size != LUPINE_VA_ARENA_SIZE || base % LUPINE_VA_ARENA_SIZE != 0 ||
-      base < LUPINE_VA_FIRST_BASE) {
-    return false;
-  }
-  uintptr_t offset = base - LUPINE_VA_FIRST_BASE;
-  return offset / LUPINE_VA_ARENA_SIZE < LUPINE_VA_ARENA_COUNT &&
-         offset % LUPINE_VA_ARENA_SIZE == 0;
-}
-
 #if !defined(_WIN32) && !defined(__APPLE__)
 void *lupine_va_reserve_exact(uintptr_t base, size_t size) {
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -57,10 +47,10 @@ void lupine_va_destroy(conn_t *conn) {
     return;
   }
 #if !defined(_WIN32) && !defined(__APPLE__)
-  if (conn->w_offset == LUPINE_VA_WRITE_OFFSET) {
-    munmap(reinterpret_cast<void *>(conn->va_base + LUPINE_VA_WRITE_OFFSET),
-           conn->va_size);
-  }
+  // The writable alias is client-only. A server leaves w_offset zero, so the
+  // first call unmaps the arena and the second finds nothing left to do.
+  munmap(reinterpret_cast<void *>(conn->va_base + conn->w_offset),
+         conn->va_size);
   munmap(reinterpret_cast<void *>(conn->va_base), conn->va_size);
 #endif
   conn->va_base = 0;
@@ -70,9 +60,19 @@ void lupine_va_destroy(conn_t *conn) {
 
 } // namespace
 
-int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
-                             unsigned int *slot) {
-  if (conn == nullptr || slot == nullptr || conn->va_size != 0) {
+lupine_va_window lupine_va_local_window(void) {
+#if defined(_WIN32) || defined(__APPLE__)
+  // No arena can be hosted here, so state none and let the peer fall back.
+  return {};
+#else
+  return {LUPINE_VA_FIRST_BASE, LUPINE_VA_ARENA_SIZE * LUPINE_VA_ARENA_COUNT};
+#endif
+}
+
+int lupine_va_reserve_client(conn_t *conn, const lupine_va_window &window,
+                             unsigned int min_slot, unsigned int *slot) {
+  const size_t arena = window.size / LUPINE_VA_ARENA_COUNT;
+  if (conn == nullptr || slot == nullptr || conn->va_size != 0 || arena == 0) {
     return -1;
   }
 #if defined(_WIN32) || defined(__APPLE__)
@@ -81,20 +81,21 @@ int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
 #else
   for (unsigned int candidate = min_slot; candidate < LUPINE_VA_ARENA_COUNT;
        ++candidate) {
-    uintptr_t base = LUPINE_VA_FIRST_BASE +
-                     static_cast<uintptr_t>(candidate) * LUPINE_VA_ARENA_SIZE;
-    uintptr_t write_base = base + LUPINE_VA_WRITE_OFFSET;
-    if (lupine_va_reserve_exact(base, LUPINE_VA_ARENA_SIZE) == nullptr) {
+    uintptr_t offset = static_cast<uintptr_t>(candidate) * arena;
+    uintptr_t base = window.base + offset;
+    uintptr_t write_base = LUPINE_VA_WRITE_BASE + offset;
+    if (lupine_va_reserve_exact(base, arena) == nullptr) {
       continue;
     }
-    if (lupine_va_reserve_exact(write_base, LUPINE_VA_ARENA_SIZE) == nullptr) {
-      munmap(reinterpret_cast<void *>(base), LUPINE_VA_ARENA_SIZE);
+    if (lupine_va_reserve_exact(write_base, arena) == nullptr) {
+      munmap(reinterpret_cast<void *>(base), arena);
       continue;
     }
     conn->va_base = base;
-    conn->va_size = LUPINE_VA_ARENA_SIZE;
+    conn->va_size = arena;
     conn->va_next = 0;
-    conn->w_offset = LUPINE_VA_WRITE_OFFSET;
+    conn->w_offset =
+        static_cast<intptr_t>(write_base) - static_cast<intptr_t>(base);
     *slot = candidate;
     return 0;
   }
@@ -125,8 +126,7 @@ bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
 }
 
 int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size) {
-  if (conn == nullptr || conn->va_size != 0 ||
-      !lupine_va_candidate_range(base, size)) {
+  if (conn == nullptr || conn->va_size != 0) {
     return -1;
   }
 #if defined(_WIN32) || defined(__APPLE__)
