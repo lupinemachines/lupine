@@ -20,9 +20,6 @@ cuSPARSE/dense2sparse_csr/dense2sparse_csr_example
 cuSPARSE/spsv_sell/spsv_sell_example
 cuSPARSE/spvv/spvv_example
 
-# #594 cuBLAS zgemm_fixed emulation
-cuBLAS/Emulation/zgemm_fixed/cublas_zgemm_fixed_example
-
 # #595 cuFFT multi-GPU c2c wrong results
 cuFFT/1d_mgpu_c2c/bin/1d_mgpu_c2c_example
 cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example
