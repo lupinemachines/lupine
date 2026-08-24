@@ -1,7 +1,7 @@
 // Checks mapped host memory emulation against the driver's registration
-// semantics: unaligned registration, overlapping re-registration, RPC writes
-// into registered memory, direct device access, reported flags, unregister of
-// allocated memory, and zero byte allocation.
+// semantics: sub-page and unaligned registration, overlapping
+// re-registration, RPC writes into registered memory, direct device access,
+// reported flags, unregister of allocated memory, and zero byte allocation.
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -69,6 +69,53 @@ int main() {
     std::fprintf(stderr, "aligned_alloc failed\n");
     return 1;
   }
+  // A sub-page registration (NPP registers a stack-resident label count this
+  // way) shares its page with unrelated application bytes. The mirror may
+  // only carry the registered range: writing the rest of the page back from
+  // the server restores whatever the application had there at flush time.
+  unsigned char *interior = block + 64;
+  for (size_t i = 0; i < page_size; ++i) {
+    block[i] = 0xA5;
+  }
+  if (!cu_ok(cuMemHostRegister(interior, 4,
+                               CU_MEMHOSTREGISTER_PORTABLE |
+                                   CU_MEMHOSTREGISTER_DEVICEMAP),
+             "sub-page cuMemHostRegister")) {
+    return 1;
+  }
+  CUdeviceptr interior_mapped = 0;
+  if (!cu_ok(cuMemHostGetDevicePointer(&interior_mapped, interior, 0),
+             "sub-page cuMemHostGetDevicePointer")) {
+    return 1;
+  }
+  interior[0] = 41;
+  increment_byte<<<1, 1>>>(reinterpret_cast<unsigned char *>(interior_mapped));
+  for (size_t i = 0; i < page_size; ++i) {
+    if (i < 64 || i >= 68) {
+      block[i] = 0x5A;
+    }
+  }
+  if (cudaGetLastError() != cudaSuccess ||
+      cudaDeviceSynchronize() != cudaSuccess || interior[0] != 42) {
+    std::fprintf(stderr, "sub-page device access produced %u, expected 42\n",
+                 static_cast<unsigned int>(interior[0]));
+    return 1;
+  }
+  for (size_t i = 0; i < page_size; ++i) {
+    if (i >= 64 && i < 68) {
+      continue;
+    }
+    if (block[i] != 0x5A) {
+      std::fprintf(stderr,
+                   "sub-page registration clobbered page byte %zu: %u\n", i,
+                   static_cast<unsigned int>(block[i]));
+      return 1;
+    }
+  }
+  if (!cu_ok(cuMemHostUnregister(interior), "sub-page cuMemHostUnregister")) {
+    return 1;
+  }
+
   unsigned char *unaligned = block + 64;
   if (!cu_ok(cuMemHostRegister(unaligned, page_size * 2 + 17,
                                CU_MEMHOSTREGISTER_PORTABLE |
