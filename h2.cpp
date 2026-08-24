@@ -475,6 +475,8 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
     status_text = "200";
   } else if (status == 409) {
     status_text = "409";
+  } else if (status == 501) {
+    status_text = "501";
   }
   std::vector<nghttp2_nv> headers = {h2_nv(":status", status_text)};
   if (!transport->server_version.empty()) {
@@ -537,6 +539,10 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
           !h2_parse_hex(stream.requested_va_base, &base) ||
           !h2_parse_hex(stream.requested_va_size, &size) || size > SIZE_MAX) {
         status = 400;
+      } else if (!lupine_va_identity_supported()) {
+        // Walking the remaining slots cannot help here, so say so rather than
+        // letting the client exhaust them and give up on the connection.
+        status = 501;
       } else if (lupine_va_reserve_server(transport->conn, base,
                                           static_cast<size_t>(size)) < 0) {
         status = 409;
@@ -1215,8 +1221,15 @@ int rpc_http2_client_init(conn_t *conn) {
                   h2_parse_hex(transport->peer_va_size, &peer_size) &&
                   peer_base == conn->va_base && peer_size == conn->va_size;
   bool conflict = stream.response_received && stream.response_status == 409;
+  bool unsupported = stream.response_received && stream.response_status == 501;
   pthread_mutex_unlock(&transport->session_mutex);
-  return accepted ? 0 : conflict ? LUPINE_RPC_HTTP2_VA_CONFLICT : -1;
+  if (accepted) {
+    return 0;
+  }
+  if (conflict) {
+    return LUPINE_RPC_HTTP2_VA_CONFLICT;
+  }
+  return unsupported ? LUPINE_RPC_HTTP2_VA_UNSUPPORTED : -1;
 }
 
 void rpc_http2_client_start_heartbeat(conn_t *conn) {

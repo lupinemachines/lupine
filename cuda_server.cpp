@@ -4270,28 +4270,13 @@ void *lupine_server_mmap(conn_t *conn, void *address, size_t size,
                          size_t alignment, int protection, int flags, int fd,
                          off_t offset) {
   if (conn != nullptr) {
-    if (conn->va_size == 0 || size == 0 || alignment == 0 ||
-        (alignment & (alignment - 1)) != 0 || size > conn->va_size) {
+    uintptr_t claimed = 0;
+    if (!lupine_va_claim(conn, size, alignment, &claimed)) {
       errno = ENOMEM;
       return MAP_FAILED;
     }
-
-    uintptr_t current = __atomic_load_n(&conn->va_next, __ATOMIC_RELAXED);
-    for (;;) {
-      uintptr_t claimed = (current + alignment - 1) & ~(alignment - 1);
-      if (claimed < current || claimed < conn->va_base ||
-          claimed - conn->va_base > conn->va_size - size) {
-        errno = ENOMEM;
-        return MAP_FAILED;
-      }
-      uintptr_t next = claimed + size;
-      if (__atomic_compare_exchange_n(&conn->va_next, &current, next, true,
-                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-        address = reinterpret_cast<void *>(claimed);
-        flags = (flags & ~(MAP_FIXED | MAP_FIXED_NOREPLACE)) | MAP_FIXED;
-        break;
-      }
-    }
+    address = reinterpret_cast<void *>(claimed);
+    flags = (flags & ~(MAP_FIXED | MAP_FIXED_NOREPLACE)) | MAP_FIXED;
   }
   return reinterpret_cast<void *>(
       syscall(SYS_mmap, address, size, protection, flags, fd, offset));

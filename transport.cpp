@@ -157,6 +157,7 @@ int connect_endpoint(client_transport_state &state,
                      unsigned int index) {
   conn_t *conn = &state.connections[index];
   unsigned int min_slot = 0;
+  bool identity_va = true;
   for (;;) {
     *conn = {};
     unsigned int retries =
@@ -176,7 +177,7 @@ int connect_endpoint(client_transport_state &state,
     conn->logical_index = static_cast<int>(index);
     conn->w_offset = state.config.w_offset;
     unsigned int slot = min_slot;
-    if (conn->w_offset != 0) {
+    if (conn->w_offset != 0 && identity_va) {
       int reserve_result = lupine_va_reserve_client(conn, min_slot, &slot);
       if (reserve_result < 0) {
         reset_connection(conn);
@@ -191,6 +192,17 @@ int connect_endpoint(client_transport_state &state,
     if (http2_result == LUPINE_RPC_HTTP2_VA_CONFLICT && conn->va_size != 0 &&
         slot + 1 < LUPINE_VA_ARENA_COUNT) {
       min_slot = slot + 1;
+      reset_connection(conn);
+      continue;
+    }
+    // The server hosts no arena at any address. Redial without one and let the
+    // translated mirror carry the connection; reset_connection releases the
+    // reservations this attempt made.
+    if (http2_result == LUPINE_RPC_HTTP2_VA_UNSUPPORTED && identity_va) {
+      LUPINE_LOG_DEBUG("LUPINE server at "
+                       << endpoint.host << " port " << endpoint.port
+                       << " does not support identity VA; using translation");
+      identity_va = false;
       reset_connection(conn);
       continue;
     }

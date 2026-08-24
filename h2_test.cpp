@@ -269,6 +269,134 @@ void test_head_probe_cuda_version_metadata(const char *expected_cuda_version) {
   }
 }
 
+// Arena bookkeeping is pure arithmetic over the conn fields, so it is checked
+// without reserving anything: the sanitizers own disjoint VA bands and neither
+// can host a real reservation the other can.
+void test_va_claim_bumps_within_arena() {
+  conn_t conn = {};
+  conn.va_base = 0x2000000000;
+  conn.va_size = 0x1000;
+  conn.va_next = conn.va_base;
+  constexpr size_t kAlign = 0x200000;
+
+  // The base is already aligned, so the first span fits even in a tiny arena;
+  // the next one has to skip a full alignment stride and no longer does.
+  uintptr_t claimed = 0;
+  require(lupine_va_claim(&conn, 0x100, kAlign, &claimed) &&
+              claimed == conn.va_base,
+          "aligned base rejected a span that fits");
+  uintptr_t beyond = 0;
+  require(!lupine_va_claim(&conn, 0x100, kAlign, &beyond),
+          "claim aligned past the end of the arena");
+  uintptr_t cursor = conn.va_next;
+  require(!lupine_va_claim(&conn, 0x100, kAlign, &beyond) &&
+              conn.va_next == cursor,
+          "a rejected claim advanced the arena cursor");
+
+  conn.va_base = 0x2000000000;
+  conn.va_size = 0x800000;
+  conn.va_next = conn.va_base;
+  require(lupine_va_claim(&conn, 0x100, kAlign, &claimed) &&
+              claimed == conn.va_base,
+          "first claim did not start at the arena base");
+  uintptr_t second = 0;
+  require(lupine_va_claim(&conn, 0x100, kAlign, &second) &&
+              second == conn.va_base + kAlign,
+          "second claim did not advance to the next aligned span");
+  require(second - claimed >= 0x100, "claims overlapped");
+
+  require(!lupine_va_claim(&conn, conn.va_size, kAlign, &claimed),
+          "claim exceeded the arena bounds");
+  require(!lupine_va_claim(&conn, 0, kAlign, &claimed),
+          "zero-sized claim was accepted");
+  require(!lupine_va_claim(&conn, 0x100, 0x300000, &claimed),
+          "non-power-of-two alignment was accepted");
+  conn.va_size = 0;
+  require(!lupine_va_claim(&conn, 0x100, kAlign, &claimed),
+          "claim succeeded without an arena");
+}
+
+// Concurrent claims must hand out disjoint spans; the cursor is advanced with a
+// compare-exchange rather than a lock.
+void test_va_claim_is_disjoint_under_contention() {
+  conn_t conn = {};
+  conn.va_base = 0x2000000000;
+  conn.va_size = 0x4000000;
+  conn.va_next = conn.va_base;
+  constexpr size_t kAlign = 0x1000;
+  constexpr size_t kPerThread = 512;
+
+  // Release the workers together and give them enough iterations that a lost
+  // update shows up; a handful of staggered claims never collide.
+  std::array<std::vector<uintptr_t>, 8> claims;
+  std::atomic<unsigned> ready{0};
+  std::atomic<bool> go{false};
+  std::vector<std::thread> workers;
+  for (auto &bucket : claims) {
+    bucket.reserve(kPerThread);
+    workers.emplace_back([&bucket, &conn, &ready, &go] {
+      ready.fetch_add(1, std::memory_order_release);
+      while (!go.load(std::memory_order_acquire)) {
+      }
+      for (size_t i = 0; i < kPerThread; ++i) {
+        uintptr_t claimed = 0;
+        if (lupine_va_claim(&conn, kAlign, kAlign, &claimed)) {
+          bucket.push_back(claimed);
+        }
+      }
+    });
+  }
+  while (ready.load(std::memory_order_acquire) < claims.size()) {
+  }
+  go.store(true, std::memory_order_release);
+  for (std::thread &worker : workers) {
+    worker.join();
+  }
+  std::vector<uintptr_t> all;
+  for (const auto &bucket : claims) {
+    all.insert(all.end(), bucket.begin(), bucket.end());
+  }
+  require(all.size() == claims.size() * kPerThread,
+          "a concurrent claim failed");
+  std::sort(all.begin(), all.end());
+  require(std::adjacent_find(all.begin(), all.end()) == all.end(),
+          "concurrent claims returned the same span twice");
+}
+
+// A server that hosts no arena has to be distinguishable from one whose slot is
+// merely taken, or the client burns every slot and then fails the connection.
+void test_va_request_reports_unsupported_platform() {
+  require(setenv("LUPINE_IDENTITY_VA", "0", 1) == 0, "env override failed");
+  require(!lupine_va_identity_supported(),
+          "identity VA stayed enabled under the override");
+
+  h2_pair pair;
+  init_pair_sockets(&pair);
+  pair.client.w_offset = LUPINE_VA_WRITE_OFFSET;
+  pair.client.va_base = LUPINE_VA_FIRST_BASE;
+  pair.client.va_size = LUPINE_VA_ARENA_SIZE;
+  pair.client.va_next = 0;
+
+  int client_result = 0;
+  std::thread client(
+      [&] { client_result = rpc_http2_client_init(&pair.client); });
+  int server_result = rpc_http2_server_init(&pair.server);
+  client.join();
+
+  require(server_result == 1, "arena request was dispatched as an RPC stream");
+  require(client_result == LUPINE_RPC_HTTP2_VA_UNSUPPORTED,
+          "arena refusal did not distinguish an unsupported platform from a "
+          "taken slot");
+  // The arena fields are borrowed, not reserved; clear them so teardown does
+  // not unmap a range this test never owned.
+  pair.client.va_base = 0;
+  pair.client.va_size = 0;
+  pair.client.w_offset = 0;
+  rpc_http2_destroy(&pair.client);
+  rpc_http2_destroy(&pair.server);
+  require(unsetenv("LUPINE_IDENTITY_VA") == 0, "env restore failed");
+}
+
 void test_fragmented_cursors() {
   h2_pair pair = make_pair();
   std::vector<std::string> chunks = {"alpha", "", ":", "beta", ":gamma"};
@@ -1201,6 +1329,9 @@ int main() {
   test_server_to_client_after_request_headers();
   test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION);
   test_head_probe_cuda_version_metadata(nullptr);
+  test_va_claim_bumps_within_arena();
+  test_va_claim_is_disjoint_under_contention();
+  test_va_request_reports_unsupported_platform();
   test_fragmented_cursors();
   test_fragmented_frames_direct();
   test_partial_read_stages_only_overflow();

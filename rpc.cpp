@@ -102,6 +102,39 @@ int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
 #endif
 }
 
+bool lupine_va_identity_supported(void) {
+#if defined(_WIN32) || defined(__APPLE__)
+  return false;
+#else
+  // Escape hatch for hosts where the arena collides with something the server
+  // does not control, and the lever the degrade tests pull.
+  const char *setting = getenv("LUPINE_IDENTITY_VA");
+  return setting == nullptr || strcmp(setting, "0") != 0;
+#endif
+}
+
+bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
+                     uintptr_t *claimed) {
+  if (conn == nullptr || claimed == nullptr || conn->va_size == 0 ||
+      size == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+      size > conn->va_size) {
+    return false;
+  }
+  uintptr_t current = __atomic_load_n(&conn->va_next, __ATOMIC_RELAXED);
+  for (;;) {
+    uintptr_t next_claim = (current + alignment - 1) & ~(alignment - 1);
+    if (next_claim < current || next_claim < conn->va_base ||
+        next_claim - conn->va_base > conn->va_size - size) {
+      return false;
+    }
+    if (__atomic_compare_exchange_n(&conn->va_next, &current, next_claim + size,
+                                    true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+      *claimed = next_claim;
+      return true;
+    }
+  }
+}
+
 int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size) {
   if (conn == nullptr || conn->va_size != 0 ||
       !lupine_va_candidate_range(base, size)) {

@@ -107,6 +107,14 @@ static inline bool lupine_va_contains(const conn_t *conn, uintptr_t address,
 extern int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
                                     unsigned int *slot);
 extern int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size);
+// False where this platform cannot host an identity arena at all, which is a
+// different answer from "this particular range is taken": no other slot will
+// work either, so the peer must stop retrying and fall back to translation.
+extern bool lupine_va_identity_supported(void);
+// Bump-claims an aligned span inside the connection's arena. Concurrent callers
+// each get a disjoint span; false means the arena cannot fit the request.
+extern bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
+                            uintptr_t *claimed);
 
 // Backends install these hooks before opening connections. They let the
 // transport report lifecycle changes without depending on backend state.
@@ -187,6 +195,9 @@ extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
 
 constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
 constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
+// The peer cannot host an identity arena on any range. Retrying another slot is
+// pointless; redial without one and use the translated mirror instead.
+constexpr int LUPINE_RPC_HTTP2_VA_UNSUPPORTED = -4;
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
