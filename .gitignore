@@ -21,3 +21,5 @@ test/cuda-python/cuda-python/
 test/cuda-python/results/
 test/cuda-library-samples/CUDALibrarySamples/
 test/cuda-library-samples/results/
+test/llama.cpp/llama.cpp/
+test/llama.cpp/results/
