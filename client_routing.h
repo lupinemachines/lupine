@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <vector>
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
 #include "cuda_compat.h"
@@ -24,10 +23,6 @@ struct lupine_route {
 lupine_route lupine_remote_route_for_conn(conn_t *conn);
 int lupine_route_identity(lupine_route route);
 lupine_route lupine_route_from_identity(int route_id);
-int lupine_known_deviceptr_route_id(CUdeviceptr ptr);
-lupine_route lupine_route_from_known_kernel_deviceptr_args(
-    void *const *kernel_params, const std::vector<size_t> &param_sizes,
-    lupine_route fallback);
 conn_t *lupine_thread_conn_by_index(unsigned int index);
 CUresult lupine_virtual_device_count(int *count);
 CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);

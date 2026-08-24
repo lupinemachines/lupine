@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -143,56 +142,6 @@ lupine_route lupine_route_from_identity(int route_id) {
         lupine_thread_conn_by_index(static_cast<unsigned int>(route_id)));
   }
   return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
-}
-
-int lupine_known_deviceptr_route_id(CUdeviceptr ptr) {
-  if (ptr == 0) {
-    return -2;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto it = lupine_owners<CUdeviceptr>().find(ptr);
-  if (it != lupine_owners<CUdeviceptr>().end()) {
-    return it->second.route_id;
-  }
-  for (const auto &entry : lupine_deviceptr_allocations()) {
-    const auto &allocation = entry.second;
-    if (allocation.base == 0 || allocation.size == 0 || ptr < allocation.base) {
-      continue;
-    }
-    uint64_t offset = static_cast<uint64_t>(ptr - allocation.base);
-    if (offset < allocation.size) {
-      return allocation.route_id;
-    }
-  }
-  return -2;
-}
-
-lupine_route lupine_route_from_known_kernel_deviceptr_args(
-    void *const *kernel_params, const std::vector<size_t> &param_sizes,
-    lupine_route fallback) {
-  int route_id = -2;
-  for (size_t i = 0; i < param_sizes.size(); ++i) {
-    if (param_sizes[i] != sizeof(CUdeviceptr) || kernel_params == nullptr ||
-        kernel_params[i] == nullptr) {
-      continue;
-    }
-    CUdeviceptr ptr = 0;
-    memcpy(&ptr, kernel_params[i], sizeof(ptr));
-    int ptr_route_id = lupine_known_deviceptr_route_id(ptr);
-    if (ptr_route_id == -2) {
-      continue;
-    }
-    if (route_id == -2) {
-      route_id = ptr_route_id;
-    } else if (route_id != ptr_route_id) {
-      return fallback;
-    }
-  }
-  if (route_id == -2 || route_id == lupine_route_identity(fallback)) {
-    return fallback;
-  }
-  lupine_route route = lupine_route_from_identity(route_id);
-  return route.kind == LUPINE_ROUTE_INVALID ? fallback : route;
 }
 
 static CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count) {

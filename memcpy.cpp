@@ -1024,24 +1024,6 @@ lupine_drain_retiring_dirty_ranges(lupine_host_allocation *allocation) {
   return CUDA_SUCCESS;
 }
 
-static bool lupine_device_ptr_in_mapping(CUdeviceptr ptr,
-                                         const lupine_mapped_host_snapshot &m) {
-  return ptr >= m.device_ptr && ptr < m.device_ptr + m.size;
-}
-
-static bool lupine_host_ptr_in_mapping(CUdeviceptr ptr,
-                                       const lupine_mapped_host_snapshot &m,
-                                       CUdeviceptr *translated) {
-  uintptr_t host = reinterpret_cast<uintptr_t>(m.host);
-  if (ptr < host || ptr >= host + m.size) {
-    return false;
-  }
-  if (translated != nullptr) {
-    *translated = m.device_ptr + (ptr - host);
-  }
-  return true;
-}
-
 // A managed allocation's client host alias is mapped at the server device VA
 // (identity arenas are reserve-or-fail at connect), so alias addresses go on
 // the wire unchanged; callers only need to know whether ptr is one.
@@ -1206,56 +1188,6 @@ extern "C" CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src,
 extern "C" CUresult cuMemcpyAsync_ptsz(CUdeviceptr dst, CUdeviceptr src,
                                        size_t ByteCount, CUstream hStream) {
   return cuMemcpyAsync(dst, src, ByteCount, hStream);
-}
-
-CUresult lupine_sync_mapped_host_to_device_for_launch(
-    void *const *kernel_params, const size_t *sizes, uint32_t count,
-    CUdeviceptr *translated_params, rpc_write_cursor *rpc_params,
-    bool *used_managed_mapping) {
-  if (kernel_params == nullptr || sizes == nullptr ||
-      translated_params == nullptr || rpc_params == nullptr) {
-    return count == 0 ? CUDA_SUCCESS : CUDA_ERROR_INVALID_VALUE;
-  }
-  for (uint32_t i = 0; i < count; ++i) {
-    rpc_params[i] = rpc_write_cursor::plain(kernel_params[i], sizes[i]);
-  }
-  if (used_managed_mapping != nullptr) {
-    *used_managed_mapping = false;
-  }
-  std::vector<lupine_mapped_host_snapshot> snapshots =
-      lupine_mapped_host_snapshots();
-  bool used_managed = false;
-  for (const auto &mapping : snapshots) {
-    bool mapping_used = false;
-    for (uint32_t i = 0; i < count; ++i) {
-      if (sizes[i] != sizeof(CUdeviceptr)) {
-        continue;
-      }
-      CUdeviceptr arg = 0;
-      memcpy(&arg, kernel_params[i], sizeof(arg));
-      CUdeviceptr translated = 0;
-      if (lupine_host_ptr_in_mapping(arg, mapping, &translated)) {
-        translated_params[i] = translated;
-        rpc_params[i].data =
-            reinterpret_cast<const unsigned char *>(&translated_params[i]);
-        used_managed = used_managed || mapping.managed;
-        mapping_used = true;
-        break;
-      }
-      if (lupine_device_ptr_in_mapping(arg, mapping)) {
-        used_managed = used_managed || mapping.managed;
-        mapping_used = true;
-        break;
-      }
-    }
-    if (mapping_used) {
-      lupine_mark_device_mapping_used(mapping.host, mapping.managed);
-    }
-  }
-  if (used_managed_mapping != nullptr) {
-    *used_managed_mapping = used_managed;
-  }
-  return CUDA_SUCCESS;
 }
 
 // Wire-fetch [offset, offset + bytes) of the backing. Handler-safe: must
