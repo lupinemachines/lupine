@@ -19,20 +19,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.36
-        with:
-          cuda: "13.3.1"
-          method: network
-          sub-packages: '["nvcc"]'
-
       - name: Regenerate checked-in sources
-        run: |
-          sudo ln -sfn "$CUDA_PATH" /usr/local/cuda
-          uv run codegen/codegen.py
+        run: ./codegen/run.sh
 
       - name: Verify generated files are current
         run: git diff --exit-code -- codegen
