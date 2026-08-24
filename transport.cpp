@@ -199,6 +199,18 @@ int connect_endpoint(client_transport_state &state,
       reset_connection(conn);
       continue;
     }
+    // Managed pointers travel as exact numeric values, so a server that hosts
+    // no arena cannot serve them at all. Say that once and stop, rather than
+    // walking every slot to arrive at the same answer.
+    if (http2_result == LUPINE_RPC_HTTP2_VA_UNSUPPORTED) {
+      LUPINE_LOG_ERROR(
+          "LUPINE server at "
+          << endpoint.host << " port " << endpoint.port
+          << " cannot host an identity VA arena, which this client "
+             "requires");
+      reset_connection(conn);
+      return -1;
+    }
     if (http2_result < 0) {
       reset_connection(conn);
       return -1;
