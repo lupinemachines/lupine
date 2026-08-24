@@ -43,20 +43,26 @@ struct rpc_http2_read_stats {
 // VA band. Driver shims map their application and transport views at fixed
 // offsets from that address, so the RPC core can translate without knowing
 // which accelerator backend owns the allocation.
-static constexpr uintptr_t LUPINE_MIRROR_SERVER_BASE = UINT64_C(0x700000000000);
-static constexpr uintptr_t LUPINE_MIRROR_WINDOW_SIZE = UINT64_C(0x100000000000);
-static constexpr intptr_t LUPINE_MIRROR_R_OFFSET = -INT64_C(0x500000000000);
-static constexpr intptr_t LUPINE_MIRROR_W_OFFSET = -INT64_C(0x400000000000);
+static constexpr uintptr_t LUPINE_HOST_ALLOCATION_SERVER_BASE =
+    UINT64_C(0x700000000000);
+static constexpr uintptr_t LUPINE_HOST_ALLOCATION_WINDOW_SIZE =
+    UINT64_C(0x100000000000);
+static constexpr intptr_t LUPINE_HOST_ALLOCATION_R_OFFSET =
+    -INT64_C(0x500000000000);
+static constexpr intptr_t LUPINE_HOST_ALLOCATION_W_OFFSET =
+    -INT64_C(0x400000000000);
 
 // Each connection owns a disjoint identity-mapped arena. The client also
-// reserves a writable alias so pointers embedded in mirrored memory retain
+// reserves a writable alias so pointers embedded in host allocation memory
+// retain
 // their server values while transport reads avoid the protected R view.
-static constexpr uintptr_t LUPINE_VA_FIRST_BASE = LUPINE_MIRROR_SERVER_BASE;
+static constexpr uintptr_t LUPINE_VA_FIRST_BASE =
+    LUPINE_HOST_ALLOCATION_SERVER_BASE;
 static constexpr size_t LUPINE_VA_ARENA_SIZE = UINT64_C(0x010000000000);
 static constexpr unsigned int LUPINE_VA_ARENA_COUNT = 8;
 static constexpr intptr_t LUPINE_VA_WRITE_OFFSET = -INT64_C(0x200000000000);
 
-struct rpc_mirror_write {
+struct rpc_host_allocation_write {
   uintptr_t start;
   size_t size;
 };
@@ -79,8 +85,8 @@ struct conn_t {
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex;
   std::vector<rpc_write_cursor> write_queue;
-  std::vector<rpc_mirror_write> mirror_writes;
-  int mirror_writes_pending;
+  std::vector<rpc_host_allocation_write> host_allocation_writes;
+  int host_allocation_writes_pending;
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
   size_t write_copy_offset;
