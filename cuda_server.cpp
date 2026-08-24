@@ -3954,8 +3954,6 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
-static bool lupine_server_managed_range(const void *pointer, size_t size);
-
 // Fire-and-forget: connection ordering already guarantees the flush is
 // applied before any later request, so no response is sent.
 int handle_lupineManagedHostFlush(conn_t *conn) {
@@ -3968,28 +3966,12 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
   for (uint32_t i = 0; i < count; ++i) {
     void *server_host_ptr = nullptr;
     size_t bytes = 0;
+    // Host mappings and native identity-VA managed allocations are both CPU
+    // accessible. Reading directly avoids a context-dependent pinned
+    // allocation on this fire-and-forget RPC path.
     if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
-        rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
-      return -1;
-    }
-    if (!lupine_server_managed_range(server_host_ptr, bytes)) {
-      if (rpc_read(conn, server_host_ptr, bytes) < 0) {
-        return -1;
-      }
-      continue;
-    }
-    void *staging = nullptr;
-    if (cuMemAllocHost(&staging, bytes) != CUDA_SUCCESS) {
-      return -1;
-    }
-    int read_result = rpc_read(conn, staging, bytes);
-    CUresult copy_result = CUDA_ERROR_UNKNOWN;
-    if (read_result >= 0) {
-      copy_result = cuMemcpyHtoD_v2(
-          reinterpret_cast<CUdeviceptr>(server_host_ptr), staging, bytes);
-    }
-    cuMemFreeHost(staging);
-    if (read_result < 0 || copy_result != CUDA_SUCCESS) {
+        rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+        rpc_read(conn, server_host_ptr, bytes) < 0) {
       return -1;
     }
   }
@@ -4454,20 +4436,6 @@ mmap64(void *address, size_t size, int protection, int flags, int fd,
   return mmap(address, size, protection, flags, fd, static_cast<off_t>(offset));
 }
 #endif
-
-static bool lupine_server_managed_range(const void *pointer, size_t size) {
-  uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
-  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
-  for (const auto &entry : lupine_server_state.allocations) {
-    if (entry.second.kind != lupine_server_allocation_kind::managed ||
-        size > entry.second.size || address < entry.first ||
-        address - entry.first > entry.second.size - size) {
-      continue;
-    }
-    return true;
-  }
-  return false;
-}
 
 // Resolve the device alias here so the client does not need a second round
 // trip for it.
