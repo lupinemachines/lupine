@@ -59,9 +59,11 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
 struct lupine_host_allocation {
   size_t size = 0;
   size_t storage_size = 0;
-  // Exact caller range; the tracked range above is rounded out to whole pages.
+  // Exact caller range; the tracked range above is rounded out to whole pages,
+  // so the mirror only owns [data_offset, data_offset + user_size) of it.
   uintptr_t user_base = 0;
   size_t user_size = 0;
+  size_t data_offset = 0;
   size_t page_size = 0;
   size_t page_count = 0;
   unsigned int flags = 0;
@@ -100,7 +102,8 @@ struct lupine_host_allocation {
 
 struct lupine_mapped_host_snapshot {
   void *host = nullptr;
-  size_t size = 0;
+  size_t data_offset = 0;
+  size_t data_bytes = 0;
   CUdeviceptr device_ptr = 0;
   bool managed = false;
   bool device_mapping_used = false;
@@ -700,12 +703,59 @@ static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
   for (const auto &entry : lupine_mutable_host_allocations_locked()) {
     if (entry.second.device_ptr != 0 && !entry.second.local_cuda &&
         !entry.second.client_to_server_only) {
-      snapshots.push_back({entry.first, entry.second.size,
-                           entry.second.device_ptr, entry.second.managed,
+      snapshots.push_back({entry.first, entry.second.data_offset,
+                           entry.second.user_size, entry.second.device_ptr,
+                           entry.second.managed,
                            entry.second.device_mapping_used});
     }
   }
   return snapshots;
+}
+
+// #612 removed the launch-time parameter scan because the pointers no longer
+// need translating -- a host allocation is identity mapped, so the client
+// pointer is already the device address. The scan also decided which mirrors a
+// synchronization point owes a readback for, and that part still has no other
+// source: marking every mirror instead invalidates ones the device never
+// touched, which hangs multi-instance workloads and breaks stream capture.
+extern "C" void lupine_mark_kernel_param_mappings(void *const *kernel_params,
+                                                  const size_t *sizes,
+                                                  uint32_t count) {
+  if (kernel_params == nullptr || sizes == nullptr || count == 0) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  for (uint32_t i = 0; i < count; ++i) {
+    if (sizes[i] != sizeof(CUdeviceptr) || kernel_params[i] == nullptr) {
+      continue;
+    }
+    CUdeviceptr arg = 0;
+    memcpy(&arg, kernel_params[i], sizeof(arg));
+    if (arg == 0) {
+      continue;
+    }
+    for (auto &entry : lupine_mutable_host_allocations_locked()) {
+      auto &allocation = entry.second;
+      if (allocation.device_ptr == 0 || allocation.local_cuda ||
+          allocation.device_mapping_used) {
+        continue;
+      }
+      uintptr_t host = reinterpret_cast<uintptr_t>(entry.first);
+      bool hit = (arg >= host && arg < host + allocation.size) ||
+                 (arg >= allocation.device_ptr &&
+                  arg < allocation.device_ptr + allocation.size);
+      if (!hit) {
+        continue;
+      }
+      allocation.device_mapping_used = true;
+      if (!allocation.tracking_enabled &&
+          __atomic_exchange_n(&allocation.eager_flush_pending, 1,
+                              __ATOMIC_ACQ_REL) == 0) {
+        __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
+      }
+      break;
+    }
+  }
 }
 
 static void lupine_mark_device_mapping_used(void *host, bool managed) {
@@ -940,17 +990,20 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
   uint32_t count = 0;
   for (const auto &range : merged) {
     auto &allocation = *range.allocation;
-    size_t offset = range.start - allocation.host_base;
-    if (offset >= allocation.size) {
+    uintptr_t data_start = allocation.host_base + allocation.data_offset;
+    uintptr_t start = std::max(range.start, data_start);
+    uintptr_t end = std::min(range.end, data_start + allocation.user_size);
+    if (end <= start) {
       continue;
     }
-    size_t bytes = std::min(range.end - range.start, allocation.size - offset);
+    size_t offset = start - allocation.host_base;
+    size_t bytes = end - start;
     CUdeviceptr dst = allocation.server_host_ptr + offset;
     memcpy(headers[count].data(), &dst, sizeof(dst));
     memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
     cursors[count * 2] = rpc_write_cursor::plain(
         headers[count].data(), LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES);
-    const void *source = reinterpret_cast<void *>(range.start);
+    const void *source = reinterpret_cast<void *>(start);
     if (allocation.io_alias != nullptr) {
       source = static_cast<unsigned char *>(allocation.io_alias) + offset;
     }
@@ -1022,24 +1075,6 @@ lupine_drain_retiring_dirty_ranges(lupine_host_allocation *allocation) {
          0) {
   }
   return CUDA_SUCCESS;
-}
-
-static bool lupine_device_ptr_in_mapping(CUdeviceptr ptr,
-                                         const lupine_mapped_host_snapshot &m) {
-  return ptr >= m.device_ptr && ptr < m.device_ptr + m.size;
-}
-
-static bool lupine_host_ptr_in_mapping(CUdeviceptr ptr,
-                                       const lupine_mapped_host_snapshot &m,
-                                       CUdeviceptr *translated) {
-  uintptr_t host = reinterpret_cast<uintptr_t>(m.host);
-  if (ptr < host || ptr >= host + m.size) {
-    return false;
-  }
-  if (translated != nullptr) {
-    *translated = m.device_ptr + (ptr - host);
-  }
-  return true;
 }
 
 // A managed allocation's client host alias is mapped at the server device VA
@@ -1208,68 +1243,26 @@ extern "C" CUresult cuMemcpyAsync_ptsz(CUdeviceptr dst, CUdeviceptr src,
   return cuMemcpyAsync(dst, src, ByteCount, hStream);
 }
 
-CUresult lupine_sync_mapped_host_to_device_for_launch(
-    void *const *kernel_params, const size_t *sizes, uint32_t count,
-    CUdeviceptr *translated_params, rpc_write_cursor *rpc_params,
-    bool *used_managed_mapping) {
-  if (kernel_params == nullptr || sizes == nullptr ||
-      translated_params == nullptr || rpc_params == nullptr) {
-    return count == 0 ? CUDA_SUCCESS : CUDA_ERROR_INVALID_VALUE;
-  }
-  for (uint32_t i = 0; i < count; ++i) {
-    rpc_params[i] = rpc_write_cursor::plain(kernel_params[i], sizes[i]);
-  }
-  if (used_managed_mapping != nullptr) {
-    *used_managed_mapping = false;
-  }
-  std::vector<lupine_mapped_host_snapshot> snapshots =
-      lupine_mapped_host_snapshots();
-  bool used_managed = false;
-  for (const auto &mapping : snapshots) {
-    bool mapping_used = false;
-    for (uint32_t i = 0; i < count; ++i) {
-      if (sizes[i] != sizeof(CUdeviceptr)) {
-        continue;
-      }
-      CUdeviceptr arg = 0;
-      memcpy(&arg, kernel_params[i], sizeof(arg));
-      CUdeviceptr translated = 0;
-      if (lupine_host_ptr_in_mapping(arg, mapping, &translated)) {
-        translated_params[i] = translated;
-        rpc_params[i].data =
-            reinterpret_cast<const unsigned char *>(&translated_params[i]);
-        used_managed = used_managed || mapping.managed;
-        mapping_used = true;
-        break;
-      }
-      if (lupine_device_ptr_in_mapping(arg, mapping)) {
-        used_managed = used_managed || mapping.managed;
-        mapping_used = true;
-        break;
-      }
-    }
-    if (mapping_used) {
-      lupine_mark_device_mapping_used(mapping.host, mapping.managed);
-    }
-  }
-  if (used_managed_mapping != nullptr) {
-    *used_managed_mapping = used_managed;
-  }
-  return CUDA_SUCCESS;
-}
-
 // Wire-fetch [offset, offset + bytes) of the backing. Handler-safe: must
 // not take lupine_host_allocation_mutex(); caller made the range writable.
+// Callers work in tracked-page space, so the span can reach past the bytes the
+// mirror owns; this is the only place server bytes land in client pages, so it
+// clips here rather than trusting each caller to.
 static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
                                      size_t offset, size_t bytes) {
+  size_t end =
+      std::min(offset + bytes, allocation->data_offset + allocation->user_size);
+  offset = std::max(offset, allocation->data_offset);
+  bytes = end - offset;
+
   conn_t *conn = allocation->stale_fetch_conn;
   auto *dst =
       allocation->io_alias != nullptr
           ? static_cast<unsigned char *>(allocation->io_alias) + offset
           : reinterpret_cast<unsigned char *>(allocation->host_base + offset);
   CUdeviceptr src = allocation->device_ptr + offset;
-  if (allocation->host_base == 0 || bytes == 0 || allocation->device_ptr == 0) {
-    return bytes == 0;
+  if (allocation->host_base == 0 || allocation->device_ptr == 0) {
+    return false;
   }
   // Demand fetch can run from the fault handler and must not re-enter the
   // normal CUDA request-start flush.
@@ -1371,10 +1364,7 @@ static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
     mprotect(reinterpret_cast<void *>(allocation->host_base + start),
              end - start, PROT_READ | PROT_WRITE);
   }
-  size_t data_bytes =
-      start < allocation->size ? std::min(end, allocation->size) - start : 0;
-  if (data_bytes != 0 &&
-      !lupine_fetch_stale_range(allocation, start, data_bytes)) {
+  if (!lupine_fetch_stale_range(allocation, start, end - start)) {
     return false;
   }
   for (size_t index = start / chunk_bytes;
@@ -1438,11 +1428,7 @@ static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
       mprotect(reinterpret_cast<void *>(allocation->host_base + position),
                run_end - position, PROT_READ | PROT_WRITE);
     }
-    size_t data_bytes = position < allocation->size
-                            ? std::min(run_end, allocation->size) - position
-                            : 0;
-    ok = data_bytes == 0 ||
-         lupine_fetch_stale_range(allocation, position, data_bytes);
+    ok = lupine_fetch_stale_range(allocation, position, run_end - position);
     if (ok) {
       for (size_t index = position / chunk_bytes;
            index < (run_end + chunk_bytes - 1) / chunk_bytes &&
@@ -1525,7 +1511,7 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     // argument payloads are opaque to the client (for example, cuBLAS). At a
     // CUDA synchronization point, conservatively invalidate their mirrors
     // even when no kernel launch explicitly marked the allocation as used.
-    if (mapping.size == 0 ||
+    if (mapping.data_bytes == 0 ||
         (!mapping.device_mapping_used && !mapping.managed)) {
       continue;
     }
@@ -1584,8 +1570,9 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     if (invalidated) {
       continue;
     }
-    CUresult result =
-        cuMemcpyDtoH_v2(mapping.host, mapping.device_ptr, mapping.size);
+    CUresult result = cuMemcpyDtoH_v2(
+        static_cast<unsigned char *>(mapping.host) + mapping.data_offset,
+        mapping.device_ptr + mapping.data_offset, mapping.data_bytes);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -2263,6 +2250,7 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
   allocation.storage_size = covering_size;
   allocation.user_base = reinterpret_cast<uintptr_t>(p);
   allocation.user_size = bytesize;
+  allocation.data_offset = reinterpret_cast<uintptr_t>(p) - covering_base;
   allocation.page_size = page_size;
   allocation.page_count = covering_size / page_size;
   allocation.flags = Flags;
@@ -2418,6 +2406,8 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
     lupine_host_allocation allocation;
     allocation.size = bytesize;
     allocation.storage_size = storage_size;
+    allocation.user_base = reinterpret_cast<uintptr_t>(ptr);
+    allocation.user_size = bytesize;
     allocation.page_size = page_size;
     allocation.page_count = storage_size / page_size;
     allocation.flags = flags;

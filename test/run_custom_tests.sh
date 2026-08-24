@@ -30,6 +30,7 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 NVCC="${NVCC:-$CUDA_HOME/bin/nvcc}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-120}"
+CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
 TEST_JOBS="${TEST_JOBS:-$(nproc)}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
   owns_build_dir=0
@@ -149,7 +150,18 @@ run_one_test() {
 
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] custom test $((i + 1))/${#tests[@]}: $name" >&2
 
-  if ! "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$src" -o "$exe" \
+  # nvcc targets one architecture by default (sm_75 on 13.3) and leaves every
+  # other device to a PTX JIT, which the test host's driver refuses when it is
+  # older than the toolkit -- the launch then silently does nothing and the
+  # test reports a stale value. Emit a cubin for every architecture nvcc knows
+  # unless CUDA_SAMPLES_ARCH pins one.
+  local arch_arg="-arch=all"
+  if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
+    arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
+  fi
+
+  if ! "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
+       "$src" -o "$exe" \
        -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs" >"$log" 2>&1; then
     echo "FAIL:build" > "$result_file"
     return 0

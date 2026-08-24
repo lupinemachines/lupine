@@ -6,10 +6,14 @@ concurrency:
 
 # Expected repository variables:
 #   GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+# The dedicated integration binary cache is:
+#   gs://kevmo314-lupine-gpu-integration-cache
 #
 # Keep GCP_SERVICE_ACCOUNT on a custom role rather than project Owner/Editor.
 # It should be bound through a Workload Identity Provider condition restricted
 # to this repository's numeric GitHub IDs, this workflow path, and trusted refs.
+# The service account has bucket-scoped Storage Admin access to the dedicated
+# cache bucket, and this workflow owns that bucket's lifecycle configuration.
 
 on:
   pull_request:
@@ -35,6 +39,7 @@ jobs:
         include:
           - label: cuda13-3
             name: CUDA 13.3
+            cuda_version: 13.3.1
             client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
             samples_ref: v13.3
             pytorch_index_url: https://download.pytorch.org/whl/cu132
@@ -44,6 +49,7 @@ jobs:
             server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4
             name: CUDA 12.4
+            cuda_version: 12.4.1
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
             pytorch_index_url: https://download.pytorch.org/whl/cu124
@@ -52,6 +58,7 @@ jobs:
             server_ld_library_path: ""
           - label: cuda11-8
             name: CUDA 11.8
+            cuda_version: 11.8.0
             client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
             samples_ref: v11.8
             pytorch_index_url: https://download.pytorch.org/whl/cu118
@@ -61,6 +68,8 @@ jobs:
 
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_BUILD_CACHE_BUCKET: kevmo314-lupine-gpu-integration-cache
+      INTEGRATION_BINARY_CACHE_VERSION: v1
       GCP_ZONE: us-central1-a
       GCP_FALLBACK_ZONES: >-
         us-central1-c us-central1-b
@@ -108,6 +117,29 @@ jobs:
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure GCS build cache lifecycle
+        if: github.event_name != 'pull_request' && matrix.label == 'cuda13-3'
+        run: |
+          set -euo pipefail
+          bucket_name="${GCP_BUILD_CACHE_BUCKET#gs://}"
+          bucket_name="${bucket_name%/}"
+          lifecycle_file="$RUNNER_TEMP/gpu-integration-cache-lifecycle.json"
+          cat > "$lifecycle_file" <<'JSON'
+          {
+            "rule": [
+              {
+                "action": { "type": "Delete" },
+                "condition": {
+                  "daysSinceCustomTime": 7,
+                  "matchesPrefix": ["gpu-integration/binaries/"]
+                }
+              }
+            ]
+          }
+          JSON
+          gcloud storage buckets update "gs://$bucket_name" \
+            --lifecycle-file="$lifecycle_file"
 
       - name: Prepare SSH key and runner allowlist
         run: |
@@ -252,6 +284,7 @@ jobs:
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
 
+          ARG INTEGRATION_BINARY_CACHE_HIT=false
           ARG CUDA_SAMPLES_ARCH
           ENV DEBIAN_FRONTEND=noninteractive \
               CUDA_HOME=/usr/local/cuda \
@@ -263,6 +296,7 @@ jobs:
               CCACHE_BASEDIR=/src \
               CCACHE_COMPILERCHECK=content \
               CCACHE_COMPRESS=true \
+              INTEGRATION_BINARY_CACHE_HIT=${INTEGRATION_BINARY_CACHE_HIT} \
               PATH=/usr/local/cuda/bin:$PATH
 
           RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -274,6 +308,7 @@ jobs:
                 curl \
                 freeglut3-dev \
                 git \
+                gzip \
                 libfreeimage-dev \
                 libgl-dev \
                 libglu1-mesa-dev \
@@ -292,6 +327,11 @@ jobs:
 
           RUN bash <<'SCRIPT'
           set -euo pipefail
+
+          if [[ "$INTEGRATION_BINARY_CACHE_HIT" == "true" ]]; then
+            echo "Using restored integration binary cache"
+            exit 0
+          fi
 
           git clone --branch "${{ matrix.samples_ref }}" --depth 1 \
             https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
@@ -316,8 +356,12 @@ jobs:
           # CUDALibrarySamples are built once here; samples the lane's toolkit
           # cannot build are reported as SKIP:build-failed by the run step.
           COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh
-          RUN LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
-                BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh
+          RUN if [ "$INTEGRATION_BINARY_CACHE_HIT" = "true" ]; then \
+                echo "Using cached CUDALibrarySamples binaries"; \
+              else \
+                LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
+                  BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh; \
+              fi
 
           WORKDIR /src
           COPY . /src
@@ -374,6 +418,85 @@ jobs:
           test -n "$arch"
           echo "CUDA_SAMPLES_ARCH=$arch" >> "$GITHUB_ENV"
 
+      - name: Restore integration binary cache from GCS
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4
+            "gha@$VM_IP"
+          )
+
+          dockerfile_sha="$(
+            sha256sum "$RUNNER_TEMP/gpu-integration.Dockerfile" | cut -d' ' -f1
+          )"
+          cache_inputs="$(
+            {
+              printf '%s\n' \
+                "$INTEGRATION_BINARY_CACHE_VERSION" \
+                "base-image=${{ matrix.client_image }}" \
+                "dockerfile=$dockerfile_sha"
+              git ls-files -s -- \
+                test/run_cuda_library_samples.sh
+            } | sha256sum | cut -d' ' -f1
+          )"
+          cache_hit=false
+          cache_uri=""
+          remote_cache_dir="/home/gha/lupine-integration-binaries-${{ matrix.label }}"
+          remote_cache_archive="${remote_cache_dir}.tar.gz"
+
+          "${ssh_base[@]}" \
+            "rm -rf '$remote_cache_dir' '$remote_cache_archive'; mkdir -p '$remote_cache_dir'"
+
+          cache_prefix="gpu-integration/binaries/$INTEGRATION_BINARY_CACHE_VERSION/cuda-${{ matrix.cuda_version }}/sm-$CUDA_SAMPLES_ARCH"
+          cache_uri="gs://$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz"
+          expected_sha="$(
+            gcloud storage objects describe "$cache_uri" \
+              --raw \
+              --format='value(metadata.sha256)' 2>/dev/null || true
+          )"
+
+          if [[ -n "$expected_sha" ]] && \
+            gcloud storage cp "$cache_uri" - | \
+              "${ssh_base[@]}" "cat > '$remote_cache_archive'"; then
+            actual_sha="$(
+              "${ssh_base[@]}" \
+                "sha256sum '$remote_cache_archive' | cut -d' ' -f1"
+            )"
+            if [[ "$actual_sha" == "$expected_sha" ]] && \
+              "${ssh_base[@]}" "
+                set -euo pipefail
+                tar -xzf '$remote_cache_archive' -C '$remote_cache_dir'
+                rm -f '$remote_cache_archive'
+                test -d '$remote_cache_dir/cuda-samples-src'
+                test -d '$remote_cache_dir/cuda-library-samples'
+              "; then
+              cache_hit=true
+              gcloud storage objects update "$cache_uri" \
+                --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "Restored integration binaries from $cache_uri"
+            fi
+          fi
+
+          if [[ "$cache_hit" != "true" ]]; then
+            echo "No valid integration binary cache found at $cache_uri"
+            "${ssh_base[@]}" \
+              "rm -rf '$remote_cache_dir' '$remote_cache_archive'; mkdir -p '$remote_cache_dir'"
+          fi
+
+          {
+            echo "INTEGRATION_BINARY_CACHE_HIT=$cache_hit"
+            echo "INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE=$remote_cache_archive"
+            echo "INTEGRATION_BINARY_CACHE_REMOTE_DIR=$remote_cache_dir"
+            echo "INTEGRATION_BINARY_CACHE_URI=$cache_uri"
+          } >> "$GITHUB_ENV"
+
       - name: Build ${{ matrix.name }} client image on L4 VM
         run: |
           set -euo pipefail
@@ -401,6 +524,7 @@ jobs:
             --tag "$CLIENT_IMAGE" \
             --build-arg "BASE_IMAGE=${{ matrix.client_image }}" \
             --build-arg "CUDA_SAMPLES_ARCH=$CUDA_SAMPLES_ARCH" \
+            --build-arg "INTEGRATION_BINARY_CACHE_HIT=$INTEGRATION_BINARY_CACHE_HIT" \
             .
           echo "Built $CLIENT_IMAGE on L4 VM in $((SECONDS - start))s"
 
@@ -444,8 +568,20 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' INTEGRATION_BINARY_CACHE_HIT='$INTEGRATION_BINARY_CACHE_HIT' INTEGRATION_BINARY_CACHE_REMOTE_DIR='$INTEGRATION_BINARY_CACHE_REMOTE_DIR' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
+          cache_mounts=()
+          if [[ "$INTEGRATION_BINARY_CACHE_HIT" == "true" ]]; then
+            cache_mounts+=(
+              -v "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-samples-src:/opt/cuda-samples-src"
+              -v "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-library-samples:/opt/cuda-library-samples"
+            )
+            if [[ -d "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-samples-build" ]]; then
+              cache_mounts+=(
+                -v "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-samples-build:/opt/cuda-samples-build"
+              )
+            fi
+          fi
           sudo docker run --rm \
             --add-host=host.docker.internal:host-gateway \
             -e CUDA_SAMPLE_JOBS="$CUDA_SAMPLE_JOBS" \
@@ -464,6 +600,7 @@ jobs:
             -e GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             -v /home/gha/lupine-ssh:/ssh:ro \
             -v /home/gha/lupine-results-"$MATRIX_LABEL":/results \
+            "${cache_mounts[@]}" \
             "$CLIENT_IMAGE" \
             bash -lc '
               set -euo pipefail
@@ -558,6 +695,61 @@ jobs:
           fi
 
           exit "$remote_status"
+
+      - name: Refresh Google Cloud credentials for cache upload
+        if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Save integration binary cache to GCS
+        if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4
+            "gha@$VM_IP"
+          )
+
+          "${ssh_base[@]}" \
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CACHE_ARCHIVE='$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          sudo docker run --rm --entrypoint bash "$CLIENT_IMAGE" -lc '
+            set -euo pipefail
+            cache_paths=(cuda-samples-src cuda-library-samples)
+            if [[ -d /opt/cuda-samples-build ]]; then
+              cache_paths+=(cuda-samples-build)
+            fi
+            tar -C /opt -cf - "${cache_paths[@]}" | gzip -1
+          ' > "$CACHE_ARCHIVE"
+          test -s "$CACHE_ARCHIVE"
+          REMOTE
+
+          archive_sha="$(
+            "${ssh_base[@]}" \
+              "sha256sum '$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE' | cut -d' ' -f1"
+          )"
+          upload_status=0
+          "${ssh_base[@]}" "cat '$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE'" | \
+            gcloud storage cp - "$INTEGRATION_BINARY_CACHE_URI" \
+              --content-type=application/gzip \
+              --custom-metadata="sha256=$archive_sha" \
+              --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            || upload_status=$?
+          "${ssh_base[@]}" "rm -f '$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE'"
+          if [[ "$upload_status" -ne 0 ]]; then
+            exit "$upload_status"
+          fi
+          echo "Saved integration binaries to $INTEGRATION_BINARY_CACHE_URI"
 
       - name: Upload compliance results
         if: always()
