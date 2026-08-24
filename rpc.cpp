@@ -371,7 +371,7 @@ void rpc_conn_destroy(conn_t *conn) {
   lupine_va_destroy(conn);
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
-  std::vector<rpc_mirror_write>().swap(conn->mirror_writes);
+  std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
 }
@@ -543,23 +543,24 @@ int rpc_read_start(conn_t *conn, int write_id) {
 static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
                                  int (*read)(conn_t *, void *, size_t)) {
   void *destination = data;
-  bool mirror = false;
+  bool host_allocation = false;
   uintptr_t address = reinterpret_cast<uintptr_t>(data);
   if (conn->va_size != 0 && conn->w_offset != 0 &&
       lupine_va_contains(conn, address, size)) {
     destination = reinterpret_cast<void *>(address + conn->w_offset);
-    mirror = true;
+    host_allocation = true;
   } else if (conn->va_size == 0 && conn->w_offset != 0) {
-    uintptr_t read_base = LUPINE_MIRROR_SERVER_BASE + LUPINE_MIRROR_R_OFFSET;
-    if (address >= read_base && size <= LUPINE_MIRROR_WINDOW_SIZE &&
-        address - read_base <= LUPINE_MIRROR_WINDOW_SIZE - size) {
-      uintptr_t server_address = address - LUPINE_MIRROR_R_OFFSET;
+    uintptr_t read_base =
+        LUPINE_HOST_ALLOCATION_SERVER_BASE + LUPINE_HOST_ALLOCATION_R_OFFSET;
+    if (address >= read_base && size <= LUPINE_HOST_ALLOCATION_WINDOW_SIZE &&
+        address - read_base <= LUPINE_HOST_ALLOCATION_WINDOW_SIZE - size) {
+      uintptr_t server_address = address - LUPINE_HOST_ALLOCATION_R_OFFSET;
       destination = reinterpret_cast<void *>(server_address + conn->w_offset);
-      mirror = true;
+      host_allocation = true;
     }
   }
   int result = read(conn, destination, size);
-  if (result < 0 || !mirror) {
+  if (result < 0 || !host_allocation) {
     return result;
   }
 
@@ -569,19 +570,21 @@ static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
   }
   uintptr_t start = reinterpret_cast<uintptr_t>(data);
   try {
-    if (!conn->mirror_writes.empty() &&
-        conn->mirror_writes.back().start + conn->mirror_writes.back().size ==
+    if (!conn->host_allocation_writes.empty() &&
+        conn->host_allocation_writes.back().start +
+                conn->host_allocation_writes.back().size ==
             start) {
-      conn->mirror_writes.back().size += written;
+      conn->host_allocation_writes.back().size += written;
     } else {
-      conn->mirror_writes.push_back({start, written});
+      conn->host_allocation_writes.push_back({start, written});
     }
   } catch (const std::bad_alloc &) {
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
   if (written != 0) {
-    __atomic_store_n(&conn->mirror_writes_pending, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&conn->host_allocation_writes_pending, 1,
+                     __ATOMIC_RELEASE);
   }
   if (pthread_mutex_unlock(&conn->write_mutex) != 0) {
     return -1;

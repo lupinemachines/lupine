@@ -84,7 +84,7 @@ static const lupine_client_transport_config &lupine_cuda_transport_config() {
     config.dispatch = rpc_client_dispatch_thread;
     config.connection_opened = lupine_cuda_transport_connection_changed;
     config.connection_closed = lupine_cuda_transport_connection_changed;
-    config.w_offset = LUPINE_MIRROR_W_OFFSET;
+    config.w_offset = LUPINE_HOST_ALLOCATION_W_OFFSET;
     return config;
   }();
   return config;
@@ -5197,8 +5197,6 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_kernel_param_mappings(kernelParams, param_sizes.data(),
-                                    param_count);
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
   bool sync_after_launch =
@@ -5281,8 +5279,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_kernel_param_mappings(kernelParams, param_sizes.data(),
-                                    param_count);
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
   bool sync_after_launch =
@@ -5368,8 +5364,6 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_kernel_param_mappings(kernelParams, param_sizes.data(),
-                                    param_count);
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
 
@@ -7329,6 +7323,14 @@ static CUresult lupine_cuStreamGetCaptureInfo(
 // answer NONE locally while this is zero.
 static std::atomic<int> lupine_active_stream_captures{0};
 
+// Capture records work rather than running it, so nothing can have altered
+// device memory while one is open. Collecting anyway would issue a copy inside
+// the capture window and invalidate it; the synchronization that follows the
+// graph's launch is the one that owes the work.
+extern "C" bool lupine_stream_capture_active() {
+  return lupine_active_stream_captures.load(std::memory_order_acquire) != 0;
+}
+
 class lupine_capture_begin_guard {
 public:
   lupine_capture_begin_guard() { lupine_checkpoint::capture_begin(); }
@@ -7414,6 +7416,7 @@ extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
 
 extern "C" CUresult cuStreamBeginCapture_v2(CUstream hStream,
                                             CUstreamCaptureMode mode) {
+  lupine_materialize_host_allocations();
   lupine_capture_begin_guard capture_guard;
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
                                           : lupine_route_for_default();

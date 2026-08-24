@@ -6,6 +6,9 @@
 
 extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
-extern "C" void lupine_mark_kernel_param_mappings(void *const *kernel_params,
-                                                  const size_t *sizes,
-                                                  uint32_t count);
+// Device work happened. A synchronization point uses this to skip a pass
+// entirely when nothing has run since its last one.
+extern "C" void lupine_note_device_work();
+// Materializes every invalidated host allocation. Call before opening a stream
+// capture so no fault can occur inside the capture window.
+extern "C" void lupine_materialize_host_allocations();

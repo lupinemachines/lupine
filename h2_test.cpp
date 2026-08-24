@@ -1345,9 +1345,10 @@ void test_rpc_read_uses_w_offset() {
   require(ftruncate(fd, static_cast<off_t>(page_size)) == 0,
           "shared alias file resize failed");
 
-  uintptr_t server_address = LUPINE_MIRROR_SERVER_BASE + UINT64_C(0x200000);
-  uintptr_t read_address = server_address + LUPINE_MIRROR_R_OFFSET;
-  uintptr_t write_address = server_address + LUPINE_MIRROR_W_OFFSET;
+  uintptr_t server_address =
+      LUPINE_HOST_ALLOCATION_SERVER_BASE + UINT64_C(0x200000);
+  uintptr_t read_address = server_address + LUPINE_HOST_ALLOCATION_R_OFFSET;
+  uintptr_t write_address = server_address + LUPINE_HOST_ALLOCATION_W_OFFSET;
   void *read_view =
       mmap(reinterpret_cast<void *>(read_address), page_size,
            PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED_NOREPLACE, fd, 0);
@@ -1362,7 +1363,7 @@ void test_rpc_read_uses_w_offset() {
           "read view protection failed");
 
   h2_pair pair = make_pair();
-  pair.client.w_offset = LUPINE_MIRROR_W_OFFSET;
+  pair.client.w_offset = LUPINE_HOST_ALLOCATION_W_OFFSET;
   constexpr int kOp = 83;
   const std::array<unsigned char, 8> expected = {3, 1, 4, 1, 5, 9, 2, 6};
   std::thread server([&] {
@@ -1397,11 +1398,11 @@ void test_rpc_read_uses_w_offset() {
 
   require(memcmp(read_view, expected.data(), expected.size()) == 0,
           "read view did not observe the writable alias");
-  require(pair.client.mirror_writes.size() == 1 &&
-              pair.client.mirror_writes[0].start == read_address &&
-              pair.client.mirror_writes[0].size == expected.size(),
+  require(pair.client.host_allocation_writes.size() == 1 &&
+              pair.client.host_allocation_writes[0].start == read_address &&
+              pair.client.host_allocation_writes[0].size == expected.size(),
           "alias response write was not tracked");
-  require(pair.client.mirror_writes_pending != 0,
+  require(pair.client.host_allocation_writes_pending != 0,
           "alias response write was not marked pending");
 
   munmap(read_view, page_size);

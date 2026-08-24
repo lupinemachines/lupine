@@ -70,7 +70,7 @@ int main() {
     return 1;
   }
   // A sub-page registration (NPP registers a stack-resident label count this
-  // way) shares its page with unrelated application bytes. The mirror may
+  // way) shares its page with unrelated application bytes. The transfer may
   // only carry the registered range: writing the rest of the page back from
   // the server restores whatever the application had there at flush time.
   unsigned char *interior = block + 64;
