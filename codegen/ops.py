@@ -897,13 +897,25 @@ class NullTerminatedOperation:
             f"         rpc_read(conn, {name}_result.data(), {name}_len) < 0) ||\n"
         )
 
-    def client_post_rpc(self, f, success_value: str):
+    def client_post_rpc(
+        self,
+        f,
+        success_value: str,
+        allocation_error: str,
+        owner_name: str,
+    ):
         if not self.recv:
             return
         name = self.parameter.name
         f.write(
-            f"    if (return_value == {success_value})\n"
-            f"        *{name} = lupine_intern_returned_string({name}_result);\n"
+            f"    if (return_value == {success_value}) {{\n"
+            f"        const char *{name}_stored = lupine_retain_returned_string(\n"
+            f"            reinterpret_cast<const void *>({owner_name}), "
+            f"{name}_result.data(), {name}_result.size());\n"
+            f"        if ({name}_stored == nullptr)\n"
+            f"            return {allocation_error};\n"
+            f"        *{name} = {name}_stored;\n"
+            "    }\n"
         )
 
 
@@ -1105,6 +1117,12 @@ class OwnerAnnotation:
 
 
 @dataclass
+class RetainAnnotation:
+    parameter: Parameter
+    handle: Parameter
+
+
+@dataclass
 class CrossServerCopyAnnotation:
     dst: Parameter
     src: Parameter
@@ -1145,11 +1163,14 @@ class FunctionAnnotationMetadata:
     routing_parameter: Optional[Parameter] = None
     routing_fallback: Optional[RoutingFallbackAnnotation] = None
     record_owners: list[OwnerAnnotation] = None
+    retains: list[RetainAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     translate_deviceptrs: list[DevicePtrTranslationAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:
             self.record_owners = []
+        if self.retains is None:
+            self.retains = []
         if self.translate_deviceptrs is None:
             self.translate_deviceptrs = []

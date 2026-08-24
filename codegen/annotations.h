@@ -2608,6 +2608,7 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
 /**
  * @guard CUDA_VERSION >= 12030
  * @routingkey FUNCTION hfunc
+ * @retain name hfunc
  * @param name RECV_ONLY NULL_TERMINATED
  * @param hfunc SEND_ONLY
  */
@@ -3949,6 +3950,7 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc);
 /**
  * @guard CUDA_VERSION >= 12030
  * @routingkey FUNCTION hfunc
+ * @retain name hfunc
  * @param name RECV_ONLY NULL_TERMINATED
  * @param hfunc SEND_ONLY
  */

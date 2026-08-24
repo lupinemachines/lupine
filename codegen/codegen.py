@@ -26,6 +26,7 @@ from ops import (
     DereferenceOperation,
     Operation,
     OwnerAnnotation,
+    RetainAnnotation,
     CrossServerCopyAnnotation,
     DevicePtrTranslationAnnotation,
     FunctionAnnotationMetadata,
@@ -472,6 +473,17 @@ def parse_annotation(
             param = annotation_param(params, parts[2])
             metadata.record_owners.append(OwnerAnnotation(parts[1].upper(), param))
             continue
+        if line.startswith("@retain"):
+            parts = line.split()
+            if len(parts) != 3:
+                raise RuntimeError("@retain requires an output parameter and a handle")
+            metadata.retains.append(
+                RetainAnnotation(
+                    parameter=annotation_param(params, parts[1]),
+                    handle=annotation_param(params, parts[2]),
+                )
+            )
+            continue
         if line.startswith("@crossservercopy"):
             parts = line.split()
             if len(parts) < 4:
@@ -818,6 +830,20 @@ def parse_annotation(
         )
         if source is not None and source > i:
             operations.insert(i, operations.pop(source))
+
+    retained_names = set()
+    for retain in metadata.retains:
+        name = retain.parameter.name
+        if name in retained_names:
+            raise RuntimeError(f"Duplicate @retain for parameter {name}")
+        retained_names.add(name)
+        operation = next(
+            (op for op in operations if op.parameter.name == name), None
+        )
+        if not isinstance(operation, NullTerminatedOperation) or not operation.recv:
+            raise NotImplementedError(
+                "@retain currently requires a RECV_ONLY NULL_TERMINATED parameter"
+            )
 
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
@@ -1500,10 +1526,8 @@ def main():
             "#include <cstdint>\n"
             "#include <cstdio>\n"
             "#include <cstring>\n"
-            "#include <mutex>\n"
             "#include <string>\n"
             "#include <unordered_map>\n"
-            "#include <unordered_set>\n"
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
             '#include "client_routing.h"\n'
@@ -1537,6 +1561,7 @@ def main():
             'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
             'extern "C" void lupine_forget_stream_owner(CUstream stream);\n\n'
+            'extern "C" const char *lupine_retain_returned_string(const void *handle, const char *data, size_t size);\n\n'
             'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
             'extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first, CUdeviceptr second);\n'
@@ -1557,12 +1582,6 @@ def main():
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
             'extern "C" const void *lupine_mapped_host_read_source(const void *host, size_t size);\n\n'
-            'static const char *lupine_intern_returned_string(const std::string &value) {\n'
-            '    static auto *mutex = new std::mutex();\n'
-            '    static auto *strings = new std::unordered_set<std::string>();\n'
-            '    std::lock_guard<std::mutex> lock(*mutex);\n'
-            '    return strings->insert(value).first->c_str();\n'
-            '}\n\n'
         )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1807,7 +1826,24 @@ def main():
 
             for operation in operations:
                 if isinstance(operation, NullTerminatedOperation) and operation.recv:
-                    operation.client_post_rpc(f, "CUDA_SUCCESS")
+                    retain = next(
+                        (
+                            item
+                            for item in metadata.retains
+                            if item.parameter.name == operation.parameter.name
+                        ),
+                        None,
+                    )
+                    if retain is None:
+                        raise RuntimeError(
+                            f"{function.name.format()}: returned string requires @retain"
+                        )
+                    operation.client_post_rpc(
+                        f,
+                        "CUDA_SUCCESS",
+                        "CUDA_ERROR_OUT_OF_MEMORY",
+                        retain.handle.name,
+                    )
 
             write_client_post_call(f, function, metadata)
             f.write("    return return_value;\n")

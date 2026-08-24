@@ -8,10 +8,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <mutex>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "gen_rpc_ids.h"
@@ -54,6 +52,10 @@ extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
 
 extern "C" void lupine_forget_stream_owner(CUstream stream);
 
+extern "C" const char *lupine_retain_returned_string(const void *handle,
+                                                     const char *data,
+                                                     size_t size);
+
 extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
                                                  CUlibrary library,
                                                  const char *name,
@@ -86,13 +88,6 @@ extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" const void *lupine_mapped_host_read_source(const void *host,
                                                       size_t size);
-
-static const char *lupine_intern_returned_string(const std::string &value) {
-  static auto *mutex = new std::mutex();
-  static auto *strings = new std::unordered_set<std::string>();
-  std::lock_guard<std::mutex> lock(*mutex);
-  return strings->insert(value).first->c_str();
-}
 
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
@@ -1061,7 +1056,7 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
   std::string name_result;
   if (name == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  if (rpc_write_start_request(conn, RPC_cuKernelGetName) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuKernelGetName) < 0 ||
       rpc_write(conn, &hfunc, sizeof(CUkernel)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
@@ -1070,8 +1065,14 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    *name = lupine_intern_returned_string(name_result);
+  if (return_value == CUDA_SUCCESS) {
+    const char *name_stored =
+        lupine_retain_returned_string(reinterpret_cast<const void *>(hfunc),
+                                      name_result.data(), name_result.size());
+    if (name_stored == nullptr)
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    *name = name_stored;
+  }
   return return_value;
 }
 
@@ -3579,7 +3580,7 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (name == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  if (rpc_write_start_request(conn, RPC_cuFuncGetName) < 0 ||
+  if (lupine_cuda_rpc_start(conn, RPC_cuFuncGetName) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
@@ -3588,8 +3589,14 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    *name = lupine_intern_returned_string(name_result);
+  if (return_value == CUDA_SUCCESS) {
+    const char *name_stored =
+        lupine_retain_returned_string(reinterpret_cast<const void *>(hfunc),
+                                      name_result.data(), name_result.size());
+    if (name_stored == nullptr)
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    *name = name_stored;
+  }
   return return_value;
 }
 

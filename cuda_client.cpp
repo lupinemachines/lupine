@@ -10,6 +10,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <new>
 #include <sstream>
 #include <stdio.h>
 #include <string.h>
@@ -5820,6 +5821,35 @@ lupine_validate_graph_dependencies(const CUgraphNode *dependencies,
 // all deep structs so codegen needs no per-type globals.
 static std::mutex g_deep_cache_mutex;
 static std::map<const void *, std::vector<void *>> g_deep_cache;
+static std::mutex g_retained_string_mutex;
+static std::unordered_map<const void *, std::vector<char *>>
+    g_retained_strings;
+
+extern "C" const char *lupine_retain_returned_string(const void *handle,
+                                                      const char *data,
+                                                      size_t size) {
+  if (handle == nullptr || (data == nullptr && size != 0)) {
+    return nullptr;
+  }
+
+  auto *stored = static_cast<char *>(malloc(size + 1));
+  if (stored == nullptr) {
+    return nullptr;
+  }
+  if (size != 0) {
+    memcpy(stored, data, size);
+  }
+  stored[size] = '\0';
+
+  std::lock_guard<std::mutex> guard(g_retained_string_mutex);
+  try {
+    g_retained_strings[handle].push_back(stored);
+  } catch (const std::bad_alloc &) {
+    free(stored);
+    return nullptr;
+  }
+  return stored;
+}
 
 extern "C" void lupine_deep_cache_reset(const void *key) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
