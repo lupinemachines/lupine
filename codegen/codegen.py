@@ -1805,10 +1805,11 @@ def main():
                         )
                     )
 
-            # Reject invalid send buffers before lupine_cuda_rpc_start()
-            # acquires the connection's call/write locks. Conditions in the
-            # builder below may skip optional writes, but only rpc_write* calls
-            # themselves are allowed to fail the builder.
+            # Reject invalid send buffers before lupine_prepare_rpc() flushes
+            # pending writes and rpc_write_start_request() acquires the
+            # connection's call/write locks. Conditions in the builder below
+            # may skip optional writes, but only rpc_write* calls themselves
+            # are allowed to fail the builder.
             for operation in operations:
                 if isinstance(operation, ArrayOperation):
                     operation.client_preflight(
@@ -1825,7 +1826,8 @@ def main():
             if metadata.async_fire_forget:
                 error_return = error_const(function.return_type.format())
                 f.write(
-                    "    if (lupine_cuda_rpc_start(conn, RPC_{name}) < 0 ||\n".format(
+                    "    if (lupine_prepare_rpc(conn) < 0 ||\n"
+                    "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
                         name=function.name.format()
                     )
                 )
@@ -1848,7 +1850,8 @@ def main():
                 continue
 
             f.write(
-                "    if (lupine_cuda_rpc_start(conn, RPC_{name}) < 0 ||\n".format(
+                "    if (lupine_prepare_rpc(conn) < 0 ||\n"
+                "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
                     name=function.name.format()
                 )
             )
