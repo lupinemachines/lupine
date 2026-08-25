@@ -669,7 +669,10 @@ jobs:
                 /src/test/run_cuda_python_tests.sh || cuda_python_status=$?
 
               library_status=0
+              # This sample hard-codes GPUs {0, 1}, while the GCE lane exposes
+              # one L4. Keep it enabled for two-GPU runs outside this workflow.
               RESULTS_DIR="/results/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)" \
+                LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example" \
                 LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples BUILD_SAMPLES=0 SERVER_PORT_BASE=21000 \
                 /src/test/run_cuda_library_samples.sh || library_status=$?
 
