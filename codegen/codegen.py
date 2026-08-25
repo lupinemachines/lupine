@@ -1719,24 +1719,22 @@ def main():
                 f.write("        lupine_current_before_destroy == ctx) {\n")
                 f.write("        cuCtxSetCurrent(nullptr);\n")
                 f.write("    }\n")
-            f.write(
-                "    using real_fn_t = {return_type} (*)({params});\n".format(
-                    return_type=function.return_type.format(),
-                    params=", ".join([param.type.format() for param in function.parameters]),
-                )
-            )
             call_args = ", ".join(client_call_args(function, metadata))
             helper_args = f", {call_args}" if call_args else ""
-            f.write(
-                "    if (lupine_call_local_cuda_if_routed<real_fn_t>(\n"
-                "            route, \"{name}\", &return_value{args})) {{\n".format(
-                    name=function.name.format(),
-                    args=helper_args,
-                )
+            local_call = 'lupine_call_real_cuda_fn("{name}"{args})'.format(
+                name=function.name.format(), args=helper_args
             )
-            write_client_post_call(f, function, metadata)
-            f.write("        return return_value;\n")
-            f.write("    }\n")
+            local_post_call = io.StringIO()
+            write_client_post_call(local_post_call, function, metadata)
+            if local_post_call.getvalue():
+                f.write("    if (lupine_route_is_local(route)) {\n")
+                f.write(f"        return_value = {local_call};\n")
+                f.write(local_post_call.getvalue())
+                f.write("        return return_value;\n")
+                f.write("    }\n")
+            else:
+                f.write("    if (lupine_route_is_local(route))\n")
+                f.write(f"        return {local_call};\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
 
             for operation in operations:

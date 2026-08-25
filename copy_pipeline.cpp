@@ -21,11 +21,9 @@ extern "C" CUresult lupine_copy_dtoh_on_stream(void *dstHost,
                                                CUstream hStream) {
   lupine_route route = lupine_route_for_deviceptr(srcDevice);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  using real_fn_t = CUresult (*)(void *, CUdeviceptr, size_t);
-  if (lupine_call_local_cuda_if_routed<real_fn_t>(route, "cuMemcpyDtoH_v2",
-                                                  &return_value, dstHost,
-                                                  srcDevice, ByteCount)) {
-    return return_value;
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
+                                    ByteCount);
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -86,10 +84,8 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                          CUstream hStream) {
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUdeviceptr, const void *, size_t, CUstream);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemcpyHtoDAsync_v2");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(dstDevice, srcHost, ByteCount, hStream);
+    return lupine_call_real_cuda_fn("cuMemcpyHtoDAsync_v2", dstDevice, srcHost,
+                                    ByteCount, hStream);
   }
   if (ByteCount != 0 && srcHost == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
