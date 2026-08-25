@@ -15,9 +15,6 @@ test_cudart.py::test_cudart_cudaMemcpy3DAsync
 test_cudart.py::test_cudart_cudaMemcpy3DPeer
 test_cudart.py::test_cudart_cudaMemcpy3DPeerAsync
 
-# #581 cuMemRangeGetAttribute
-test_cuda.py::test_cuda_mem_range_attr
-
 # #582 cuPointerSetAttribute(SYNC_MEMOPS)
 test_cuda.py::test_cuda_pointer_attr
 

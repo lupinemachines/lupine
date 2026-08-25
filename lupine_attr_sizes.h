@@ -27,6 +27,31 @@ inline bool lupine_mem_pool_attribute_size(CUmemPool_attribute attr,
   }
 }
 
+// cuMemRangeGetAttribute(s) accepts caller-sized result buffers. Most
+// attributes are one 32-bit value; ACCESSED_BY is the exception and returns as
+// many 32-bit device ordinals as fit in the supplied buffer.
+inline bool lupine_mem_range_attribute_size_is_valid(
+    CUmem_range_attribute attr, size_t size) {
+  switch (attr) {
+  case CU_MEM_RANGE_ATTRIBUTE_READ_MOSTLY:
+  case CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION:
+  case CU_MEM_RANGE_ATTRIBUTE_LAST_PREFETCH_LOCATION:
+    return size == sizeof(int);
+  case CU_MEM_RANGE_ATTRIBUTE_ACCESSED_BY:
+    return size != 0 && size % sizeof(int) == 0;
+#if CUDA_VERSION >= 12020
+  case CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION_TYPE:
+  case CU_MEM_RANGE_ATTRIBUTE_LAST_PREFETCH_LOCATION_TYPE:
+    return size == sizeof(CUmemLocationType);
+  case CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION_ID:
+  case CU_MEM_RANGE_ATTRIBUTE_LAST_PREFETCH_LOCATION_ID:
+    return size == sizeof(int);
+#endif
+  default:
+    return false;
+  }
+}
+
 inline bool lupine_pointer_attribute_size(CUpointer_attribute attr,
                                           size_t *size) {
   if (size == nullptr) {

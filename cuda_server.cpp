@@ -1715,6 +1715,116 @@ int handle_cuMemPoolImportFromShareableHandle(conn_t *conn) {
   return 0;
 }
 
+int handle_cuMemRangeGetAttribute(conn_t *conn) {
+  CUmem_range_attribute attribute;
+  CUdeviceptr dev_ptr = 0;
+  size_t count = 0;
+  size_t data_size = 0;
+  if (rpc_read(conn, &attribute, sizeof(attribute)) < 0 ||
+      rpc_read(conn, &dev_ptr, sizeof(dev_ptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 ||
+      rpc_read(conn, &data_size, sizeof(data_size)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  std::vector<unsigned char> value;
+  if (lupine_mem_range_attribute_size_is_valid(attribute, data_size)) {
+    try {
+      value.resize(data_size);
+      result = cuMemRangeGetAttribute(value.data(), data_size, attribute,
+                                      dev_ptr, count);
+    } catch (const std::bad_alloc &) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (result == CUDA_SUCCESS &&
+       rpc_write(conn, value.data(), value.size()) < 0) ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cuMemRangeGetAttributes(conn_t *conn) {
+  size_t num_attributes = 0;
+  if (rpc_read(conn, &num_attributes, sizeof(num_attributes)) < 0 ||
+      num_attributes > SIZE_MAX / sizeof(size_t) ||
+      num_attributes > SIZE_MAX / sizeof(CUmem_range_attribute)) {
+    return -1;
+  }
+
+  std::vector<size_t> data_sizes;
+  std::vector<CUmem_range_attribute> attributes;
+  try {
+    data_sizes.resize(num_attributes);
+    attributes.resize(num_attributes);
+  } catch (const std::bad_alloc &) {
+    return -1;
+  }
+  CUdeviceptr dev_ptr = 0;
+  size_t count = 0;
+  if ((num_attributes != 0 &&
+       rpc_read(conn, data_sizes.data(),
+                num_attributes * sizeof(data_sizes[0])) < 0) ||
+      (num_attributes != 0 &&
+       rpc_read(conn, attributes.data(),
+                num_attributes * sizeof(attributes[0])) < 0) ||
+      rpc_read(conn, &dev_ptr, sizeof(dev_ptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = CUDA_SUCCESS;
+  std::vector<std::vector<unsigned char>> values;
+  std::vector<void *> data;
+  try {
+    values.resize(num_attributes);
+    data.resize(num_attributes);
+    for (size_t i = 0; i < num_attributes; ++i) {
+      if (!lupine_mem_range_attribute_size_is_valid(attributes[i],
+                                                     data_sizes[i])) {
+        result = CUDA_ERROR_INVALID_VALUE;
+        break;
+      }
+      values[i].resize(data_sizes[i]);
+      data[i] = values[i].data();
+    }
+  } catch (const std::bad_alloc &) {
+    result = CUDA_ERROR_OUT_OF_MEMORY;
+  }
+
+  if (result == CUDA_SUCCESS) {
+    result = cuMemRangeGetAttributes(data.data(), data_sizes.data(),
+                                     attributes.data(), num_attributes,
+                                     dev_ptr, count);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0) {
+    return -1;
+  }
+  if (result == CUDA_SUCCESS) {
+    for (size_t i = 0; i < num_attributes; ++i) {
+      if (rpc_write(conn, values[i].data(), values[i].size()) < 0) {
+        return -1;
+      }
+    }
+  }
+  return rpc_write_end(conn) < 0 ? -1 : 0;
+}
+
 int handle_cuPointerGetAttribute(conn_t *conn) {
   CUpointer_attribute attribute;
   CUdeviceptr ptr = 0;

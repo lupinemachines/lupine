@@ -172,6 +172,7 @@
 #define RPC_cuMemPoolImportPointer 1026713940
 #define RPC_cuMemPrefetchAsync_v2 199313298
 #define RPC_cuMemAdvise_v2 1952016083
+#define RPC_cuMemRangeGetAttribute 1819983801
 #define RPC_cuMemRangeGetAttributes 694140572
 #define RPC_cuPointerSetAttribute 749063765
 #define RPC_cuPointerGetAttributes 1948058610
@@ -397,7 +398,6 @@
 #define RPC_cuMemPoolGetAttribute 830843819
 #define RPC_cuMemPoolSetAttribute 1050377512
 #define RPC_cuMemPrefetchAsync 596440383
-#define RPC_cuMemRangeGetAttribute 1819983801
 #define RPC_cuMemRetainAllocationHandle 1903553150
 #define RPC_cuMemcpyAtoHAsync_v2 1591028942
 #define RPC_cuParamSetv 1622049063
