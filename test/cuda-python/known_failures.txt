@@ -10,9 +10,6 @@ test_cudart.py::test_cudart_cudaGraphNodeGetDependencies_edgeData_outlives_call
 # #579 cuGraphAddNode
 test_cuda.py::test_graph_poly
 
-# #581 cuMemRangeGetAttribute
-test_cuda.py::test_cuda_mem_range_attr
-
 # #582 cuPointerSetAttribute(SYNC_MEMOPS)
 test_cuda.py::test_cuda_pointer_attr
 

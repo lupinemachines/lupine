@@ -2807,32 +2807,27 @@ CUresult cuMemPoolImportPointer(CUdeviceptr *ptr_out, CUmemoryPool pool,
   return return_value;
 }
 
-CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
-                                 CUmem_range_attribute *attributes,
-                                 size_t numAttributes, CUdeviceptr devPtr,
-                                 size_t count) {
+CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
+                                CUmem_range_attribute attribute,
+                                CUdeviceptr devPtr, size_t count) {
   lupine_route route = lupine_route_for_deviceptr(devPtr);
   CUresult return_value;
-  using real_fn_t = CUresult (*)(void **, size_t *, CUmem_range_attribute *,
-                                 size_t, CUdeviceptr, size_t);
+  using real_fn_t =
+      CUresult (*)(void *, size_t, CUmem_range_attribute, CUdeviceptr, size_t);
   if (lupine_call_local_cuda_if_routed<real_fn_t>(
-          route, "cuMemRangeGetAttributes", &return_value, data, dataSizes,
-          attributes, numAttributes, devPtr, count)) {
+          route, "cuMemRangeGetAttribute", &return_value, data, dataSize,
+          attribute, devPtr, count)) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemRangeGetAttributes) < 0 ||
-      rpc_write(conn, data, sizeof(void *)) < 0 ||
-      rpc_write(conn, dataSizes, sizeof(size_t)) < 0 ||
-      rpc_write(conn, attributes, sizeof(CUmem_range_attribute)) < 0 ||
-      rpc_write(conn, &numAttributes, sizeof(size_t)) < 0 ||
+      rpc_write_start_request(conn, RPC_cuMemRangeGetAttribute) < 0 ||
+      rpc_write(conn, &dataSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &attribute, sizeof(CUmem_range_attribute)) < 0 ||
       rpc_write(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, data, sizeof(void *)) < 0 ||
-      rpc_read(conn, dataSizes, sizeof(size_t)) < 0 ||
-      rpc_read(conn, attributes, sizeof(CUmem_range_attribute)) < 0 ||
+      (dataSize != 0 && rpc_read(conn, data, dataSize) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -7824,7 +7819,7 @@ std::unordered_map<std::string, void *> functionMap = {
 #if CUDA_VERSION >= 12020
     {"cuMemAdvise_v2", (void *)cuMemAdvise_v2},
 #endif
-    {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
+    {"cuMemRangeGetAttribute", (void *)cuMemRangeGetAttribute},
     {"cuPointerGetAttributes", (void *)cuPointerGetAttributes},
     {"cuStreamCreate", (void *)cuStreamCreate},
     {"cuStreamCreateWithPriority", (void *)cuStreamCreateWithPriority},

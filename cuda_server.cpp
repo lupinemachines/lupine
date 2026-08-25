@@ -1715,6 +1715,68 @@ int handle_cuMemPoolImportFromShareableHandle(conn_t *conn) {
   return 0;
 }
 
+int handle_cuMemRangeGetAttributes(conn_t *conn) {
+  size_t num_attributes = 0;
+  if (rpc_read(conn, &num_attributes, sizeof(num_attributes)) < 0) {
+    return -1;
+  }
+
+  size_t *data_sizes = static_cast<size_t *>(
+      std::malloc(num_attributes * sizeof(*data_sizes)));
+  CUmem_range_attribute *attributes = static_cast<CUmem_range_attribute *>(
+      std::malloc(num_attributes * sizeof(*attributes)));
+  CUdeviceptr dev_ptr = 0;
+  size_t count = 0;
+  int status = -1;
+  int request_id;
+  void **data;
+  CUresult result;
+  if (rpc_read(conn, data_sizes, num_attributes * sizeof(*data_sizes)) < 0 ||
+      rpc_read(conn, attributes, num_attributes * sizeof(*attributes)) < 0 ||
+      rpc_read(conn, &dev_ptr, sizeof(dev_ptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0) {
+    goto CLEANUP_REQUEST;
+  }
+  request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    goto CLEANUP_REQUEST;
+  }
+
+  data = static_cast<void **>(std::malloc(num_attributes * sizeof(*data)));
+  for (size_t i = 0; i < num_attributes; ++i) {
+    data[i] = std::malloc(data_sizes[i]);
+  }
+
+  result = cuMemRangeGetAttributes(data, data_sizes, attributes, num_attributes,
+                                   dev_ptr, count);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0) {
+    goto CLEANUP_DATA;
+  }
+  if (result == CUDA_SUCCESS) {
+    for (size_t i = 0; i < num_attributes; ++i) {
+      if (rpc_write(conn, data[i], data_sizes[i]) < 0) {
+        goto CLEANUP_DATA;
+      }
+    }
+  }
+  if (rpc_write_end(conn) < 0) {
+    goto CLEANUP_DATA;
+  }
+  status = 0;
+
+CLEANUP_DATA:
+  for (size_t i = 0; i < num_attributes; ++i) {
+    std::free(data[i]);
+  }
+  std::free(data);
+CLEANUP_REQUEST:
+  std::free(data_sizes);
+  std::free(attributes);
+  return status;
+}
+
 int handle_cuPointerGetAttribute(conn_t *conn) {
   CUpointer_attribute attribute;
   CUdeviceptr ptr = 0;

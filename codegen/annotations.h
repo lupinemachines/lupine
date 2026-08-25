@@ -3440,8 +3440,9 @@ CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
 CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
                         CUmemLocation location);
 /**
- * @param data SEND_RECV
+ * @routingkey DEVICEPTR devPtr
  * @param dataSize SEND_ONLY
+ * @param data RECV_ONLY LENGTH:dataSize
  * @param attribute SEND_ONLY
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
@@ -3450,6 +3451,8 @@ CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
                                 CUmem_range_attribute attribute,
                                 CUdeviceptr devPtr, size_t count);
 /**
+ * @disabled - manual client and server marshal each variable-sized result
+ * @server CUDA
  * @param data SEND_RECV
  * @param dataSizes SEND_RECV
  * @param attributes SEND_RECV
