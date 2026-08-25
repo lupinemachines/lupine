@@ -113,6 +113,10 @@ static inline bool lupine_va_contains(const conn_t *conn, uintptr_t address,
 extern int lupine_va_reserve_client(conn_t *conn, unsigned int min_slot,
                                     unsigned int *slot);
 extern int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size);
+// Bump-claims an aligned span inside the connection's arena. Concurrent callers
+// each get a disjoint span; false means the arena cannot fit the request.
+extern bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
+                            uintptr_t *claimed);
 
 // Backends install these hooks before opening connections. They let the
 // transport report lifecycle changes without depending on backend state.
@@ -196,7 +200,7 @@ constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 // Peer was built from a different tree. Retrying another arena slot cannot
 // help, so the dial loop gives up rather than treating this as a VA conflict.
 constexpr int LUPINE_RPC_HTTP2_IDENTITY_MISMATCH = -4;
-// This build's wire identity, and the comparison the preflight applies. An
+// This build's wire identity, and the comparison the connect check applies. An
 // empty side means that peer cannot state what it is, which reads as
 // unverifiable rather than as a match.
 extern const char *lupine_wire_identity(void);
