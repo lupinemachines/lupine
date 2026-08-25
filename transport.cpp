@@ -157,6 +157,10 @@ int connect_endpoint(client_transport_state &state,
                      unsigned int index) {
   conn_t *conn = &state.connections[index];
   unsigned int min_slot = 0;
+  // Start optimistic with this host's window. A peer that hosts a different one
+  // says so in its response, and the retry below adopts it, so a matching pair
+  // never spends an extra dial to learn what it already assumed.
+  lupine_va_window window = lupine_va_local_window();
   for (;;) {
     *conn = {};
     unsigned int retries =
@@ -176,8 +180,11 @@ int connect_endpoint(client_transport_state &state,
     conn->logical_index = static_cast<int>(index);
     conn->w_offset = state.config.w_offset;
     unsigned int slot = min_slot;
-    if (conn->w_offset != 0) {
-      int reserve_result = lupine_va_reserve_client(conn, min_slot, &slot);
+    // A server that stated no window hosts no arena at all; the refusal below
+    // reports that rather than spending a dial to be told the same thing.
+    if (conn->w_offset != 0 && window.size != 0) {
+      int reserve_result =
+          lupine_va_reserve_client(conn, window, min_slot, &slot);
       if (reserve_result < 0) {
         reset_connection(conn);
         return -1;
@@ -193,11 +200,29 @@ int connect_endpoint(client_transport_state &state,
     if (http2_result == 0 && conn->va_size == 0) {
       http2_result = rpc_http2_client_await_ready(conn);
     }
-    if (http2_result == LUPINE_RPC_HTTP2_VA_CONFLICT && conn->va_size != 0 &&
-        slot + 1 < LUPINE_VA_ARENA_COUNT) {
-      min_slot = slot + 1;
-      reset_connection(conn);
-      continue;
+    if (http2_result == LUPINE_RPC_HTTP2_VA_CONFLICT && conn->va_size != 0) {
+      // A refusal means either this slot is taken or the whole window was
+      // wrong. The response carries the peer's window, so adopt it and start
+      // over from its first slot; otherwise step to the next slot in the window
+      // both ends already agree on.
+      lupine_va_window stated = {};
+      bool adopt = rpc_http2_peer_va_window(conn, &stated) &&
+                   (stated.base != window.base || stated.size != window.size);
+      if (adopt) {
+        LUPINE_LOG_DEBUG("LUPINE server at " << endpoint.host << " port "
+                                             << endpoint.port
+                                             << " hosts arenas elsewhere; "
+                                                "retrying in its window");
+        window = stated;
+        min_slot = 0;
+        reset_connection(conn);
+        continue;
+      }
+      if (slot + 1 < LUPINE_VA_ARENA_COUNT) {
+        min_slot = slot + 1;
+        reset_connection(conn);
+        continue;
+      }
     }
     if (http2_result < 0) {
       reset_connection(conn);

@@ -400,6 +400,52 @@ void test_va_claim_is_disjoint_under_contention() {
           "concurrent claims returned the same span twice");
 }
 
+// The client starts from its own window and needs the peer's stated window on
+// the same connection to correct itself when the two differ.
+void test_client_await_ready_reports_va_window() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  lupine_va_window peer = {};
+  bool stated = false;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    require(rpc_http2_client_await_ready(&pair.client) == 0,
+            "client was not accepted");
+    stated = rpc_http2_peer_va_window(&pair.client, &peer);
+  });
+  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
+  client.join();
+
+  const lupine_va_window local = lupine_va_local_window();
+  if (local.size == 0) {
+    require(!stated, "a host with no arena still advertised a window");
+  } else {
+    require(stated, "the response did not carry the arena window");
+    require(peer.base == local.base && peer.size == local.size,
+            "advertised window did not match the local one");
+  }
+  rpc_http2_destroy(&pair.client);
+  rpc_http2_destroy(&pair.server);
+}
+
+// The arena constants and the alias region have to stay clear of each other: an
+// overlap would let a transport write land inside the protection-managed read
+// view it is supposed to bypass.
+void test_va_window_and_aliases_are_disjoint() {
+  const lupine_va_window window = lupine_va_local_window();
+  if (window.size == 0) {
+    return;
+  }
+  require(window.size / LUPINE_VA_ARENA_COUNT != 0,
+          "the stated window offered no room for a slot");
+  require(window.base <= UINTPTR_MAX - window.size,
+          "window runs past the top of the address space");
+  require(LUPINE_VA_WRITE_BASE >= window.base + window.size ||
+              LUPINE_VA_WRITE_BASE + window.size <= window.base,
+          "writable aliases overlap the arena window");
+}
+
 void test_fragmented_cursors() {
   h2_pair pair = make_pair();
   std::vector<std::string> chunks = {"alpha", "", ":", "beta", ":gamma"};
@@ -1335,6 +1381,8 @@ int main() {
   test_head_probe_cuda_version_metadata(nullptr);
   test_wire_identity_compatibility_rule();
   test_client_await_ready_reports_wire_identity();
+  test_client_await_ready_reports_va_window();
+  test_va_window_and_aliases_are_disjoint();
   test_va_claim_bumps_within_arena();
   test_va_claim_is_disjoint_under_contention();
   test_fragmented_cursors();

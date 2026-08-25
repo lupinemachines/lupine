@@ -92,6 +92,10 @@ struct h2_transport {
   std::string peer_va_size;
   std::string local_va_base;
   std::string local_va_size;
+  std::string peer_window_base;
+  std::string peer_window_size;
+  std::string local_window_base;
+  std::string local_window_size;
   conn_t *conn = nullptr;
 };
 
@@ -439,6 +443,8 @@ constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
 constexpr char kLupineVaSizeHeader[] = "x-lupine-va-size";
 constexpr char kLupineWireIdentityHeader[] = "x-lupine-wire-identity";
+constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
+constexpr char kLupineVaWindowSizeHeader[] = "x-lupine-va-window-size";
 
 #ifndef LUPINE_WIRE_IDENTITY
 #define LUPINE_WIRE_IDENTITY ""
@@ -497,6 +503,17 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   }
   if (LUPINE_WIRE_IDENTITY[0] != '\0') {
     headers.push_back(h2_nv(kLupineWireIdentityHeader, LUPINE_WIRE_IDENTITY));
+  }
+  // State the window on every response, probe included: the client has to know
+  // it before it reserves anything, and no single constant fits both platforms.
+  const lupine_va_window window = lupine_va_local_window();
+  if (window.size != 0) {
+    transport->local_window_base = h2_hex(window.base);
+    transport->local_window_size = h2_hex(window.size);
+    headers.push_back(
+        h2_nv(kLupineVaWindowBaseHeader, transport->local_window_base.c_str()));
+    headers.push_back(
+        h2_nv(kLupineVaWindowSizeHeader, transport->local_window_size.c_str()));
   }
   if (status == 200 && transport->conn != nullptr &&
       transport->conn->va_size != 0) {
@@ -645,6 +662,18 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
       memcmp(name, kLupineWireIdentityHeader, namelen) == 0) {
     transport->peer_wire_identity.assign(reinterpret_cast<const char *>(value),
                                          valuelen);
+    return 0;
+  }
+  if (namelen == strlen(kLupineVaWindowBaseHeader) &&
+      memcmp(name, kLupineVaWindowBaseHeader, namelen) == 0) {
+    transport->peer_window_base.assign(reinterpret_cast<const char *>(value),
+                                       valuelen);
+    return 0;
+  }
+  if (namelen == strlen(kLupineVaWindowSizeHeader) &&
+      memcmp(name, kLupineVaWindowSizeHeader, namelen) == 0) {
+    transport->peer_window_size.assign(reinterpret_cast<const char *>(value),
+                                       valuelen);
     return 0;
   }
   if (namelen == strlen(kLupineVaBaseHeader) &&
@@ -1311,6 +1340,27 @@ const char *rpc_http2_client_probe(conn_t *conn) {
   }
   pthread_mutex_unlock(&transport->session_mutex);
   return version;
+}
+
+// False when the peer stated no window, in which case it hosts no arena at all
+// and the caller should not reserve one.
+bool rpc_http2_peer_va_window(conn_t *conn, lupine_va_window *window) {
+  if (conn == nullptr || conn->http2 == nullptr || window == nullptr) {
+    return false;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  uintptr_t base = 0;
+  uintptr_t size = 0;
+  bool parsed = h2_parse_hex(transport->peer_window_base, &base) &&
+                h2_parse_hex(transport->peer_window_size, &size);
+  pthread_mutex_unlock(&transport->session_mutex);
+  if (!parsed || size == 0 || base > UINTPTR_MAX - size) {
+    return false;
+  }
+  window->base = base;
+  window->size = static_cast<size_t>(size);
+  return true;
 }
 
 // Valid until the transport is destroyed. A server built without git advertises

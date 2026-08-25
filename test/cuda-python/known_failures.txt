@@ -10,11 +10,6 @@ test_cudart.py::test_cudart_cudaGraphNodeGetDependencies_edgeData_outlives_call
 # #579 cuGraphAddNode
 test_cuda.py::test_graph_poly
 
-# #580 cuMemcpy3DAsync / cuMemcpy3DPeer / cuMemcpy3DPeerAsync
-test_cudart.py::test_cudart_cudaMemcpy3DAsync
-test_cudart.py::test_cudart_cudaMemcpy3DPeer
-test_cudart.py::test_cudart_cudaMemcpy3DPeerAsync
-
 # #582 cuPointerSetAttribute(SYNC_MEMOPS)
 test_cuda.py::test_cuda_pointer_attr
 
