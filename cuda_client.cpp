@@ -4360,7 +4360,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
       return -1;
     }
   }
-  lupine_note_async_dtoh_drained(copy_count);
+  lupine_event_stale_semaphore_add(-static_cast<int64_t>(copy_count));
   return 0;
 }
 
@@ -4409,7 +4409,7 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
           route, "cuEventRecord", &return_value, hEvent, hStream)) {
     return return_value;
   }
-  lupine_note_event_recorded(hEvent);
+  lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuEventRecord) < 0 ||
@@ -4439,7 +4439,7 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
           flags)) {
     return return_value;
   }
-  lupine_note_event_recorded(hEvent);
+  lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuEventRecordWithFlags) < 0 ||
@@ -4465,9 +4465,9 @@ extern "C" CUresult cuEventRecordWithFlags_ptsz(CUevent hEvent,
 // already produced by RPC_cuEventQuery.
 static void lupine_prefetch_event_queries(CUevent exclude, conn_t *conn) {
   CUevent events[kLupineEventQueryBatch];
-  uint64_t recorded[kLupineEventQueryBatch];
+  uint64_t records[kLupineEventQueryBatch];
   uint32_t count =
-      lupine_collect_event_query_prefetch(exclude, conn, events, recorded);
+      lupine_event_collect_query_batch(exclude, conn, events, records);
   if (count == 0) {
     return;
   }
@@ -4482,7 +4482,7 @@ static void lupine_prefetch_event_queries(CUevent exclude, conn_t *conn) {
       rpc_read_end(conn) < 0) {
     return;
   }
-  lupine_note_event_query_results(events, recorded, results, count);
+  lupine_event_cache_completions(events, records, results, count);
 }
 
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
@@ -4500,8 +4500,8 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   }
   std::shared_lock<std::shared_mutex> event_lifecycle_lock(
       lupine_event_lifecycle_mutex());
-  uint64_t recorded = 0;
-  if (!lupine_event_query_needed(hEvent, &recorded)) {
+  uint64_t record = 0;
+  if (!lupine_event_query_needed(hEvent, &record)) {
     return lupine_sync_mapped_device_to_host();
   }
   CUresult result = CUDA_ERROR_UNKNOWN;
@@ -4513,7 +4513,7 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  lupine_note_event_query_results(&hEvent, &recorded, &result, 1);
+  lupine_event_cache_completions(&hEvent, &record, &result, 1);
 
   return_value = result;
   if (return_value == CUDA_SUCCESS) {
@@ -5590,7 +5590,7 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (ByteCount != 0) {
-    lupine_note_async_dtoh_copy();
+    lupine_event_stale_semaphore_add(1);
   }
   return CUDA_SUCCESS;
 }
