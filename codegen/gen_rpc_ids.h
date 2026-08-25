@@ -274,6 +274,11 @@
 #define RPC_cuGraphClone 1985984852
 #define RPC_cuGraphNodeFindInClone 1346487083
 #define RPC_cuGraphNodeGetType 1733309030
+#define RPC_cuGraphNodeGetContainingGraph 2073783441
+#define RPC_cuGraphNodeGetLocalId 909459841
+#define RPC_cuGraphNodeGetToolsId 1122255545
+#define RPC_cuGraphGetId 1130798716
+#define RPC_cuGraphExecGetId 1513714907
 #define RPC_cuGraphGetNodes 314616981
 #define RPC_cuGraphGetRootNodes 1731117011
 #define RPC_cuGraphDestroyNode 1083979368

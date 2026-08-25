@@ -4448,6 +4448,38 @@ CUresult cuGraphNodeFindInClone(CUgraphNode *phNode, CUgraphNode hOriginalNode,
  */
 CUresult cuGraphNodeGetType(CUgraphNode hNode, CUgraphNodeType *type);
 /**
+ * @guard CUDA_VERSION >= 13010
+ * @recordowner GRAPH phGraph
+ * @param hNode SEND_ONLY
+ * @param phGraph RECV_ONLY
+ */
+CUresult cuGraphNodeGetContainingGraph(CUgraphNode hNode, CUgraph *phGraph);
+/**
+ * @guard CUDA_VERSION >= 13010
+ * @param hNode SEND_ONLY
+ * @param nodeId RECV_ONLY
+ */
+CUresult cuGraphNodeGetLocalId(CUgraphNode hNode, unsigned int *nodeId);
+/**
+ * @guard CUDA_VERSION >= 13010
+ * @param hNode SEND_ONLY
+ * @param toolsNodeId RECV_ONLY
+ */
+CUresult cuGraphNodeGetToolsId(CUgraphNode hNode,
+                               unsigned long long *toolsNodeId);
+/**
+ * @guard CUDA_VERSION >= 13010
+ * @param hGraph SEND_ONLY
+ * @param graphId RECV_ONLY
+ */
+CUresult cuGraphGetId(CUgraph hGraph, unsigned int *graphId);
+/**
+ * @guard CUDA_VERSION >= 13010
+ * @param hGraphExec SEND_ONLY
+ * @param graphId RECV_ONLY
+ */
+CUresult cuGraphExecGetId(CUgraphExec hGraphExec, unsigned int *graphId);
+/**
  * @param hGraph SEND_ONLY
  * @param numNodes SEND_RECV
  * @param nodes RECV_ONLY NULLABLE LENGTH:numNodes

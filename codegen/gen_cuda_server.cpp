@@ -5762,6 +5762,141 @@ ERROR_0:
   return -1;
 }
 
+#if CUDA_VERSION >= 13010
+int handle_cuGraphNodeGetContainingGraph(conn_t *conn) {
+  CUgraphNode hNode;
+  CUgraph phGraph;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGraphNodeGetContainingGraph(hNode, &phGraph);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &phGraph, sizeof(CUgraph)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+int handle_cuGraphNodeGetLocalId(conn_t *conn) {
+  CUgraphNode hNode;
+  unsigned int nodeId;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGraphNodeGetLocalId(hNode, &nodeId);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &nodeId, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+int handle_cuGraphNodeGetToolsId(conn_t *conn) {
+  CUgraphNode hNode;
+  unsigned long long toolsNodeId;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGraphNodeGetToolsId(hNode, &toolsNodeId);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &toolsNodeId, sizeof(unsigned long long)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+int handle_cuGraphGetId(conn_t *conn) {
+  CUgraph hGraph;
+  unsigned int graphId;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGraphGetId(hGraph, &graphId);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &graphId, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+int handle_cuGraphExecGetId(conn_t *conn) {
+  CUgraphExec hGraphExec;
+  unsigned int graphId;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGraphExecGetId(hGraphExec, &graphId);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &graphId, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 int handle_cuGraphGetNodes(conn_t *conn) {
   CUgraph hGraph;
   size_t numNodes = 0;

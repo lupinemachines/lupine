@@ -1,18 +1,6 @@
 # pytest node ids (relative to the tests or examples directory) that run_cuda_python_tests.sh
 # deselects. One tracking issue per root cause; drop the lines when it closes.
 
-# #577 CUDA 13.1 graph identity APIs
-test_cuda.py::test_cuGraphGetId
-test_cuda.py::test_cuGraphExecGetId
-test_cuda.py::test_cuGraphNodeGetLocalId
-test_cuda.py::test_cuGraphNodeGetToolsId
-test_cuda.py::test_cuGraphNodeGetContainingGraph
-test_cudart.py::test_cudaGraphGetId
-test_cudart.py::test_cudaGraphExecGetId
-test_cudart.py::test_cudaGraphNodeGetLocalId
-test_cudart.py::test_cudaGraphNodeGetToolsId
-test_cudart.py::test_cudaGraphNodeGetContainingGraph
-
 # #578 cuGraphGetEdges / cuGraphNodeGetDependencies with edgeData
 test_cuda.py::test_cuGraphGetEdges_edgeData_outlives_call
 test_cuda.py::test_cuGraphNodeGetDependencies_edgeData_outlives_call
