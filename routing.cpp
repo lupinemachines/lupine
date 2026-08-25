@@ -88,18 +88,6 @@ extern "C" conn_t *lupine_route_remote_conn(lupine_route route) {
   return route.kind == LUPINE_ROUTE_REMOTE ? route.conn : nullptr;
 }
 
-extern "C" bool lupine_local_cuda_symbol_if_routed(lupine_route route,
-                                                   const char *symbol,
-                                                   void **symbol_out) {
-  if (!lupine_route_is_local(route)) {
-    return false;
-  }
-  if (symbol_out != nullptr) {
-    *symbol_out = lupine_real_cuda_symbol(symbol);
-  }
-  return true;
-}
-
 lupine_route lupine_remote_route_for_conn(conn_t *conn) {
   if (conn == nullptr) {
     return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
@@ -179,17 +167,15 @@ static CUresult lupine_ensure_device_table() {
   auto &devices = lupine_device_table();
   devices.clear();
 
-  using cuDeviceGetCount_fn = CUresult (*)(int *);
-  using cuDeviceGet_fn = CUresult (*)(CUdevice *, int);
-  auto local_count_fn =
-      lupine_real_cuda_fn<cuDeviceGetCount_fn>("cuDeviceGetCount");
-  auto local_get_fn = lupine_real_cuda_fn<cuDeviceGet_fn>("cuDeviceGet");
-  if (local_count_fn != nullptr && local_get_fn != nullptr) {
+  if (lupine_local_cuda_available()) {
     int local_count = 0;
-    if (local_count_fn(&local_count) == CUDA_SUCCESS && local_count > 0) {
+    if (lupine_call_real_cuda_fn("cuDeviceGetCount", &local_count) ==
+            CUDA_SUCCESS &&
+        local_count > 0) {
       for (int ordinal = 0; ordinal < local_count; ++ordinal) {
         CUdevice local_device = 0;
-        if (local_get_fn(&local_device, ordinal) == CUDA_SUCCESS) {
+        if (lupine_call_real_cuda_fn("cuDeviceGet", &local_device, ordinal) ==
+            CUDA_SUCCESS) {
           lupine_device_entry entry;
           entry.local = true;
           entry.local_device = local_device;
@@ -719,9 +705,7 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
   uint64_t epoch = lupine_lane_context_cache_epoch();
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUcontext);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuCtxSetCurrent");
-    result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(ctx);
+    result = lupine_call_real_cuda_fn("cuCtxSetCurrent", ctx);
   } else {
     conn_t *conn = lupine_route_remote_conn(route);
     if (lupine_prepare_rpc(conn) < 0 ||

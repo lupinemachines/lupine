@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <type_traits>
+#include <utility>
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
 #include "cuda_compat.h"
@@ -93,9 +95,6 @@ static CUresult lupine_lookup_device_on_all_routes(CUdevice *device,
 }
 
 extern "C" void *lupine_real_cuda_symbol(const char *name);
-extern "C" bool lupine_local_cuda_symbol_if_routed(lupine_route route,
-                                                   const char *symbol,
-                                                   void **symbol_out);
 
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);
@@ -143,19 +142,18 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                        size_t size,
                                                        lupine_route route);
 
-template <typename Fn> static Fn lupine_real_cuda_fn(const char *name) {
-  return reinterpret_cast<Fn>(lupine_real_cuda_symbol(name));
+template <typename Fn = void,
+          CUresult MissingSymbol = CUDA_ERROR_DEVICE_UNAVAILABLE,
+          typename... Args>
+static CUresult lupine_call_real_cuda_fn(const char *name, Args &&...args) {
+  using inferred_fn = CUresult(CUDAAPI *)(std::decay_t<Args>...);
+  using real_fn = std::conditional_t<std::is_void_v<Fn>, inferred_fn, Fn>;
+  auto real = reinterpret_cast<real_fn>(lupine_real_cuda_symbol(name));
+  return real == nullptr ? MissingSymbol : real(std::forward<Args>(args)...);
 }
 
-template <typename Fn, typename... Args>
-static bool lupine_call_local_cuda_if_routed(lupine_route route,
-                                             const char *symbol,
-                                             CUresult *result, Args... args) {
-  void *local_symbol = nullptr;
-  if (!lupine_local_cuda_symbol_if_routed(route, symbol, &local_symbol)) {
-    return false;
-  }
-  auto real = reinterpret_cast<Fn>(local_symbol);
-  *result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(args...);
-  return true;
+template <CUresult MissingSymbol, typename... Args>
+static CUresult lupine_call_real_cuda_fn(const char *name, Args &&...args) {
+  return lupine_call_real_cuda_fn<void, MissingSymbol>(
+      name, std::forward<Args>(args)...);
 }

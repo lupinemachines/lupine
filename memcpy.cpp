@@ -1645,10 +1645,8 @@ static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
   }
   *device_ptr = 0;
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(void **, size_t, unsigned int);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostAlloc");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(remote_host, bytesize, flags);
+    return lupine_call_real_cuda_fn("cuMemHostAlloc", remote_host, bytesize,
+                                    flags);
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1676,9 +1674,7 @@ static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
     return CUDA_SUCCESS;
   }
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(void *);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemFreeHost");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(remote_host);
+    return lupine_call_real_cuda_fn("cuMemFreeHost", remote_host);
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1702,10 +1698,8 @@ static CUresult lupine_remote_cuMemHostGetDevicePointer(CUdeviceptr *device_ptr,
     return CUDA_ERROR_INVALID_VALUE;
   }
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUdeviceptr *, void *, unsigned int);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostGetDevicePointer_v2");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(device_ptr, remote_host, flags);
+    return lupine_call_real_cuda_fn("cuMemHostGetDevicePointer_v2", device_ptr,
+                                    remote_host, flags);
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1732,10 +1726,7 @@ static CUresult lupine_remote_cuMemHostGetFlags(unsigned int *flags,
     return CUDA_ERROR_INVALID_VALUE;
   }
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(unsigned int *, void *);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostGetFlags");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(flags, remote_host);
+    return lupine_call_real_cuda_fn("cuMemHostGetFlags", flags, remote_host);
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1772,10 +1763,8 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
 
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(void **, size_t, unsigned int);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostAlloc");
-    CUresult result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                                      : real(pp, bytesize, Flags);
+    CUresult result =
+        lupine_call_real_cuda_fn("cuMemHostAlloc", pp, bytesize, Flags);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -1798,11 +1787,7 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
       if (!lupine_mutable_host_allocations_locked()
                .emplace(*pp, std::move(allocation))
                .second) {
-        using free_fn_t = CUresult (*)(void *);
-        auto free_real = lupine_real_cuda_fn<free_fn_t>("cuMemFreeHost");
-        if (free_real != nullptr) {
-          free_real(*pp);
-        }
+        (void)lupine_call_real_cuda_fn("cuMemFreeHost", *pp);
         return CUDA_ERROR_OUT_OF_MEMORY;
       }
     }
@@ -1958,9 +1943,7 @@ extern "C" CUresult cuMemFreeHost(void *p) {
     allocations.erase(it);
   }
   if (local_cuda) {
-    using real_fn_t = CUresult (*)(void *);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemFreeHost");
-    CUresult result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(p);
+    CUresult result = lupine_call_real_cuda_fn("cuMemFreeHost", p);
     if (result == CUDA_SUCCESS) {
       lupine_forget_deviceptr_owner(reinterpret_cast<CUdeviceptr>(p));
       if (device_ptr != 0) {
@@ -2031,11 +2014,8 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
   if (!known_allocation) {
     lupine_route route = lupine_route_for_default();
     if (lupine_route_is_local(route)) {
-      using real_fn_t = CUresult (*)(CUdeviceptr *, void *, unsigned int);
-      auto real =
-          lupine_real_cuda_fn<real_fn_t>("cuMemHostGetDevicePointer_v2");
-      return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                             : real(pdptr, p, Flags);
+      return lupine_call_real_cuda_fn("cuMemHostGetDevicePointer_v2", pdptr, p,
+                                      Flags);
     }
 
     size_t page_size = lupine_page_size();
@@ -2055,11 +2035,9 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
       lupine_route_for_deviceptr(reinterpret_cast<CUdeviceptr>(remote_host));
   CUresult alloc_result;
   if (local_cuda) {
-    using real_fn_t = CUresult (*)(CUdeviceptr *, void *, unsigned int);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostGetDevicePointer_v2");
-    alloc_result = real == nullptr
-                       ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                       : real(&new_device_ptr, allocation_host, Flags);
+    alloc_result =
+        lupine_call_real_cuda_fn("cuMemHostGetDevicePointer_v2",
+                                 &new_device_ptr, allocation_host, Flags);
   } else {
     alloc_result = lupine_remote_cuMemHostGetDevicePointer(
         &new_device_ptr, remote_host, Flags, route);
@@ -2164,10 +2142,8 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
 
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(void *, size_t, unsigned int);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostRegister_v2");
-    CUresult result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                                      : real(p, bytesize, Flags);
+    CUresult result =
+        lupine_call_real_cuda_fn("cuMemHostRegister_v2", p, bytesize, Flags);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -2189,12 +2165,7 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
     if (!lupine_mutable_host_allocations_locked()
              .emplace(p, std::move(allocation))
              .second) {
-      using unregister_fn_t = CUresult (*)(void *);
-      auto unregister_real =
-          lupine_real_cuda_fn<unregister_fn_t>("cuMemHostUnregister");
-      if (unregister_real != nullptr) {
-        unregister_real(p);
-      }
+      (void)lupine_call_real_cuda_fn("cuMemHostUnregister", p);
       return CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED;
     }
     return CUDA_SUCCESS;
@@ -2313,9 +2284,7 @@ extern "C" CUresult cuMemHostUnregister(void *p) {
     allocations.erase(it);
   }
   if (local_cuda) {
-    using real_fn_t = CUresult (*)(void *);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemHostUnregister");
-    CUresult result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : real(p);
+    CUresult result = lupine_call_real_cuda_fn("cuMemHostUnregister", p);
     if (result == CUDA_SUCCESS && device_ptr != 0) {
       lupine_forget_deviceptr_owner(device_ptr);
     }
@@ -2344,10 +2313,8 @@ extern "C" CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
 
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(CUdeviceptr *, size_t, unsigned int);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemAllocManaged");
-    CUresult result = real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                                      : real(dptr, bytesize, flags);
+    CUresult result =
+        lupine_call_real_cuda_fn("cuMemAllocManaged", dptr, bytesize, flags);
     if (result == CUDA_SUCCESS) {
       lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
     }
@@ -2447,12 +2414,7 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
   if (!found) {
     lupine_route route = lupine_route_for_deviceptr(dptr);
     if (lupine_route_is_local(route)) {
-      using real_fn_t = CUresult (*)(CUdeviceptr);
-      auto real = lupine_real_cuda_fn<real_fn_t>("cuMemFree_v2");
-      if (real == nullptr) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-      }
-      CUresult result = real(dptr);
+      CUresult result = lupine_call_real_cuda_fn("cuMemFree_v2", dptr);
       if (result == CUDA_SUCCESS) {
         lupine_forget_deviceptr_owner(dptr);
       }
@@ -2544,10 +2506,8 @@ extern "C" CUresult cuPointerGetAttribute(void *data,
   }
   lupine_route route = lupine_route_for_deviceptr(query_ptr);
   if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(void *, CUpointer_attribute, CUdeviceptr);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuPointerGetAttribute");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(data, attribute, query_ptr);
+    return lupine_call_real_cuda_fn("cuPointerGetAttribute", data, attribute,
+                                    query_ptr);
   }
   // Identity-VA managed allocations use device VMM on the server, so the
   // server has no host alias to report. Return the client allocation instead.
@@ -2604,11 +2564,8 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
   }
   lupine_route route = lupine_route_for_deviceptr(target_ptr);
   if (lupine_route_is_local(route)) {
-    using real_fn_t =
-        CUresult (*)(const void *, CUpointer_attribute, CUdeviceptr);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuPointerSetAttribute");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(value, attribute, target_ptr);
+    return lupine_call_real_cuda_fn("cuPointerSetAttribute", value, attribute,
+                                    target_ptr);
   }
 
   size_t value_size = 0;
@@ -2701,11 +2658,8 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   }
   lupine_route route = lupine_route_for_deviceptr(query_ptr);
   if (lupine_route_is_local(route)) {
-    using real_fn_t =
-        CUresult (*)(unsigned int, CUpointer_attribute *, void **, CUdeviceptr);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuPointerGetAttributes");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(numAttributes, attributes, data, query_ptr);
+    return lupine_call_real_cuda_fn("cuPointerGetAttributes", numAttributes,
+                                    attributes, data, query_ptr);
   }
 
   // A pointer in neither the host-allocation registry nor the device-pointer
