@@ -45,6 +45,8 @@
 #define RPC_cuCtxGetStreamPriorityRange 1782496290
 #define RPC_cuCtxResetPersistingL2Cache 1127157402
 #define RPC_cuCtxGetExecAffinity 110995246
+#define RPC_cuCtxRecordEvent 64806754
+#define RPC_cuCtxWaitEvent 1390839162
 #define RPC_cuCtxAttach 1257564665
 #define RPC_cuCtxDetach 1203357304
 #define RPC_cuCtxGetSharedMemConfig 1986889819
@@ -379,8 +381,11 @@
 #define RPC_cuDevSmResourceSplitByCount 2128109816
 #define RPC_cuDevSmResourceSplit 1230886197
 #define RPC_cuDevResourceGenerateDesc 1242809183
+#define RPC_cuGreenCtxRecordEvent 1473921838
+#define RPC_cuGreenCtxWaitEvent 1136327306
 #define RPC_cuStreamGetGreenCtx 1723357044
 #define RPC_cuGreenCtxStreamCreate 1433266945
+#define RPC_cuGreenCtxGetId 1724676806
 #define RPC_cuStreamGetDevResource 494275841
 #define RPC_cuCtxCreate_v2 804269166
 #define RPC_cuCtxCreate_v3 1492589816

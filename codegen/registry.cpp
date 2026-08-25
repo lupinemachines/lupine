@@ -462,6 +462,14 @@ LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
 LUPINE_DECLARE_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2,
                        rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12050
+LUPINE_DECLARE_HANDLER(RPC_cuCtxRecordEvent, handle_cuCtxRecordEvent,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12050
+LUPINE_DECLARE_HANDLER(RPC_cuCtxWaitEvent, handle_cuCtxWaitEvent,
+                       rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 12030
 LUPINE_DECLARE_HANDLER(RPC_cuKernelGetName, handle_cuKernelGetName,
                        rpc_backend::cuda)
@@ -542,12 +550,24 @@ LUPINE_DECLARE_HANDLER(RPC_cuDevResourceGenerateDesc,
                        handle_cuDevResourceGenerateDesc, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12040
+LUPINE_DECLARE_HANDLER(RPC_cuGreenCtxRecordEvent, handle_cuGreenCtxRecordEvent,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12040
+LUPINE_DECLARE_HANDLER(RPC_cuGreenCtxWaitEvent, handle_cuGreenCtxWaitEvent,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12040
 LUPINE_DECLARE_HANDLER(RPC_cuStreamGetGreenCtx, handle_cuStreamGetGreenCtx,
                        rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12050
 LUPINE_DECLARE_HANDLER(RPC_cuGreenCtxStreamCreate,
                        handle_cuGreenCtxStreamCreate, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13000
+LUPINE_DECLARE_HANDLER(RPC_cuGreenCtxGetId, handle_cuGreenCtxGetId,
+                       rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 13010
 LUPINE_DECLARE_HANDLER(RPC_cuStreamGetDevResource,
@@ -577,6 +597,12 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 13000
       LUPINE_REGISTER_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12050
+      LUPINE_REGISTER_HANDLER(RPC_cuCtxRecordEvent, handle_cuCtxRecordEvent, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12050
+      LUPINE_REGISTER_HANDLER(RPC_cuCtxWaitEvent, handle_cuCtxWaitEvent, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12030
       LUPINE_REGISTER_HANDLER(RPC_cuKernelGetName, handle_cuKernelGetName, rpc_backend::cuda)
@@ -639,10 +665,19 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cuDevResourceGenerateDesc, handle_cuDevResourceGenerateDesc, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12040
+      LUPINE_REGISTER_HANDLER(RPC_cuGreenCtxRecordEvent, handle_cuGreenCtxRecordEvent, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12040
+      LUPINE_REGISTER_HANDLER(RPC_cuGreenCtxWaitEvent, handle_cuGreenCtxWaitEvent, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12040
       LUPINE_REGISTER_HANDLER(RPC_cuStreamGetGreenCtx, handle_cuStreamGetGreenCtx, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12050
       LUPINE_REGISTER_HANDLER(RPC_cuGreenCtxStreamCreate, handle_cuGreenCtxStreamCreate, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13000
+      LUPINE_REGISTER_HANDLER(RPC_cuGreenCtxGetId, handle_cuGreenCtxGetId, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 13010
       LUPINE_REGISTER_HANDLER(RPC_cuStreamGetDevResource, handle_cuStreamGetDevResource, rpc_backend::cuda)
