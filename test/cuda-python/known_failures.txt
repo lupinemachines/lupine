@@ -33,9 +33,6 @@ test_cuda.py::test_cuda_mem_range_attr
 # #582 cuPointerSetAttribute(SYNC_MEMOPS)
 test_cuda.py::test_cuda_pointer_attr
 
-# #583 cuCoredumpSetAttributeGlobal
-test_cuda.py::test_cuda_coredump_attr
-
 # #599 CUDA 11 cuGraphInstantiate_v2 with a log buffer (11.8 lane)
 test_cuda.py::test_cuda_graphMem_attr
 test_cudart.py::test_cudart_cudaGraphAddMemcpyNode1D

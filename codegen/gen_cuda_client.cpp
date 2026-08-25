@@ -6755,6 +6755,61 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
   return return_value;
 }
 
+#if CUDA_VERSION >= 12010
+CUresult cuCoredumpGetAttributeGlobal(CUcoredumpSettings attrib, void *value,
+                                      size_t *size) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUcoredumpSettings, void *, size_t *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuCoredumpGetAttributeGlobal", &return_value, attrib, value,
+          size)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuCoredumpGetAttributeGlobal) < 0 ||
+      rpc_write(conn, &attrib, sizeof(CUcoredumpSettings)) < 0 ||
+      rpc_write(conn, size, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, size, sizeof(size_t)) < 0 ||
+      (*size != 0 && rpc_read(conn, value, *size) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12010
+CUresult cuCoredumpSetAttributeGlobal(CUcoredumpSettings attrib, void *value,
+                                      size_t *size) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUcoredumpSettings, void *, size_t *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuCoredumpSetAttributeGlobal", &return_value, attrib, value,
+          size)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (*size != 0 && value == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuCoredumpSetAttributeGlobal) < 0 ||
+      rpc_write(conn, &attrib, sizeof(CUcoredumpSettings)) < 0 ||
+      rpc_write(conn, size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, value, *size) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, size, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
 #if CUDA_VERSION >= 12040
 CUresult cuGreenCtxCreate(CUgreenCtx *phCtx, CUdevResourceDesc desc,
                           CUdevice dev, unsigned int flags) {
@@ -7842,6 +7897,12 @@ std::unordered_map<std::string, void *> functionMap = {
      (void *)cuGraphicsResourceSetMapFlags_v2},
     {"cuGraphicsMapResources", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources", (void *)cuGraphicsUnmapResources},
+#if CUDA_VERSION >= 12010
+    {"cuCoredumpGetAttributeGlobal", (void *)cuCoredumpGetAttributeGlobal},
+#endif
+#if CUDA_VERSION >= 12010
+    {"cuCoredumpSetAttributeGlobal", (void *)cuCoredumpSetAttributeGlobal},
+#endif
 #if CUDA_VERSION >= 12040
     {"cuGreenCtxCreate", (void *)cuGreenCtxCreate},
 #endif

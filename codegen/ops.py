@@ -165,6 +165,20 @@ class ArrayOperation:
             return self.byte_count_expr()
         return f"{self.element_count_expr()} * sizeof({self.ptr.ptr_to.format()})"
 
+    def server_element_count_expr(self) -> str:
+        if isinstance(self.length, int):
+            return str(self.length)
+        # Pointer length parameters are unmarshalled into scalar server locals.
+        return self.length.name
+
+    def server_transfer_size_expr(self) -> str:
+        if self.is_void_bytes:
+            return self.server_element_count_expr()
+        return (
+            f"{self.server_element_count_expr()} * "
+            f"sizeof({self.ptr.ptr_to.format()})"
+        )
+
     def mutable_ptr_format(self) -> str:
         c = self.ptr.ptr_to.const
         self.ptr.ptr_to.const = False
@@ -365,13 +379,13 @@ class ArrayOperation:
                     "    {param_name} = ({server_type})malloc({size});\n".format(
                         param_name=self.parameter.name,
                         server_type=self.ptr.format(),
-                        size=self.transfer_size_expr(),
+                        size=self.server_transfer_size_expr(),
                     )
                 )
                 f.write(
                     "    if (({size} != 0 && {param_name} == nullptr) ||\n".format(
                         param_name=self.parameter.name,
-                        size=self.transfer_size_expr(),
+                        size=self.server_transfer_size_expr(),
                     )
                 )
                 return self.parameter.name
@@ -382,7 +396,7 @@ class ArrayOperation:
             f.write(
                 "    {param_name}_size = {size};\n".format(
                     param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
+                    size=self.server_transfer_size_expr(),
                 )
             )
             f.write(
@@ -437,7 +451,10 @@ class ArrayOperation:
             return f"{self.parameter.name}.data()"
         if isinstance(self.length, int):
             return f"{self.parameter.name}"
-        return f"({self.transfer_size_expr()} == 0 ? nullptr : {self.parameter.name})"
+        return (
+            f"({self.server_transfer_size_expr()} == 0 ? "
+            f"nullptr : {self.parameter.name})"
+        )
 
     def server_rpc_write(self, f):
         if not self.recv:
@@ -454,7 +471,7 @@ class ArrayOperation:
                 "        {write_fn}(conn, {param_name}, {size}) < 0 ||\n".format(
                     write_fn="rpc_write_payload" if self.compressible else "rpc_write",
                     param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
+                    size=self.server_transfer_size_expr(),
                 )
             )
 
