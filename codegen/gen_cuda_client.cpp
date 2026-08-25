@@ -4973,6 +4973,129 @@ CUresult cuGraphNodeGetType(CUgraphNode hNode, CUgraphNodeType *type) {
   return return_value;
 }
 
+#if CUDA_VERSION >= 13010
+CUresult cuGraphNodeGetContainingGraph(CUgraphNode hNode, CUgraph *phGraph) {
+  lupine_route route = lupine_route_for_graph_node(hNode);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgraphNode, CUgraph *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphNodeGetContainingGraph", &return_value, hNode,
+          phGraph)) {
+    if (return_value == CUDA_SUCCESS && phGraph != nullptr) {
+      lupine_note_graph_owner_route(*phGraph, route);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphNodeGetContainingGraph) < 0 ||
+      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && phGraph != nullptr) {
+    lupine_note_graph_owner_route(*phGraph, route);
+  }
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+CUresult cuGraphNodeGetLocalId(CUgraphNode hNode, unsigned int *nodeId) {
+  lupine_route route = lupine_route_for_graph_node(hNode);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgraphNode, unsigned int *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphNodeGetLocalId", &return_value, hNode, nodeId)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphNodeGetLocalId) < 0 ||
+      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, nodeId, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+CUresult cuGraphNodeGetToolsId(CUgraphNode hNode,
+                               unsigned long long *toolsNodeId) {
+  lupine_route route = lupine_route_for_graph_node(hNode);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgraphNode, unsigned long long *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphNodeGetToolsId", &return_value, hNode, toolsNodeId)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphNodeGetToolsId) < 0 ||
+      rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, toolsNodeId, sizeof(unsigned long long)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+CUresult cuGraphGetId(CUgraph hGraph, unsigned int *graphId) {
+  lupine_route route = lupine_route_for_graph(hGraph);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgraph, unsigned int *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphGetId", &return_value, hGraph, graphId)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphGetId) < 0 ||
+      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, graphId, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13010
+CUresult cuGraphExecGetId(CUgraphExec hGraphExec, unsigned int *graphId) {
+  lupine_route route = lupine_route_for_graph_exec(hGraphExec);
+  CUresult return_value;
+  using real_fn_t = CUresult (*)(CUgraphExec, unsigned int *);
+  if (lupine_call_local_cuda_if_routed<real_fn_t>(
+          route, "cuGraphExecGetId", &return_value, hGraphExec, graphId)) {
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphExecGetId) < 0 ||
+      rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, graphId, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
 CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes) {
   lupine_route route = lupine_route_for_graph(hGraph);
   CUresult return_value;
@@ -7802,6 +7925,21 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphClone", (void *)cuGraphClone},
     {"cuGraphNodeFindInClone", (void *)cuGraphNodeFindInClone},
     {"cuGraphNodeGetType", (void *)cuGraphNodeGetType},
+#if CUDA_VERSION >= 13010
+    {"cuGraphNodeGetContainingGraph", (void *)cuGraphNodeGetContainingGraph},
+#endif
+#if CUDA_VERSION >= 13010
+    {"cuGraphNodeGetLocalId", (void *)cuGraphNodeGetLocalId},
+#endif
+#if CUDA_VERSION >= 13010
+    {"cuGraphNodeGetToolsId", (void *)cuGraphNodeGetToolsId},
+#endif
+#if CUDA_VERSION >= 13010
+    {"cuGraphGetId", (void *)cuGraphGetId},
+#endif
+#if CUDA_VERSION >= 13010
+    {"cuGraphExecGetId", (void *)cuGraphExecGetId},
+#endif
     {"cuGraphGetNodes", (void *)cuGraphGetNodes},
     {"cuGraphGetRootNodes", (void *)cuGraphGetRootNodes},
     {"cuGraphDestroyNode", (void *)cuGraphDestroyNode},

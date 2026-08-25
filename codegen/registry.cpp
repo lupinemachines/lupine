@@ -477,6 +477,25 @@ LUPINE_DECLARE_HANDLER(RPC_cuMemAdvise_v2, handle_cuMemAdvise_v2,
 LUPINE_DECLARE_HANDLER(RPC_cuFuncGetName, handle_cuFuncGetName,
                        rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 13010
+LUPINE_DECLARE_HANDLER(RPC_cuGraphNodeGetContainingGraph,
+                       handle_cuGraphNodeGetContainingGraph, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+LUPINE_DECLARE_HANDLER(RPC_cuGraphNodeGetLocalId, handle_cuGraphNodeGetLocalId,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+LUPINE_DECLARE_HANDLER(RPC_cuGraphNodeGetToolsId, handle_cuGraphNodeGetToolsId,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+LUPINE_DECLARE_HANDLER(RPC_cuGraphGetId, handle_cuGraphGetId, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+LUPINE_DECLARE_HANDLER(RPC_cuGraphExecGetId, handle_cuGraphExecGetId,
+                       rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 12010
 LUPINE_DECLARE_HANDLER(RPC_cuCoredumpGetAttributeGlobal,
                        handle_cuCoredumpGetAttributeGlobal, rpc_backend::cuda)
@@ -569,6 +588,21 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 12030
       LUPINE_REGISTER_HANDLER(RPC_cuFuncGetName, handle_cuFuncGetName, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+      LUPINE_REGISTER_HANDLER(RPC_cuGraphNodeGetContainingGraph, handle_cuGraphNodeGetContainingGraph, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+      LUPINE_REGISTER_HANDLER(RPC_cuGraphNodeGetLocalId, handle_cuGraphNodeGetLocalId, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+      LUPINE_REGISTER_HANDLER(RPC_cuGraphNodeGetToolsId, handle_cuGraphNodeGetToolsId, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+      LUPINE_REGISTER_HANDLER(RPC_cuGraphGetId, handle_cuGraphGetId, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13010
+      LUPINE_REGISTER_HANDLER(RPC_cuGraphExecGetId, handle_cuGraphExecGetId, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12010
       LUPINE_REGISTER_HANDLER(RPC_cuCoredumpGetAttributeGlobal, handle_cuCoredumpGetAttributeGlobal, rpc_backend::cuda)
