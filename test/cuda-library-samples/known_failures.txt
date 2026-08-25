@@ -1,15 +1,6 @@
 # Units (<sample dir>/<executable>) that run_cuda_library_samples.sh marks
 # SKIP:known. One tracking issue per root cause; drop the lines when it closes.
 
-# #595 cuFFT multi-GPU c2c wrong results
-cuFFT/1d_mgpu_c2c/bin/1d_mgpu_c2c_example
-cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example
-
-# #596 cuFFT callbacks
-cuFFT/lto_callback_window_1d/bin/r2c_c2r_legacy_callback_example
-cuFFT/lto_callback_window_1d/bin/r2c_c2r_lto_callback_example
-cuFFT/lto_callback_window_1d/bin/r2c_c2r_lto_nvrtc_callback_example
-
 # #597 nvJPEG resize buffer overflow
 nvJPEG/Image-Resize/imageResize
 nvJPEG/Image-Resize-WaterMark/imageResizeWatermark
