@@ -3964,18 +3964,6 @@ extern "C" CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count,
 extern "C" CUresult cuMemRangeGetAttributes(
     void **data, size_t *dataSizes, CUmem_range_attribute *attributes,
     size_t numAttributes, CUdeviceptr devPtr, size_t count) {
-  if (numAttributes != 0 &&
-      (data == nullptr || dataSizes == nullptr || attributes == nullptr ||
-       numAttributes > SIZE_MAX / sizeof(dataSizes[0]) ||
-       numAttributes > SIZE_MAX / sizeof(attributes[0]))) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  for (size_t i = 0; i < numAttributes; ++i) {
-    if (dataSizes[i] != 0 && data[i] == nullptr) {
-      return CUDA_ERROR_INVALID_VALUE;
-    }
-  }
-
   lupine_route route = lupine_route_for_deviceptr(devPtr);
   if (lupine_route_is_local(route)) {
     using real_fn_t = CUresult (*)(void **, size_t *,
