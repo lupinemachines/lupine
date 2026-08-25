@@ -105,15 +105,18 @@ if [[ -z "$CUDA_PYTHON_REF" ]]; then
   CUDA_PYTHON_REF="v$installed"
 fi
 
-mkdir -p "$(dirname "$CUDA_PYTHON_DIR")" "$RESULTS_DIR"
-if [[ ! -d "$CUDA_PYTHON_DIR/.git" ]]; then
-  rm -rf "$CUDA_PYTHON_DIR"
-  git clone --quiet "$CUDA_PYTHON_URL" "$CUDA_PYTHON_DIR"
-fi
-git config --global --add safe.directory "$CUDA_PYTHON_DIR"
-if [[ "$(git -C "$CUDA_PYTHON_DIR" describe --tags --exact-match 2>/dev/null || true)" != "$CUDA_PYTHON_REF" ]]; then
-  git -C "$CUDA_PYTHON_DIR" fetch --quiet --tags origin
-  git -C "$CUDA_PYTHON_DIR" checkout --quiet "$CUDA_PYTHON_REF"
+mkdir -p "$RESULTS_DIR"
+if [[ "$CUDA_PYTHON_INSTALL" != "0" ]]; then
+  mkdir -p "$(dirname "$CUDA_PYTHON_DIR")"
+  if [[ ! -d "$CUDA_PYTHON_DIR/.git" ]]; then
+    rm -rf "$CUDA_PYTHON_DIR"
+    git clone --quiet "$CUDA_PYTHON_URL" "$CUDA_PYTHON_DIR"
+  fi
+  git config --global --add safe.directory "$CUDA_PYTHON_DIR"
+  if [[ "$(git -C "$CUDA_PYTHON_DIR" describe --tags --exact-match 2>/dev/null || true)" != "$CUDA_PYTHON_REF" ]]; then
+    git -C "$CUDA_PYTHON_DIR" fetch --quiet --tags origin
+    git -C "$CUDA_PYTHON_DIR" checkout --quiet "$CUDA_PYTHON_REF"
+  fi
 fi
 
 tests_dir=""
@@ -157,6 +160,11 @@ if [[ -n "$examples_dir" ]]; then
 fi
 if [[ $# -gt 0 ]]; then
   UNITS=("$@")
+fi
+
+if [[ "${LIST_TESTS:-0}" == "1" ]]; then
+  printf '%s\n' "${UNITS[@]}"
+  exit 0
 fi
 
 deselect_args=()
