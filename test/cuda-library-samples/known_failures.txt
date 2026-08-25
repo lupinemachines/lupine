@@ -1,25 +1,6 @@
 # Units (<sample dir>/<executable>) that run_cuda_library_samples.sh marks
 # SKIP:known. One tracking issue per root cause; drop the lines when it closes.
 
-# #590 cuSPARSE SpSV/SpSM solve SIGFPE
-cuSPARSE/cg/cg_example
-cuSPARSE/spsm_coo/spsm_coo_example
-cuSPARSE/spsm_csr/spsm_csr_example
-cuSPARSE/spsv_coo/spsv_coo_example
-cuSPARSE/spsv_csr/spsv_csr_example
-
-# #591 cuSPARSE SpGEMM cudaErrorInvalidValue
-cuSPARSE/spgemm/spgemm_example
-cuSPARSE/spgemm_mem/spgemm_mem_example
-cuSPARSE/spgemm_reuse/spgemm_reuse_example
-
-# #592 cuSPARSE dense2sparse_csr stack smashing
-cuSPARSE/dense2sparse_csr/dense2sparse_csr_example
-
-# #593 cuSPARSE wrong results
-cuSPARSE/spsv_sell/spsv_sell_example
-cuSPARSE/spvv/spvv_example
-
 # #595 cuFFT multi-GPU c2c wrong results
 cuFFT/1d_mgpu_c2c/bin/1d_mgpu_c2c_example
 cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example

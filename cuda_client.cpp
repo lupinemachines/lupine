@@ -3219,6 +3219,13 @@ CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
 CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
                               size_t ByteCount, CUstream hStream);
 CUresult cuStreamSynchronize(CUstream hStream);
+extern "C" CUresult lupine_copy_dtoh_on_stream(void *dstHost,
+                                               CUdeviceptr srcDevice,
+                                               size_t ByteCount,
+                                               CUstream hStream);
+// Defined with the capture wrappers below; nonzero only while this client holds
+// a stream capture open, where a pageable copy must stay a graph node.
+extern std::atomic<int> lupine_active_stream_captures;
 extern "C" CUresult cuStreamQuery_ptsz(CUstream hStream);
 extern "C" CUresult cuStreamSynchronize_ptsz(CUstream hStream);
 
@@ -5521,6 +5528,19 @@ extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
 
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
+  // "API synchronization behavior" lets the driver make this copy synchronous
+  // when the destination is pageable, and every driver does. Callers rely on it
+  // instead of synchronizing: cuSPARSE reads its scalar results (nnz counts,
+  // SpVV dot products) that way, and a deferred copy either never lands or
+  // lands on a stack frame the caller has already left. The bytes come back
+  // through the same bounded, chunked path the synchronous copy uses, issued on
+  // this stream so they stay ordered behind its prior work. Capture is the
+  // exception: there the copy only becomes a graph node and must not block.
+  if (ByteCount != 0 && !lupine_host_ptr_is_page_locked(dstHost) &&
+      lupine_active_stream_captures.load(std::memory_order_relaxed) == 0) {
+    return lupine_copy_dtoh_on_stream(dstHost, srcDevice, ByteCount, hStream);
+  }
+
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyDtoHAsync_v2) < 0 ||
@@ -5574,8 +5594,8 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
                            : lupine_copy_direction::host_to_device)
                : (dst_host ? lupine_copy_direction::device_to_host
                            : lupine_copy_direction::device_to_device);
-  const char *src_base = (const char *)copy.srcHost +
-                         copy.srcY * copy.srcPitch + copy.srcXInBytes;
+  const char *src_base =
+      (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
@@ -5701,8 +5721,8 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
                            : lupine_copy_direction::host_to_device)
                : (dst_host ? lupine_copy_direction::device_to_host
                            : lupine_copy_direction::device_to_device);
-  const char *src_base = (const char *)copy.srcHost +
-                         copy.srcY * copy.srcPitch + copy.srcXInBytes;
+  const char *src_base =
+      (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
@@ -5829,8 +5849,8 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
                            : lupine_copy_direction::host_to_device)
                : (dst_host ? lupine_copy_direction::device_to_host
                            : lupine_copy_direction::device_to_device);
-  const char *src_base = (const char *)copy.srcHost +
-                         copy.srcY * copy.srcPitch + copy.srcXInBytes;
+  const char *src_base =
+      (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
@@ -6019,9 +6039,9 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                            : lupine_copy_direction::device_to_device);
   size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
   size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
-  const char *src_base =
-      (const char *)copy.srcHost + copy.srcZ * src_slice_pitch +
-      copy.srcY * copy.srcPitch + copy.srcXInBytes;
+  const char *src_base = (const char *)copy.srcHost +
+                         copy.srcZ * src_slice_pitch +
+                         copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base = (char *)copy.dstHost + copy.dstZ * dst_slice_pitch +
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
@@ -8005,7 +8025,7 @@ static CUresult lupine_cuStreamGetCaptureInfo(
 // Stream captures started by this client and not yet terminated. A stream can
 // only be capturing if we started the capture, so cuStreamIsCapturing can
 // answer NONE locally while this is zero.
-static std::atomic<int> lupine_active_stream_captures{0};
+std::atomic<int> lupine_active_stream_captures{0};
 
 class lupine_capture_begin_guard {
 public:

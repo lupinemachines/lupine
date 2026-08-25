@@ -1072,6 +1072,26 @@ static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
          lupine_mutable_host_allocations_locked().end();
 }
 
+// Whether the driver would treat this address as page-locked, which is true of
+// exactly the ranges the caller handed to cuMemHostAlloc, cuMemAllocHost,
+// cuMemHostRegister or cuMemAllocManaged. Tracked ranges are rounded out to
+// whole pages, so the exact caller range is what has to be tested: a plain
+// malloc that merely shares a page with a registered one is still pageable, and
+// treating it as page-locked would defer a copy the driver completes inline.
+extern "C" bool lupine_host_ptr_is_page_locked(const void *host) {
+  if (host == nullptr) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(const_cast<void *>(host));
+  if (it == lupine_mutable_host_allocations_locked().end()) {
+    return false;
+  }
+  uintptr_t address = reinterpret_cast<uintptr_t>(host);
+  return address >= it->second.user_base &&
+         address < it->second.user_base + it->second.user_size;
+}
+
 static bool lupine_managed_host_alias_base(CUdeviceptr ptr,
                                            CUdeviceptr *alias_base) {
   void *host = reinterpret_cast<void *>(ptr);
@@ -1209,9 +1229,11 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   }
   // Demand fetch can run from the fault handler and must not re-enter the
   // normal CUDA request-start flush.
+  CUstream fetch_stream = CU_STREAM_LEGACY;
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &src, sizeof(src)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(bytes)) < 0) {
+      rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_write(conn, &fetch_stream, sizeof(fetch_stream)) < 0) {
     return false;
   }
   int request_id = rpc_write_end(conn);
