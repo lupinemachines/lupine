@@ -2676,6 +2676,15 @@ lupine_private_export_slot_called(int slot, const char *table_name,
 
   if (table_name != nullptr &&
       strcmp(table_name, "da9151d33ae6cc41a5c04f26d533e328") == 0) {
+#if !defined(_WIN32)
+    // This process-local emulation is based on the cuFFT JIT-callback
+    // consumer. cuSPARSE/nvJitLink consumers use the same UUID with a
+    // different object contract; preserve the generic NOT_SUPPORTED fallback
+    // unless the cuFFT JIT-callback API is loaded in this process.
+    if (lupine_real_dlsym(RTLD_DEFAULT, "cufftXtSetJITCallback") == nullptr) {
+      return CUDA_ERROR_NOT_SUPPORTED;
+    }
+#endif
     if (slot == 1) {
       if (arg0 == 0 || arg2 == 0 || arg3 == 0) {
         return CUDA_ERROR_INVALID_VALUE;
