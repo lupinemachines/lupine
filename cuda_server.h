@@ -31,7 +31,6 @@ int handle_cuMemExportToShareableHandle(conn_t *conn);
 int handle_cuMemImportFromShareableHandle(conn_t *conn);
 int handle_cuMemPoolExportToShareableHandle(conn_t *conn);
 int handle_cuMemPoolImportFromShareableHandle(conn_t *conn);
-int handle_cuMemRangeGetAttribute(conn_t *conn);
 int handle_cuMemRangeGetAttributes(conn_t *conn);
 int handle_cuPointerGetAttribute(conn_t *conn);
 int handle_cuPointerSetAttribute(conn_t *conn);

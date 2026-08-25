@@ -3961,41 +3961,6 @@ extern "C" CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count,
 }
 #endif
 
-extern "C" CUresult cuMemRangeGetAttribute(
-    void *data, size_t dataSize, CUmem_range_attribute attribute,
-    CUdeviceptr devPtr, size_t count) {
-  if (data == nullptr ||
-      !lupine_mem_range_attribute_size_is_valid(attribute, dataSize)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  lupine_route route = lupine_route_for_deviceptr(devPtr);
-  if (lupine_route_is_local(route)) {
-    using real_fn_t = CUresult (*)(void *, size_t, CUmem_range_attribute,
-                                   CUdeviceptr, size_t);
-    auto real = lupine_real_cuda_fn<real_fn_t>("cuMemRangeGetAttribute");
-    return real == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                           : real(data, dataSize, attribute, devPtr, count);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemRangeGetAttribute) < 0 ||
-      rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
-      rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, &dataSize, sizeof(dataSize)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (result == CUDA_SUCCESS && rpc_read(conn, data, dataSize) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return rpc_read_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : result;
-}
-
 extern "C" CUresult cuMemRangeGetAttributes(
     void **data, size_t *dataSizes, CUmem_range_attribute *attributes,
     size_t numAttributes, CUdeviceptr devPtr, size_t count) {
@@ -9856,7 +9821,6 @@ lupine_manual_function_map() {
       {"cuMemAdvise", (void *)cuMemAdvise},
       {"cuMemPrefetchAsync", (void *)cuMemPrefetchAsync},
       {"cuMemPrefetchAsync_ptsz", (void *)cuMemPrefetchAsync_ptsz},
-      {"cuMemRangeGetAttribute", (void *)cuMemRangeGetAttribute},
       {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
       {"cuArrayCreate", (void *)cuArrayCreate_v2},
       {"cuArrayCreate_v2", (void *)cuArrayCreate_v2},

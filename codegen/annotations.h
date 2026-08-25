@@ -3440,10 +3440,9 @@ CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
 CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
                         CUmemLocation location);
 /**
- * @disabled - manual client and server marshal the variable-sized result
- * @server CUDA
- * @param data SEND_RECV
+ * @routingkey DEVICEPTR devPtr
  * @param dataSize SEND_ONLY
+ * @param data RECV_ONLY LENGTH:dataSize
  * @param attribute SEND_ONLY
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY

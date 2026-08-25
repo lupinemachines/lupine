@@ -3392,6 +3392,42 @@ ERROR_0:
 
 #endif
 
+int handle_cuMemRangeGetAttribute(conn_t *conn) {
+  size_t dataSize;
+  void *data = nullptr;
+  CUmem_range_attribute attribute;
+  CUdeviceptr devPtr;
+  size_t count;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &dataSize, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+  data = (void *)malloc(dataSize);
+  if ((dataSize != 0 && data == nullptr) ||
+      rpc_read(conn, &attribute, sizeof(CUmem_range_attribute)) < 0 ||
+      rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuMemRangeGetAttribute(
+      (dataSize == 0 ? nullptr : data), dataSize, attribute, devPtr, count);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, data, dataSize) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  free((void *)data);
+  return 0;
+ERROR_0:
+  free((void *)data);
+  return -1;
+}
+
 int handle_cuStreamCreate(conn_t *conn) {
   CUstream phStream;
   unsigned int Flags;
