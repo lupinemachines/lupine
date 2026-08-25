@@ -269,6 +269,43 @@ void test_head_probe_cuda_version_metadata(const char *expected_cuda_version) {
   }
 }
 
+// The preflight refuses a peer only when both sides state an identity and they
+// differ; an unstated identity must stay connectable so builds without git and
+// servers predating the header are not locked out.
+void test_wire_identity_compatibility_rule() {
+  require(lupine_wire_identity_compatible("abc", "abc"),
+          "matching identities were rejected");
+  require(!lupine_wire_identity_compatible("abc", "def"),
+          "mismatched identities were accepted");
+  require(lupine_wire_identity_compatible("", "def"),
+          "unstated local identity was treated as a mismatch");
+  require(lupine_wire_identity_compatible("abc", ""),
+          "unstated peer identity was treated as a mismatch");
+  require(lupine_wire_identity_compatible(nullptr, nullptr),
+          "null identities were treated as a mismatch");
+}
+
+// The identity rides the response on the session's own connection, so the
+// build check costs a round trip rather than a second dial.
+void test_client_await_ready_reports_wire_identity() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  std::string peer;
+  int ready = -1;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    ready = rpc_http2_client_await_ready(&pair.client);
+    peer = rpc_http2_peer_wire_identity(&pair.client);
+  });
+  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
+  client.join();
+
+  require(ready == 0, "matching builds were not accepted");
+  require(peer == lupine_wire_identity(),
+          "response did not carry this build's wire identity");
+}
+
 void test_fragmented_cursors() {
   h2_pair pair = make_pair();
   std::vector<std::string> chunks = {"alpha", "", ":", "beta", ":gamma"};
@@ -1201,6 +1238,8 @@ int main() {
   test_server_to_client_after_request_headers();
   test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION);
   test_head_probe_cuda_version_metadata(nullptr);
+  test_wire_identity_compatibility_rule();
+  test_client_await_ready_reports_wire_identity();
   test_fragmented_cursors();
   test_fragmented_frames_direct();
   test_partial_read_stages_only_overflow();
