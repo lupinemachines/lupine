@@ -12,8 +12,13 @@
 
 extern "C" const void *lupine_mapped_host_read_source(const void *host,
                                                       size_t size);
-extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
-                                    size_t ByteCount) {
+// Shared by the synchronous copy and by an async copy into pageable memory,
+// which the driver also completes before returning. The chunks are staged in a
+// bounded pool on the server, so neither shape materializes the whole transfer.
+extern "C" CUresult lupine_copy_dtoh_on_stream(void *dstHost,
+                                               CUdeviceptr srcDevice,
+                                               size_t ByteCount,
+                                               CUstream hStream) {
   lupine_route route = lupine_route_for_deviceptr(srcDevice);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   using real_fn_t = CUresult (*)(void *, CUdeviceptr, size_t);
@@ -26,7 +31,8 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0) {
+      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   int request_id = rpc_write_end(conn);
@@ -59,6 +65,12 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
     }
   } while (offset < ByteCount);
   return return_value;
+}
+
+extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
+                                    size_t ByteCount) {
+  return lupine_copy_dtoh_on_stream(dstHost, srcDevice, ByteCount,
+                                    CU_STREAM_LEGACY);
 }
 
 #ifdef cuMemcpyDtoH
@@ -1467,7 +1479,7 @@ static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
 
 static int lupine_copy_dtoh_serial(conn_t *conn, int request_id,
                                    CUdeviceptr source, size_t bytes,
-                                   size_t offset) {
+                                   size_t offset, CUstream stream) {
   if (offset > bytes) {
     return -1;
   }
@@ -1485,7 +1497,10 @@ static int lupine_copy_dtoh_serial(conn_t *conn, int request_id,
   do {
     size_t chunk = std::min(bytes - offset, staging_size);
     void *destination = chunk == 0 ? nullptr : host.data();
-    CUresult result = cuMemcpyDtoH_v2(destination, source + offset, chunk);
+    // host is pageable, so this returns only once the chunk has landed,
+    // ordered behind whatever was already queued on the caller's stream.
+    CUresult result =
+        cuMemcpyDtoHAsync_v2(destination, source + offset, chunk, stream);
     if (lupine_write_dtoh_chunk_response(conn, request_id, result, host.data(),
                                          chunk) < 0) {
       return -1;
@@ -1521,6 +1536,7 @@ struct lupine_dtoh_pipeline {
 };
 
 static CUresult lupine_cleanup_dtoh_pipeline(lupine_dtoh_pipeline &pipeline,
+                                             CUstream stream,
                                              bool synchronize_stream) {
   CUresult completion_result = CUDA_SUCCESS;
   bool completion_confirmed = true;
@@ -1530,7 +1546,7 @@ static CUresult lupine_cleanup_dtoh_pipeline(lupine_dtoh_pipeline &pipeline,
     }
   }
   if (synchronize_stream) {
-    completion_result = cuStreamSynchronize(CU_STREAM_LEGACY);
+    completion_result = cuStreamSynchronize(stream);
     completion_confirmed = completion_result == CUDA_SUCCESS;
   } else {
     for (const auto &slot : pipeline.slots) {
@@ -1540,7 +1556,7 @@ static CUresult lupine_cleanup_dtoh_pipeline(lupine_dtoh_pipeline &pipeline,
       CUresult result = cuEventSynchronize(slot.completion);
       if (result != CUDA_SUCCESS) {
         completion_result = result;
-        CUresult stream_result = cuStreamSynchronize(CU_STREAM_LEGACY);
+        CUresult stream_result = cuStreamSynchronize(stream);
         completion_confirmed = stream_result == CUDA_SUCCESS;
         break;
       }
@@ -1566,7 +1582,8 @@ static CUresult lupine_cleanup_dtoh_pipeline(lupine_dtoh_pipeline &pipeline,
 // resume.
 static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
                                       CUdeviceptr source, size_t bytes,
-                                      size_t *fallback_offset) {
+                                      size_t *fallback_offset,
+                                      CUstream stream) {
   lupine_dtoh_pipeline pipeline;
   if (cuMemAllocHost(&pipeline.storage, LUPINE_DTOH_PIPELINE_SLOT_COUNT *
                                             LUPINE_DTOH_PIPELINE_SLOT_BYTES) !=
@@ -1581,7 +1598,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     slot.data = storage + index * LUPINE_DTOH_PIPELINE_SLOT_BYTES;
     if (cuEventCreate(&slot.completion, CU_EVENT_DISABLE_TIMING) !=
         CUDA_SUCCESS) {
-      (void)lupine_cleanup_dtoh_pipeline(pipeline, false);
+      (void)lupine_cleanup_dtoh_pipeline(pipeline, stream, false);
       *fallback_offset = 0;
       return 1;
     }
@@ -1597,12 +1614,12 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     // unproven until an event or stream synchronization establishes completion.
     slot.in_flight = true;
     slot.event_recorded = false;
-    CUresult result = cuMemcpyDtoHAsync_v2(slot.data, source + offset,
-                                           slot.bytes, CU_STREAM_LEGACY);
+    CUresult result =
+        cuMemcpyDtoHAsync_v2(slot.data, source + offset, slot.bytes, stream);
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    if (cuEventRecord(slot.completion, CU_STREAM_LEGACY) != CUDA_SUCCESS) {
+    if (cuEventRecord(slot.completion, stream) != CUDA_SUCCESS) {
       event_record_failed = true;
     } else {
       slot.event_recorded = true;
@@ -1622,7 +1639,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     }
     CUresult result = submit(slot, submitted_offset);
     if (event_record_failed) {
-      CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, true);
+      CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
       if (cleanup != CUDA_SUCCESS) {
         return lupine_write_dtoh_chunk_response(conn, request_id, cleanup,
                                                 nullptr, 0);
@@ -1643,7 +1660,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     if (terminal_error_pending && terminal_error_offset == sent_offset) {
       int write_result = lupine_write_dtoh_chunk_response(
           conn, request_id, terminal_error, nullptr, 0);
-      (void)lupine_cleanup_dtoh_pipeline(pipeline, false);
+      (void)lupine_cleanup_dtoh_pipeline(pipeline, stream, false);
       return write_result;
     }
 
@@ -1651,7 +1668,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
                    LUPINE_DTOH_PIPELINE_SLOT_COUNT;
     auto &slot = pipeline.slots[index];
     if (!slot.in_flight || !slot.event_recorded || slot.offset != sent_offset) {
-      CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, true);
+      CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
       if (cleanup != CUDA_SUCCESS) {
         return lupine_write_dtoh_chunk_response(conn, request_id, cleanup,
                                                 nullptr, 0);
@@ -1664,12 +1681,12 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     if (result != CUDA_SUCCESS) {
       int write_result = lupine_write_dtoh_chunk_response(conn, request_id,
                                                           result, nullptr, 0);
-      (void)lupine_cleanup_dtoh_pipeline(pipeline, true);
+      (void)lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
       return write_result;
     }
     if (lupine_write_dtoh_chunk_response(conn, request_id, CUDA_SUCCESS,
                                          slot.data, slot.bytes) < 0) {
-      (void)lupine_cleanup_dtoh_pipeline(pipeline, false);
+      (void)lupine_cleanup_dtoh_pipeline(pipeline, stream, false);
       return -1;
     }
 
@@ -1679,7 +1696,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     if (submitted_offset < bytes && !terminal_error_pending) {
       result = submit(slot, submitted_offset);
       if (event_record_failed) {
-        CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, true);
+        CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
         if (cleanup != CUDA_SUCCESS) {
           return lupine_write_dtoh_chunk_response(conn, request_id, cleanup,
                                                   nullptr, 0);
@@ -1697,15 +1714,20 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     }
   }
 
-  (void)lupine_cleanup_dtoh_pipeline(pipeline, false);
+  (void)lupine_cleanup_dtoh_pipeline(pipeline, stream, false);
   return 0;
 }
 
 int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr source = 0;
   size_t bytes = 0;
+  // The stream the caller's copy was queued on. A synchronous cuMemcpyDtoH
+  // sends the legacy stream; an async copy into pageable memory sends its own,
+  // so the chunks stay ordered behind that stream's prior work.
+  CUstream stream = CU_STREAM_LEGACY;
   if (rpc_read(conn, &source, sizeof(source)) < 0 ||
-      rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -1716,13 +1738,13 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   size_t fallback_offset = 0;
   if (bytes >= LUPINE_DTOH_PIPELINE_MIN_BYTES) {
     int result = lupine_copy_dtoh_pipelined(conn, request_id, source, bytes,
-                                            &fallback_offset);
+                                            &fallback_offset, stream);
     if (result <= 0) {
       return result;
     }
   }
   return lupine_copy_dtoh_serial(conn, request_id, source, bytes,
-                                 fallback_offset);
+                                 fallback_offset, stream);
 }
 
 int lupine_server_copy_htod_async(conn_t *conn, int framed,
