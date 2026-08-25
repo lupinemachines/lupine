@@ -151,6 +151,14 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
   constexpr int kMaxBackoffMs = 30000;
   constexpr int kConnectTimeoutMs = 10000;
 
+  // Every client dial funnels through here, and on Windows no socket call --
+  // getaddrinfo included -- works until Winsock has been started. The server
+  // starts it from main; a client shim has no such entry point of its own.
+  if (lupine_socket_init() < 0) {
+    LUPINE_LOG_ERROR("Socket initialization failed");
+    return LUPINE_INVALID_SOCKET;
+  }
+
   for (int attempt = 0;; ++attempt) {
     addrinfo hints;
     memset(&hints, 0, sizeof(hints));

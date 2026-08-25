@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
   id-token: write
 
 jobs:
@@ -89,7 +90,6 @@ jobs:
       # cascades in otherwise passing cuBLAS and PyTorch tests.
       CUDA_SAMPLE_JOBS: 8
       SSH_COMMAND_TIMEOUT: 120
-      PYTORCH_TEST_TIMEOUT: 180
       CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
       CUDA_COMPAT_DEB_SHA256: ${{ matrix.cuda_compat_deb_sha256 }}
       SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
@@ -564,7 +564,7 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_TEST_TIMEOUT='$PYTORCH_TEST_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' INTEGRATION_BINARY_CACHE_HIT='$INTEGRATION_BINARY_CACHE_HIT' INTEGRATION_BINARY_CACHE_REMOTE_DIR='$INTEGRATION_BINARY_CACHE_REMOTE_DIR' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' INTEGRATION_BINARY_CACHE_HIT='$INTEGRATION_BINARY_CACHE_HIT' INTEGRATION_BINARY_CACHE_REMOTE_DIR='$INTEGRATION_BINARY_CACHE_REMOTE_DIR' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           cache_mounts=()
           if [[ "$INTEGRATION_BINARY_CACHE_HIT" == "true" ]]; then
@@ -585,7 +585,6 @@ jobs:
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
             -e SSH_COMMAND_TIMEOUT="$SSH_COMMAND_TIMEOUT" \
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
-            -e PYTORCH_TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
             -e SERVER_LD_LIBRARY_PATH="$SERVER_LD_LIBRARY_PATH" \
             -e SERVER_HOST=host.docker.internal \
@@ -632,9 +631,10 @@ jobs:
               export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
               export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
               export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
-              export TEST_TIMEOUT="$PYTORCH_TEST_TIMEOUT"
               export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
+              export CUDA_PYTHON_DIR=/tmp/cuda-python
+              export LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples
 
               python3 -m venv /tmp/venv-pytorch
               /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
@@ -654,36 +654,24 @@ jobs:
               ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
               ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
-              cuda_status=0
-              RESULTS_DIR="/results/test/cuda-samples/results/$(date +%Y%m%d-%H%M%S)" \
-                BUILD_SAMPLES=0 SAMPLE_SUITE=compliance \
-                /src/test/run_cuda_samples.sh || cuda_status=$?
+              # shellcheck disable=SC2206
+              ssh_args=($SSH_OPTS)
+              timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+                scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
+                  "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 
-              pytorch_status=0
-              RESULTS_DIR="/results/test/pytorch/results/$(date +%Y%m%d-%H%M%S)" \
-                /src/test/run_pytorch_lupine_tests.sh || pytorch_status=$?
-
-              cuda_python_status=0
-              RESULTS_DIR="/results/test/cuda-python/results/$(date +%Y%m%d-%H%M%S)" \
-                CUDA_PYTHON_DIR=/tmp/cuda-python SERVER_PORT_BASE=20300 \
-                /src/test/run_cuda_python_tests.sh || cuda_python_status=$?
-
-              library_status=0
               # This sample hard-codes GPUs {0, 1}, while the GCE lane exposes
               # one L4. Keep it enabled for two-GPU runs outside this workflow.
-              RESULTS_DIR="/results/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)" \
-                LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example" \
-                LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples BUILD_SAMPLES=0 SERVER_PORT_BASE=21000 \
-                /src/test/run_cuda_library_samples.sh || library_status=$?
-
-              custom_status=0
-              SERVER_PORT_BASE=20900 TEST_JOBS="$CUDA_SAMPLE_JOBS" \
-                /src/test/run_custom_tests.sh || custom_status=$?
-
-              if [[ "$cuda_status" -ne 0 || "$pytorch_status" -ne 0 || "$cuda_python_status" -ne 0 || "$library_status" -ne 0 || "$custom_status" -ne 0 ]]; then
-                echo "CUDA samples exited $cuda_status; PyTorch exited $pytorch_status; cuda-python exited $cuda_python_status; library samples exited $library_status; custom tests exited $custom_status" >&2
-                exit 1
-              fi
+              export LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example"
+              export INTEGRATION_RESULTS_DIR="/results/test/integration/results/$(date +%Y%m%d-%H%M%S)"
+              mkdir -p "$INTEGRATION_RESULTS_DIR"
+              cmake -S /src/test/integration -B /tmp/lupine-integration-ctest
+              timeout --kill-after=30s "$COMPLIANCE_TIMEOUT" \
+                ctest --test-dir /tmp/lupine-integration-ctest \
+                  --parallel "$CUDA_SAMPLE_JOBS" \
+                  --output-on-failure \
+                  --output-log "$INTEGRATION_RESULTS_DIR/ctest.log" \
+                  --output-junit "$INTEGRATION_RESULTS_DIR/junit.xml"
             '
           REMOTE
 
@@ -750,59 +738,22 @@ jobs:
           fi
           echo "Saved integration binaries to $INTEGRATION_BINARY_CACHE_URI"
 
-      - name: Upload compliance results
+      - name: Publish integration test results
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: GPU integration (${{ matrix.label }})
+          path: test/integration/results/*/junit.xml
+          reporter: java-junit
+          fail-on-empty: false
+
+      - name: Upload integration results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: gpu-integration-results-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            test/cuda-samples/results/
-            test/pytorch/results/
-            test/cuda-python/results/
-            test/cuda-library-samples/results/
+          path: test/integration/results/
           if-no-files-found: ignore
-
-      - name: Report sample results
-        id: sample_results
-        if: always()
-        run: |
-          set -uo pipefail
-          rd="$(ls -td test/cuda-samples/results/*/ 2>/dev/null | head -n1 || true)"
-          if [[ -z "${rd:-}" ]]; then
-            echo "No CUDA sample results dir found." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          {
-            echo "### CUDA samples (${{ matrix.label }})"
-            echo '```'
-            [[ -f "$rd/summary.txt" ]] && cat "$rd/summary.txt"
-            [[ -f "$rd/coverage.txt" ]] && { echo; cat "$rd/coverage.txt"; }
-            echo '```'
-            cp="$(ls -td test/cuda-python/results/*/ 2>/dev/null | head -n1 || true)"
-            if [[ -n "${cp:-}" && -f "$cp/summary.txt" ]]; then
-              echo "### cuda-python (${{ matrix.label }})"
-              echo '```'
-              cat "$cp/summary.txt"
-              echo '```'
-            fi
-            lsd="$(ls -td test/cuda-library-samples/results/*/ 2>/dev/null | head -n1 || true)"
-            if [[ -n "${lsd:-}" && -f "$lsd/summary.txt" ]]; then
-              echo "### CUDALibrarySamples (${{ matrix.label }})"
-              echo '```'
-              cat "$lsd/summary.txt"
-              echo '```'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [[ -f "$rd/summary.txt" ]]; then
-            awk '{print tolower($1)"="$2}' "$rd/summary.txt" >> "$GITHUB_OUTPUT"
-          fi
-          cov=""
-          if [[ -f "$rd/coverage.txt" ]]; then
-            cov="$(grep 'coverage:' "$rd/coverage.txt" | sed -E 's/^CUDA sample coverage: /coverage=/')"
-          fi
-          if [[ -n "${cov:-}" ]]; then
-            echo "$cov" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Refresh Google Cloud credentials for cleanup
         if: always()

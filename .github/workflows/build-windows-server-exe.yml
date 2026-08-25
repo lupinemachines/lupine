@@ -52,11 +52,15 @@ jobs:
           & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Install nghttp2
+      - name: Install nghttp2 and OpenSSL
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:VCPKG_ROOT\vcpkg.exe" install "nghttp2:$env:VCPKG_TARGET_TRIPLET"
+          # OpenSSL comes from vcpkg under the static triplet so it links into
+          # the executable. Left to CMake, the runner image's shared OpenSSL is
+          # found instead and the published exe depends on libssl DLLs that the
+          # artifact does not carry.
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "nghttp2:$env:VCPKG_TARGET_TRIPLET" "openssl:$env:VCPKG_TARGET_TRIPLET"
 
       - name: Configure
         shell: pwsh
@@ -69,10 +73,29 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
+            "-DOPENSSL_USE_STATIC_LIBS=ON" `
             "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
 
       - name: Build
         run: cmake --build build/windows-server --config Release --target lupine_driver_server --parallel
+
+      - name: Verify the executable is self-contained
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'build/windows-server/Release/lupine_driver_server.exe'
+          $dumpbin = Get-ChildItem -Path "$env:ProgramFiles*\Microsoft Visual Studio" `
+            -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe not found" }
+          $deps = & $dumpbin.FullName /dependents $exe
+          $deps | Write-Output
+          # Anything here beyond the system DLLs and the driver has to ship with
+          # the exe, and the artifact carries the exe alone.
+          $bad = $deps | Select-String -Pattern 'libssl|libcrypto|nghttp2|msvcp|vcruntime'
+          if ($bad) {
+            throw "executable depends on DLLs the artifact does not ship: $bad"
+          }
 
       - name: Collect artifact
         shell: pwsh

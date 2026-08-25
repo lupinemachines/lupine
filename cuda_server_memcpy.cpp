@@ -1689,9 +1689,6 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1715,9 +1712,6 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
@@ -1738,9 +1732,6 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1866,9 +1857,6 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy3DPeerAsync(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1892,9 +1880,6 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy3DPeerAsync(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
@@ -1915,9 +1900,6 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy3DPeerAsync(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -2106,9 +2088,6 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy2DAsync_v2(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -2129,9 +2108,6 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy2DAsync_v2(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
@@ -2151,9 +2127,6 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy2DAsync_v2(&copy, stream);
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
