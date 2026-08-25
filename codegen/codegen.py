@@ -228,6 +228,9 @@ $nvml_guarded_declarations
 const rpc_handler_registry &lupine_rpc_handlers() {
 #define LUPINE_REGISTER_HANDLER(operation, handler, backend)                    \
   {operation, {handler, backend}},
+  // clang-format treats registrations separated by preprocessor guards as a
+  // single continued expression, adding another indentation level per guard.
+  // clang-format off
   static const rpc_handler_registry handlers = {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
@@ -238,6 +241,7 @@ $cuda_guarded_handlers
 $nvml_guarded_handlers
 #endif
   };
+  // clang-format on
 #undef LUPINE_REGISTER_HANDLER
   return handlers;
 }
