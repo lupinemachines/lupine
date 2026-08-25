@@ -42,6 +42,7 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
+nvjpeg_assets="${TMPDIR:-/tmp}/lupine-nvjpeg-assets"
 
 usage() {
   cat <<EOF
@@ -73,15 +74,17 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-mkdir -p "$(dirname "$LIBRARY_SAMPLES_DIR")"
-if [[ ! -d "$LIBRARY_SAMPLES_DIR/.git" ]]; then
-  rm -rf "$LIBRARY_SAMPLES_DIR"
-  git clone --quiet "$LIBRARY_SAMPLES_URL" "$LIBRARY_SAMPLES_DIR"
-fi
-git config --global --add safe.directory "$LIBRARY_SAMPLES_DIR"
-if [[ "$(git -C "$LIBRARY_SAMPLES_DIR" rev-parse --short=7 HEAD)" != "$(git -C "$LIBRARY_SAMPLES_DIR" rev-parse --short=7 "$LIBRARY_SAMPLES_REF" 2>/dev/null || true)" ]]; then
-  git -C "$LIBRARY_SAMPLES_DIR" fetch --quiet origin
-  git -C "$LIBRARY_SAMPLES_DIR" checkout --quiet "$LIBRARY_SAMPLES_REF"
+if [[ "$BUILD_SAMPLES" != "0" ]]; then
+  mkdir -p "$(dirname "$LIBRARY_SAMPLES_DIR")"
+  if [[ ! -d "$LIBRARY_SAMPLES_DIR/.git" ]]; then
+    rm -rf "$LIBRARY_SAMPLES_DIR"
+    git clone --quiet "$LIBRARY_SAMPLES_URL" "$LIBRARY_SAMPLES_DIR"
+  fi
+  git config --global --add safe.directory "$LIBRARY_SAMPLES_DIR"
+  if [[ "$(git -C "$LIBRARY_SAMPLES_DIR" rev-parse --short=7 HEAD)" != "$(git -C "$LIBRARY_SAMPLES_DIR" rev-parse --short=7 "$LIBRARY_SAMPLES_REF" 2>/dev/null || true)" ]]; then
+    git -C "$LIBRARY_SAMPLES_DIR" fetch --quiet origin
+    git -C "$LIBRARY_SAMPLES_DIR" checkout --quiet "$LIBRARY_SAMPLES_REF"
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -101,6 +104,10 @@ else
       | awk '{ if (prev != "" && index($0, prev "/") == 1) { skip[prev] = 1 } ; prev = $0; lines[n++] = $0 }
              END { for (i = 0; i < n; i++) if (!(lines[i] in skip)) print lines[i] }'
   )
+fi
+if [[ "${LIST_TESTS:-0}" == "1" ]]; then
+  printf '%s\n' "${SAMPLES[@]}"
+  exit 0
 fi
 
 build_sample() {
@@ -173,12 +180,12 @@ done
 unit_argv() {
   local images="$LIBRARY_SAMPLES_DIR/nvJPEG/nvJPEG-Decoder/input_images/"
   case "$1" in
-    nvJPEG/nvJPEG-Decoder/*) printf '%s\0' -i "$images" -b 2 -o "$RESULTS_DIR/nvjpeg-decoded" ;;
+    nvJPEG/nvJPEG-Decoder/*) printf '%s\0' -i "$images" -b 2 -o "$nvjpeg_assets/nvjpeg-decoded" ;;
     nvJPEG/nvJPEG-Decoder-Backend-ROI/*) printf '%s\0' -i "$images" -b 2 ;;
     nvJPEG/nvJPEG-Decoder-MultipleInstances/*) printf '%s\0' -i "$images" -s 2 -j 2 -r 1 ;;
-    nvJPEG/nvJPEG-Encoder-MultipleInstances/*) printf '%s\0' -i "$RESULTS_DIR/nvjpeg-decoded/" -s 2 -j 2 -r 1 ;;
-    nvJPEG/Image-Resize/*) printf '%s\0' -i "$images" -o "$RESULTS_DIR/nvjpeg-resized" ;;
-    nvJPEG/Image-Resize-WaterMark/*) printf '%s\0' -i "$LIBRARY_SAMPLES_DIR/nvJPEG/Image-Resize-WaterMark/input_images/" -o "$RESULTS_DIR/nvjpeg-watermarked" ;;
+    nvJPEG/nvJPEG-Encoder-MultipleInstances/*) printf '%s\0' -i "$nvjpeg_assets/nvjpeg-decoded/" -s 2 -j 2 -r 1 ;;
+    nvJPEG/Image-Resize/*) printf '%s\0' -i "$images" -o "$nvjpeg_assets/nvjpeg-resized" ;;
+    nvJPEG/Image-Resize-WaterMark/*) printf '%s\0' -i "$LIBRARY_SAMPLES_DIR/nvJPEG/Image-Resize-WaterMark/input_images/" -o "$nvjpeg_assets/nvjpeg-watermarked" ;;
     NPP/nppCanny/*) printf '%s\0' example_input.png ;;
   esac
 }
@@ -249,7 +256,10 @@ in_list() {
   return 1
 }
 
-mkdir -p "$RESULTS_DIR" "$RESULTS_DIR/nvjpeg-decoded" "$RESULTS_DIR/nvjpeg-resized" "$RESULTS_DIR/nvjpeg-watermarked"
+mkdir -p "$RESULTS_DIR" \
+  "$nvjpeg_assets/nvjpeg-decoded" \
+  "$nvjpeg_assets/nvjpeg-resized" \
+  "$nvjpeg_assets/nvjpeg-watermarked"
 tsv="$RESULTS_DIR/results.tsv"
 : > "$tsv"
 pass=0

@@ -19,7 +19,6 @@ SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:-}"
 PYTORCH_SKIP_LIST="${PYTORCH_SKIP_LIST:-}"
 
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
-LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$repo_root/.venv-pytorch312/bin/python}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-90}"
@@ -41,6 +40,11 @@ TESTS=(
 if [[ $# -gt 0 ]]; then
   TESTS=("$@")
 fi
+if [[ "${LIST_TESTS:-0}" == "1" ]]; then
+  printf '%s\n' "${TESTS[@]}"
+  exit 0
+fi
+LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "missing python: $PYTHON_BIN" >&2

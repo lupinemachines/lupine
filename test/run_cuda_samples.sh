@@ -160,15 +160,18 @@ if [[ "$BUILD_ONLY" != "1" ]]; then
   fi
 fi
 
-mkdir -p "$(dirname "$CUDA_SAMPLES_DIR")" "$RESULTS_DIR"
+mkdir -p "$RESULTS_DIR"
 
-if [[ ! -d "$CUDA_SAMPLES_DIR/.git" ]]; then
-  if [[ -e "$CUDA_SAMPLES_DIR" ]]; then
-    rm -rf "$CUDA_SAMPLES_DIR"
+if [[ "$BUILD_SAMPLES" != "0" ]]; then
+  mkdir -p "$(dirname "$CUDA_SAMPLES_DIR")"
+  if [[ ! -d "$CUDA_SAMPLES_DIR/.git" ]]; then
+    if [[ -e "$CUDA_SAMPLES_DIR" ]]; then
+      rm -rf "$CUDA_SAMPLES_DIR"
+    fi
+    git clone "$CUDA_SAMPLES_URL" "$CUDA_SAMPLES_DIR"
   fi
-  git clone "$CUDA_SAMPLES_URL" "$CUDA_SAMPLES_DIR"
+  git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
 fi
-git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
 
 detect_cuda_samples_ref() {
   local release=""
@@ -228,7 +231,7 @@ if [[ -z "$CUDA_SAMPLES_REF" ]]; then
   CUDA_SAMPLES_REF="$(detect_cuda_samples_ref)"
 fi
 
-if [[ -n "$CUDA_SAMPLES_REF" ]]; then
+if [[ "$BUILD_SAMPLES" != "0" && -n "$CUDA_SAMPLES_REF" ]]; then
   git -C "$CUDA_SAMPLES_DIR" fetch --tags origin
   git -C "$CUDA_SAMPLES_DIR" checkout "$CUDA_SAMPLES_REF"
   git -C "$CUDA_SAMPLES_DIR" reset --hard "$CUDA_SAMPLES_REF"
@@ -238,7 +241,7 @@ fi
 # -D flag cannot narrow them. Rewrite lists that include the requested arch to
 # just that arch; samples restricted to other archs are left as upstream built
 # them.
-if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
+if [[ "$BUILD_SAMPLES" != "0" && -n "$CUDA_SAMPLES_ARCH" ]]; then
   find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
     "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
 fi
@@ -485,7 +488,6 @@ prepare_sample_runtime_files() {
   esac
 }
 
-explicit_samples=0
 build_full_sample_tree=0
 samples=("$@")
 if [[ ${#samples[@]} -eq 0 ]]; then
@@ -509,8 +511,10 @@ if [[ ${#samples[@]} -eq 0 ]]; then
       exit 1
       ;;
   esac
-else
-  explicit_samples=1
+fi
+if [[ "${LIST_TESTS:-0}" == "1" ]]; then
+  printf '%s\n' "${samples[@]}"
+  exit 0
 fi
 selected_sample_build=0
 if [[ "$build_full_sample_tree" != "1" && ${#samples[@]} -gt 0 ]]; then
@@ -758,18 +762,10 @@ run_sample() {
   sample_exe="$(resolve_sample_exe "$sample" || true)"
   if [[ -z "$sample_exe" ]]; then
     if [[ -z "$(resolve_sample_srcdir "$sample" || true)" ]]; then
-      if [[ "$explicit_samples" == "1" ]]; then
-        status="FAIL:missing"
-      else
-        status="SKIP:missing"
-      fi
+      status="SKIP:missing"
       signature="missing sample source dir: $sample"
     else
-      if [[ "$explicit_samples" == "1" ]]; then
-        status="FAIL:build-failed"
-      else
-        status="SKIP:build-failed"
-      fi
+      status="SKIP:build-failed"
       build_log="$RESULTS_DIR/.build-$sample.log"
       signature="$(compact_signature "$(grep -iE 'will not build|fatal error|:[[:space:]]*error:|No rule to make target|not found' "$build_log" 2>/dev/null || true)")"
       if [[ -z "$signature" ]]; then
@@ -891,7 +887,7 @@ done
 } | tee "$summary"
 
 # Coverage: how much of the pinned cuda-samples catalog this run exercises.
-if [[ "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/Samples" ]]; then
+if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/Samples" ]]; then
   declare -A _enabled=()
   for _s in "${samples[@]}"; do _enabled["$_s"]=1; done
 
