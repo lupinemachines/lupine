@@ -7884,6 +7884,81 @@ ERROR_0:
   return -1;
 }
 
+#if CUDA_VERSION >= 12010
+int handle_cuCoredumpGetAttributeGlobal(conn_t *conn) {
+  CUcoredumpSettings attrib;
+  size_t size;
+  void *value = nullptr;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &attrib, sizeof(CUcoredumpSettings)) < 0 ||
+      rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+  value = (void *)malloc(size);
+  if ((size != 0 && value == nullptr) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuCoredumpGetAttributeGlobal(
+      attrib, (size == 0 ? nullptr : value), &size);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, value, size) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12010
+int handle_cuCoredumpSetAttributeGlobal(conn_t *conn) {
+  CUcoredumpSettings attrib;
+  size_t size;
+  void *value = nullptr;
+  size_t value_size;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &attrib, sizeof(CUcoredumpSettings)) < 0 ||
+      rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+  value_size = size;
+  value = (void *)malloc(value_size);
+  if (value_size != 0 && value == nullptr)
+    goto ERROR_0;
+  if ((value_size != 0 && rpc_read(conn, value, value_size) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuCoredumpSetAttributeGlobal(
+      attrib, (size == 0 ? nullptr : value), &size);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
+  return -1;
+}
+
+#endif
+
 #if CUDA_VERSION >= 12040
 int handle_cuGreenCtxCreate(conn_t *conn) {
   CUgreenCtx phCtx;

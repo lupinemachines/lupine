@@ -5154,6 +5154,22 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                              cuuint64_t flags,
                              CUdriverProcAddressQueryResult *symbolStatus);
 /**
+ * @guard CUDA_VERSION >= 12010
+ * @param attrib SEND_ONLY
+ * @param size SEND_RECV
+ * @param value RECV_ONLY LENGTH:size
+ */
+CUresult cuCoredumpGetAttributeGlobal(CUcoredumpSettings attrib, void *value,
+                                      size_t *size);
+/**
+ * @guard CUDA_VERSION >= 12010
+ * @param attrib SEND_ONLY
+ * @param size SEND_RECV
+ * @param value SEND_ONLY LENGTH:size
+ */
+CUresult cuCoredumpSetAttributeGlobal(CUcoredumpSettings attrib, void *value,
+                                      size_t *size);
+/**
  * @disabled
  * @param ppExportTable SEND_RECV
  * @param pExportTableId SEND_RECV
