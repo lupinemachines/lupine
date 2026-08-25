@@ -47,8 +47,6 @@ void lupine_va_destroy(conn_t *conn) {
     return;
   }
 #if !defined(_WIN32) && !defined(__APPLE__)
-  // The writable alias is client-only. A server leaves w_offset zero, so the
-  // first call unmaps the arena and the second finds nothing left to do.
   munmap(reinterpret_cast<void *>(conn->va_base + conn->w_offset),
          conn->va_size);
   munmap(reinterpret_cast<void *>(conn->va_base), conn->va_size);
