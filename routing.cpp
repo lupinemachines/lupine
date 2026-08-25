@@ -596,7 +596,7 @@ extern "C" void lupine_forget_event_owner(CUevent event) {
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());
     lupine_owners<CUevent>().erase(event);
   }
-  lupine_note_event_destroyed(event);
+  lupine_event_forget(event);
 }
 
 template <typename Handle>
