@@ -2869,6 +2869,7 @@ CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy);
 /**
@@ -2956,12 +2957,14 @@ CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy, CUstream hStream);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
+ * @server CUDA
  */
 CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
 /**
@@ -5153,6 +5156,22 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
 CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                              cuuint64_t flags,
                              CUdriverProcAddressQueryResult *symbolStatus);
+/**
+ * @guard CUDA_VERSION >= 12010
+ * @param attrib SEND_ONLY
+ * @param size SEND_RECV
+ * @param value RECV_ONLY LENGTH:size
+ */
+CUresult cuCoredumpGetAttributeGlobal(CUcoredumpSettings attrib, void *value,
+                                      size_t *size);
+/**
+ * @guard CUDA_VERSION >= 12010
+ * @param attrib SEND_ONLY
+ * @param size SEND_RECV
+ * @param value SEND_ONLY LENGTH:size
+ */
+CUresult cuCoredumpSetAttributeGlobal(CUcoredumpSettings attrib, void *value,
+                                      size_t *size);
 /**
  * @disabled
  * @param ppExportTable SEND_RECV

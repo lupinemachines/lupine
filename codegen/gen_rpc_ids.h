@@ -361,6 +361,8 @@
 #define RPC_cuGraphicsMapResources 156810469
 #define RPC_cuGraphicsUnmapResources 121118754
 #define RPC_cuGetProcAddress_v2 1976428842
+#define RPC_cuCoredumpGetAttributeGlobal 2132238767
+#define RPC_cuCoredumpSetAttributeGlobal 1511844529
 #define RPC_cuGetExportTable 2020229241
 #define RPC_cuGreenCtxCreate 1079242194
 #define RPC_cuGreenCtxDestroy 1043831578
