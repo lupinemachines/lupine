@@ -28,7 +28,6 @@
 #include "rpc_server.h"
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include "checkpoint.h"
-#include "copy_pipeline.h"
 #include "cuda_server.h"
 #include "server_checkpoint.h"
 #endif

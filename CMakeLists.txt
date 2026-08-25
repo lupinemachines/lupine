@@ -204,8 +204,7 @@ if(LUPINE_BUILD_CUDA)
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/memcpy.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_memcpy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.cpp
     )
     target_include_directories(lupine_cuda_client PRIVATE
@@ -283,7 +282,7 @@ if(LUPINE_BUILD_SERVER)
         add_library(lupine_cuda_server STATIC
             ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cuda_server.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/copy_pipeline.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cuda_server_memcpy.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_server.cpp
         )
         lupine_internal_target(lupine_cuda_server)
