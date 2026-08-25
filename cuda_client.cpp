@@ -3971,9 +3971,7 @@ extern "C" CUresult cuMemRangeGetAttributes(
     return CUDA_ERROR_INVALID_VALUE;
   }
   for (size_t i = 0; i < numAttributes; ++i) {
-    if (data[i] == nullptr ||
-        !lupine_mem_range_attribute_size_is_valid(attributes[i],
-                                                   dataSizes[i])) {
+    if (dataSizes[i] != 0 && data[i] == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
   }
