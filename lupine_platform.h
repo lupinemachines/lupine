@@ -341,7 +341,7 @@ inline int mincore(void *address, size_t, unsigned char *residency) {
 
 // Windows access violations are the native equivalent of the SIGSEGV dirty
 // tracking hook used on Unix. These definitions provide only the subset of
-// sigaction/sigaltstack consumed by memcpy.cpp.
+// sigaction/sigaltstack consumed by cuda_client_memcpy.cpp.
 struct siginfo_t {
   void *si_addr;
 };
