@@ -1,9 +1,9 @@
 // Integration test for demand-fetched mapped/managed device-to-host sync.
-// Synchronization points invalidate the client mirror instead of copying it
+// Synchronization points invalidate the client allocation instead of copying it
 // back; the first host touch fetches the affected chunks. Covers device
 // writes at page granularity (mapped and managed, base and offset pointers,
 // default and created streams), host writes flushed after a fetch, cudaMemcpy
-// with a stale mirror as the host source, scattered and sequential reads
+// with a stale allocation as the host source, scattered and sequential reads
 // through the chunked fetch path, and post-sync polling with no host access.
 #include <chrono>
 #include <cuda_runtime.h>
@@ -154,7 +154,7 @@ int main() {
     return 2;
   }
 
-  // Stale mirror as a cudaMemcpy host source.
+  // Stale host allocation as a cudaMemcpy host source.
   const unsigned char kDevF = 0x66;
   write_bytes<<<(unsigned)(kPage / 256), 256>>>(mapped_dev + kSparseOffset,
                                                 kDevF, kPage);
@@ -165,14 +165,14 @@ int main() {
   if (fatal(cudaMalloc((void **)&scratch, kPage), "scratch alloc") ||
       fatal(cudaMemcpy(scratch, mapped_host + kSparseOffset, kPage,
                        cudaMemcpyHostToDevice),
-            "htod from stale mirror")) {
+            "htod from stale host allocation")) {
     return 2;
   }
   int ok = check_device_bytes(scratch, kDevF, dev_ok, "scratch check");
   if (ok < 0) {
     return 2;
   }
-  expect(ok == 1, "htod from stale mirror carries device bytes");
+  expect(ok == 1, "htod from stale host allocation carries device bytes");
 
   // RPC responses can land in a permanently writable alias of a protected
   // mapped allocation. The application view must see those bytes, and the

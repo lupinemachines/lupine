@@ -151,7 +151,7 @@ int main() {
     }
   }
 
-  // Dirty pages after the mirror has been demand-fetched from the server.
+  // Dirty pages after the allocation has been demand-fetched from the server.
   // The next kernel must observe both dense and sparse host writes.
   constexpr size_t kSpots[] = {0, 1, (64u << 10) / sizeof(int),
                                (2u << 20) / sizeof(int), kElements - 1};
