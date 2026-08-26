@@ -343,6 +343,7 @@ if(BUILD_TESTING)
     lupine_apply_sanitizer(transport_test)
     add_test(NAME transport_test COMMAND transport_test)
 
+
     add_executable(checkpoint_test
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp)
@@ -350,12 +351,16 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(checkpoint_test PRIVATE Threads::Threads)
     lupine_apply_sanitizer(checkpoint_test)
+
+    add_test(NAME checkpoint_test COMMAND checkpoint_test)
+    lupine_scaled_timeout(ckpt_timeout 10)
+    set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
 endif()
 
-# Linux-only, not merely Unix: these pair sockets with socketpair(), place
-# mappings with MAP_FIXED_NOREPLACE and back them with memfd_create(), none of
-# which macOS has. Portable tests belong in the block above.
-if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Unix: h2_test needs no socketpair or mmap any more, but it hangs partway
+# through on Windows (issue #656, in test_rpc_write_queue_grows), so it stays
+# off that platform until the transport difference behind that is understood.
+if(BUILD_TESTING AND NOT WIN32)
     add_executable(h2_test ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
     target_include_directories(h2_test PRIVATE ${NGHTTP2_INCLUDE_DIR})
     if(CUDAToolkit_VERSION)
@@ -367,6 +372,15 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
+    add_test(NAME h2_test COMMAND h2_test)
+    lupine_scaled_timeout(h2_timeout 30)
+    set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
+endif()
+
+# Linux-only, not merely Unix: these pair sockets with socketpair(), place
+# mappings with MAP_FIXED_NOREPLACE and back them with memfd_create(), none of
+# which macOS has. Portable tests belong in the block above.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     if(LUPINE_BUILD_CUDA)
         add_executable(events_test
@@ -400,12 +414,6 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ${CMAKE_DL_LIBS} Threads::Threads)
     lupine_apply_sanitizer(server_checkpoint_test)
 
-    add_test(NAME h2_test COMMAND h2_test)
-    lupine_scaled_timeout(h2_timeout 30)
-    set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
-    add_test(NAME checkpoint_test COMMAND checkpoint_test)
-    lupine_scaled_timeout(ckpt_timeout 10)
-    set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
     if(TARGET events_test)
         add_test(NAME events_test COMMAND events_test)
         lupine_scaled_timeout(events_timeout 10)
