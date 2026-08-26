@@ -2258,6 +2258,18 @@ CUresult cuCtxGetFlags(unsigned int *flags);
  */
 CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
 /**
+ * @guard CUDA_VERSION >= 12050
+ * @param hCtx SEND_ONLY
+ * @param hEvent SEND_ONLY
+ */
+CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent);
+/**
+ * @guard CUDA_VERSION >= 12050
+ * @param hCtx SEND_ONLY
+ * @param hEvent SEND_ONLY
+ */
+CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent);
+/**
  * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey CURRENT_CONTEXT
@@ -3639,6 +3651,27 @@ CUresult cuGreenCtxDestroy(CUgreenCtx hCtx);
  */
 CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
                                 unsigned int flags, int priority);
+/**
+ * @guard CUDA_VERSION >= 13000
+ * @routingkey CURRENT_CONTEXT
+ * @param greenCtx SEND_ONLY
+ * @param greenCtxId RECV_ONLY
+ */
+CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey CURRENT_CONTEXT
+ * @param hCtx SEND_ONLY
+ * @param hEvent SEND_ONLY
+ */
+CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @routingkey CURRENT_CONTEXT
+ * @param hCtx SEND_ONLY
+ * @param hEvent SEND_ONLY
+ */
+CUresult cuGreenCtxWaitEvent(CUgreenCtx hCtx, CUevent hEvent);
 /**
  * @disabled - manual client handles cross-server event waits
  * @routingkey STREAM hStream

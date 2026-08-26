@@ -556,6 +556,46 @@ CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
   return return_value;
 }
 
+#if CUDA_VERSION >= 12050
+CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
+  lupine_route route = lupine_route_for_context(hCtx);
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuCtxRecordEvent", hCtx, hEvent);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuCtxRecordEvent) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
+      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12050
+CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent) {
+  lupine_route route = lupine_route_for_context(hCtx);
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuCtxWaitEvent", hCtx, hEvent);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuCtxWaitEvent) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
+      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
 CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
@@ -6473,6 +6513,46 @@ CUresult cuDevResourceGenerateDesc(CUdevResourceDesc *phDesc,
 #endif
 
 #if CUDA_VERSION >= 12040
+CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuGreenCtxRecordEvent", hCtx, hEvent);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGreenCtxRecordEvent) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+CUresult cuGreenCtxWaitEvent(CUgreenCtx hCtx, CUevent hEvent) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuGreenCtxWaitEvent", hCtx, hEvent);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGreenCtxWaitEvent) < 0 ||
+      rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
 CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
@@ -6520,6 +6600,26 @@ CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
   if (return_value == CUDA_SUCCESS && phStream != nullptr) {
     lupine_note_stream_owner_route(*phStream, route);
   }
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 13000
+CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId) {
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuGreenCtxGetId", greenCtx, greenCtxId);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGreenCtxGetId) < 0 ||
+      rpc_write(conn, &greenCtx, sizeof(CUgreenCtx)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, greenCtxId, sizeof(unsigned long long)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
 }
 
@@ -6959,6 +7059,12 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuCtxGetStreamPriorityRange", (void *)cuCtxGetStreamPriorityRange},
     {"cuCtxResetPersistingL2Cache", (void *)cuCtxResetPersistingL2Cache},
     {"cuCtxGetExecAffinity", (void *)cuCtxGetExecAffinity},
+#if CUDA_VERSION >= 12050
+    {"cuCtxRecordEvent", (void *)cuCtxRecordEvent},
+#endif
+#if CUDA_VERSION >= 12050
+    {"cuCtxWaitEvent", (void *)cuCtxWaitEvent},
+#endif
     {"cuCtxAttach", (void *)cuCtxAttach},
     {"cuCtxDetach", (void *)cuCtxDetach},
     {"cuCtxGetSharedMemConfig", (void *)cuCtxGetSharedMemConfig},
@@ -7312,10 +7418,19 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuDevResourceGenerateDesc", (void *)cuDevResourceGenerateDesc},
 #endif
 #if CUDA_VERSION >= 12040
+    {"cuGreenCtxRecordEvent", (void *)cuGreenCtxRecordEvent},
+#endif
+#if CUDA_VERSION >= 12040
+    {"cuGreenCtxWaitEvent", (void *)cuGreenCtxWaitEvent},
+#endif
+#if CUDA_VERSION >= 12040
     {"cuStreamGetGreenCtx", (void *)cuStreamGetGreenCtx},
 #endif
 #if CUDA_VERSION >= 12050
     {"cuGreenCtxStreamCreate", (void *)cuGreenCtxStreamCreate},
+#endif
+#if CUDA_VERSION >= 13000
+    {"cuGreenCtxGetId", (void *)cuGreenCtxGetId},
 #endif
 #if CUDA_VERSION >= 13010
     {"cuStreamGetDevResource", (void *)cuStreamGetDevResource},
