@@ -3086,21 +3086,16 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
   return result;
 }
 
-// A linear copy is a single run: WidthInBytes carries the whole transfer and
-// Height and Depth are one, so the server's run-boundary rule never bites.
-static CUDA_MEMCPY3D lupine_linear_copy(size_t bytes) {
-  CUDA_MEMCPY3D copy = {};
-  copy.srcPitch = copy.dstPitch = bytes;
-  copy.srcHeight = copy.dstHeight = 1;
-  copy.WidthInBytes = bytes;
-  copy.Height = 1;
-  copy.Depth = 1;
-  return copy;
-}
-
 extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                                     size_t ByteCount) {
-  CUDA_MEMCPY3D copy = lupine_linear_copy(ByteCount);
+  // A linear copy is a single run: WidthInBytes carries the whole transfer and
+  // Height and Depth are one, so the server's run-boundary rule never bites.
+  CUDA_MEMCPY3D copy = {};
+  copy.srcPitch = copy.dstPitch = ByteCount;
+  copy.srcHeight = copy.dstHeight = 1;
+  copy.WidthInBytes = ByteCount;
+  copy.Height = 1;
+  copy.Depth = 1;
   copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
   copy.srcDevice = srcDevice;
   copy.dstMemoryType = CU_MEMORYTYPE_HOST;
@@ -3110,7 +3105,12 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
 
 extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                     size_t ByteCount) {
-  CUDA_MEMCPY3D copy = lupine_linear_copy(ByteCount);
+  CUDA_MEMCPY3D copy = {};
+  copy.srcPitch = copy.dstPitch = ByteCount;
+  copy.srcHeight = copy.dstHeight = 1;
+  copy.WidthInBytes = ByteCount;
+  copy.Height = 1;
+  copy.Depth = 1;
   copy.srcMemoryType = CU_MEMORYTYPE_HOST;
   copy.srcHost = srcHost;
   copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
@@ -3132,7 +3132,12 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   if (ByteCount != 0 && srcHost == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  CUDA_MEMCPY3D copy = lupine_linear_copy(ByteCount);
+  CUDA_MEMCPY3D copy = {};
+  copy.srcPitch = copy.dstPitch = ByteCount;
+  copy.srcHeight = copy.dstHeight = 1;
+  copy.WidthInBytes = ByteCount;
+  copy.Height = 1;
+  copy.Depth = 1;
   copy.srcMemoryType = CU_MEMORYTYPE_HOST;
   copy.srcHost = srcHost;
   copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
@@ -3253,7 +3258,12 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   // exception: there the copy only becomes a graph node and must not block.
   if (ByteCount != 0 && !lupine_host_ptr_is_page_locked(dstHost) &&
       lupine_active_stream_captures.load(std::memory_order_relaxed) == 0) {
-    CUDA_MEMCPY3D copy = lupine_linear_copy(ByteCount);
+    CUDA_MEMCPY3D copy = {};
+    copy.srcPitch = copy.dstPitch = ByteCount;
+    copy.srcHeight = copy.dstHeight = 1;
+    copy.WidthInBytes = ByteCount;
+    copy.Height = 1;
+    copy.Depth = 1;
     copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
     copy.srcDevice = srcDevice;
     copy.dstMemoryType = CU_MEMORYTYPE_HOST;
@@ -3285,50 +3295,41 @@ extern "C" CUresult cuMemcpyDtoHAsync(void *dstHost, CUdeviceptr srcDevice,
   return cuMemcpyDtoHAsync_v2(dstHost, srcDevice, ByteCount, hStream);
 }
 
-// A 2D copy is a 3D copy of a single slice. srcHeight and dstHeight carry the
-// rows the offset reaches past, which is what the driver validates against.
-static CUDA_MEMCPY3D lupine_widen(const CUDA_MEMCPY2D &flat) {
-  CUDA_MEMCPY3D copy = {};
-  copy.srcXInBytes = flat.srcXInBytes;
-  copy.srcY = flat.srcY;
-  copy.srcMemoryType = flat.srcMemoryType;
-  copy.srcHost = flat.srcHost;
-  copy.srcDevice = flat.srcDevice;
-  copy.srcArray = flat.srcArray;
-  copy.srcPitch = flat.srcPitch;
-  copy.srcHeight = flat.srcY + flat.Height;
-  copy.dstXInBytes = flat.dstXInBytes;
-  copy.dstY = flat.dstY;
-  copy.dstMemoryType = flat.dstMemoryType;
-  copy.dstHost = flat.dstHost;
-  copy.dstDevice = flat.dstDevice;
-  copy.dstArray = flat.dstArray;
-  copy.dstPitch = flat.dstPitch;
-  copy.dstHeight = flat.dstY + flat.Height;
-  copy.WidthInBytes = flat.WidthInBytes;
-  copy.Height = flat.Height;
-  copy.Depth = 1;
-  return copy;
-}
-
-// The pitched entry points invalidate every mapped host allocation once the
-// device side has changed, which the linear ones have never done.
-static CUresult lupine_pitched_memcpy(CUDA_MEMCPY3D *copy, CUstream stream,
-                                      bool blocking) {
-  lupine_resolve_unified(*copy);
-  CUresult result = lupine_memcpy(copy, stream, blocking);
-  if (result == CUDA_SUCCESS && copy->dstMemoryType != CU_MEMORYTYPE_HOST) {
-    result = lupine_sync_mapped_device_to_host();
-  }
-  return result;
-}
-
 extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  CUDA_MEMCPY3D copy = lupine_widen(*pCopy);
-  return lupine_pitched_memcpy(&copy, CU_STREAM_LEGACY, true);
+  // A 2D copy is a 3D copy of a single slice. srcHeight and dstHeight carry
+  // the rows the offset reaches past, which is what the driver validates
+  // against.
+  CUDA_MEMCPY3D copy = {};
+  copy.srcXInBytes = pCopy->srcXInBytes;
+  copy.srcY = pCopy->srcY;
+  copy.srcMemoryType = pCopy->srcMemoryType;
+  copy.srcHost = pCopy->srcHost;
+  copy.srcDevice = pCopy->srcDevice;
+  copy.srcArray = pCopy->srcArray;
+  copy.srcPitch = pCopy->srcPitch;
+  copy.srcHeight = pCopy->srcY + pCopy->Height;
+  copy.dstXInBytes = pCopy->dstXInBytes;
+  copy.dstY = pCopy->dstY;
+  copy.dstMemoryType = pCopy->dstMemoryType;
+  copy.dstHost = pCopy->dstHost;
+  copy.dstDevice = pCopy->dstDevice;
+  copy.dstArray = pCopy->dstArray;
+  copy.dstPitch = pCopy->dstPitch;
+  copy.dstHeight = pCopy->dstY + pCopy->Height;
+  copy.WidthInBytes = pCopy->WidthInBytes;
+  copy.Height = pCopy->Height;
+  copy.Depth = 1;
+  // The pitched entry points invalidate every mapped host allocation once the
+  // device side has changed, which the linear ones have never done.
+  lupine_resolve_unified(copy);
+  CUresult result = lupine_memcpy(&copy, CU_STREAM_LEGACY, true);
+  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+    result = lupine_sync_mapped_device_to_host();
+  }
+  return result;
 }
 
 #ifdef cuMemcpy2D
@@ -3342,8 +3343,37 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  CUDA_MEMCPY3D copy = lupine_widen(*pCopy);
-  return lupine_pitched_memcpy(&copy, CU_STREAM_LEGACY, true);
+  // A 2D copy is a 3D copy of a single slice. srcHeight and dstHeight carry
+  // the rows the offset reaches past, which is what the driver validates
+  // against.
+  CUDA_MEMCPY3D copy = {};
+  copy.srcXInBytes = pCopy->srcXInBytes;
+  copy.srcY = pCopy->srcY;
+  copy.srcMemoryType = pCopy->srcMemoryType;
+  copy.srcHost = pCopy->srcHost;
+  copy.srcDevice = pCopy->srcDevice;
+  copy.srcArray = pCopy->srcArray;
+  copy.srcPitch = pCopy->srcPitch;
+  copy.srcHeight = pCopy->srcY + pCopy->Height;
+  copy.dstXInBytes = pCopy->dstXInBytes;
+  copy.dstY = pCopy->dstY;
+  copy.dstMemoryType = pCopy->dstMemoryType;
+  copy.dstHost = pCopy->dstHost;
+  copy.dstDevice = pCopy->dstDevice;
+  copy.dstArray = pCopy->dstArray;
+  copy.dstPitch = pCopy->dstPitch;
+  copy.dstHeight = pCopy->dstY + pCopy->Height;
+  copy.WidthInBytes = pCopy->WidthInBytes;
+  copy.Height = pCopy->Height;
+  copy.Depth = 1;
+  // The pitched entry points invalidate every mapped host allocation once the
+  // device side has changed, which the linear ones have never done.
+  lupine_resolve_unified(copy);
+  CUresult result = lupine_memcpy(&copy, CU_STREAM_LEGACY, true);
+  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+    result = lupine_sync_mapped_device_to_host();
+  }
+  return result;
 }
 
 #ifdef cuMemcpy2DUnaligned
@@ -3358,8 +3388,37 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  CUDA_MEMCPY3D copy = lupine_widen(*pCopy);
-  return lupine_pitched_memcpy(&copy, hStream, false);
+  // A 2D copy is a 3D copy of a single slice. srcHeight and dstHeight carry
+  // the rows the offset reaches past, which is what the driver validates
+  // against.
+  CUDA_MEMCPY3D copy = {};
+  copy.srcXInBytes = pCopy->srcXInBytes;
+  copy.srcY = pCopy->srcY;
+  copy.srcMemoryType = pCopy->srcMemoryType;
+  copy.srcHost = pCopy->srcHost;
+  copy.srcDevice = pCopy->srcDevice;
+  copy.srcArray = pCopy->srcArray;
+  copy.srcPitch = pCopy->srcPitch;
+  copy.srcHeight = pCopy->srcY + pCopy->Height;
+  copy.dstXInBytes = pCopy->dstXInBytes;
+  copy.dstY = pCopy->dstY;
+  copy.dstMemoryType = pCopy->dstMemoryType;
+  copy.dstHost = pCopy->dstHost;
+  copy.dstDevice = pCopy->dstDevice;
+  copy.dstArray = pCopy->dstArray;
+  copy.dstPitch = pCopy->dstPitch;
+  copy.dstHeight = pCopy->dstY + pCopy->Height;
+  copy.WidthInBytes = pCopy->WidthInBytes;
+  copy.Height = pCopy->Height;
+  copy.Depth = 1;
+  // The pitched entry points invalidate every mapped host allocation once the
+  // device side has changed, which the linear ones have never done.
+  lupine_resolve_unified(copy);
+  CUresult result = lupine_memcpy(&copy, hStream, false);
+  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+    result = lupine_sync_mapped_device_to_host();
+  }
+  return result;
 }
 
 #ifdef cuMemcpy2DAsync
@@ -3383,7 +3442,14 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   CUDA_MEMCPY3D copy = *pCopy;
-  return lupine_pitched_memcpy(&copy, CU_STREAM_LEGACY, true);
+  // The pitched entry points invalidate every mapped host allocation once the
+  // device side has changed, which the linear ones have never done.
+  lupine_resolve_unified(copy);
+  CUresult result = lupine_memcpy(&copy, CU_STREAM_LEGACY, true);
+  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+    result = lupine_sync_mapped_device_to_host();
+  }
+  return result;
 }
 
 extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
@@ -3392,7 +3458,14 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     return CUDA_ERROR_INVALID_VALUE;
   }
   CUDA_MEMCPY3D copy = *pCopy;
-  return lupine_pitched_memcpy(&copy, hStream, false);
+  // The pitched entry points invalidate every mapped host allocation once the
+  // device side has changed, which the linear ones have never done.
+  lupine_resolve_unified(copy);
+  CUresult result = lupine_memcpy(&copy, hStream, false);
+  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+    result = lupine_sync_mapped_device_to_host();
+  }
+  return result;
 }
 
 extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
