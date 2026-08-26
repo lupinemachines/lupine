@@ -93,6 +93,15 @@ extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" const void *lupine_mapped_host_read_source(const void *host,
                                                       size_t size);
 
+#ifdef cuGraphInstantiate_v2
+#undef cuGraphInstantiate_v2
+#endif
+extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
+                                                  CUgraph hGraph,
+                                                  CUgraphNode *phErrorNode,
+                                                  char *logBuffer,
+                                                  size_t bufferSize);
+
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
@@ -6649,6 +6658,50 @@ CUresult cuStreamGetDevResource(CUstream hStream, CUdevResource *resource,
 
 #endif
 
+CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
+                               CUgraphNode *phErrorNode, char *logBuffer,
+                               size_t bufferSize) {
+  lupine_route route = lupine_route_for_graph(hGraph);
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value =
+        lupine_call_real_cuda_fn("cuGraphInstantiate_v2", phGraphExec, hGraph,
+                                 phErrorNode, logBuffer, bufferSize);
+    if (return_value == CUDA_SUCCESS && phGraphExec != nullptr) {
+      lupine_note_graph_exec_owner_route(*phGraphExec, route);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t logBuffer_null = logBuffer == nullptr ? 1 : 0;
+  CUgraphNode *phErrorNode_null_check;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphInstantiate_v2) < 0 ||
+      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_write(conn, &phErrorNode, sizeof(CUgraphNode *)) < 0 ||
+      rpc_write(conn, &bufferSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &logBuffer_null, sizeof(uint8_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_read(conn, &phErrorNode_null_check, sizeof(CUgraphNode *)) < 0 ||
+      (phErrorNode_null_check &&
+       rpc_read(conn, phErrorNode, sizeof(CUgraphNode)) < 0) ||
+      ([&]() {
+        uint8_t logBuffer_has_data = 0;
+        if (rpc_read(conn, &logBuffer_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        return logBuffer_has_data != 0 && bufferSize != 0 &&
+               rpc_read(conn, logBuffer, bufferSize * sizeof(char)) < 0;
+      }()) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && phGraphExec != nullptr) {
+    lupine_note_graph_exec_owner_route(*phGraphExec, route);
+  }
+  return return_value;
+}
+
 #ifdef cuCtxDestroy
 #undef cuCtxDestroy
 #endif
@@ -7435,6 +7488,7 @@ std::unordered_map<std::string, void *> functionMap = {
 #if CUDA_VERSION >= 13010
     {"cuStreamGetDevResource", (void *)cuStreamGetDevResource},
 #endif
+    {"cuGraphInstantiate_v2", (void *)cuGraphInstantiate_v2},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},

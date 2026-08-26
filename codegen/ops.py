@@ -575,6 +575,7 @@ class NullableArrayOperation:
     parameter: Parameter
     ptr: Pointer
     count: Parameter
+    recv_on_error: bool = False
 
     def element_type(self) -> str:
         c = self.ptr.ptr_to.const
@@ -619,9 +620,16 @@ class NullableArrayOperation:
         # null selects count-query semantics, which can report a count larger
         # than the zero-length storage the response would then be read from.
         f.write(f"    if (!{name}_null) {{\n")
+        if self.recv_on_error:
+            allocation = (
+                f"calloc(({requested} != 0 ? {requested} : 1), sizeof({elem}))"
+            )
+        else:
+            allocation = (
+                f"malloc(({requested} != 0 ? {requested} : 1) * sizeof({elem}))"
+            )
         f.write(
-            f"        {name} = ({elem} *)malloc(\n"
-            f"            ({requested} != 0 ? {requested} : 1) * sizeof({elem}));\n"
+            f"        {name} = ({elem} *){allocation};\n"
         )
         f.write(f"        if ({name} == nullptr)\n")
         f.write("            goto ERROR_0;\n")
@@ -642,6 +650,19 @@ class NullableArrayOperation:
         name = self.parameter.name
         requested = self.requested_count_expr()
         returned = self.count.name
+        if self.recv_on_error:
+            f.write(
+                f"        ([&]() {{\n"
+                f"          uint8_t {name}_has_data =\n"
+                f"              !{name}_null &&\n"
+                f"              lupine_intercept_result != CUDA_SUCCESS;\n"
+                f"          return rpc_write(conn, &{name}_has_data, sizeof(uint8_t)) < 0 ||\n"
+                f"                 ({name}_has_data != 0 && {requested} != 0 &&\n"
+                f"                  rpc_write(conn, {name},\n"
+                f"                            {requested} * sizeof({elem})) < 0);\n"
+                f"        }}()) ||\n"
+            )
+            return
         if not isinstance(self.count.type, Pointer):
             f.write(
                 f"        (!{name}_null && "
@@ -664,6 +685,18 @@ class NullableArrayOperation:
             if isinstance(self.count.type, Pointer)
             else self.count.name
         )
+        if self.recv_on_error:
+            f.write(
+                f"        ([&]() {{\n"
+                f"          uint8_t {name}_has_data = 0;\n"
+                f"          if (rpc_read(conn, &{name}_has_data, sizeof(uint8_t)) < 0)\n"
+                f"            return true;\n"
+                f"          return {name}_has_data != 0 && {requested} != 0 &&\n"
+                f"                 rpc_read(conn, {name},\n"
+                f"                          {requested} * sizeof({elem})) < 0;\n"
+                f"        }}()) ||\n"
+            )
+            return
         if not isinstance(self.count.type, Pointer):
             f.write(
                 f"        ({name} != nullptr && {requested} != 0 && "

@@ -387,6 +387,7 @@
 #define RPC_cuGreenCtxStreamCreate 1433266945
 #define RPC_cuGreenCtxGetId 1724676806
 #define RPC_cuStreamGetDevResource 494275841
+#define RPC_cuGraphInstantiate_v2 1599532620
 #define RPC_cuCtxCreate_v2 804269166
 #define RPC_cuCtxCreate_v3 1492589816
 #define RPC_cuDeviceGetGraphMemAttribute 622504442

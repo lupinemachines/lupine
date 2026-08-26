@@ -10,10 +10,14 @@ Specifically, the order of `@param` annotations indicates the order in which the
 available are `NULL_TERMINATED` (to indicate that this is a null-terminated string), or `LENGTH:<param>` and
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
-`NULLABLE` marks a pointer that may be null. It composes with `LENGTH`: `NULLABLE LENGTH:<count>`
-on a `RECV_ONLY` pointer whose `<count>` is `SEND_RECV` declares an optional out-array sized by an
-in/out count (the `cuGraphGetNodes` query pattern). Each such array leads with its own presence
-byte on the wire, and several arrays may share one count.
+`NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
+`RECV_ONLY` pointer to declare an optional out-array. A pointer count marked
+`SEND_RECV` supports the `cuGraphGetNodes` query pattern; a by-value count is a
+fixed capacity. Each array leads with its own presence byte on the wire, and
+several arrays may share one count.
+`ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
+writes the buffer on failure. The generated response preserves the caller's
+buffer on success.
 
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the

@@ -35,6 +35,12 @@ from ops import (
     SynchronizeAnnotation,
 )
 
+# CUDA headers omit some legacy ABI entry points from their public declarations.
+# Keep the small set that still needs RPC wrappers explicit here.
+LEGACY_ABI_FUNCTIONS = {
+    "cuGraphInstantiate_v2",
+}
+
 # this table is manually generated from the cuda.h headers
 MANUAL_REMAPPINGS = [
     ("cuDeviceTotalMem", "cuDeviceTotalMem_v2"),
@@ -562,6 +568,7 @@ def parse_annotation(
                 null_terminated = "NULL_TERMINATED" in args
                 nullable = "NULLABLE" in args
                 deref = "DEREF" in args
+                recv_on_error = "ON_ERROR" in args
 
                 # NULLABLE composes with LENGTH (an optional out-array
                 # sized by an in/out count); every other combination is
@@ -572,6 +579,12 @@ def parse_annotation(
                 ) and not (nullable and length_arg and not size_arg and not null_terminated):
                     raise NotImplementedError(
                         "Only one of LENGTH, SIZE, NULL_TERMINATED, or NULLABLE can be specified (except NULLABLE LENGTH)"
+                    )
+                if recv_on_error and not (
+                    nullable and length_arg and recv and not send
+                ):
+                    raise NotImplementedError(
+                        "ON_ERROR requires a RECV_ONLY NULLABLE LENGTH out-array"
                     )
 
                 if deref:
@@ -601,6 +614,7 @@ def parse_annotation(
                                 parameter=param,
                                 ptr=param.type,
                                 count=length_param,
+                                recv_on_error=recv_on_error,
                             )
                         )
                     else:
@@ -1423,15 +1437,15 @@ def main():
             (function, annotation, metadata.operations, metadata)
         )
 
-    # cuda.h hides some legacy ABI entry points behind macros. When such an
-    # entry point is explicitly declared in annotations.h, keep its manual
-    # client while generating the ordinary server marshalling from that
-    # declaration.
+    # Generate explicitly listed legacy ABI entry points that cuda.h hides
+    # behind macros. A legacy entry point may still use @disabled server when
+    # its server handler needs lifecycle management beyond ordinary marshalling.
     server_functions_with_annotations = list(functions_with_annotations)
     server_function_names = {
         function.name.format()
         for function, _, _, _ in server_functions_with_annotations
     }
+    legacy_abi_functions = []
     annotation_only_server_functions = []
     for annotation in annotations.namespace.functions:
         name = annotation.name.format()
@@ -1443,12 +1457,14 @@ def main():
         ):
             continue
         directives = annotation_directives(annotation.doxygen)
-        if not any(
+        legacy_abi = name in LEGACY_ABI_FUNCTIONS
+        client_disabled = any(
             directive.startswith("@disabled client")
             for directive in directives
-        ):
+        )
+        if not legacy_abi and not client_disabled:
             continue
-        if any(
+        if not legacy_abi and any(
             directive == "@disabled"
             or directive.startswith("@disabled server")
             for directive in directives
@@ -1462,9 +1478,29 @@ def main():
             metadata.operations,
             metadata,
         )
+        if legacy_abi:
+            if metadata.disabled_client:
+                raise RuntimeError(
+                    f"{name}: legacy ABI function cannot disable the client"
+                )
+            functions_with_annotations.append(annotated_function)
+            legacy_abi_functions.append(annotated_function)
         server_functions_with_annotations.append(annotated_function)
-        annotation_only_server_functions.append(annotated_function)
+        if not legacy_abi:
+            annotation_only_server_functions.append(annotated_function)
         server_function_names.add(name)
+
+    found_legacy_abi_functions = {
+        function.name.format() for function, _, _, _ in legacy_abi_functions
+    }
+    missing_legacy_abi_functions = (
+        LEGACY_ABI_FUNCTIONS - found_legacy_abi_functions
+    )
+    if missing_legacy_abi_functions:
+        raise RuntimeError(
+            "Legacy ABI annotations not found: "
+            + ", ".join(sorted(missing_legacy_abi_functions))
+        )
 
     nvml_functions_with_annotations = collect_nvml_functions(
         annotations, server_bindings
@@ -1607,6 +1643,16 @@ def main():
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
             'extern "C" const void *lupine_mapped_host_read_source(const void *host, size_t size);\n\n'
         )
+        for function, _, _, _ in legacy_abi_functions:
+            name = function.name.format()
+            f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
+            f.write(
+                'extern "C" {return_type} CUDAAPI {name}({params});\n\n'.format(
+                    return_type=function.return_type.format(),
+                    name=name,
+                    params=", ".join(format_function_params(function)),
+                )
+            )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
             # functions; their RPC/server definitions may still be generated.
@@ -1959,7 +2005,10 @@ def main():
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
         )
-        for function, _, _, _ in annotation_only_server_functions:
+        annotation_only_functions = (
+            legacy_abi_functions + annotation_only_server_functions
+        )
+        for function, _, _, _ in annotation_only_functions:
             name = function.name.format()
             f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
             f.write(

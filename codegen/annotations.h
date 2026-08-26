@@ -4577,6 +4577,19 @@ CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
  */
 CUresult cuGraphDestroyNode(CUgraphNode hNode);
 /**
+ * @disabled server - manual server retains graph staging resources
+ * @recordowner GRAPH_EXEC phGraphExec
+ * @param phGraphExec RECV_ONLY
+ * @param hGraph SEND_ONLY
+ * @param phErrorNode RECV_ONLY NULLABLE
+ * @param bufferSize SEND_ONLY
+ * @param logBuffer RECV_ONLY NULLABLE LENGTH:bufferSize ON_ERROR
+ * @server CUDA
+ */
+CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
+                               CUgraphNode *phErrorNode, char *logBuffer,
+                               size_t bufferSize);
+/**
  * @recordowner GRAPH_EXEC phGraphExec
  * @param phGraphExec SEND_RECV
  * @param hGraph SEND_ONLY
