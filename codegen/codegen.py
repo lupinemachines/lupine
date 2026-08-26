@@ -35,6 +35,12 @@ from ops import (
     SynchronizeAnnotation,
 )
 
+# CUDA headers omit some legacy ABI entry points from their public declarations.
+# Keep the small set that still needs RPC wrappers explicit here.
+LEGACY_ABI_FUNCTIONS = {
+    "cuGraphInstantiate_v2",
+}
+
 # this table is manually generated from the cuda.h headers
 MANUAL_REMAPPINGS = [
     ("cuDeviceTotalMem", "cuDeviceTotalMem_v2"),
@@ -451,8 +457,6 @@ def parse_annotation(
             if not guard or metadata.guard is not None:
                 raise RuntimeError("Invalid @guard annotation")
             metadata.guard = guard
-            continue
-        if line.strip() == "@hidden":
             continue
         if line.startswith("@server"):
             continue
@@ -1433,15 +1437,15 @@ def main():
             (function, annotation, metadata.operations, metadata)
         )
 
-    # cuda.h hides some legacy ABI entry points behind macros. @hidden
-    # generates both sides from annotations.h; @disabled client keeps a manual
-    # client while generating the ordinary server marshalling.
+    # Generate explicitly listed legacy ABI entry points that cuda.h hides
+    # behind macros. @disabled client keeps a manual client while generating
+    # the ordinary server marshalling.
     server_functions_with_annotations = list(functions_with_annotations)
     server_function_names = {
         function.name.format()
         for function, _, _, _ in server_functions_with_annotations
     }
-    hidden_functions = []
+    legacy_abi_functions = []
     annotation_only_server_functions = []
     for annotation in annotations.namespace.functions:
         name = annotation.name.format()
@@ -1453,12 +1457,12 @@ def main():
         ):
             continue
         directives = annotation_directives(annotation.doxygen)
-        hidden = "@hidden" in directives
+        legacy_abi = name in LEGACY_ABI_FUNCTIONS
         client_disabled = any(
             directive.startswith("@disabled client")
             for directive in directives
         )
-        if not hidden and not client_disabled:
+        if not legacy_abi and not client_disabled:
             continue
         if any(
             directive == "@disabled"
@@ -1474,15 +1478,29 @@ def main():
             metadata.operations,
             metadata,
         )
-        if hidden:
+        if legacy_abi:
             if metadata.disabled_client:
-                raise RuntimeError(f"{name}: @hidden cannot disable the client")
+                raise RuntimeError(
+                    f"{name}: legacy ABI function cannot disable the client"
+                )
             functions_with_annotations.append(annotated_function)
-            hidden_functions.append(annotated_function)
+            legacy_abi_functions.append(annotated_function)
         server_functions_with_annotations.append(annotated_function)
-        if not hidden:
+        if not legacy_abi:
             annotation_only_server_functions.append(annotated_function)
         server_function_names.add(name)
+
+    found_legacy_abi_functions = {
+        function.name.format() for function, _, _, _ in legacy_abi_functions
+    }
+    missing_legacy_abi_functions = (
+        LEGACY_ABI_FUNCTIONS - found_legacy_abi_functions
+    )
+    if missing_legacy_abi_functions:
+        raise RuntimeError(
+            "Legacy ABI annotations not found: "
+            + ", ".join(sorted(missing_legacy_abi_functions))
+        )
 
     nvml_functions_with_annotations = collect_nvml_functions(
         annotations, server_bindings
@@ -1625,7 +1643,7 @@ def main():
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
             'extern "C" const void *lupine_mapped_host_read_source(const void *host, size_t size);\n\n'
         )
-        for function, _, _, _ in hidden_functions:
+        for function, _, _, _ in legacy_abi_functions:
             name = function.name.format()
             f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
             f.write(
@@ -1988,7 +2006,7 @@ def main():
             '#include "rpc.h"\n\n'
         )
         annotation_only_functions = (
-            hidden_functions + annotation_only_server_functions
+            legacy_abi_functions + annotation_only_server_functions
         )
         for function, _, _, _ in annotation_only_functions:
             name = function.name.format()

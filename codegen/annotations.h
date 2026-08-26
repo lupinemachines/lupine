@@ -4577,7 +4577,6 @@ CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
  */
 CUresult cuGraphDestroyNode(CUgraphNode hNode);
 /**
- * @hidden
  * @recordowner GRAPH_EXEC phGraphExec
  * @param phGraphExec RECV_ONLY
  * @param hGraph SEND_ONLY

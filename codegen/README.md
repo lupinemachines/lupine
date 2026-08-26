@@ -44,11 +44,6 @@ route-local device back to its virtual client ordinal before returning it.
 manual client implementation with the original API name. These manual symbols
 remain part of the generated client function map.
 
-`@hidden` generates both sides of an API declared only in CUDA's internal
-legacy section. Codegen emits the missing client and server declarations before
-the generated definitions, allowing old ABI entry points to use the ordinary
-annotation-driven marshalling path.
-
 `@guard <preprocessor-expression>` wraps the generated client wrapper, server
 handler, function-map entry, and server registration. Use it for APIs that are
 not declared by every supported CUDA toolkit, such as an API introduced in a
