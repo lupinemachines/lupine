@@ -1164,7 +1164,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
     return -1;
   }
 
-  int framed = lupine_payload_framed(conn, bytes);
+  int framed = lupine_payload_framed(bytes);
   auto *state = lupine_staging_state_for(conn);
   CUcontext context = nullptr;
   CUdevice device = 0;
@@ -2150,7 +2150,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     return -1;
   }
 
-  int framed = lupine_payload_framed(conn, byteCount);
+  int framed = lupine_payload_framed(byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   CUresult capture_query_result = CUDA_SUCCESS;
   if (stream != nullptr) {

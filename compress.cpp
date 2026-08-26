@@ -1,12 +1,7 @@
-// Optional LZ4 compression for large host<->device memory transfer payloads.
+// LZ4 compression for large host<->device memory transfer payloads.
 //
-// The client always advertises support with an "x-lupine-compress: lz4"
-// HTTP/2 request header and the server mirrors it, so both directions of a
-// connection frame large payloads; toward a peer that did not advertise
-// (e.g. an older client) the wire format stays byte-identical to before.
-//
-// A payload is framed only when both ends negotiated compression and the
-// total (uncompressed) payload size is at least LUPINE_COMPRESS_MIN_BYTES.
+// LZ4 framing is part of the wire protocol. A payload is framed when its total
+// (uncompressed) size is at least kLupineCompressMinBytes.
 // A framed payload is a sequence of blocks, each covering up to
 // LUPINE_COMPRESS_BLOCK_BYTES of uncompressed data:
 //
@@ -45,19 +40,19 @@ static_assert(kLupineCompressBlockBytes <= LZ4_MAX_INPUT_SIZE,
 
 } // namespace
 
-int lupine_payload_framed(conn_t *conn, size_t total_size) {
-  return total_size >= kLupineCompressMinBytes && rpc_http2_compress_lz4(conn);
+int lupine_payload_framed(size_t total_size) {
+  return total_size >= kLupineCompressMinBytes;
 }
 
 // rpc_write_payload writes a bulk data payload, compressing it when the
-// connection negotiated compression and the payload is large enough. The
-// payload is compressed lazily by the transport as it streams to the socket;
-// like rpc_write, the caller's buffer must stay valid until rpc_write_end().
+// payload is large enough. The payload is compressed lazily by the transport
+// as it streams to the socket; like rpc_write, the caller's buffer must stay
+// valid until rpc_write_end().
 int rpc_write_payload(conn_t *conn, const void *data, size_t size) {
   if (size == 0) {
     return 0;
   }
-  if (!lupine_payload_framed(conn, size)) {
+  if (!lupine_payload_framed(size)) {
     return rpc_write(conn, data, size);
   }
   return rpc_write_framed(conn, data, size);

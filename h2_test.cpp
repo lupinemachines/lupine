@@ -1159,6 +1159,14 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
           "rpc_conn_destroy retained the copy buffer");
 }
 
+void test_lz4_payload_size_threshold() {
+  constexpr size_t kCompressMinBytes = 64 * 1024;
+  require(!lupine_payload_framed(kCompressMinBytes - 1),
+          "payload below LZ4 threshold was framed");
+  require(lupine_payload_framed(kCompressMinBytes),
+          "payload at LZ4 threshold was not framed");
+}
+
 void test_rpc_lz4_payload_round_trip() {
   h2_pair pair = make_pair();
 
@@ -1371,6 +1379,7 @@ int main() {
   test_rpc_write_queue_grows();
   test_rpc_write_buffer_uses_fixed_allocation();
   test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
+  test_lz4_payload_size_threshold();
   test_rpc_lz4_payload_round_trip();
   test_rpc_repeated_responses_on_lane();
   test_response_wait_sends_transport_heartbeat();
