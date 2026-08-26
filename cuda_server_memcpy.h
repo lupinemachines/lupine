@@ -58,8 +58,7 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context);
 void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device);
 int lupine_write_lifecycle_response(conn_t *conn, int request_id,
                                     CUresult result);
-int lupine_copy_htod_serial(conn_t *conn, int framed, CUdeviceptr destination,
-                            size_t bytes, lupine_staging_state &state,
-                            CUresult *result);
+int lupine_copy_htod_serial(conn_t *conn, CUdeviceptr destination, size_t bytes,
+                            lupine_staging_state &state, CUresult *result);
 
 #endif

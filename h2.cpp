@@ -265,8 +265,7 @@ ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
 void h2_materialize_block(h2_transport *transport, rpc_write_cursor &cursor) {
   size_t raw =
       std::min<size_t>(LUPINE_COMPRESS_BLOCK_BYTES, cursor.source_size);
-  size_t bound =
-      static_cast<size_t>(LZ4_compressBound(LUPINE_COMPRESS_BLOCK_BYTES));
+  size_t bound = static_cast<size_t>(LZ4_compressBound(static_cast<int>(raw)));
   if (transport->compress_scratch.size() < sizeof(uint32_t) + bound) {
     transport->compress_scratch.resize(sizeof(uint32_t) + bound);
   }

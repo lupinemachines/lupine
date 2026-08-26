@@ -290,12 +290,10 @@ extern rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn);
 extern void rpc_http2_window_release(conn_t *conn,
                                      rpc_http2_window_credit credit);
 
-// LZ4 framing for large memory transfer payloads (see compress.cpp).
-extern int lupine_payload_framed(size_t total_size);
+// LZ4 framing for memory transfer payloads (see compress.cpp).
 extern int rpc_write_payload(conn_t *conn, const void *data, size_t size);
 extern int rpc_read_payload(conn_t *conn, void *data, size_t size);
-extern int rpc_read_payload_part(conn_t *conn, int framed, void *data,
-                                 size_t size);
-extern int rpc_drain_payload(conn_t *conn, int framed, size_t size);
+extern int rpc_read_payload_part(conn_t *conn, void *data, size_t size);
+extern int rpc_drain_payload(conn_t *conn, size_t size);
 
 #endif
