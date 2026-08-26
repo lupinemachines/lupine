@@ -32,6 +32,7 @@ constexpr uint32_t kH2ServerWindow =
 // blocked on.
 constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
+constexpr size_t kH2FrameHeaderLen = 9;
 constexpr size_t kH2EncodeChunkBytes = 4 * 1024 * 1024;
 constexpr size_t kH2ProviderMinFrameBytes = 16 * 1024;
 constexpr size_t kH2ProviderMaxFrameBytes = 1024 * 1024;
@@ -83,6 +84,10 @@ struct h2_transport {
   rpc_http2_read_stats read_stats = {};
   uint64_t staged_bytes = 0;
   uint64_t window_held = 0;
+  // LZ4F_compressBound includes a full worst-case block even for tiny input.
+  // Writes are serialized, so retain one connection-wide workspace and track
+  // its valid prefix separately instead of resizing/zeroing it per RPC.
+  std::vector<unsigned char> encoder_output;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
@@ -125,6 +130,7 @@ struct h2_write_source {
   size_t index = 0;
   uint64_t progress = 0;
   std::vector<unsigned char> pending;
+  size_t pending_size = 0;
   size_t pending_offset = 0;
   bool terminal_generated = false;
   bool finish_stream = false;
@@ -159,12 +165,63 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
       transport->read_stats.peak_staged_bytes, transport->staged_bytes);
 }
 
-int h2_write_all(h2_transport *transport, const uint8_t *data, size_t size) {
-  while (size != 0) {
+// Maximum buffers per vectored send. Compressed DATA uses at most four, but
+// cap defensively so a single sendmsg never exceeds the platform's IOV_MAX.
+constexpr int kH2MaxSendIov = 512;
+
+#ifdef LUPINE_TLS_OPENSSL
+constexpr size_t kH2TlsCoalesceCapacity = 4 * 1024;
+constexpr size_t kH2TlsCoalesceFragmentMax = 256;
+
+struct h2_tls_batch {
+  int count = 0;
+  size_t size = 0;
+};
+
+h2_tls_batch h2_plan_tls_batch(const struct iovec *iov, int iov_count) {
+  h2_tls_batch batch;
+  while (batch.count < iov_count) {
+    size_t size = iov[batch.count].iov_len;
+    if (size > kH2TlsCoalesceFragmentMax ||
+        size > kH2TlsCoalesceCapacity - batch.size) {
+      break;
+    }
+    batch.size += size;
+    ++batch.count;
+  }
+  if (batch.count < 2) {
+    return {};
+  }
+  return batch;
+}
+#endif
+
+int h2_write_all(h2_transport *transport, const struct iovec *iov,
+                 int iov_count) {
+  std::vector<struct iovec> local(iov, iov + iov_count);
+  struct iovec *cursor = local.data();
+  int count = iov_count;
+#ifdef LUPINE_TLS_OPENSSL
+  std::array<unsigned char, kH2TlsCoalesceCapacity> tls_scratch;
+#endif
+  while (count > 0) {
     ssize_t n;
 #ifdef LUPINE_TLS_OPENSSL
     if (transport->tls != nullptr) {
       SSL *ssl = static_cast<SSL *>(transport->tls);
+      const void *data = cursor[0].iov_base;
+      size_t size = cursor[0].iov_len;
+      const h2_tls_batch batch = h2_plan_tls_batch(cursor, count);
+      if (batch.count != 0) {
+        size_t offset = 0;
+        for (int i = 0; i < batch.count; ++i) {
+          memcpy(tls_scratch.data() + offset, cursor[i].iov_base,
+                 cursor[i].iov_len);
+          offset += cursor[i].iov_len;
+        }
+        data = tls_scratch.data();
+        size = batch.size;
+      }
       int want = static_cast<int>(std::min(size, static_cast<size_t>(INT_MAX)));
       int r;
       while ((r = SSL_write(ssl, data, want)) <= 0) {
@@ -177,8 +234,8 @@ int h2_write_all(h2_transport *transport, const uint8_t *data, size_t size) {
     } else
 #endif
     {
-      struct iovec iov = {const_cast<uint8_t *>(data), size};
-      n = lupine_socket_sendv(transport->netfd, &iov, 1);
+      int batch = std::min(count, kH2MaxSendIov);
+      n = lupine_socket_sendv(transport->netfd, cursor, batch);
       if (n < 0) {
         if (lupine_socket_error_is_intr()) {
           continue;
@@ -189,8 +246,16 @@ int h2_write_all(h2_transport *transport, const uint8_t *data, size_t size) {
         return -1;
       }
     }
-    data += n;
-    size -= static_cast<size_t>(n);
+    size_t written = static_cast<size_t>(n);
+    while (count > 0 && written >= cursor[0].iov_len) {
+      written -= cursor[0].iov_len;
+      ++cursor;
+      --count;
+    }
+    if (count > 0 && written != 0) {
+      cursor[0].iov_base = static_cast<char *>(cursor[0].iov_base) + written;
+      cursor[0].iov_len -= written;
+    }
   }
   return 0;
 }
@@ -198,9 +263,9 @@ int h2_write_all(h2_transport *transport, const uint8_t *data, size_t size) {
 ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
                          int, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  return h2_write_all(transport, data, length) == 0
-             ? static_cast<ssize_t>(length)
-             : NGHTTP2_ERR_CALLBACK_FAILURE;
+  struct iovec iov = {const_cast<uint8_t *>(data), length};
+  return h2_write_all(transport, &iov, 1) == 0 ? static_cast<ssize_t>(length)
+                                               : NGHTTP2_ERR_CALLBACK_FAILURE;
 }
 
 LZ4F_preferences_t h2_lz4_preferences() {
@@ -221,23 +286,20 @@ void h2_update_provider_frame_size(h2_stream &stream, size_t encoded) {
   }
 }
 
-void h2_copy_pending(h2_write_source &source, uint8_t *buffer, size_t capacity,
-                     size_t &produced) {
-  size_t available = source.pending.size() - source.pending_offset;
-  size_t copied = std::min(available, capacity - produced);
-  memcpy(buffer + produced, source.pending.data() + source.pending_offset,
-         copied);
-  source.pending_offset += copied;
-  source.progress += copied;
-  produced += copied;
-  if (source.pending_offset == source.pending.size()) {
-    source.pending.clear();
-    source.pending_offset = 0;
+unsigned char *h2_append_pending(h2_write_source &source, size_t capacity) {
+  size_t required = source.pending_size + capacity;
+  if (source.pending.size() < required) {
+    source.pending.resize(required);
   }
+  return source.pending.data() + source.pending_size;
+}
+
+void h2_commit_pending(h2_write_source &source, size_t produced) {
+  source.pending_size += produced;
 }
 
 ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
-                                     uint8_t *buffer, size_t length,
+                                     uint8_t *, size_t length,
                                      uint32_t *data_flags,
                                      nghttp2_data_source *source,
                                      void *user_data) {
@@ -249,27 +311,22 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
   }
 
   const LZ4F_preferences_t preferences = h2_lz4_preferences();
-  size_t produced = 0;
   size_t input_budget = kH2EncodeChunkBytes;
-  while (produced < length && !write_source->complete) {
-    if (!write_source->pending.empty()) {
-      h2_copy_pending(*write_source, buffer, length, produced);
-      continue;
-    }
+  while (write_source->pending_size < length && !write_source->complete) {
 
     if (!stream.encoder_started) {
       if (LZ4F_isError(
               LZ4F_createCompressionContext(&stream.encoder, LZ4F_VERSION))) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
       }
-      write_source->pending.resize(LZ4F_HEADER_SIZE_MAX);
-      size_t header =
-          LZ4F_compressBegin(stream.encoder, write_source->pending.data(),
-                             write_source->pending.size(), &preferences);
+      size_t capacity = LZ4F_HEADER_SIZE_MAX;
+      unsigned char *destination = h2_append_pending(*write_source, capacity);
+      size_t header = LZ4F_compressBegin(stream.encoder, destination, capacity,
+                                         &preferences);
       if (LZ4F_isError(header)) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
       }
-      write_source->pending.resize(header);
+      h2_commit_pending(*write_source, header);
       stream.encoder_started = true;
       continue;
     }
@@ -288,32 +345,30 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
 
     if (cursor == nullptr) {
       if (!write_source->terminal_generated) {
-        write_source->pending.resize(LZ4F_compressBound(0, &preferences));
+        size_t capacity = LZ4F_compressBound(0, &preferences);
+        unsigned char *destination = h2_append_pending(*write_source, capacity);
         size_t terminal;
         if (write_source->finish_stream) {
           terminal =
-              LZ4F_compressEnd(stream.encoder, write_source->pending.data(),
-                               write_source->pending.size(), nullptr);
+              LZ4F_compressEnd(stream.encoder, destination, capacity, nullptr);
         } else {
-          terminal = LZ4F_flush(stream.encoder, write_source->pending.data(),
-                                write_source->pending.size(), nullptr);
+          terminal = LZ4F_flush(stream.encoder, destination, capacity, nullptr);
         }
         if (LZ4F_isError(terminal)) {
           return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
         h2_update_provider_frame_size(stream, terminal);
-        write_source->pending.resize(terminal);
+        h2_commit_pending(*write_source, terminal);
         write_source->terminal_generated = true;
         continue;
       }
       if (write_source->finish_stream) {
         stream.encoder_finished = true;
-        write_source->complete = true;
         *data_flags |= NGHTTP2_DATA_FLAG_EOF;
       } else {
-        write_source->complete = true;
         *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
       }
+      write_source->complete = true;
       break;
     }
 
@@ -326,15 +381,15 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
     }
 
     size_t input = std::min(cursor->size, input_budget);
-    write_source->pending.resize(LZ4F_compressBound(input, &preferences));
-    size_t encoded = LZ4F_compressUpdate(
-        stream.encoder, write_source->pending.data(),
-        write_source->pending.size(), cursor->data, input, nullptr);
+    size_t capacity = LZ4F_compressBound(input, &preferences);
+    unsigned char *destination = h2_append_pending(*write_source, capacity);
+    size_t encoded = LZ4F_compressUpdate(stream.encoder, destination, capacity,
+                                         cursor->data, input, nullptr);
     if (LZ4F_isError(encoded)) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     h2_update_provider_frame_size(stream, encoded);
-    write_source->pending.resize(encoded);
+    h2_commit_pending(*write_source, encoded);
     cursor->data += input;
     cursor->size -= input;
     input_budget -= input;
@@ -343,7 +398,62 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
       ++write_source->index;
     }
   }
+
+  size_t available = write_source->pending_size - write_source->pending_offset;
+  size_t produced = std::min(available, length);
+  if (produced == 0) {
+    return write_source->complete ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  *data_flags |= NGHTTP2_DATA_FLAG_NO_COPY;
+  if (produced == available && write_source->terminal_generated) {
+    if (write_source->finish_stream) {
+      stream.encoder_finished = true;
+      *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+    } else {
+      *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
+    }
+    write_source->complete = true;
+  }
   return static_cast<ssize_t>(produced);
+}
+
+int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
+                          const uint8_t *framehd, size_t length,
+                          nghttp2_data_source *source, void *user_data) {
+  auto *transport = static_cast<h2_transport *>(user_data);
+  auto *write_source = static_cast<h2_write_source *>(source->ptr);
+  size_t available = write_source->pending_size - write_source->pending_offset;
+  if (length > available) {
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+
+  std::array<struct iovec, 4> iov = {};
+  int iov_count = 0;
+  iov[iov_count++] = {const_cast<uint8_t *>(framehd), kH2FrameHeaderLen};
+
+  unsigned char padlen = 0;
+  if (frame->data.padlen > 0) {
+    padlen = static_cast<unsigned char>(frame->data.padlen - 1);
+    iov[iov_count++] = {&padlen, 1};
+  }
+  iov[iov_count++] = {
+      write_source->pending.data() + write_source->pending_offset, length};
+
+  unsigned char padding[256] = {};
+  if (frame->data.padlen > 1) {
+    iov[iov_count++] = {padding, frame->data.padlen - 1};
+  }
+  if (h2_write_all(transport, iov.data(), iov_count) < 0) {
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+
+  write_source->pending_offset += length;
+  write_source->progress += length;
+  if (write_source->pending_offset == write_source->pending_size) {
+    write_source->pending_size = 0;
+    write_source->pending_offset = 0;
+  }
+  return 0;
 }
 
 ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t,
@@ -725,6 +835,7 @@ int h2_flush_session_locked(h2_transport *transport) {
 
 int h2_send_source_locked(h2_transport *transport, int32_t stream_id,
                           h2_write_source *source) {
+  source->pending.swap(transport->encoder_output);
   nghttp2_data_provider provider = {};
   provider.source.ptr = source;
   provider.read_callback = h2_data_source_read_callback;
@@ -753,6 +864,7 @@ int h2_send_source_locked(h2_transport *transport, int32_t stream_id,
       break;
     }
   }
+  source->pending.swap(transport->encoder_output);
   return result == 0 ? 0 : -1;
 }
 
@@ -858,6 +970,8 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     return -1;
   }
   nghttp2_session_callbacks_set_send_callback(callbacks, h2_send_callback);
+  nghttp2_session_callbacks_set_send_data_callback(callbacks,
+                                                   h2_send_data_callback);
   nghttp2_session_callbacks_set_data_source_read_length_callback(
       callbacks, h2_data_source_read_length_callback);
   nghttp2_session_callbacks_set_on_data_chunk_recv_callback(
