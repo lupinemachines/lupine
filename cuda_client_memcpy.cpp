@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #ifndef _WIN32
 #include <fcntl.h>
@@ -3055,6 +3056,16 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
     mirrored_destination = 0;
   }
   const bool use_server_destination = mirrored_destination != 0;
+  const bool contiguous_destination =
+      copy.dstPitch == run && (slices == 1 || dst_slice_pitch == run * rows);
+  std::unique_ptr<unsigned char, decltype(&std::free)> staging(
+      contiguous_destination ? nullptr
+                             : static_cast<unsigned char *>(
+                                   std::malloc(LUPINE_COMPRESS_BLOCK_BYTES)),
+      &std::free);
+  if (!contiguous_destination && staging == nullptr) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
   const uint8_t wire_flags =
       (blocking ? LUPINE_MEMCPY_BLOCKING : 0) |
       (use_server_destination ? LUPINE_MEMCPY_SERVER_DESTINATION : 0);
@@ -3074,10 +3085,7 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
   if (request_id < 0 || rpc_read_start(conn, request_id) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  const bool contiguous_destination =
-      copy.dstPitch == run && (slices == 1 || dst_slice_pitch == run * rows);
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  std::vector<unsigned char> staging;
   size_t offset = 0;
   while (offset < total) {
     uint64_t wire_bytes = 0;
@@ -3086,8 +3094,8 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
       rpc_read_end(conn);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    if (wire_bytes > total - offset) {
-      rpc_read_end(conn);
+    if (wire_bytes > total - offset ||
+        wire_bytes > LUPINE_COMPRESS_BLOCK_BYTES) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     const size_t bytes = static_cast<size_t>(wire_bytes);
@@ -3096,21 +3104,11 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
       // directly. This is also the path the fault handler takes, where a heap
       // allocation would not be safe.
       if (rpc_read_payload_part(conn, destination_rows + offset, bytes) < 0) {
-        rpc_read_end(conn);
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
       }
       offset += bytes;
     } else if (bytes != 0) {
-      try {
-        if (staging.size() < bytes) {
-          staging.resize(bytes);
-        }
-      } catch (...) {
-        rpc_read_end(conn);
-        return CUDA_ERROR_OUT_OF_MEMORY;
-      }
-      if (rpc_read_payload_part(conn, staging.data(), bytes) < 0) {
-        rpc_read_end(conn);
+      if (rpc_read_payload_part(conn, staging.get(), bytes) < 0) {
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
       }
       for (size_t filled = 0; filled < bytes;) {
@@ -3120,7 +3118,7 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
         size_t span = std::min(run - column, bytes - filled);
         memcpy(destination_rows + (index / rows) * dst_slice_pitch +
                    (index % rows) * copy.dstPitch + column,
-               staging.data() + filled, span);
+               staging.get() + filled, span);
         filled += span;
       }
       offset += bytes;
