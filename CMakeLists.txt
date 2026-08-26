@@ -14,6 +14,10 @@ else()
 endif()
 option(LUPINE_BUILD_SERVER "Build the RPC server"
        ${LUPINE_BUILD_SERVER_DEFAULT})
+set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
+    "CUDA driver library or stub to use without a complete CUDA Toolkit")
+set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
+    "CUDA version reported by a header-only server build")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -50,7 +54,8 @@ find_package(OpenSSL QUIET)
 
 set(MIN_CUDA_VERSION 11.0)
 if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
-    if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+    if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
+       NOT LUPINE_CUDA_DRIVER_LIBRARY)
         find_package(CUDAToolkit REQUIRED)
         if(NOT CUDAToolkit_VERSION)
             message(FATAL_ERROR
@@ -86,7 +91,28 @@ if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
         string(REGEX REPLACE ".*CUDA_VERSION +([0-9]+).*" "\\1"
                LUPINE_CUDA_HEADER_VERSION "${LUPINE_CUDA_VERSION_LINE}")
         message(STATUS
-            "Using client CUDA API headers version: ${LUPINE_CUDA_HEADER_VERSION}")
+            "Using CUDA API headers version: ${LUPINE_CUDA_HEADER_VERSION}")
+
+        if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+            if(NOT EXISTS "${LUPINE_CUDA_DRIVER_LIBRARY}")
+                message(FATAL_ERROR
+                    "LUPINE_CUDA_DRIVER_LIBRARY does not exist: ${LUPINE_CUDA_DRIVER_LIBRARY}")
+            endif()
+            if(NOT LUPINE_CUDA_VERSION_OVERRIDE)
+                message(FATAL_ERROR
+                    "LUPINE_CUDA_VERSION_OVERRIDE is required with LUPINE_CUDA_DRIVER_LIBRARY")
+            endif()
+            set(CUDAToolkit_VERSION "${LUPINE_CUDA_VERSION_OVERRIDE}")
+            if(CUDAToolkit_VERSION VERSION_LESS MIN_CUDA_VERSION)
+                message(FATAL_ERROR
+                    "CUDA Toolkit must be >= ${MIN_CUDA_VERSION}; found ${CUDAToolkit_VERSION}")
+            endif()
+            add_library(CUDA::cuda_driver UNKNOWN IMPORTED)
+            set_target_properties(CUDA::cuda_driver PROPERTIES
+                IMPORTED_LOCATION "${LUPINE_CUDA_DRIVER_LIBRARY}")
+            message(STATUS
+                "Using CUDA driver stub for header-only server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
+        endif()
     endif()
 endif()
 
