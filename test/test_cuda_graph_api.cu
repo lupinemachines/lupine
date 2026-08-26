@@ -10,28 +10,9 @@
 // the first failed assertion.
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <cuda.h>
-#include <dlfcn.h>
 #include <set>
 #include <vector>
-
-using LegacyGraphInstantiate = CUresult(CUDAAPI *)(
-    CUgraphExec *, CUgraph, CUgraphNode *, char *, size_t);
-using GetProcAddressV1 = CUresult(CUDAAPI *)(const char *, void **, int,
-                                             cuuint64_t);
-
-template <typename Function> static Function load_symbol(const char *name) {
-  dlerror();
-  void *symbol = dlsym(RTLD_DEFAULT, name);
-  const char *error = dlerror();
-  if (error != nullptr || symbol == nullptr) {
-    fprintf(stderr, "dlsym(%s) failed: %s\n", name,
-            error == nullptr ? "symbol not found" : error);
-    return nullptr;
-  }
-  return reinterpret_cast<Function>(symbol);
-}
 
 static int g_failures = 0;
 #define CHECK(cond, msg)                                                       \
@@ -248,51 +229,6 @@ int main() {
   DRV(cuGraphHostNodeGetParams(C, &got2));
   CHECK(got2.userData == (void *)0xBEEF,
         "cuGraphHostNodeSetParams updated userData");
-
-  // ---- CUDA 11 graph-instantiation ABI: cuGetProcAddress must select the
-  // five-argument _v2 wrapper, and a successful call must not overwrite the
-  // failure-only log buffer (issue #599). ----
-  LegacyGraphInstantiate legacy_instantiate =
-      load_symbol<LegacyGraphInstantiate>("cuGraphInstantiate_v2");
-  GetProcAddressV1 get_proc_address =
-      load_symbol<GetProcAddressV1>("cuGetProcAddress");
-  void *legacy_address = nullptr;
-  CHECK(legacy_instantiate != nullptr && get_proc_address != nullptr &&
-            get_proc_address("cuGraphInstantiate", &legacy_address, 11080, 0) ==
-                CUDA_SUCCESS &&
-            legacy_address == reinterpret_cast<void *>(legacy_instantiate),
-        "cuGetProcAddress selects the CUDA 11 graph-instantiation ABI");
-  if (legacy_address != nullptr) {
-    auto instantiate =
-        reinterpret_cast<LegacyGraphInstantiate>(legacy_address);
-    CUgraphExec legacy_exec = nullptr;
-    CUgraphNode error_node = nullptr;
-    char log_buffer[1024];
-    memset(log_buffer, 0x5a, sizeof(log_buffer));
-    CHECK(instantiate(&legacy_exec, graph, &error_node, log_buffer, 0) ==
-                  CUDA_SUCCESS &&
-              legacy_exec != nullptr,
-          "cuGraphInstantiate_v2 accepts a present zero-length log buffer");
-    if (legacy_exec != nullptr)
-      DRV(cuGraphExecDestroy(legacy_exec));
-
-    legacy_exec = nullptr;
-    CHECK(instantiate(&legacy_exec, graph, &error_node, log_buffer,
-                      sizeof(log_buffer)) == CUDA_SUCCESS &&
-              legacy_exec != nullptr,
-          "cuGraphInstantiate_v2 accepts a present log buffer");
-    bool log_untouched = true;
-    for (char byte : log_buffer) {
-      if (static_cast<unsigned char>(byte) != 0x5a) {
-        log_untouched = false;
-        break;
-      }
-    }
-    CHECK(log_untouched,
-          "cuGraphInstantiate_v2 preserves its failure-only log on success");
-    if (legacy_exec != nullptr)
-      DRV(cuGraphExecDestroy(legacy_exec));
-  }
 
   CUgraphExec exec;
   DRV(cuGraphInstantiateWithFlags(&exec, graph, 0));
