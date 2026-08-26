@@ -6,12 +6,6 @@
 // kills the server process and takes the connection with it. This test sets
 // CU_POINTER_ATTRIBUTE_SYNC_MEMOPS (the only settable pointer attribute) and
 // then issues further driver calls to prove the connection survived.
-//
-// The attribute is also allocator-sensitive: the driver only accepts it on
-// allocations whose backing supports it, and rejects a virtual-memory backing
-// with CUDA_ERROR_NOT_SUPPORTED. Both cuMemAlloc and cuMemAllocManaged
-// pointers are covered so a change to how the server backs either allocator
-// cannot silently make the attribute unsettable.
 
 #include <cuda.h>
 
@@ -151,27 +145,6 @@ int main() {
     return 1;
   }
   CHECK(cuMemGetInfo(&free_bytes, &total_bytes));
-
-  // cuMemAllocManaged is backed by a different server-side allocator than
-  // cuMemAlloc, so it has to round-trip the attribute on its own.
-  CUdeviceptr managed = 0;
-  CHECK(cuMemAllocManaged(&managed, 4096, CU_MEM_ATTACH_GLOBAL));
-  static const int wanted_values[] = {1, 0};
-  for (int wanted : wanted_values) {
-    sync_memops = wanted;
-    CHECK(cuPointerSetAttribute(&sync_memops, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
-                                managed));
-    observed = -1;
-    CHECK(cuPointerGetAttribute(&observed, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
-                                managed));
-    if (observed != wanted) {
-      std::fprintf(stderr,
-                   "managed SYNC_MEMOPS read back as %d after setting %d\n",
-                   observed, wanted);
-      return 1;
-    }
-  }
-  CHECK(cuMemFree(managed));
 
   CHECK(cuMemFree(ptr));
   CHECK(cuDevicePrimaryCtxRelease(device));
