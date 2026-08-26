@@ -33,9 +33,8 @@ constexpr uint32_t kH2ServerWindow =
 constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2EncodeChunkBytes = 4 * 1024 * 1024;
-// Amortize DATA framing without making nghttp2 reserve a maximum-size frame
-// buffer for every highly compressed LZ4 block.
-constexpr size_t kH2ProviderFrameBytes = 1024 * 1024;
+constexpr size_t kH2ProviderMinFrameBytes = 16 * 1024;
+constexpr size_t kH2ProviderMaxFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Linux restarts slow start after an idle period of one retransmission
 // timeout. Keeping response waits below the usual 200 ms minimum RTO avoids
@@ -60,6 +59,7 @@ struct h2_stream {
   bool encoder_started = false;
   bool encoder_finished = false;
   bool decoder_finished = false;
+  size_t provider_frame_bytes = kH2ProviderMinFrameBytes;
   LZ4F_compressionContext_t encoder = nullptr;
   LZ4F_decompressionContext_t decoder = nullptr;
   int response_status = 0;
@@ -211,6 +211,16 @@ LZ4F_preferences_t h2_lz4_preferences() {
   return preferences;
 }
 
+void h2_update_provider_frame_size(h2_stream &stream, size_t encoded) {
+  if (encoded != 0) {
+    // Match nghttp2's next provider buffer to actual compressed output: large
+    // blocks amortize DATA framing, while high-ratio blocks avoid repeatedly
+    // reserving a mostly empty maximum-size buffer.
+    stream.provider_frame_bytes =
+        std::clamp(encoded, kH2ProviderMinFrameBytes, kH2ProviderMaxFrameBytes);
+  }
+}
+
 void h2_copy_pending(h2_write_source &source, uint8_t *buffer, size_t capacity,
                      size_t &produced) {
   size_t available = source.pending.size() - source.pending_offset;
@@ -291,6 +301,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
         if (LZ4F_isError(terminal)) {
           return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
+        h2_update_provider_frame_size(stream, terminal);
         write_source->pending.resize(terminal);
         write_source->terminal_generated = true;
         continue;
@@ -322,6 +333,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
     if (LZ4F_isError(encoded)) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
+    h2_update_provider_frame_size(stream, encoded);
     write_source->pending.resize(encoded);
     cursor->data += input;
     cursor->size -= input;
@@ -334,18 +346,21 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
   return static_cast<ssize_t>(produced);
 }
 
-ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t, int32_t,
+ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t,
+                                            int32_t stream_id,
                                             int32_t session_remote_window_size,
                                             int32_t stream_remote_window_size,
                                             uint32_t remote_max_frame_size,
-                                            void *) {
+                                            void *user_data) {
+  auto *transport = static_cast<h2_transport *>(user_data);
   int32_t window =
       std::min(session_remote_window_size, stream_remote_window_size);
   if (window <= 0) {
     return NGHTTP2_ERR_CALLBACK_FAILURE;
   }
   size_t max_len = std::min<size_t>(kH2MaxFrame, remote_max_frame_size);
-  max_len = std::min(max_len, kH2ProviderFrameBytes);
+  max_len = std::min(max_len,
+                     h2_get_stream(transport, stream_id).provider_frame_bytes);
   max_len = std::min<size_t>(max_len, static_cast<size_t>(window));
   return static_cast<ssize_t>(std::max<size_t>(1, max_len));
 }

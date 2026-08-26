@@ -301,21 +301,25 @@ void test_data_provider_frame_sizing() {
     write_result.store(
         write_bytes(&pair.client, payload.data(), payload.size()));
   });
-  size_t data_frame_size = 0;
-  for (int frame_count = 0; frame_count < 8 && data_frame_size == 0;
+  size_t max_data_frame_size = 0;
+  int data_frame_count = 0;
+  for (int frame_count = 0; frame_count < 8 && data_frame_count < 2;
        ++frame_count) {
     std::array<unsigned char, 9> header = {};
     require(raw_read_frame(pair.server.connfd, &header),
             "failed to read compressed DATA frame");
     if (header[3] == NGHTTP2_DATA) {
-      data_frame_size = (static_cast<size_t>(header[0]) << 16) |
-                        (static_cast<size_t>(header[1]) << 8) | header[2];
+      size_t data_frame_size = (static_cast<size_t>(header[0]) << 16) |
+                               (static_cast<size_t>(header[1]) << 8) |
+                               header[2];
+      max_data_frame_size = std::max(max_data_frame_size, data_frame_size);
+      ++data_frame_count;
     }
   }
   writer.join();
 
   require(write_result.load() == 0, "large-frame write failed");
-  require(data_frame_size > 16 * 1024,
+  require(max_data_frame_size > 16 * 1024,
           "compressed provider fell back to 16 KiB DATA frames");
 
   std::vector<unsigned char> zeros(16 * 1024 * 1024);
@@ -323,7 +327,7 @@ void test_data_provider_frame_sizing() {
   std::thread compressible_writer([&] {
     write_result.store(write_bytes(&pair.client, zeros.data(), zeros.size()));
   });
-  data_frame_size = 0;
+  size_t data_frame_size = 0;
   while (data_frame_size == 0) {
     std::array<unsigned char, 9> header = {};
     require(raw_read_frame(pair.server.connfd, &header),
