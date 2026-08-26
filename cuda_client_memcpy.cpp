@@ -3137,13 +3137,15 @@ static CUresult lupine_memcpy_dtod(CUDA_MEMCPY3D copy, CUstream stream,
 
 extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
                                   bool blocking) {
-  const CUDA_MEMCPY3D &copy = *request;
-  // A zero extent copies nothing. The paths below all assume at least one run,
-  // and a device-to-host request for none of them leaves the response half
-  // read, which wedges the connection.
-  if (copy.WidthInBytes == 0 || copy.Height == 0 || copy.Depth == 0) {
+  CUDA_MEMCPY3D copy = *request;
+  // A zero-width run carries no bytes. Missing row and slice dimensions are
+  // represented internally as one so every path can use the same explicit 3D
+  // geometry without supporting zero-sized rows or slices.
+  if (copy.WidthInBytes == 0) {
     return CUDA_SUCCESS;
   }
+  copy.Height = std::max<size_t>(copy.Height, 1);
+  copy.Depth = std::max<size_t>(copy.Depth, 1);
   // A UNIFIED address is client-space: a managed alias is already the server's
   // address for that allocation and a plain device pointer is server-valid, but
   // an ordinary host pointer's bytes have to travel. An array is device memory

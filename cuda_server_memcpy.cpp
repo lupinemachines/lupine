@@ -1951,8 +1951,8 @@ int handle_lupineMemcpy(conn_t *conn) {
   const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
   const size_t run = copy.WidthInBytes;
-  const size_t rows = copy.Height == 0 ? 1 : copy.Height;
-  const size_t slices = copy.Depth == 0 ? 1 : copy.Depth;
+  const size_t rows = copy.Height;
+  const size_t slices = copy.Depth;
   const size_t total = run * rows * slices;
 
   // Neither side is host memory, so nothing is staged and the descriptor
