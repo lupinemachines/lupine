@@ -599,60 +599,6 @@ int rpc_read_payload(conn_t *conn, void *data, size_t size) {
   return rpc_read_into_context(conn, data, size, rpc_read_framed_payload);
 }
 
-// Reads a pitched region that was sent as one framed payload. The payload
-// arrives packed and compressed, so it is decoded a block at a time into a
-// bounded buffer and scattered across the rows.
-int rpc_read_pitched_payload(conn_t *conn, void *data, size_t width,
-                             size_t rows, size_t row_stride, size_t slices,
-                             size_t slice_stride) {
-  if (width == 0 || rows == 0 || slices == 0) {
-    return 0;
-  }
-  size_t total = width * rows * slices;
-  if (row_stride == width && (slices == 1 || slice_stride == width * rows)) {
-    return rpc_read_payload(conn, data, total);
-  }
-  // Framing is a property of the whole payload, so it is decided once here and
-  // every part read below either spans a whole block or runs to the end.
-  int framed = lupine_payload_framed(conn, total);
-  if (!framed) {
-    return rpc_read_pitched(conn, data, width, rows, row_stride, slices,
-                            slice_stride);
-  }
-
-  size_t staging_size = std::min(total, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
-  std::vector<unsigned char> packed;
-  try {
-    packed.resize(staging_size);
-  } catch (...) {
-    return -1;
-  }
-
-  size_t offset = 0;
-  while (offset < total) {
-    size_t chunk = std::min(staging_size, total - offset);
-    if (rpc_read_payload_part(conn, framed, packed.data(), chunk) < 0) {
-      return -1;
-    }
-    size_t filled = 0;
-    while (filled < chunk) {
-      size_t position = offset + filled;
-      size_t per_slice = width * rows;
-      size_t slice = position / per_slice;
-      size_t within = position % per_slice;
-      size_t row = within / width;
-      size_t column = within % width;
-      size_t run = std::min(width - column, chunk - filled);
-      memcpy(static_cast<char *>(data) + slice * slice_stride +
-                 row * row_stride + column,
-             packed.data() + filled, run);
-      filled += run;
-    }
-    offset += chunk;
-  }
-  return 0;
-}
-
 int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
                      size_t row_stride, size_t slices, size_t slice_stride) {
   for (size_t z = 0; z < slices; ++z) {
@@ -925,10 +871,7 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
   for (size_t i = 0; i < count; ++i) {
     if ((cursors[i].data == nullptr && cursors[i].size != 0) ||
         (cursors[i].source == nullptr && cursors[i].source_size != 0) ||
-        (cursors[i].size != 0 && cursors[i].source_size != 0) ||
-        (cursors[i].is_pitched() &&
-         (cursors[i].row_stride < cursors[i].row_width ||
-          cursors[i].rows_per_slice == 0))) {
+        (cursors[i].size != 0 && cursors[i].source_size != 0)) {
       return -1;
     }
     conn->write_queue.push_back(cursors[i]);
@@ -942,30 +885,6 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 // rpc_write(). See compress.cpp for the framing format.
 int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
   return rpc_write_queue_push(conn, rpc_write_cursor::framed(data, size));
-}
-
-// Queues a pitched region as one framed payload. A region whose rows are
-// already back to back is handed over as an ordinary contiguous payload, so the
-// gather in the transport only runs when there is padding to skip.
-int rpc_write_pitched_payload(conn_t *conn, const void *data, size_t width,
-                              size_t rows, size_t row_stride, size_t slices,
-                              size_t slice_stride) {
-  if (width == 0 || rows == 0 || slices == 0) {
-    return 0;
-  }
-  size_t total = width * rows * slices;
-  if (row_stride == width && (slices == 1 || slice_stride == width * rows)) {
-    return rpc_write_payload(conn, data, total);
-  }
-  // The reader decides framing from the payload's total size, so a region the
-  // connection would not frame has to go out unframed, row by row.
-  if (!lupine_payload_framed(conn, total)) {
-    return rpc_write_pitched(conn, data, width, rows, row_stride, slices,
-                             slice_stride);
-  }
-  return rpc_write_queue_push(
-      conn, rpc_write_cursor::pitched(data, width, rows, row_stride, slices,
-                                      slice_stride));
 }
 
 // rpc_write_end finalizes the current request builder on the given connection
