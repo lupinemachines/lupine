@@ -2957,8 +2957,8 @@ static CUresult lupine_memcpy_htod(CUDA_MEMCPY3D copy, CUstream stream,
   size_t span =
       (slices - 1) * src_slice_pitch + (rows - 1) * copy.srcPitch + run;
   const char *source = static_cast<const char *>(host) +
-                       copy.srcZ * src_slice_pitch +
-                       copy.srcY * copy.srcPitch + copy.srcXInBytes;
+                       copy.srcZ * src_slice_pitch + copy.srcY * copy.srcPitch +
+                       copy.srcXInBytes;
   CUdeviceptr server_source = 0;
   // Below 16 KiB, sending the packed bytes is cheaper than synchronizing a
   // second server-side copy from the persistent mirror. The crossover is
@@ -2976,8 +2976,8 @@ static CUresult lupine_memcpy_htod(CUDA_MEMCPY3D copy, CUstream stream,
     copy.srcY = 0;
     copy.srcZ = 0;
   } else {
-    source_rows = static_cast<const char *>(
-        lupine_mapped_host_read_source(source, span));
+    source_rows =
+        static_cast<const char *>(lupine_mapped_host_read_source(source, span));
   }
   const uint8_t wire_flags =
       (blocking ? LUPINE_MEMCPY_BLOCKING : 0) |

@@ -1949,8 +1949,7 @@ int handle_lupineMemcpy(conn_t *conn) {
   }
 
   const bool blocking = (wire_flags & LUPINE_MEMCPY_BLOCKING) != 0;
-  const bool server_source =
-      (wire_flags & LUPINE_MEMCPY_SERVER_SOURCE) != 0;
+  const bool server_source = (wire_flags & LUPINE_MEMCPY_SERVER_SOURCE) != 0;
   const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
   const size_t run = copy.WidthInBytes;
