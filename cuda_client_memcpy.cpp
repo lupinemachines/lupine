@@ -2960,12 +2960,7 @@ static CUresult lupine_memcpy_htod(CUDA_MEMCPY3D copy, CUstream stream,
                        copy.srcZ * src_slice_pitch + copy.srcY * copy.srcPitch +
                        copy.srcXInBytes;
   CUdeviceptr server_source = 0;
-  // Below 16 KiB, sending the packed bytes is cheaper than synchronizing a
-  // second server-side copy from the persistent mirror. The crossover is
-  // consistent across linear and pitched transfers on the remote benchmark.
-  constexpr size_t kServerSourceThreshold = 16 * 1024;
   const bool use_server_source =
-      run * rows * slices >= kServerSourceThreshold &&
       lupine_translate_client_host_range_to_server_source(
           source, span, lupine_route_identity(route), &server_source);
   const char *source_rows = source;
