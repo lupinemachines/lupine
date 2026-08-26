@@ -284,6 +284,9 @@
 #define RPC_cuGraphExecGetId 1513714907
 #define RPC_cuGraphGetNodes 314616981
 #define RPC_cuGraphGetRootNodes 1731117011
+#define RPC_cuGraphGetEdges_v2 316952113
+#define RPC_cuGraphNodeGetDependencies_v2 773232156
+#define RPC_cuGraphNodeGetDependentNodes_v2 310507977
 #define RPC_cuGraphDestroyNode 1083979368
 #define RPC_cuGraphInstantiateWithFlags 115605169
 #define RPC_cuGraphInstantiateWithParams 403780036
@@ -312,6 +315,8 @@
 #define RPC_cuUserObjectRelease 1470942030
 #define RPC_cuGraphRetainUserObject 430924800
 #define RPC_cuGraphReleaseUserObject 127294699
+#define RPC_cuGraphNodeSetParams 886812701
+#define RPC_cuGraphExecNodeSetParams 598468608
 #define RPC_cuOccupancyMaxActiveBlocksPerMultiprocessor 949228373
 #define RPC_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags 1746375403
 #define RPC_cuOccupancyMaxPotentialBlockSize 2031689913
@@ -392,9 +397,7 @@
 #define RPC_cuDeviceGetGraphMemAttribute 622504442
 #define RPC_cuDeviceSetGraphMemAttribute 187820422
 #define RPC_cuGraphAddDependencies_v2 1733357590
-#define RPC_cuGraphGetEdges_v2 316952113
-#define RPC_cuGraphNodeGetDependencies_v2 773232156
-#define RPC_cuGraphNodeGetDependentNodes_v2 310507977
+#define RPC_cuGraphAddNode_v2 1958016248
 #define RPC_cuGraphRemoveDependencies_v2 1606074400
 #define RPC_cuMemAdvise 2001260778
 #define RPC_cuMemGetHandleForAddressRange 835443611
@@ -478,7 +481,6 @@
 #define RPC_nvmlDeviceGetCudaComputeCapability 1264755594
 
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
-#define LUPINE_RPC_cuGraphAddNode_v2 1958016248
 #define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620
 #define LUPINE_RPC_cuPrivateGetModuleNode 1986234018
 #define LUPINE_RPC_cuStreamBeginCaptureToGraph 1423223781
