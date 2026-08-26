@@ -333,6 +333,17 @@ if(LUPINE_BUILD_SERVER)
     endif()
 endif()
 
+# Runs everywhere the client ships, unlike the tests below it, which pair
+# sockets with socketpair() and so are Unix-only. Windows transport regressions
+# have no other coverage.
+if(BUILD_TESTING)
+    add_executable(transport_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/transport_test.cpp)
+    target_link_libraries(transport_test PRIVATE lupine_rpc_core)
+    lupine_apply_sanitizer(transport_test)
+    add_test(NAME transport_test COMMAND transport_test)
+endif()
+
 if(BUILD_TESTING AND NOT WIN32)
     add_executable(h2_test ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
     target_include_directories(h2_test PRIVATE ${NGHTTP2_INCLUDE_DIR})

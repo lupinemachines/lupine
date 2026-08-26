@@ -108,6 +108,21 @@ jobs:
           cmake --build build/windows-client --config Release --parallel
           --target lupine_cuda_client lupine_nvml
 
+      # The client's own transport, exercised on the platform it ships for.
+      # Nothing else here runs Lupine code on Windows, so a runtime break in the
+      # dial or teardown path reaches users with CI green. Needs no GPU, so it
+      # rides along in this job rather than the GPU integration suite. arm64 is
+      # cross-built on an x64 runner and cannot execute its own binary.
+      - name: Run transport tests
+        if: matrix.arch == 'x86_64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build build/windows-client --config Release --parallel `
+            --target transport_test
+          & 'build/windows-client/Release/transport_test.exe'
+          if ($LASTEXITCODE -ne 0) { throw "transport_test failed" }
+
       - name: Stage thin DLLs
         shell: pwsh
         run: |
