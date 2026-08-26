@@ -247,7 +247,7 @@ void test_response_wait_sends_transport_heartbeat() {
   require(received_ping, "response wait did not emit an HTTP/2 PING heartbeat");
 }
 
-void test_data_provider_uses_peer_frame_size() {
+void test_data_provider_frame_sizing() {
   h2_pair pair;
   init_raw_server_peer(&pair);
 
@@ -317,6 +317,27 @@ void test_data_provider_uses_peer_frame_size() {
   require(write_result.load() == 0, "large-frame write failed");
   require(data_frame_size > 16 * 1024,
           "compressed provider fell back to 16 KiB DATA frames");
+
+  std::vector<unsigned char> zeros(16 * 1024 * 1024);
+  write_result.store(-1);
+  std::thread compressible_writer([&] {
+    write_result.store(write_bytes(&pair.client, zeros.data(), zeros.size()));
+  });
+  data_frame_size = 0;
+  while (data_frame_size == 0) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read compressible DATA frame");
+    if (header[3] == NGHTTP2_DATA) {
+      data_frame_size = (static_cast<size_t>(header[0]) << 16) |
+                        (static_cast<size_t>(header[1]) << 8) | header[2];
+    }
+  }
+  compressible_writer.join();
+
+  require(write_result.load() == 0, "compressible streaming write failed");
+  require(data_frame_size < 32 * 1024,
+          "compressed provider buffered too much logical input");
 }
 
 void test_client_to_server() {
@@ -1516,7 +1537,7 @@ int main() {
   RUN_CASE(test_rpc_small_payload_round_trip());
   RUN_CASE(test_rpc_repeated_responses_on_lane());
   RUN_CASE(test_response_wait_sends_transport_heartbeat());
-  RUN_CASE(test_data_provider_uses_peer_frame_size());
+  RUN_CASE(test_data_provider_frame_sizing());
   RUN_CASE(test_client_to_server());
   RUN_CASE(test_server_receives_session_id());
   RUN_CASE(test_server_to_client_after_request_headers());

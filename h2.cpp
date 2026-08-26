@@ -237,6 +237,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
 
   const LZ4F_preferences_t preferences = h2_lz4_preferences();
   size_t produced = 0;
+  size_t input_budget = kH2EncodeChunkBytes;
   while (produced < length && !write_source->complete) {
     if (!write_source->pending.empty()) {
       h2_copy_pending(*write_source, buffer, length, produced);
@@ -302,7 +303,15 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
       break;
     }
 
-    size_t input = std::min(cursor->size, kH2EncodeChunkBytes);
+    // Bound work by logical input as well as encoded output. Otherwise a very
+    // compressible body can consume gigabytes while trying to fill one large
+    // HTTP/2 DATA frame, delaying the first byte until the entire body has
+    // been compressed.
+    if (input_budget == 0) {
+      break;
+    }
+
+    size_t input = std::min(cursor->size, input_budget);
     write_source->pending.resize(LZ4F_compressBound(input, &preferences));
     size_t encoded = LZ4F_compressUpdate(
         stream.encoder, write_source->pending.data(),
@@ -313,6 +322,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
     write_source->pending.resize(encoded);
     cursor->data += input;
     cursor->size -= input;
+    input_budget -= input;
     write_source->progress += input;
     if (cursor->size == 0) {
       ++write_source->index;
