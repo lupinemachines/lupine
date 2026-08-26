@@ -3050,8 +3050,7 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
   bool managed_destination = false;
   if (!lupine_translate_client_host_range_to_server(
           written_destination, written_span, lupine_route_identity(route),
-          &mirrored_destination,
-          &managed_destination) ||
+          &mirrored_destination, &managed_destination) ||
       managed_destination) {
     mirrored_destination = 0;
   }
@@ -3262,9 +3261,8 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
                             !lupine_is_managed_host_alias(copy.srcDevice) &&
                             lupine_copy_pointer_is_host(copy.srcDevice));
 
-  const bool lazy_managed_destination =
-      lupine_prepare_lazy_managed_destination(copy, stream, blocking,
-                                              host_source);
+  const bool lazy_managed_destination = lupine_prepare_lazy_managed_destination(
+      copy, stream, blocking, host_source);
   const bool host_destination =
       copy.dstMemoryType == CU_MEMORYTYPE_HOST ||
       (copy.dstMemoryType == CU_MEMORYTYPE_UNIFIED &&
