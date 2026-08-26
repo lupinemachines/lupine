@@ -3008,9 +3008,9 @@ static CUresult lupine_memcpy_htod(CUDA_MEMCPY3D copy, CUstream stream,
       (use_server_source ? LUPINE_MEMCPY_SERVER_SOURCE : 0);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
+      rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
       rpc_write(conn, &copy, sizeof(copy)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
       (!use_server_source &&
        rpc_write_pitched_payload(conn, source_rows, run, rows, copy.srcPitch,
                                  slices, src_slice_pitch) < 0)) {
@@ -3081,14 +3081,17 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
       managed_destination) {
     mirrored_destination = 0;
   }
-  const uint8_t blocking_wire = blocking ? 1 : 0;
+  const bool use_server_destination = mirrored_destination != 0;
+  const uint8_t wire_flags =
+      (blocking ? LUPINE_MEMCPY_BLOCKING : 0) |
+      (use_server_destination ? LUPINE_MEMCPY_SERVER_DESTINATION : 0);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
+      rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
       rpc_write(conn, &copy, sizeof(copy)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0 ||
-      rpc_write(conn, &mirrored_destination, sizeof(mirrored_destination)) <
-          0) {
+      (use_server_destination && rpc_write(conn, &mirrored_destination,
+                                           sizeof(mirrored_destination)) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
@@ -3104,12 +3107,17 @@ static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
   std::vector<unsigned char> staging;
   size_t offset = 0;
   while (offset < total) {
-    uint64_t bytes = 0;
+    uint64_t wire_bytes = 0;
     if (rpc_read(conn, &result, sizeof(result)) < 0 ||
-        rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
+        rpc_read(conn, &wire_bytes, sizeof(wire_bytes)) < 0) {
       rpc_read_end(conn);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
+    if (wire_bytes > total - offset) {
+      rpc_read_end(conn);
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    const size_t bytes = static_cast<size_t>(wire_bytes);
     if (bytes != 0 && contiguous_destination) {
       // The rows are back to back, so the payload lands in the caller's buffer
       // directly. This is also the path the fault handler takes, where a heap
@@ -3206,13 +3214,13 @@ static CUresult lupine_memcpy_dtod(CUDA_MEMCPY3D copy, CUstream stream,
   // Nothing is staged, so the answer is just the result, and it is always read:
   // the server writes one whether or not the caller is waiting.
   conn_t *conn = lupine_route_remote_conn(route);
-  const uint8_t blocking_wire = blocking ? 1 : 0;
+  const uint8_t wire_flags = blocking ? LUPINE_MEMCPY_BLOCKING : 0;
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
+      rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
       rpc_write(conn, &copy, sizeof(copy)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

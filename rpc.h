@@ -10,12 +10,14 @@
 // decoded by the rpc_read_payload helpers (compress.cpp).
 #define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
 
-// Flags carried by the private lupineMemcpy RPC. A server-source copy reads a
-// tracked client host allocation through its persistent server allocation,
-// after the normal dirty-page flush has made that mirror current.
+// Flags carried first by the private lupineMemcpy RPC. A server-source copy
+// reads a tracked client host allocation through its persistent server
+// allocation. A server-destination copy also updates that persistent allocation
+// while returning the DtoH payload.
 enum lupine_memcpy_wire_flag : uint8_t {
   LUPINE_MEMCPY_BLOCKING = 1u << 0,
   LUPINE_MEMCPY_SERVER_SOURCE = 1u << 1,
+  LUPINE_MEMCPY_SERVER_DESTINATION = 1u << 2,
 };
 
 // References caller-owned bytes while an RPC is being serialized. Plain

@@ -1939,23 +1939,27 @@ bool lupine_copy_ring_reserve(lupine_copy_ring &ring, size_t bytes,
 // pageable host memory before returning, so the staging buffer is free to be
 // refilled on the next turn of the loop.
 int handle_lupineMemcpy(conn_t *conn) {
+  uint8_t wire_flags = 0;
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
-  uint8_t wire_flags = 0;
-  if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &wire_flags, sizeof(wire_flags)) < 0) {
+  if (rpc_read(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
+      rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0) {
     return -1;
   }
 
   const bool blocking = (wire_flags & LUPINE_MEMCPY_BLOCKING) != 0;
   const bool server_source = (wire_flags & LUPINE_MEMCPY_SERVER_SOURCE) != 0;
+  const bool server_destination =
+      (wire_flags & LUPINE_MEMCPY_SERVER_DESTINATION) != 0;
   const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
   CUdeviceptr mirrored_destination = 0;
-  if (host_destination &&
-      rpc_read(conn, &mirrored_destination, sizeof(mirrored_destination)) < 0) {
-    return -1;
+  if (server_destination) {
+    if (!host_destination || rpc_read(conn, &mirrored_destination,
+                                      sizeof(mirrored_destination)) < 0) {
+      return -1;
+    }
   }
   const size_t run = copy.WidthInBytes;
   const size_t rows = copy.Height;
