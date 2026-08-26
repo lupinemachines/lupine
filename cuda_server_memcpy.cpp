@@ -1952,6 +1952,11 @@ int handle_lupineMemcpy(conn_t *conn) {
   const bool server_source = (wire_flags & LUPINE_MEMCPY_SERVER_SOURCE) != 0;
   const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
+  CUdeviceptr mirrored_destination = 0;
+  if (host_destination &&
+      rpc_read(conn, &mirrored_destination, sizeof(mirrored_destination)) < 0) {
+    return -1;
+  }
   const size_t run = copy.WidthInBytes;
   const size_t rows = copy.Height;
   const size_t slices = copy.Depth;
@@ -2169,6 +2174,21 @@ int handle_lupineMemcpy(conn_t *conn) {
     return -1;
   }
   CUresult result = CUDA_SUCCESS;
+  const size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
+  auto update_mirror = [&](size_t offset, const void *source, size_t bytes) {
+    auto *destination = reinterpret_cast<unsigned char *>(mirrored_destination);
+    auto *packed = static_cast<const unsigned char *>(source);
+    for (size_t filled = 0; filled < bytes;) {
+      size_t position = offset + filled;
+      size_t row_index = position / run;
+      size_t column = position % run;
+      size_t span = std::min(run - column, bytes - filled);
+      memcpy(destination + (row_index / rows) * dst_slice_pitch +
+                 (row_index % rows) * copy.dstPitch + column,
+             packed + filled, span);
+      filled += span;
+    }
+  };
   size_t submitted = 0;
   for (size_t i = 0; i < kSlotCount && submitted < total; ++i) {
     size_t bytes = std::min(slot_bytes, total - submitted);
@@ -2182,6 +2202,9 @@ int handle_lupineMemcpy(conn_t *conn) {
     reclaim(index, &result);
     size_t bytes = slots[index].bytes;
     uint64_t carried = result == CUDA_SUCCESS ? bytes : 0;
+    if (carried != 0 && mirrored_destination != 0) {
+      update_mirror(slots[index].offset, slots[index].host, bytes);
+    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write(conn, &carried, sizeof(carried)) < 0 ||
