@@ -5,7 +5,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Expected repository variables:
-#   GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+#   GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT,
+#   GCP_VM_SERVICE_ACCOUNT
+# GCP_VM_SERVICE_ACCOUNT is a no-role identity used only to authenticate the
+# licensed G4 vGPU driver. GCP_SERVICE_ACCOUNT needs Service Account User on
+# that identity so it can attach it to the ephemeral VM.
 # The dedicated integration binary cache is:
 #   gs://kevmo314-lupine-gpu-integration-cache
 #
@@ -25,7 +29,7 @@ permissions:
 
 jobs:
   gpu-integration:
-    name: ${{ matrix.name }} GPU integration on GCE L4
+    name: ${{ matrix.name }} GPU integration on GCE G4
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 300
@@ -39,6 +43,7 @@ jobs:
             cuda_version: 13.3.1
             client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
             samples_ref: v13.3
+            cuda_build_arch: 120
             pytorch_index_url: https://download.pytorch.org/whl/cu132
             cuda_compat_deb_url: >-
               https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
@@ -49,6 +54,7 @@ jobs:
             cuda_version: 12.4.1
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
+            cuda_build_arch: 90
             pytorch_index_url: https://download.pytorch.org/whl/cu124
             cuda_compat_deb_url: ""
             cuda_compat_deb_sha256: ""
@@ -58,6 +64,7 @@ jobs:
             cuda_version: 11.8.0
             client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
             samples_ref: v11.8
+            cuda_build_arch: 90
             pytorch_index_url: https://download.pytorch.org/whl/cu118
             cuda_compat_deb_url: ""
             cuda_compat_deb_sha256: ""
@@ -67,33 +74,31 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_BUILD_CACHE_BUCKET: kevmo314-lupine-gpu-integration-cache
       INTEGRATION_BINARY_CACHE_VERSION: v1
-      GCP_ZONE: us-central1-a
-      GCP_FALLBACK_ZONES: >-
-        us-central1-c us-central1-b
-        us-west1-a us-west1-b us-west1-c
-        us-east1-b us-east1-c us-east1-d
-        us-east4-a us-east4-c
-        us-west4-a us-west4-c
-        northamerica-northeast1-b northamerica-northeast1-c
-        northamerica-northeast2-a northamerica-northeast2-b
-        europe-west1-b europe-west1-c
+      # Google's fractional G4 shapes are available only in us-central1-b.
+      GCP_ZONE: us-central1-b
       GCP_NETWORK: default
-      MACHINE_TYPE: g2-standard-8
-      VM_IMAGE_PROJECT: ml-images
-      VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
+      # This shape automatically exposes one 1/8 RTX PRO 6000 vGPU (12 GB).
+      MACHINE_TYPE: g4-standard-6
+      VM_IMAGE_PROJECT: ubuntu-os-cloud
+      VM_IMAGE_FAMILY: ubuntu-2404-lts-amd64
+      GCP_VM_SERVICE_ACCOUNT: ${{ vars.GCP_VM_SERVICE_ACCOUNT }}
+      VGPU_DRIVER_URI: >-
+        gs://gce-nvidia-vgpu-drivers/G4_VGPU/NVIDIA-Linux-x86_64-580.126.09-grid-gcp.run
+      VGPU_DRIVER_SHA256: aacb0abf029da41a8c4e733fafdbef8f8485b849333169d3ffbf6aaff55d6935
       VM_MAX_RUN_DURATION: 260m
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      # Match the eight vCPUs on g2-standard-8. Higher fan-out runs too many
-      # independent CUDA contexts on one L4 and causes device-unavailable
+      # Match the six vCPUs on g4-standard-6. Higher fan-out runs too many
+      # independent CUDA contexts on one vGPU and causes device-unavailable
       # cascades in otherwise passing cuBLAS and PyTorch tests.
-      CUDA_SAMPLE_JOBS: 8
+      CUDA_SAMPLE_JOBS: 6
       SSH_COMMAND_TIMEOUT: 120
       CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
       CUDA_COMPAT_DEB_SHA256: ${{ matrix.cuda_compat_deb_sha256 }}
       SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
-      USE_SPOT: "false"
+      # The suite is restartable, and Spot further reduces the G4 cost.
+      USE_SPOT: "true"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
       VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
       FIREWALL_ALLOW_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}-allow
@@ -190,7 +195,7 @@ jobs:
             tcp:1-65535,udp:1-65535,icmp,esp,ah,sctp \
             0.0.0.0/0
 
-      - name: Create L4 server VM
+      - name: Create G4 server VM
         run: |
           set -euo pipefail
           startup_script="$RUNNER_TEMP/gce-startup.sh"
@@ -199,8 +204,30 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io libnghttp2-14
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
+            dkms \
+            docker.io \
+            gcc \
+            g++ \
+            libnghttp2-14 \
+            linux-headers-$(uname -r) \
+            make \
+            pciutils
           SCRIPT
+
+          driver_path="/tmp/${VGPU_DRIVER_URI##*/}"
+          printf '/snap/bin/gcloud storage cp %q %q\n' \
+            "$VGPU_DRIVER_URI" "$driver_path" >> "$startup_script"
+          printf 'printf "%%s  %%s\\n" %q %q | sha256sum --check\n' \
+            "$VGPU_DRIVER_SHA256" "$driver_path" >> "$startup_script"
+          printf '%s\n' \
+            "chmod +x '$driver_path'" \
+            "'$driver_path' -s" \
+            "rm -f '$driver_path'" \
+            'nvidia-smi -L' >> "$startup_script"
 
           if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
             printf 'curl --fail --location --retry 5 --output /tmp/cuda-compat.deb %q\n' \
@@ -217,9 +244,7 @@ jobs:
           touch /var/lib/lupine-startup-complete
           SCRIPT
 
-          # shellcheck disable=SC2206
-          fallback_zones=($GCP_FALLBACK_ZONES)
-          candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
+          candidate_zones=("$GCP_ZONE")
 
           vm_ip=""
           selected_zone=""
@@ -235,12 +260,12 @@ jobs:
               "--image-family=$VM_IMAGE_FAMILY"
               "--image-project=$VM_IMAGE_PROJECT"
               "--boot-disk-size=100GB"
-              "--boot-disk-type=pd-balanced"
+              "--boot-disk-type=hyperdisk-balanced"
               "--maintenance-policy=TERMINATE"
               "--max-run-duration=$VM_MAX_RUN_DURATION"
               "--instance-termination-action=DELETE"
-              "--no-service-account"
-              "--no-scopes"
+              "--service-account=$GCP_VM_SERVICE_ACCOUNT"
+              "--scopes=https://www.googleapis.com/auth/devstorage.read_only"
               "--metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat "$SSH_DIR/id_ed25519.pub")"
               "--metadata-from-file=startup-script=$startup_script"
               "--shielded-vtpm"
@@ -409,10 +434,16 @@ jobs:
             sudo usermod -aG docker gha
           '
 
-          arch="$("${ssh_base[@]}" 'nvidia-smi --query-gpu=compute_cap --format=csv,noheader' \
+          gpu_count="$("${ssh_base[@]}" 'nvidia-smi --query-gpu=count --format=csv,noheader,nounits' \
+            | sort -u | xargs)"
+          [[ "$gpu_count" == "1" ]]
+          device_arch="$("${ssh_base[@]}" 'nvidia-smi --query-gpu=compute_cap --format=csv,noheader' \
             | tr -d '. ' | sort -u | xargs)"
-          test -n "$arch"
-          echo "CUDA_SAMPLES_ARCH=$arch" >> "$GITHUB_ENV"
+          [[ "$device_arch" == "120" ]]
+          {
+            echo "CUDA_DEVICE_ARCH=$device_arch"
+            echo "CUDA_SAMPLES_ARCH=${{ matrix.cuda_build_arch }}"
+          } >> "$GITHUB_ENV"
 
       - name: Restore integration binary cache from GCS
         run: |
@@ -493,7 +524,7 @@ jobs:
             echo "INTEGRATION_BINARY_CACHE_URI=$cache_uri"
           } >> "$GITHUB_ENV"
 
-      - name: Build ${{ matrix.name }} client image on L4 VM
+      - name: Build ${{ matrix.name }} client image on G4 VM
         run: |
           set -euo pipefail
           # The docker CLI reaches the VM daemon over SSH and ships only the
@@ -522,9 +553,9 @@ jobs:
             --build-arg "CUDA_SAMPLES_ARCH=$CUDA_SAMPLES_ARCH" \
             --build-arg "INTEGRATION_BINARY_CACHE_HIT=$INTEGRATION_BINARY_CACHE_HIT" \
             .
-          echo "Built $CLIENT_IMAGE on L4 VM in $((SECONDS - start))s"
+          echo "Built $CLIENT_IMAGE on G4 VM in $((SECONDS - start))s"
 
-      - name: Run ${{ matrix.name }} client inside L4 VM
+      - name: Run ${{ matrix.name }} client inside G4 VM
         run: |
           set -euo pipefail
 
@@ -765,9 +796,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # shellcheck disable=SC2206
-          fallback_zones=($GCP_FALLBACK_ZONES)
-          candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
+          candidate_zones=("$GCP_ZONE")
 
           delete_pids=()
           for zone in "${candidate_zones[@]}"; do
