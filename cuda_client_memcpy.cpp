@@ -952,13 +952,13 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     CUdeviceptr dst = allocation.server_host_ptr + offset;
     memcpy(headers[count].data(), &dst, sizeof(dst));
     memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
-    cursors[count * 2] = rpc_write_cursor::plain(
-        headers[count].data(), LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES);
+    cursors[count * 2] = {headers[count].data(),
+                          LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES};
     const void *source = reinterpret_cast<void *>(start);
     if (allocation.io_alias != nullptr) {
       source = static_cast<unsigned char *>(allocation.io_alias) + offset;
     }
-    cursors[count * 2 + 1] = rpc_write_cursor::plain(source, bytes);
+    cursors[count * 2 + 1] = {source, static_cast<ssize_t>(bytes)};
     ++count;
     if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
       CUresult result = send_batch(count);

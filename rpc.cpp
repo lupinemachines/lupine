@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <string.h>
 #include <thread>
@@ -844,7 +845,11 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
   if (size == 0) {
     return 0;
   }
-  return rpc_write_queue_push(conn, rpc_write_cursor::plain(data, size));
+  if (data == nullptr ||
+      size > static_cast<size_t>(std::numeric_limits<ssize_t>::max())) {
+    return -1;
+  }
+  return rpc_write_queue_push(conn, {data, static_cast<ssize_t>(size)});
 }
 
 // Rows are queued, not copied, so the caller's buffer must stay valid until
@@ -916,12 +921,8 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
     return -1;
   }
   for (size_t i = 0; i < count; ++i) {
-    if ((cursors[i].data == nullptr && cursors[i].size != 0) ||
-        (cursors[i].source == nullptr && cursors[i].source_size != 0) ||
-        (cursors[i].size != 0 && cursors[i].source_size != 0) ||
-        (cursors[i].is_pitched() &&
-         (cursors[i].row_stride < cursors[i].row_width ||
-          cursors[i].rows_per_slice == 0))) {
+    if (cursors[i].size < 0 ||
+        (cursors[i].data == nullptr && cursors[i].size != 0)) {
       return -1;
     }
     conn->write_queue.push_back(cursors[i]);
@@ -934,25 +935,66 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 // buffer must stay valid until rpc_write_end() returns, exactly like
 // rpc_write(). See compress.cpp for the framing format.
 int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  return rpc_write_queue_push(conn, rpc_write_cursor::framed(data, size));
+  if (size == 0) {
+    return 0;
+  }
+  if (conn == nullptr || data == nullptr ||
+      size > static_cast<size_t>(std::numeric_limits<ssize_t>::max()) ||
+      conn->write_queue.size() > conn->write_queue.max_size() - 2 ||
+      conn->write_queue.size() > static_cast<size_t>(INT_MAX) - 2) {
+    return -1;
+  }
+  try {
+    conn->write_queue.reserve(conn->write_queue.size() + 2);
+  } catch (const std::bad_alloc &) {
+    return -1;
+  }
+  conn->write_queue.push_back({nullptr, -static_cast<ssize_t>(size)});
+  conn->write_queue.push_back({data, static_cast<ssize_t>(size)});
+  return 0;
 }
 
-// Queues a pitched region as one framed payload. A region whose rows are
-// already back to back is handed over as an ordinary contiguous payload, so the
-// gather in the transport only runs when there is padding to skip.
+// Queues a pitched region as one framed sequence of ordinary row fragments.
+// The transport gathers fragments generically; pitch geometry does not escape
+// this request-building helper.
 int rpc_write_pitched_payload(conn_t *conn, const void *data, size_t width,
                               size_t rows, size_t row_stride, size_t slices,
                               size_t slice_stride) {
   if (width == 0 || rows == 0 || slices == 0) {
     return 0;
   }
-  size_t total = width * rows * slices;
+  if (conn == nullptr || data == nullptr || row_stride < width ||
+      rows > SIZE_MAX / slices) {
+    return -1;
+  }
+  size_t fragment_count = rows * slices;
+  const size_t max_cursor_size =
+      static_cast<size_t>(std::numeric_limits<ssize_t>::max());
+  if (width > max_cursor_size || fragment_count > max_cursor_size / width ||
+      fragment_count + 1 >
+          conn->write_queue.max_size() - conn->write_queue.size() ||
+      fragment_count + 1 >
+          static_cast<size_t>(INT_MAX) - conn->write_queue.size()) {
+    return -1;
+  }
+  size_t total = width * fragment_count;
   if (row_stride == width && (slices == 1 || slice_stride == width * rows)) {
     return rpc_write_payload(conn, data, total);
   }
-  return rpc_write_queue_push(
-      conn, rpc_write_cursor::pitched(data, width, rows, row_stride, slices,
-                                      slice_stride));
+  try {
+    conn->write_queue.reserve(conn->write_queue.size() + fragment_count + 1);
+  } catch (const std::bad_alloc &) {
+    return -1;
+  }
+  conn->write_queue.push_back({nullptr, -static_cast<ssize_t>(total)});
+  for (size_t z = 0; z < slices; ++z) {
+    const char *slice = static_cast<const char *>(data) + z * slice_stride;
+    for (size_t row = 0; row < rows; ++row) {
+      conn->write_queue.push_back(
+          {slice + row * row_stride, static_cast<ssize_t>(width)});
+    }
+  }
+  return 0;
 }
 
 // rpc_write_end finalizes the current request builder on the given connection
@@ -974,10 +1016,10 @@ int rpc_write_end(conn_t *conn) {
   int32_t write_stream_id = conn->write_stream_id;
   int result = -1;
   if (conn->write_queue.size() >= 2) {
-    conn->write_queue[0] =
-        rpc_write_cursor::plain(&conn->write_id, sizeof(conn->write_id));
-    conn->write_queue[1] =
-        rpc_write_cursor::plain(&conn->write_op, sizeof(conn->write_op));
+    conn->write_queue[0] = {&conn->write_id,
+                            static_cast<ssize_t>(sizeof(conn->write_id))};
+    conn->write_queue[1] = {&conn->write_op,
+                            static_cast<ssize_t>(sizeof(conn->write_op))};
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
   }
   rpc_write_buffer_release(conn);

@@ -4910,7 +4910,7 @@ lupine_kernel_param_cursors(void *const *kernel_params,
   std::vector<rpc_write_cursor> cursors;
   cursors.reserve(sizes.size());
   for (size_t i = 0; i < sizes.size(); ++i) {
-    cursors.push_back(rpc_write_cursor::plain(kernel_params[i], sizes[i]));
+    cursors.push_back({kernel_params[i], static_cast<ssize_t>(sizes[i])});
   }
   return cursors;
 }

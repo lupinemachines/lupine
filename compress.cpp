@@ -14,11 +14,11 @@
 // schedule chosen by the writer.
 //
 // Framed payloads are never materialized in full. The write side only marks
-// the payload cursor (rpc_write_framed) and the HTTP/2 transport compresses
+// the payload fragments (rpc_write_framed) and the HTTP/2 transport compresses
 // one block at a time into a reusable scratch buffer as nghttp2 pulls data
 // (see h2.cpp), so memory stays bounded by a single block and early blocks
-// reach the wire while later blocks are still being compressed. The read
-// side mirrors this with a single compressed-block scratch buffer.
+// reach the wire while later blocks are still being compressed. The read side
+// mirrors this with a single compressed-block scratch buffer.
 
 #include "rpc.h"
 

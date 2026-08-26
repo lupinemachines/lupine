@@ -86,19 +86,19 @@ void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
   std::vector<rpc_write_cursor> cursors;
   cursors.reserve(chunks.size());
   for (const std::string &chunk : chunks) {
-    cursors.push_back(rpc_write_cursor::plain(chunk.data(), chunk.size()));
+    cursors.push_back({chunk.data(), static_cast<ssize_t>(chunk.size())});
   }
   require(rpc_http2_write(conn, cursors) == 0, "h2 write failed");
 }
 
 int write_bytes(conn_t *conn, const void *data, size_t size) {
-  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor::plain(data, size)};
+  std::vector<rpc_write_cursor> cursors = {{data, static_cast<ssize_t>(size)}};
   return rpc_http2_write(conn, cursors);
 }
 
 int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
                        size_t size) {
-  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor::plain(data, size)};
+  std::vector<rpc_write_cursor> cursors = {{data, static_cast<ssize_t>(size)}};
   return rpc_http2_write_stream(conn, stream_id, cursors);
 }
 
@@ -1015,14 +1015,81 @@ void test_framed_payload_round_trip() {
   });
 
   std::vector<rpc_write_cursor> cursors = {
-      rpc_write_cursor::plain(prefix.data(), prefix.size()),
-      rpc_write_cursor::framed(payload.data(), payload.size()),
-      rpc_write_cursor::plain(suffix.data(), suffix.size())};
+      {prefix.data(), static_cast<ssize_t>(prefix.size())},
+      {nullptr, -static_cast<ssize_t>(payload.size())},
+      {payload.data(), static_cast<ssize_t>(payload.size())},
+      {suffix.data(), static_cast<ssize_t>(suffix.size())}};
   require(rpc_http2_write(&pair.client, cursors) == 0, "framed write failed");
   reader.join();
   require(received_prefix == prefix, "framed prefix mismatch");
   require(received == payload, "framed payload mismatch");
   require(received_suffix == suffix, "framed suffix mismatch");
+}
+
+void test_fragmented_framed_payload_round_trip() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  constexpr int kOp = 78;
+  constexpr size_t kWidth = 4096;
+  constexpr size_t kRows = 1027;
+  constexpr size_t kSlices = 2;
+  constexpr size_t kRowStride = kWidth + 128;
+  constexpr size_t kSliceStride = kRowStride * (kRows + 2);
+  constexpr size_t kPayloadSize = kWidth * kRows * kSlices;
+  std::vector<unsigned char> source(kSliceStride * kSlices, 0xa5);
+  std::vector<unsigned char> expected(kPayloadSize);
+  uint32_t random = 1;
+  size_t packed = 0;
+  for (size_t z = 0; z < kSlices; ++z) {
+    for (size_t row = 0; row < kRows; ++row) {
+      unsigned char *fragment =
+          source.data() + z * kSliceStride + row * kRowStride;
+      for (size_t x = 0; x < kWidth; ++x) {
+        random = random * 1664525u + 1013904223u;
+        fragment[x] = row % 4 < 2 ? static_cast<unsigned char>(x % 11)
+                                  : static_cast<unsigned char>(random >> 24);
+      }
+      memcpy(expected.data() + packed, fragment, kWidth);
+      packed += kWidth;
+    }
+  }
+  std::vector<unsigned char> second_payload(64 * 1024, 0x3c);
+  std::vector<unsigned char> received(kPayloadSize);
+  std::vector<unsigned char> received_second(second_payload.size());
+
+  std::thread reader([&] {
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "fragmented payload stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp,
+            "fragmented payload dispatch failed");
+    require(rpc_read_payload(&pair.server, received.data(), received.size()) ==
+                static_cast<int>(received.size()),
+            "fragmented payload read failed");
+    require(rpc_read_payload(&pair.server, received_second.data(),
+                             received_second.size()) ==
+                static_cast<int>(received_second.size()),
+            "adjacent payload read failed");
+    require(rpc_read_end(&pair.server) > 0,
+            "fragmented payload read_end failed");
+    rpc_unbind_http2_stream(&pair.server);
+  });
+
+  require(rpc_write_start_request(&pair.client, kOp) == 0,
+          "fragmented payload request start failed");
+  require(rpc_write_pitched_payload(&pair.client, source.data(), kWidth, kRows,
+                                    kRowStride, kSlices, kSliceStride) == 0,
+          "fragmented payload queue failed");
+  require(rpc_write_payload(&pair.client, second_payload.data(),
+                            second_payload.size()) == 0,
+          "adjacent payload queue failed");
+  require(rpc_write_end(&pair.client) > 0,
+          "fragmented payload write_end failed");
+  reader.join();
+
+  require(received == expected, "fragmented payload mismatch");
+  require(received_second == second_payload, "adjacent payload mismatch");
 }
 
 void test_rpc_write_queue_grows() {
@@ -1109,7 +1176,8 @@ void test_rpc_write_buffer_uses_fixed_allocation() {
               pair.client.write_queue[4].data ==
                   pair.client.write_copy_buffer + 16,
           "fixed copy queued the wrong spans");
-  require(*pair.client.write_queue[2].data == first &&
+  require(*static_cast<const uint8_t *>(pair.client.write_queue[2].data) ==
+                  first &&
               *reinterpret_cast<const uint64_t *>(
                   pair.client.write_queue[3].data) == second &&
               *reinterpret_cast<const uint32_t *>(
@@ -1200,10 +1268,13 @@ void test_rpc_lz4_small_payload_round_trip() {
           "lz4 payload prefix write failed");
   require(rpc_write_payload(&pair.client, payload.data(), payload.size()) == 0,
           "lz4 payload payload write failed");
+  const rpc_write_cursor &payload_marker =
+      pair.client.write_queue[pair.client.write_queue.size() - 2];
   const rpc_write_cursor &payload_cursor = pair.client.write_queue.back();
-  require(payload_cursor.source ==
-                  reinterpret_cast<const unsigned char *>(payload.data()) &&
-              payload_cursor.source_size == payload.size(),
+  require(payload_marker.data == nullptr &&
+              payload_marker.size == -static_cast<ssize_t>(payload.size()) &&
+              payload_cursor.data == payload.data() &&
+              payload_cursor.size == static_cast<ssize_t>(payload.size()),
           "small payload was not LZ4-framed");
   require(rpc_write(&pair.client, suffix.data(), suffix.size()) == 0,
           "lz4 payload suffix write failed");
@@ -1396,6 +1467,7 @@ int main() {
   test_socket_reader_hands_off_between_streams();
   test_large_payload();
   test_framed_payload_round_trip();
+  test_fragmented_framed_payload_round_trip();
   test_payload_larger_than_flow_control_window();
   test_server_window_hold_caps_and_releases();
   test_reset_wakes_flow_controlled_writer();
