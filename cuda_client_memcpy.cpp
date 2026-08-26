@@ -2950,10 +2950,16 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
                  ? lupine_route_for_deviceptr(copy.dstDevice)
                  : lupine_route_for_stream(stream));
   if (lupine_route_is_local(route)) {
+    // Synchronizing the legacy stream would wait on every other stream's work
+    // as well, so a blocking copy there is the driver's own synchronous copy
+    // rather than an asynchronous one plus a wait. A blocking copy on a real
+    // stream has to stay ordered behind that stream, so it keeps the wait.
+    if (blocking && (stream == CU_STREAM_LEGACY || stream == nullptr)) {
+      return lupine_call_real_cuda_fn("cuMemcpy3D_v2", &copy);
+    }
     CUresult result =
         lupine_call_real_cuda_fn("cuMemcpy3DAsync_v2", &copy, stream);
-    if (result == CUDA_SUCCESS && blocking &&
-        (host_source || host_destination)) {
+    if (result == CUDA_SUCCESS && blocking) {
       result = lupine_call_real_cuda_fn("cuStreamSynchronize", stream);
     }
     return result;
