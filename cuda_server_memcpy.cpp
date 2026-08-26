@@ -346,11 +346,10 @@ static void lupine_release_staging_window(lupine_staging_state &state,
 
 // Reads a payload into staging with the connection's window held, charging the
 // received bytes to the staging buffer rather than crediting them immediately.
-static int lupine_read_staged_payload(conn_t *conn, int framed, void *host,
-                                      size_t bytes,
+static int lupine_read_staged_payload(conn_t *conn, void *host, size_t bytes,
                                       rpc_http2_window_credit &held) {
   rpc_http2_window_hold_begin(conn);
-  int result = rpc_read_payload_part(conn, framed, host, bytes);
+  int result = rpc_read_payload_part(conn, host, bytes);
   rpc_http2_window_credit credit = rpc_http2_window_hold_end(conn);
   if (held.bytes != 0 && held.stream_id != credit.stream_id) {
     rpc_http2_window_release(conn, credit);
@@ -581,9 +580,9 @@ static void lupine_async_htod_discard_spill(lupine_staging_state &state,
 }
 
 static CUresult lupine_async_htod_enqueue_spill(
-    lupine_staging_state &state, conn_t *conn, int framed,
-    CUdeviceptr destination, size_t bytes, CUstream stream, CUcontext context,
-    bool *payload_consumed, bool *connection_failed) {
+    lupine_staging_state &state, conn_t *conn, CUdeviceptr destination,
+    size_t bytes, CUstream stream, CUcontext context, bool *payload_consumed,
+    bool *connection_failed) {
   if (payload_consumed != nullptr) {
     *payload_consumed = false;
   }
@@ -612,7 +611,7 @@ static CUresult lupine_async_htod_enqueue_spill(
   while (offset < bytes) {
     size_t chunk = std::min(LUPINE_HTOD_CHUNK_BYTES, bytes - offset);
     auto *chunk_host = static_cast<unsigned char *>(spill.ptr) + offset;
-    if (lupine_read_staged_payload(conn, framed, chunk_host, chunk,
+    if (lupine_read_staged_payload(conn, chunk_host, chunk,
                                    spill.held_window_credit) < 0) {
       if (spill.work_queued) {
         (void)lupine_async_htod_publish_spill(state, spill, stream);
@@ -635,7 +634,7 @@ static CUresult lupine_async_htod_enqueue_spill(
     offset += chunk;
     if (result != CUDA_SUCCESS) {
       (void)lupine_async_htod_publish_spill(state, spill, stream);
-      if (rpc_drain_payload(conn, framed, bytes - offset) < 0) {
+      if (rpc_drain_payload(conn, bytes - offset) < 0) {
         if (connection_failed != nullptr) {
           *connection_failed = true;
         }
@@ -991,28 +990,27 @@ int lupine_write_lifecycle_response(conn_t *conn, int request_id,
   return 0;
 }
 
-int lupine_copy_htod_serial(conn_t *conn, int framed, CUdeviceptr destination,
-                            size_t bytes, lupine_staging_state &state,
-                            CUresult *result) {
+int lupine_copy_htod_serial(conn_t *conn, CUdeviceptr destination, size_t bytes,
+                            lupine_staging_state &state, CUresult *result) {
   size_t chunk_bytes = std::min(LUPINE_HTOD_CHUNK_BYTES, bytes);
   lupine_staging staging =
       lupine_acquire_staging(chunk_bytes, state.sync_staging);
   if (chunk_bytes != 0 && staging.ptr == nullptr) {
     *result = CUDA_ERROR_OUT_OF_MEMORY;
-    return rpc_drain_payload(conn, framed, bytes) < 0 ? -1 : 0;
+    return rpc_drain_payload(conn, bytes) < 0 ? -1 : 0;
   }
 
   size_t offset = 0;
   while (*result == CUDA_SUCCESS && offset < bytes) {
     size_t chunk = std::min(chunk_bytes, bytes - offset);
-    if (rpc_read_payload_part(conn, framed, staging.ptr, chunk) < 0) {
+    if (rpc_read_payload_part(conn, staging.ptr, chunk) < 0) {
       lupine_release_staging(staging);
       return -1;
     }
     *result = cuMemcpyHtoD_v2(destination + offset, staging.ptr, chunk);
     offset += chunk;
     if (*result != CUDA_SUCCESS &&
-        rpc_drain_payload(conn, framed, bytes - offset) < 0) {
+        rpc_drain_payload(conn, bytes - offset) < 0) {
       lupine_release_staging(staging);
       return -1;
     }
@@ -1050,14 +1048,12 @@ static CUresult lupine_wait_sync_htod_events(
 // Returns 1 after consuming the payload, 0 when the serial path should handle
 // it, and -1 on a transport failure. The legacy stream preserves synchronous
 // memcpy ordering while two pinned slots overlap network receipt with DMA.
-static int lupine_copy_htod_pipelined(conn_t *conn, int framed,
-                                      CUdeviceptr destination, size_t bytes,
-                                      CUcontext context,
+static int lupine_copy_htod_pipelined(conn_t *conn, CUdeviceptr destination,
+                                      size_t bytes, CUcontext context,
                                       lupine_staging_state &state,
                                       CUresult *result) {
 #ifdef _WIN32
   (void)conn;
-  (void)framed;
   (void)destination;
   (void)bytes;
   (void)context;
@@ -1088,7 +1084,7 @@ static int lupine_copy_htod_pipelined(conn_t *conn, int framed,
       if (wait_result != CUDA_SUCCESS) {
         *result = wait_result;
         state.sync_htod.disabled = true;
-        if (rpc_drain_payload(conn, framed, bytes - offset) < 0) {
+        if (rpc_drain_payload(conn, bytes - offset) < 0) {
           lupine_destroy_sync_htod_events(events);
           return -1;
         }
@@ -1100,7 +1096,7 @@ static int lupine_copy_htod_pipelined(conn_t *conn, int framed,
 
     size_t chunk = std::min(LUPINE_SYNC_HTOD_SLOT_BYTES, bytes - offset);
     void *host = state.sync_htod.slots[slot];
-    if (rpc_read_payload_part(conn, framed, host, chunk) < 0) {
+    if (rpc_read_payload_part(conn, host, chunk) < 0) {
       state.sync_htod.disabled = true;
       (void)cuStreamSynchronize(CU_STREAM_LEGACY);
       lupine_destroy_sync_htod_events(events);
@@ -1113,7 +1109,7 @@ static int lupine_copy_htod_pipelined(conn_t *conn, int framed,
     if (copy_result != CUDA_SUCCESS) {
       *result = copy_result;
       state.sync_htod.disabled = true;
-      if (rpc_drain_payload(conn, framed, bytes - offset) < 0) {
+      if (rpc_drain_payload(conn, bytes - offset) < 0) {
         lupine_destroy_sync_htod_events(events);
         return -1;
       }
@@ -1128,11 +1124,11 @@ static int lupine_copy_htod_pipelined(conn_t *conn, int framed,
       if (synchronize_result != CUDA_SUCCESS) {
         *result = synchronize_result;
         state.sync_htod.disabled = true;
-        if (rpc_drain_payload(conn, framed, bytes - offset) < 0) {
+        if (rpc_drain_payload(conn, bytes - offset) < 0) {
           lupine_destroy_sync_htod_events(events);
           return -1;
         }
-      } else if (lupine_copy_htod_serial(conn, framed, destination + offset,
+      } else if (lupine_copy_htod_serial(conn, destination + offset,
                                          bytes - offset, state, result) < 0) {
         lupine_destroy_sync_htod_events(events);
         return -1;
@@ -1164,7 +1160,6 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
     return -1;
   }
 
-  int framed = lupine_payload_framed(conn, bytes);
   auto *state = lupine_staging_state_for(conn);
   CUcontext context = nullptr;
   CUdevice device = 0;
@@ -1184,17 +1179,16 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
 
   int pipeline_result = 0;
   if (result == CUDA_SUCCESS) {
-    pipeline_result = lupine_copy_htod_pipelined(
-        conn, framed, destination, bytes, context, *state, &result);
+    pipeline_result = lupine_copy_htod_pipelined(conn, destination, bytes,
+                                                 context, *state, &result);
   }
-  if (pipeline_result < 0 ||
-      (pipeline_result == 0 && result == CUDA_SUCCESS &&
-       lupine_copy_htod_serial(conn, framed, destination, bytes, *state,
-                               &result) < 0)) {
+  if (pipeline_result < 0 || (pipeline_result == 0 && result == CUDA_SUCCESS &&
+                              lupine_copy_htod_serial(conn, destination, bytes,
+                                                      *state, &result) < 0)) {
     return -1;
   }
   if (pipeline_result == 0 && result != CUDA_SUCCESS &&
-      rpc_drain_payload(conn, framed, bytes) < 0) {
+      rpc_drain_payload(conn, bytes) < 0) {
     return -1;
   }
 
@@ -1491,9 +1485,9 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
                                  fallback_offset, stream);
 }
 
-int lupine_server_copy_htod_async(conn_t *conn, int framed,
-                                  CUdeviceptr dstDevice, size_t byteCount,
-                                  CUstream stream, CUresult &result) {
+int lupine_server_copy_htod_async(conn_t *conn, CUdeviceptr dstDevice,
+                                  size_t byteCount, CUstream stream,
+                                  CUresult &result) {
   auto *state = lupine_staging_state_for(conn);
   CUcontext context = nullptr;
   CUdevice device = 0;
@@ -1526,7 +1520,7 @@ int lupine_server_copy_htod_async(conn_t *conn, int framed,
       break;
     }
     size_t chunk = std::min(slot->size, byteCount - offset);
-    if (lupine_read_staged_payload(conn, framed, slot->ptr, chunk,
+    if (lupine_read_staged_payload(conn, slot->ptr, chunk,
                                    slot->held_window_credit) < 0) {
       return -1;
     }
@@ -1537,7 +1531,7 @@ int lupine_server_copy_htod_async(conn_t *conn, int framed,
     if (copy_result != CUDA_SUCCESS) {
       (void)lupine_async_htod_publish_slot(*state, slot, stream);
       result = copy_result;
-      if (rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
+      if (rpc_drain_payload(conn, byteCount - offset) < 0) {
         return -1;
       }
       break;
@@ -1547,7 +1541,7 @@ int lupine_server_copy_htod_async(conn_t *conn, int framed,
       // The copy was accepted but its completion could not be published.
       // Keep the slot quarantined until context teardown and report the CUDA
       // error without ever synchronizing the caller's stream.
-      if (rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
+      if (rpc_drain_payload(conn, byteCount - offset) < 0) {
         return -1;
       }
       break;
@@ -1559,16 +1553,16 @@ int lupine_server_copy_htod_async(conn_t *conn, int framed,
     bool connection_failed = false;
     size_t remaining = byteCount - offset;
     result = lupine_async_htod_enqueue_spill(
-        *state, conn, framed, dstDevice + offset, remaining, stream, context,
+        *state, conn, dstDevice + offset, remaining, stream, context,
         &payload_consumed, &connection_failed);
     if (connection_failed) {
       return -1;
     }
-    if (!payload_consumed && rpc_drain_payload(conn, framed, remaining) < 0) {
+    if (!payload_consumed && rpc_drain_payload(conn, remaining) < 0) {
       return -1;
     }
   } else if (result != CUDA_SUCCESS && offset == 0 &&
-             rpc_drain_payload(conn, framed, byteCount) < 0) {
+             rpc_drain_payload(conn, byteCount) < 0) {
     return -1;
   }
   return 0;
@@ -2150,7 +2144,6 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     return -1;
   }
 
-  int framed = lupine_payload_framed(conn, byteCount);
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   CUresult capture_query_result = CUDA_SUCCESS;
   if (stream != nullptr) {
@@ -2158,7 +2151,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   }
   if (capture_query_result != CUDA_SUCCESS) {
     result = capture_query_result;
-    if (rpc_drain_payload(conn, framed, byteCount) < 0) {
+    if (rpc_drain_payload(conn, byteCount) < 0) {
       return -1;
     }
   } else if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
@@ -2166,12 +2159,12 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     capture_host = lupine_alloc_capture_scratch(resources, byteCount);
     if (capture_host == nullptr && byteCount != 0) {
       result = CUDA_ERROR_OUT_OF_MEMORY;
-      if (rpc_drain_payload(conn, framed, byteCount) < 0) {
+      if (rpc_drain_payload(conn, byteCount) < 0) {
         return -1;
       }
     } else {
       if (byteCount != 0 &&
-          rpc_read_payload_part(conn, framed, capture_host, byteCount) < 0) {
+          rpc_read_payload_part(conn, capture_host, byteCount) < 0) {
         return -1;
       }
     }
@@ -2183,7 +2176,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       result = cuMemAllocHost(&host, byteCount);
     }
     if (result != CUDA_SUCCESS) {
-      if (rpc_drain_payload(conn, framed, byteCount) < 0) {
+      if (rpc_drain_payload(conn, byteCount) < 0) {
         return -1;
       }
     }
@@ -2191,7 +2184,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     while (result == CUDA_SUCCESS && offset < byteCount) {
       size_t chunk = std::min(LUPINE_HTOD_CHUNK_BYTES, byteCount - offset);
       auto *chunk_host = static_cast<unsigned char *>(host) + offset;
-      if (rpc_read_payload_part(conn, framed, chunk_host, chunk) < 0) {
+      if (rpc_read_payload_part(conn, chunk_host, chunk) < 0) {
         cuStreamSynchronize(stream);
         cuMemFreeHost(host);
         return -1;
@@ -2204,7 +2197,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
         cuMemFreeHost(host);
         result = copy_result;
         offset += chunk;
-        if (rpc_drain_payload(conn, framed, byteCount - offset) < 0) {
+        if (rpc_drain_payload(conn, byteCount - offset) < 0) {
           return -1;
         }
         host = nullptr;
@@ -2220,8 +2213,8 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       }
     }
 #else
-    if (lupine_server_copy_htod_async(conn, framed, dstDevice, byteCount,
-                                      stream, result) < 0) {
+    if (lupine_server_copy_htod_async(conn, dstDevice, byteCount, stream,
+                                      result) < 0) {
       return -1;
     }
 #endif

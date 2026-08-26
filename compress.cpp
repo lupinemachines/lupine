@@ -1,12 +1,6 @@
-// Optional LZ4 compression for large host<->device memory transfer payloads.
+// LZ4 compression for host<->device memory transfer payloads.
 //
-// The client always advertises support with an "x-lupine-compress: lz4"
-// HTTP/2 request header and the server mirrors it, so both directions of a
-// connection frame large payloads; toward a peer that did not advertise
-// (e.g. an older client) the wire format stays byte-identical to before.
-//
-// A payload is framed only when both ends negotiated compression and the
-// total (uncompressed) payload size is at least LUPINE_COMPRESS_MIN_BYTES.
+// LZ4 framing is part of the wire protocol for every non-empty payload.
 // A framed payload is a sequence of blocks, each covering up to
 // LUPINE_COMPRESS_BLOCK_BYTES of uncompressed data:
 //
@@ -30,14 +24,11 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstdio>
-#include <cstring>
 #include <lz4.h>
 #include <stdlib.h>
 
 namespace {
 
-constexpr size_t kLupineCompressMinBytes = 64 * 1024;
 constexpr size_t kLupineCompressBlockBytes = LUPINE_COMPRESS_BLOCK_BYTES;
 
 static_assert(kLupineCompressBlockBytes <= LZ4_MAX_INPUT_SIZE,
@@ -45,40 +36,27 @@ static_assert(kLupineCompressBlockBytes <= LZ4_MAX_INPUT_SIZE,
 
 } // namespace
 
-int lupine_payload_framed(conn_t *conn, size_t total_size) {
-  return total_size >= kLupineCompressMinBytes && rpc_http2_compress_lz4(conn);
-}
-
-// rpc_write_payload writes a bulk data payload, compressing it when the
-// connection negotiated compression and the payload is large enough. The
-// payload is compressed lazily by the transport as it streams to the socket;
-// like rpc_write, the caller's buffer must stay valid until rpc_write_end().
+// rpc_write_payload writes a framed data payload. The payload is compressed
+// lazily by the transport as it streams to the socket; like rpc_write, the
+// caller's buffer must stay valid until rpc_write_end().
 int rpc_write_payload(conn_t *conn, const void *data, size_t size) {
   if (size == 0) {
     return 0;
   }
-  if (!lupine_payload_framed(conn, size)) {
-    return rpc_write(conn, data, size);
-  }
   return rpc_write_framed(conn, data, size);
 }
 
-// rpc_read_payload_part reads `size` uncompressed payload bytes. `framed`
-// must be computed once per payload via lupine_payload_framed() with the
-// payload's total size, so chunked readers stay consistent with the writer.
-// Each part read must either be a multiple of the block size or extend to the
-// end of the payload.
-int rpc_read_payload_part(conn_t *conn, int framed, void *data, size_t size) {
+// rpc_read_payload_part reads `size` uncompressed payload bytes. Each part
+// read must either be a multiple of the block size or extend to the end of the
+// payload.
+int rpc_read_payload_part(conn_t *conn, void *data, size_t size) {
   if (size == 0) {
     return 0;
   }
-  if (!framed) {
-    return rpc_read(conn, data, size);
-  }
-
   auto *dst = static_cast<char *>(data);
   size_t remaining = size;
   char *scratch = nullptr;
+  size_t scratch_size = 0;
   while (remaining > 0) {
     size_t raw = std::min(kLupineCompressBlockBytes, remaining);
     uint32_t token = 0;
@@ -97,12 +75,14 @@ int rpc_read_payload_part(conn_t *conn, int framed, void *data, size_t size) {
         free(scratch);
         return -1;
       }
-      if (scratch == nullptr) {
-        scratch = static_cast<char *>(malloc(static_cast<size_t>(
-            LZ4_compressBound(static_cast<int>(kLupineCompressBlockBytes)))));
-        if (scratch == nullptr) {
+      if (scratch_size < token) {
+        char *resized = static_cast<char *>(realloc(scratch, token));
+        if (resized == nullptr) {
+          free(scratch);
           return -1;
         }
+        scratch = resized;
+        scratch_size = token;
       }
       if (rpc_read(conn, scratch, token) < 0 ||
           LZ4_decompress_safe(scratch, dst, static_cast<int>(token),
@@ -118,13 +98,9 @@ int rpc_read_payload_part(conn_t *conn, int framed, void *data, size_t size) {
   return static_cast<int>(size);
 }
 
-// rpc_drain_payload discards `size` uncompressed payload bytes, honoring the
-// payload framing. Like rpc_read_payload_part, drains must start at a block
-// boundary of the payload.
-int rpc_drain_payload(conn_t *conn, int framed, size_t size) {
-  if (!framed) {
-    return rpc_drain(conn, size);
-  }
+// rpc_drain_payload discards `size` uncompressed payload bytes. Like
+// rpc_read_payload_part, drains must start at a block boundary of the payload.
+int rpc_drain_payload(conn_t *conn, size_t size) {
   size_t remaining = size;
   while (remaining > 0) {
     size_t raw = std::min(kLupineCompressBlockBytes, remaining);
