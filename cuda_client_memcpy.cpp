@@ -3157,7 +3157,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched_payload(conn, src_base, copy.WidthInBytes, copy.Height,
+        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
                           copy.srcPitch, 1, 0) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3179,7 +3179,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS &&
-         rpc_read_pitched_payload(conn, dst_base, copy.WidthInBytes, copy.Height,
+         rpc_read_pitched(conn, dst_base, copy.WidthInBytes, copy.Height,
                           copy.dstPitch, 1, 0) < 0) ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3284,7 +3284,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched_payload(conn, src_base, copy.WidthInBytes, copy.Height,
+        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
                           copy.srcPitch, 1, 0) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3306,7 +3306,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS &&
-         rpc_read_pitched_payload(conn, dst_base, copy.WidthInBytes, copy.Height,
+         rpc_read_pitched(conn, dst_base, copy.WidthInBytes, copy.Height,
                           copy.dstPitch, 1, 0) < 0) ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3412,7 +3412,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched_payload(conn, src_base, copy.WidthInBytes, copy.Height,
+        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
                           copy.srcPitch, 1, 0) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3436,7 +3436,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS &&
-         rpc_read_pitched_payload(conn, dst_base, copy.WidthInBytes, copy.Height,
+         rpc_read_pitched(conn, dst_base, copy.WidthInBytes, copy.Height,
                           copy.dstPitch, 1, 0) < 0) ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3557,7 +3557,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched_payload(conn, src_base, copy.WidthInBytes, copy.Height,
+        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
                           copy.srcPitch, copy.Depth, src_slice_pitch) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3579,7 +3579,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS &&
-         rpc_read_pitched_payload(conn, dst_base, copy.WidthInBytes, copy.Height,
+         rpc_read_pitched(conn, dst_base, copy.WidthInBytes, copy.Height,
                           copy.dstPitch, copy.Depth, dst_slice_pitch) < 0) ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3686,7 +3686,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched_payload(conn, src_base, copy.WidthInBytes, copy.Height,
+        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
                           copy.srcPitch, copy.Depth, src_slice_pitch) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3710,7 +3710,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS &&
-         rpc_read_pitched_payload(conn, dst_base, copy.WidthInBytes, copy.Height,
+         rpc_read_pitched(conn, dst_base, copy.WidthInBytes, copy.Height,
                           copy.dstPitch, copy.Depth, dst_slice_pitch) < 0) ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3824,7 +3824,7 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeer) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched_payload(conn, src_base, copy.WidthInBytes, copy.Height,
+        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
                           copy.srcPitch, copy.Depth, src_slice_pitch) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3843,7 +3843,7 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS &&
-         rpc_read_pitched_payload(conn, dst_base, copy.WidthInBytes, copy.Height,
+         rpc_read_pitched(conn, dst_base, copy.WidthInBytes, copy.Height,
                           copy.dstPitch, copy.Depth, dst_slice_pitch) < 0) ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3930,7 +3930,7 @@ extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeerAsync) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched_payload(conn, src_base, copy.WidthInBytes, copy.Height,
+        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
                           copy.srcPitch, copy.Depth, src_slice_pitch) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3951,7 +3951,7 @@ extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS &&
-         rpc_read_pitched_payload(conn, dst_base, copy.WidthInBytes, copy.Height,
+         rpc_read_pitched(conn, dst_base, copy.WidthInBytes, copy.Height,
                           copy.dstPitch, copy.Depth, dst_slice_pitch) < 0) ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
