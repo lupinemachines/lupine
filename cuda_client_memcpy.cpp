@@ -2960,35 +2960,60 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  const char *source_rows =
-      host_source ? static_cast<const char *>(copy.srcHost) +
-                        copy.srcZ * src_slice_pitch +
-                        copy.srcY * copy.srcPitch + copy.srcXInBytes
-                  : nullptr;
-  // A mapped host allocation may be stale; reading it has to go through the
-  // mirror the fault handler maintains, exactly as the linear paths did.
+  const uint8_t blocking_wire = blocking ? 1 : 0;
+  // Host-to-host returned above and a copy has at most one host end, so the
+  // two sides never both need staging.
   if (host_source) {
+    // A mapped host allocation may be stale; reading it has to go through the
+    // mirror the fault handler maintains. That happens before the request
+    // opens, because servicing a fault is itself a request on this thread.
     size_t span =
         (slices - 1) * src_slice_pitch + (rows - 1) * copy.srcPitch + run;
-    source_rows = static_cast<const char *>(
-        lupine_mapped_host_read_source(source_rows, span));
+    const char *source_rows =
+        static_cast<const char *>(lupine_mapped_host_read_source(
+            static_cast<const char *>(copy.srcHost) +
+                copy.srcZ * src_slice_pitch + copy.srcY * copy.srcPitch +
+                copy.srcXInBytes,
+            span));
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
+        rpc_write(conn, &copy, sizeof(copy)) < 0 ||
+        rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+        rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0 ||
+        rpc_write_pitched_payload(conn, source_rows, run, rows, copy.srcPitch,
+                                  slices, src_slice_pitch) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (!blocking) {
+      // A non-blocking upload is fire-and-forget, as the driver's is: the
+      // payload is on its way and an execution failure surfaces from the
+      // caller's next synchronize rather than from here. The server answers
+      // nothing, so nothing is left unread.
+      return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                                     : CUDA_SUCCESS;
+    }
+    CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return result;
   }
-  char *destination_rows =
-      host_destination
-          ? static_cast<char *>(copy.dstHost) + copy.dstZ * dst_slice_pitch +
-                copy.dstY * copy.dstPitch + copy.dstXInBytes
-          : nullptr;
+
   // The response lands in the caller's buffer while the read is open, so a
-  // stale mapped allocation has to be settled first: faulting mid-read would
-  // hand this thread's read state to the fault handler's own request.
-  char *written_destination = destination_rows;
+  // stale mapped allocation is settled first: faulting mid-read would hand
+  // this thread's read state to the fault handler's own request.
+  char *destination_rows = nullptr;
+  char *written_destination = nullptr;
   size_t written_span =
       (slices - 1) * dst_slice_pitch + (rows - 1) * copy.dstPitch + run;
   if (host_destination) {
+    written_destination = static_cast<char *>(copy.dstHost) +
+                          copy.dstZ * dst_slice_pitch +
+                          copy.dstY * copy.dstPitch + copy.dstXInBytes;
     destination_rows = const_cast<char *>(static_cast<const char *>(
-        lupine_mapped_host_read_source(destination_rows, written_span)));
+        lupine_mapped_host_read_source(written_destination, written_span)));
   }
-  uint8_t blocking_wire = blocking ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
       rpc_write(conn, &copy, sizeof(copy)) < 0 ||
@@ -2996,21 +3021,11 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
       rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (host_source &&
-      rpc_write_pitched_payload(conn, source_rows, run, rows, copy.srcPitch,
-                                slices, src_slice_pitch) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
 
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (!host_destination && !blocking) {
-    // A non-blocking upload is fire-and-forget, as the driver's is: the payload
-    // is on its way and an execution failure surfaces from the caller's next
-    // synchronize rather than from here.
-    return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                                   : CUDA_SUCCESS;
-  }
   if (!host_destination) {
+    // Neither end is host memory, so the answer is just the result, and it is
+    // always read: the server writes one whether or not the caller is waiting.
     if (rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
