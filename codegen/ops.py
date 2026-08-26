@@ -138,9 +138,6 @@ class ArrayOperation:
     ptr: Pointer
     # if int, it's a constant length, if Parameter, it's a variable length.
     length: Union[int, Parameter]
-    # Host-memory inputs may need their mapped read alias selected before the
-    # request locks are acquired.
-    mapped_source: bool = False
 
     @property
     def is_void_bytes(self) -> bool:
@@ -208,16 +205,6 @@ class ArrayOperation:
                 error_return=error_return,
             )
         )
-        if self.mapped_source:
-            # Refresh stale mapped mirrors and select their permanent R/W
-            # source before the connection is held.
-            f.write(
-                "    {param_name} = lupine_mapped_host_read_source({param_name}, {size});\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
     def client_rpc_write(self, f):
         if self.iter:
             loop_template = """

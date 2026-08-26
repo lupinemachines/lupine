@@ -655,7 +655,6 @@ def parse_annotation(
                                 ptr=param.type,
                                 length=length_param,
                                 iter=False,
-                                mapped_source="MAPPED_SOURCE" in args,
                             )
                         )
                 elif size_arg:
@@ -1886,8 +1885,7 @@ def main():
             'extern "C" void lupine_invalidate_function_attribute_cache();\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
-            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
-            'extern "C" const void *lupine_mapped_host_read_source(const void *host, size_t size);\n\n'
+            'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
         )
         for function, _, _, _ in legacy_abi_functions:
             name = function.name.format()
