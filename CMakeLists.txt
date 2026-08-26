@@ -333,7 +333,29 @@ if(LUPINE_BUILD_SERVER)
     endif()
 endif()
 
-if(BUILD_TESTING AND NOT WIN32)
+# Tests that build wherever the project does. The Linux-only block below leans
+# on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
+# those belongs here instead, so it covers every platform the client ships for.
+if(BUILD_TESTING)
+    add_executable(transport_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/transport_test.cpp)
+    target_link_libraries(transport_test PRIVATE lupine_rpc_core)
+    lupine_apply_sanitizer(transport_test)
+    add_test(NAME transport_test COMMAND transport_test)
+
+    add_executable(checkpoint_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp)
+    target_include_directories(checkpoint_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(checkpoint_test PRIVATE Threads::Threads)
+    lupine_apply_sanitizer(checkpoint_test)
+endif()
+
+# Linux-only, not merely Unix: these pair sockets with socketpair(), place
+# mappings with MAP_FIXED_NOREPLACE and back them with memfd_create(), none of
+# which macOS has. Portable tests belong in the block above.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(h2_test ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
     target_include_directories(h2_test PRIVATE ${NGHTTP2_INCLUDE_DIR})
     if(CUDAToolkit_VERSION)
@@ -345,14 +367,6 @@ if(BUILD_TESTING AND NOT WIN32)
     endif()
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
-
-    add_executable(checkpoint_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp)
-    target_include_directories(checkpoint_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(checkpoint_test PRIVATE Threads::Threads)
-    lupine_apply_sanitizer(checkpoint_test)
 
     if(LUPINE_BUILD_CUDA)
         add_executable(events_test
