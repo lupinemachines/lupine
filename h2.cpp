@@ -321,6 +321,21 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
   return static_cast<ssize_t>(produced);
 }
 
+ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t, int32_t,
+                                            int32_t session_remote_window_size,
+                                            int32_t stream_remote_window_size,
+                                            uint32_t remote_max_frame_size,
+                                            void *) {
+  int32_t window =
+      std::min(session_remote_window_size, stream_remote_window_size);
+  if (window <= 0) {
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  size_t max_len = std::min<size_t>(kH2MaxFrame, remote_max_frame_size);
+  max_len = std::min<size_t>(max_len, static_cast<size_t>(window));
+  return static_cast<ssize_t>(std::max<size_t>(1, max_len));
+}
+
 int h2_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t,
                                    int32_t stream_id, const uint8_t *data,
                                    size_t len, void *user_data) {
@@ -814,6 +829,8 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     return -1;
   }
   nghttp2_session_callbacks_set_send_callback(callbacks, h2_send_callback);
+  nghttp2_session_callbacks_set_data_source_read_length_callback(
+      callbacks, h2_data_source_read_length_callback);
   nghttp2_session_callbacks_set_on_data_chunk_recv_callback(
       callbacks, h2_on_data_chunk_recv_callback);
   nghttp2_session_callbacks_set_on_frame_recv_callback(

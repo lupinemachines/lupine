@@ -247,6 +247,78 @@ void test_response_wait_sends_transport_heartbeat() {
   require(received_ping, "response wait did not emit an HTTP/2 PING heartbeat");
 }
 
+void test_data_provider_uses_peer_frame_size() {
+  h2_pair pair;
+  init_raw_server_peer(&pair);
+
+  constexpr uint32_t kPeerFrameSize = 1024 * 1024;
+  std::array<unsigned char, 21> settings = {};
+  settings[2] = 12;
+  settings[3] = NGHTTP2_SETTINGS;
+  settings[9] = NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE >> 8;
+  settings[10] = NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+  settings[11] = static_cast<unsigned char>(kPeerFrameSize >> 24);
+  settings[12] = static_cast<unsigned char>(kPeerFrameSize >> 16);
+  settings[13] = static_cast<unsigned char>(kPeerFrameSize >> 8);
+  settings[14] = static_cast<unsigned char>(kPeerFrameSize);
+  settings[15] = NGHTTP2_SETTINGS_MAX_FRAME_SIZE >> 8;
+  settings[16] = NGHTTP2_SETTINGS_MAX_FRAME_SIZE;
+  settings[17] = static_cast<unsigned char>(kPeerFrameSize >> 24);
+  settings[18] = static_cast<unsigned char>(kPeerFrameSize >> 16);
+  settings[19] = static_cast<unsigned char>(kPeerFrameSize >> 8);
+  settings[20] = static_cast<unsigned char>(kPeerFrameSize);
+  require(raw_write_all(pair.server.connfd, settings.data(), settings.size()),
+          "failed to send large-frame SETTINGS");
+  std::array<unsigned char, 13> window_update = {};
+  window_update[2] = 4;
+  window_update[3] = NGHTTP2_WINDOW_UPDATE;
+  window_update[9] = static_cast<unsigned char>(kPeerFrameSize >> 24);
+  window_update[10] = static_cast<unsigned char>(kPeerFrameSize >> 16);
+  window_update[11] = static_cast<unsigned char>(kPeerFrameSize >> 8);
+  window_update[12] = static_cast<unsigned char>(kPeerFrameSize);
+  require(raw_write_all(pair.server.connfd, window_update.data(),
+                        window_update.size()),
+          "failed to enlarge the connection window");
+
+  bool received_ack = false;
+  while (!received_ack) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read large-frame SETTINGS acknowledgement");
+    received_ack =
+        header[3] == NGHTTP2_SETTINGS && (header[4] & NGHTTP2_FLAG_ACK) != 0;
+  }
+
+  std::vector<unsigned char> payload(256 * 1024);
+  uint32_t seed = 43;
+  for (unsigned char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
+
+  std::atomic<int> write_result{-1};
+  std::thread writer([&] {
+    write_result.store(
+        write_bytes(&pair.client, payload.data(), payload.size()));
+  });
+  size_t data_frame_size = 0;
+  for (int frame_count = 0; frame_count < 8 && data_frame_size == 0;
+       ++frame_count) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read compressed DATA frame");
+    if (header[3] == NGHTTP2_DATA) {
+      data_frame_size = (static_cast<size_t>(header[0]) << 16) |
+                        (static_cast<size_t>(header[1]) << 8) | header[2];
+    }
+  }
+  writer.join();
+
+  require(write_result.load() == 0, "large-frame write failed");
+  require(data_frame_size > 16 * 1024,
+          "compressed provider fell back to 16 KiB DATA frames");
+}
+
 void test_client_to_server() {
   h2_pair pair = make_pair();
   std::string message = "hello over h2";
@@ -1444,6 +1516,7 @@ int main() {
   RUN_CASE(test_rpc_small_payload_round_trip());
   RUN_CASE(test_rpc_repeated_responses_on_lane());
   RUN_CASE(test_response_wait_sends_transport_heartbeat());
+  RUN_CASE(test_data_provider_uses_peer_frame_size());
   RUN_CASE(test_client_to_server());
   RUN_CASE(test_server_receives_session_id());
   RUN_CASE(test_server_to_client_after_request_headers());
