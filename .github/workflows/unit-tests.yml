@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   unit-tests:
-    name: CMake _test targets
+    name: CMake _test targets (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -38,3 +38,54 @@ jobs:
         run: |
           docker run --rm --entrypoint bash lupine-unit-tests -lc \
             'BUILD_DIR=/opt/lupine/build /opt/lupine/test/run_unit_tests.sh'
+
+  # The Linux job runs everything, but it runs it only on Linux: the tests it
+  # builds pair sockets with socketpair(), so the transport a Windows client
+  # actually uses had no coverage at all. Targets that build on both platforms
+  # run here too. No CUDA and no GPU, so this needs nothing but nghttp2.
+  unit-tests-windows:
+    name: CMake _test targets (Windows)
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    env:
+      VCPKG_TARGET_TRIPLET: x64-windows-static
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install nghttp2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe")) {
+            throw 'The runner vcpkg installation was not found'
+          }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+            "nghttp2:$env:VCPKG_TARGET_TRIPLET"
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build/windows-tests `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DLUPINE_BUILD_SERVER=OFF `
+            -DLUPINE_BUILD_CUDA=OFF `
+            -DLUPINE_BUILD_NVML=OFF `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+
+      - name: Build and run the Windows-capable test targets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Build everything the Windows configuration defines rather than one
+          # named target, so a later Windows-capable test is picked up here
+          # without touching this workflow.
+          cmake --build build/windows-tests --config Release --parallel
+          ctest --test-dir build/windows-tests -C Release --output-on-failure
