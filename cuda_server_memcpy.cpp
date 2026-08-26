@@ -1941,13 +1941,16 @@ bool lupine_copy_ring_reserve(lupine_copy_ring &ring, size_t bytes,
 int handle_lupineMemcpy(conn_t *conn) {
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
-  uint8_t blocking = 0;
+  uint8_t wire_flags = 0;
   if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
       rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &blocking, sizeof(blocking)) < 0) {
+      rpc_read(conn, &wire_flags, sizeof(wire_flags)) < 0) {
     return -1;
   }
 
+  const bool blocking = (wire_flags & LUPINE_MEMCPY_BLOCKING) != 0;
+  const bool server_source =
+      (wire_flags & LUPINE_MEMCPY_SERVER_SOURCE) != 0;
   const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
   const size_t run = copy.WidthInBytes;
@@ -1966,6 +1969,14 @@ int handle_lupineMemcpy(conn_t *conn) {
       return -1;
     }
     CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
+    if (result == CUDA_SUCCESS && server_source && blocking) {
+      // The caller may refill a synchronous HtoD source as soon as this answer
+      // arrives, so its persistent server mirror must no longer be in use.
+      result = cuStreamSynchronize(stream);
+    }
+    if (server_source && !blocking) {
+      return 0;
+    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {

@@ -10,6 +10,14 @@
 // decoded by the rpc_read_payload helpers (compress.cpp).
 #define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
 
+// Flags carried by the private lupineMemcpy RPC. A server-source copy reads a
+// tracked client host allocation through its persistent server allocation,
+// after the normal dirty-page flush has made that mirror current.
+enum lupine_memcpy_wire_flag : uint8_t {
+  LUPINE_MEMCPY_BLOCKING = 1u << 0,
+  LUPINE_MEMCPY_SERVER_SOURCE = 1u << 1,
+};
+
 // References caller-owned bytes while an RPC is being serialized. Plain
 // cursors use data/size directly. Framed cursors keep uncompressed bytes in
 // source/source_size while HTTP/2 materializes one framed block at a time into

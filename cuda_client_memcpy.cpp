@@ -1073,6 +1073,31 @@ static bool lupine_translate_client_host_ptr_to_server(
   return true;
 }
 
+// A tracked host allocation already has a host/managed address on its owning
+// server. Once dirty pages have been flushed, HtoD can read that address there
+// instead of sending the same bytes a second time as its own payload.
+static bool lupine_translate_client_host_range_to_server_source(
+    const void *host, size_t size, int route_id, CUdeviceptr *translated) {
+  if (host == nullptr || translated == nullptr) {
+    return false;
+  }
+  uintptr_t address = reinterpret_cast<uintptr_t>(host);
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(const_cast<void *>(host));
+  if (it == lupine_mutable_host_allocations_locked().end() ||
+      it->second.server_host_ptr == 0 || it->second.local_cuda ||
+      it->second.route_id != route_id) {
+    return false;
+  }
+  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
+  size_t offset = address - base;
+  if (offset > it->second.size || size > it->second.size - offset) {
+    return false;
+  }
+  *translated = it->second.server_host_ptr + offset;
+  return true;
+}
+
 static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
   void *host = reinterpret_cast<void *>(ptr);
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -2931,19 +2956,40 @@ static CUresult lupine_memcpy_htod(CUDA_MEMCPY3D copy, CUstream stream,
   // because servicing a fault is itself a request on this thread.
   size_t span =
       (slices - 1) * src_slice_pitch + (rows - 1) * copy.srcPitch + run;
-  const char *source_rows =
-      static_cast<const char *>(lupine_mapped_host_read_source(
-          static_cast<const char *>(host) + copy.srcZ * src_slice_pitch +
-              copy.srcY * copy.srcPitch + copy.srcXInBytes,
-          span));
-  const uint8_t blocking_wire = blocking ? 1 : 0;
+  const char *source = static_cast<const char *>(host) +
+                       copy.srcZ * src_slice_pitch +
+                       copy.srcY * copy.srcPitch + copy.srcXInBytes;
+  CUdeviceptr server_source = 0;
+  // Below 16 KiB, sending the packed bytes is cheaper than synchronizing a
+  // second server-side copy from the persistent mirror. The crossover is
+  // consistent across linear and pitched transfers on the remote benchmark.
+  constexpr size_t kServerSourceThreshold = 16 * 1024;
+  const bool use_server_source =
+      run * rows * slices >= kServerSourceThreshold &&
+      lupine_translate_client_host_range_to_server_source(
+          source, span, lupine_route_identity(route), &server_source);
+  const char *source_rows = source;
+  if (use_server_source) {
+    copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
+    copy.srcDevice = server_source;
+    copy.srcXInBytes = 0;
+    copy.srcY = 0;
+    copy.srcZ = 0;
+  } else {
+    source_rows = static_cast<const char *>(
+        lupine_mapped_host_read_source(source, span));
+  }
+  const uint8_t wire_flags =
+      (blocking ? LUPINE_MEMCPY_BLOCKING : 0) |
+      (use_server_source ? LUPINE_MEMCPY_SERVER_SOURCE : 0);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
       rpc_write(conn, &copy, sizeof(copy)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0 ||
-      rpc_write_pitched_payload(conn, source_rows, run, rows, copy.srcPitch,
-                                slices, src_slice_pitch) < 0) {
+      rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
+      (!use_server_source &&
+       rpc_write_pitched_payload(conn, source_rows, run, rows, copy.srcPitch,
+                                 slices, src_slice_pitch) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (!blocking) {
