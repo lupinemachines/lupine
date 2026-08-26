@@ -309,7 +309,6 @@ jobs:
                 libgl-dev \
                 libglu1-mesa-dev \
                 libnghttp2-dev \
-                zlib1g-dev \
                 libx11-dev \
                 libxi-dev \
                 libxmu-dev \

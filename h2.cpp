@@ -7,6 +7,7 @@
 #include <climits>
 #include <deque>
 #include <errno.h>
+#include <lz4frame.h>
 #include <nghttp2/nghttp2.h>
 #ifdef LUPINE_TLS_OPENSSL
 #include <openssl/ssl.h>
@@ -18,7 +19,6 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-#include <zlib.h>
 
 namespace {
 
@@ -32,7 +32,8 @@ constexpr uint32_t kH2ServerWindow =
 // blocked on.
 constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
-constexpr size_t kH2InflateBufferBytes = 64 * 1024;
+constexpr size_t kH2EncodeChunkBytes = 4 * 1024 * 1024;
+constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Linux restarts slow start after an idle period of one retransmission
 // timeout. Keeping response waits below the usual 200 ms minimum RTO avoids
 // collapsing the congestion window between bursts on high-latency links.
@@ -52,13 +53,12 @@ struct h2_stream {
   bool response_received = false;
   bool response_sent = false;
   bool content_encoding_seen = false;
-  bool gzip_encoded = false;
-  bool deflater_initialized = false;
-  bool deflater_finished = false;
-  bool inflater_initialized = false;
-  bool inflater_finished = false;
-  z_stream deflater = {};
-  z_stream inflater = {};
+  bool lz4_encoded = false;
+  bool encoder_started = false;
+  bool encoder_finished = false;
+  bool decoder_finished = false;
+  LZ4F_compressionContext_t encoder = nullptr;
+  LZ4F_decompressionContext_t decoder = nullptr;
   int response_status = 0;
   std::string requested_va_base;
   std::string requested_va_size;
@@ -107,13 +107,13 @@ h2_stream &h2_get_stream(h2_transport *transport, int32_t stream_id) {
 }
 
 void h2_release_codecs(h2_stream &stream) {
-  if (stream.deflater_initialized) {
-    deflateEnd(&stream.deflater);
-    stream.deflater_initialized = false;
+  if (stream.encoder != nullptr) {
+    LZ4F_freeCompressionContext(stream.encoder);
+    stream.encoder = nullptr;
   }
-  if (stream.inflater_initialized) {
-    inflateEnd(&stream.inflater);
-    stream.inflater_initialized = false;
+  if (stream.decoder != nullptr) {
+    LZ4F_freeDecompressionContext(stream.decoder);
+    stream.decoder = nullptr;
   }
 }
 
@@ -121,6 +121,9 @@ struct h2_write_source {
   std::vector<rpc_write_cursor> *cursors = nullptr;
   size_t index = 0;
   uint64_t progress = 0;
+  std::vector<unsigned char> pending;
+  size_t pending_offset = 0;
+  bool terminal_generated = false;
   bool finish_stream = false;
   bool complete = false;
 };
@@ -197,19 +200,27 @@ ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
              : NGHTTP2_ERR_CALLBACK_FAILURE;
 }
 
-int h2_start_deflater(h2_stream &stream) {
-  if (stream.deflater_finished) {
-    return -1;
+LZ4F_preferences_t h2_lz4_preferences() {
+  LZ4F_preferences_t preferences = {};
+  preferences.frameInfo.blockSizeID = LZ4F_max4MB;
+  preferences.frameInfo.blockMode = LZ4F_blockLinked;
+  // Linked blocks retain compression history across each RPC message flush.
+  return preferences;
+}
+
+void h2_copy_pending(h2_write_source &source, uint8_t *buffer, size_t capacity,
+                     size_t &produced) {
+  size_t available = source.pending.size() - source.pending_offset;
+  size_t copied = std::min(available, capacity - produced);
+  memcpy(buffer + produced, source.pending.data() + source.pending_offset,
+         copied);
+  source.pending_offset += copied;
+  source.progress += copied;
+  produced += copied;
+  if (source.pending_offset == source.pending.size()) {
+    source.pending.clear();
+    source.pending_offset = 0;
   }
-  if (stream.deflater_initialized) {
-    return 0;
-  }
-  if (deflateInit2(&stream.deflater, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
-                   MAX_WBITS + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
-    return -1;
-  }
-  stream.deflater_initialized = true;
-  return 0;
 }
 
 ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
@@ -220,15 +231,35 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
   auto *transport = static_cast<h2_transport *>(user_data);
   auto *write_source = static_cast<h2_write_source *>(source->ptr);
   h2_stream &stream = h2_get_stream(transport, stream_id);
-  if (length == 0 || length > UINT_MAX || write_source->complete ||
-      h2_start_deflater(stream) < 0) {
+  if (length == 0 || write_source->complete || stream.encoder_finished) {
     return NGHTTP2_ERR_CALLBACK_FAILURE;
   }
 
-  z_stream &deflater = stream.deflater;
-  deflater.next_out = buffer;
-  deflater.avail_out = static_cast<uInt>(length);
-  while (deflater.avail_out != 0 && !write_source->complete) {
+  const LZ4F_preferences_t preferences = h2_lz4_preferences();
+  size_t produced = 0;
+  while (produced < length && !write_source->complete) {
+    if (!write_source->pending.empty()) {
+      h2_copy_pending(*write_source, buffer, length, produced);
+      continue;
+    }
+
+    if (!stream.encoder_started) {
+      if (LZ4F_isError(
+              LZ4F_createCompressionContext(&stream.encoder, LZ4F_VERSION))) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+      }
+      write_source->pending.resize(LZ4F_HEADER_SIZE_MAX);
+      size_t header =
+          LZ4F_compressBegin(stream.encoder, write_source->pending.data(),
+                             write_source->pending.size(), &preferences);
+      if (LZ4F_isError(header)) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+      }
+      write_source->pending.resize(header);
+      stream.encoder_started = true;
+      continue;
+    }
+
     rpc_write_cursor *cursor = nullptr;
     if (write_source->cursors != nullptr) {
       auto &cursors = *write_source->cursors;
@@ -238,45 +269,56 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
       }
       if (write_source->index < cursors.size()) {
         cursor = &cursors[write_source->index];
-        deflater.next_in = const_cast<Bytef *>(cursor->data);
-        deflater.avail_in = static_cast<uInt>(
-            std::min(cursor->size, static_cast<size_t>(UINT_MAX)));
       }
     }
 
-    const uInt input_before = deflater.avail_in;
-    const uInt output_before = deflater.avail_out;
-    int flush = cursor == nullptr
-                    ? (write_source->finish_stream ? Z_FINISH : Z_SYNC_FLUSH)
-                    : Z_NO_FLUSH;
-    int result = deflate(&deflater, flush);
-    const size_t consumed = input_before - deflater.avail_in;
-    const size_t produced = output_before - deflater.avail_out;
-    write_source->progress += consumed + produced;
-
-    if (cursor != nullptr) {
-      cursor->data += consumed;
-      cursor->size -= consumed;
-      if (cursor->size == 0) {
-        ++write_source->index;
+    if (cursor == nullptr) {
+      if (!write_source->terminal_generated) {
+        write_source->pending.resize(LZ4F_compressBound(0, &preferences));
+        size_t terminal;
+        if (write_source->finish_stream) {
+          terminal =
+              LZ4F_compressEnd(stream.encoder, write_source->pending.data(),
+                               write_source->pending.size(), nullptr);
+        } else {
+          terminal = LZ4F_flush(stream.encoder, write_source->pending.data(),
+                                write_source->pending.size(), nullptr);
+        }
+        if (LZ4F_isError(terminal)) {
+          return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        write_source->pending.resize(terminal);
+        write_source->terminal_generated = true;
+        continue;
       }
+      if (write_source->finish_stream) {
+        stream.encoder_finished = true;
+        write_source->complete = true;
+        *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+      } else {
+        write_source->complete = true;
+        *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
+      }
+      break;
     }
 
-    if (result == Z_STREAM_END && write_source->finish_stream) {
-      stream.deflater_finished = true;
-      write_source->complete = true;
-      *data_flags |= NGHTTP2_DATA_FLAG_EOF;
-    } else if (result != Z_OK && result != Z_BUF_ERROR) {
+    size_t input = std::min(cursor->size, kH2EncodeChunkBytes);
+    write_source->pending.resize(LZ4F_compressBound(input, &preferences));
+    size_t encoded = LZ4F_compressUpdate(
+        stream.encoder, write_source->pending.data(),
+        write_source->pending.size(), cursor->data, input, nullptr);
+    if (LZ4F_isError(encoded)) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
-    } else if (cursor == nullptr && !write_source->finish_stream &&
-               deflater.avail_out != 0) {
-      write_source->complete = true;
-      *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
-    } else if (consumed == 0 && produced == 0) {
-      return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    write_source->pending.resize(encoded);
+    cursor->data += input;
+    cursor->size -= input;
+    write_source->progress += input;
+    if (cursor->size == 0) {
+      ++write_source->index;
     }
   }
-  return static_cast<ssize_t>(length - deflater.avail_out);
+  return static_cast<ssize_t>(produced);
 }
 
 int h2_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t,
@@ -297,42 +339,44 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t,
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
   }
-  if (!stream.gzip_encoded || stream.inflater_finished || len > UINT_MAX) {
+  if (!stream.lz4_encoded || stream.decoder_finished) {
     return NGHTTP2_ERR_CALLBACK_FAILURE;
   }
-  if (!stream.inflater_initialized) {
-    if (inflateInit2(&stream.inflater, MAX_WBITS + 16) != Z_OK) {
+  if (stream.decoder == nullptr) {
+    if (LZ4F_isError(
+            LZ4F_createDecompressionContext(&stream.decoder, LZ4F_VERSION))) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    stream.inflater_initialized = true;
   }
 
-  z_stream &inflater = stream.inflater;
-  inflater.next_in = const_cast<Bytef *>(data);
-  inflater.avail_in = static_cast<uInt>(len);
-  std::array<unsigned char, kH2InflateBufferBytes> output;
+  size_t offset = 0;
+  std::array<unsigned char, kH2DecodeBufferBytes> output;
   for (;;) {
-    inflater.next_out = output.data();
-    inflater.avail_out = static_cast<uInt>(output.size());
-    const uInt input_before = inflater.avail_in;
-    int result = inflate(&inflater, Z_NO_FLUSH);
-    size_t produced = output.size() - inflater.avail_out;
-    receive_bytes(transport, stream_id, output.data(), produced);
-    if (result == Z_STREAM_END) {
-      if (inflater.avail_in != 0) {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-      }
-      stream.inflater_finished = true;
-      break;
-    }
-    if (result == Z_BUF_ERROR && inflater.avail_in == 0 && produced == 0) {
-      break;
-    }
-    if (result != Z_OK ||
-        (input_before == inflater.avail_in && produced == 0)) {
+    size_t input = len - offset;
+    size_t produced = output.size();
+    size_t result = LZ4F_decompress(stream.decoder, output.data(), &produced,
+                                    data + offset, &input, nullptr);
+    if (LZ4F_isError(result)) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    if (inflater.avail_in == 0 && inflater.avail_out != 0) {
+    receive_bytes(transport, stream_id, output.data(), produced);
+    offset += input;
+    if (result == 0) {
+      if (offset != len) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+      }
+      stream.decoder_finished = true;
+      break;
+    }
+    if (input == 0 && produced == 0) {
+      if (offset != len) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+      }
+      break;
+    }
+    // LZ4F can consume the complete encoded block while retaining decoded
+    // output internally. Drain it before waiting for the next DATA frame.
+    if (offset == len && produced < output.size()) {
       break;
     }
   }
@@ -355,7 +399,7 @@ constexpr char kLupineWireIdentityHeader[] = "x-lupine-wire-identity";
 constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
 constexpr char kLupineVaWindowSizeHeader[] = "x-lupine-va-window-size";
 constexpr char kContentEncodingHeader[] = "content-encoding";
-constexpr char kGzipEncoding[] = "gzip";
+constexpr char kLz4Encoding[] = "lz4";
 
 #ifndef LUPINE_WIRE_IDENTITY
 #define LUPINE_WIRE_IDENTITY ""
@@ -409,7 +453,7 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   }
   std::vector<nghttp2_nv> headers = {h2_nv(":status", status_text)};
   if (!end_stream) {
-    headers.push_back(h2_nv(kContentEncodingHeader, kGzipEncoding));
+    headers.push_back(h2_nv(kContentEncodingHeader, kLz4Encoding));
   }
   if (!transport->server_version.empty()) {
     headers.push_back(
@@ -475,7 +519,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
     transport->request_received = true;
     bool probe = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-    int status = stream.gzip_encoded || probe ? 200 : 400;
+    int status = stream.lz4_encoded || probe ? 200 : 400;
     bool has_va_base = !stream.requested_va_base.empty();
     bool has_va_size = !stream.requested_va_size.empty();
     if (!probe && (has_va_base || has_va_size)) {
@@ -507,7 +551,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
              frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
     if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == 0 &&
-        !stream.gzip_encoded) {
+        !stream.lz4_encoded) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.response_received = true;
@@ -515,8 +559,8 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) &&
       (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
-    if (frame->hd.type == NGHTTP2_DATA && stream.gzip_encoded &&
-        !stream.inflater_finished) {
+    if (frame->hd.type == NGHTTP2_DATA && stream.lz4_encoded &&
+        !stream.decoder_finished) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.remote_end = true;
@@ -552,9 +596,9 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
   if (namelen == strlen(kContentEncodingHeader) &&
       memcmp(name, kContentEncodingHeader, namelen) == 0) {
-    stream.gzip_encoded = !stream.content_encoding_seen &&
-                          valuelen == strlen(kGzipEncoding) &&
-                          memcmp(value, kGzipEncoding, valuelen) == 0;
+    stream.lz4_encoded = !stream.content_encoding_seen &&
+                         valuelen == strlen(kLz4Encoding) &&
+                         memcmp(value, kLz4Encoding, valuelen) == 0;
     stream.content_encoding_seen = true;
     return 0;
   }
@@ -828,7 +872,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
         h2_nv(":authority", "lupine"),
     };
     if (!probe) {
-      headers.push_back(h2_nv(kContentEncodingHeader, kGzipEncoding));
+      headers.push_back(h2_nv(kContentEncodingHeader, kLz4Encoding));
       if (session_id != nullptr && session_id[0] != '\0') {
         headers.push_back(h2_nv(kLupineSessionHeader, session_id));
       }
@@ -998,7 +1042,7 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
       h2_nv(":scheme", "http"),
       h2_nv(":path", "/"),
       h2_nv(":authority", "lupine"),
-      h2_nv(kContentEncodingHeader, kGzipEncoding),
+      h2_nv(kContentEncodingHeader, kLz4Encoding),
   };
   int32_t stream_id =
       nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1, nullptr,

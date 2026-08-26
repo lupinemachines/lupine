@@ -118,9 +118,9 @@ far sooner than the kernel's default 2-hour keepalive. The next RPC then fails
 fatally. Lupine keeps these connections alive and resilient without retrying
 RPCs (which would break CUDA semantics):
 
-RPC request and response bodies require `content-encoding: gzip`. Compression
-is applied transparently to each HTTP/2 stream; peers do not negotiate or fall
-back to another encoding.
+RPC request and response bodies require `content-encoding: lz4`. Compression
+is applied transparently as one LZ4 frame per HTTP/2 body; peers do not
+negotiate or fall back to another encoding.
 
 - **TCP keepalive** is enabled on every connection (client *and* server) with a
   60s idle interval, 15s between probes, and 3 unanswered probes before giving

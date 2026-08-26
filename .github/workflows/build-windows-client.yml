@@ -87,8 +87,7 @@ jobs:
           }
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
             "nghttp2:${{ matrix.vcpkg_triplet }}" `
-            "openssl:${{ matrix.vcpkg_triplet }}" `
-            "zlib:${{ matrix.vcpkg_triplet }}"
+            "openssl:${{ matrix.vcpkg_triplet }}"
 
       - name: Configure client-only build
         shell: pwsh

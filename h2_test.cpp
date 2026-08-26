@@ -184,7 +184,7 @@ nghttp2_nv raw_h2_header(const char *name, const char *value) {
           strlen(value), NGHTTP2_NV_FLAG_NONE};
 }
 
-void test_server_rejects_request_without_gzip_encoding() {
+void test_server_rejects_request_without_lz4_encoding() {
   h2_pair pair;
   init_pair_sockets(&pair);
 
@@ -212,7 +212,7 @@ void test_server_rejects_request_without_gzip_encoding() {
   require(nghttp2_session_send(session) == 0, "raw client request send failed");
 
   require(rpc_http2_server_init(&pair.server) > 0,
-          "server accepted a request without content-encoding: gzip");
+          "server accepted a request without content-encoding: lz4");
   nghttp2_session_del(session);
 }
 
@@ -1050,9 +1050,9 @@ void test_reset_wakes_flow_controlled_writer() {
   require(!reset_failed, "failed to deliver RST_STREAM");
 }
 
-// The transport gzip-encodes the complete HTTP/2 body, including small RPC
+// The transport LZ4-encodes the complete HTTP/2 body, including small RPC
 // fields and large transfer data spread across several caller-owned cursors.
-void test_gzip_content_encoding_round_trip() {
+void test_lz4_content_encoding_round_trip() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
 
@@ -1076,11 +1076,11 @@ void test_gzip_content_encoding_round_trip() {
     size_t first = LUPINE_RPC_TRANSFER_CHUNK_BYTES;
     require(rpc_http2_read(&pair.server, received.data(), first) ==
                 static_cast<int>(first),
-            "gzip read part 1 failed");
+            "LZ4 read part 1 failed");
     require(rpc_http2_read(&pair.server, received.data() + first,
                            received.size() - first) ==
                 static_cast<int>(received.size() - first),
-            "gzip read part 2 failed");
+            "LZ4 read part 2 failed");
     received_suffix = read_string(&pair.server, suffix.size());
   });
 
@@ -1088,11 +1088,11 @@ void test_gzip_content_encoding_round_trip() {
       rpc_write_cursor(prefix.data(), prefix.size()),
       rpc_write_cursor(payload.data(), payload.size()),
       rpc_write_cursor(suffix.data(), suffix.size())};
-  require(rpc_http2_write(&pair.client, cursors) == 0, "gzip write failed");
+  require(rpc_http2_write(&pair.client, cursors) == 0, "LZ4 write failed");
   reader.join();
-  require(received_prefix == prefix, "gzip prefix mismatch");
-  require(received == payload, "gzip payload mismatch");
-  require(received_suffix == suffix, "gzip suffix mismatch");
+  require(received_prefix == prefix, "LZ4 prefix mismatch");
+  require(received == payload, "LZ4 payload mismatch");
+  require(received_suffix == suffix, "LZ4 suffix mismatch");
 }
 
 void test_rpc_write_queue_grows() {
@@ -1432,7 +1432,7 @@ void test_rpc_read_uses_w_offset() {
 } // namespace
 
 int main() {
-  RUN_CASE(test_server_rejects_request_without_gzip_encoding());
+  RUN_CASE(test_server_rejects_request_without_lz4_encoding());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
     !defined(_WIN32)
@@ -1464,7 +1464,7 @@ int main() {
   RUN_CASE(test_independent_stream_lanes());
   RUN_CASE(test_socket_reader_hands_off_between_streams());
   RUN_CASE(test_large_payload());
-  RUN_CASE(test_gzip_content_encoding_round_trip());
+  RUN_CASE(test_lz4_content_encoding_round_trip());
 #ifndef _WIN32
   RUN_CASE(test_payload_larger_than_flow_control_window());
 #endif

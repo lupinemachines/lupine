@@ -50,7 +50,6 @@ include(CTest)
 find_package(Threads REQUIRED)
 find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
 find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
-find_package(ZLIB REQUIRED)
 find_package(OpenSSL QUIET)
 
 set(MIN_CUDA_VERSION 11.0)
@@ -168,6 +167,19 @@ function(lupine_scaled_timeout out base)
     set(${out} ${scaled} PARENT_SCOPE)
 endfunction()
 
+# Vendored LZ4 keeps the neutral core independent of host package versions.
+add_library(lupine_lz4 STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4frame.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4hc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/xxhash.c)
+set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(lupine_lz4 PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib)
+if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
+    target_compile_options(lupine_lz4 PRIVATE -O2)
+endif()
+
 # Accelerator-neutral wire protocol, HTTP/2, compression, and platform IPC.
 add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
@@ -178,7 +190,7 @@ target_include_directories(lupine_rpc_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
-    Threads::Threads ${NGHTTP2_LIBRARY} ZLIB::ZLIB)
+    Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
 target_compile_definitions(lupine_rpc_core PRIVATE
     LUPINE_WIRE_IDENTITY="${LUPINE_WIRE_IDENTITY}")
 if(OpenSSL_FOUND)
@@ -435,9 +447,7 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
     add_test(NAME h2_test COMMAND h2_test)
-    # Streaming incompressible window-limit payloads through gzip can exceed
-    # 30 seconds on slower CI runners (notably macOS x86_64).
-    lupine_scaled_timeout(h2_timeout 90)
+    lupine_scaled_timeout(h2_timeout 30)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
 endif()
 
