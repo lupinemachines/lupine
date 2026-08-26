@@ -188,6 +188,23 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceGetCudaComputeCapability",
 ]
 
+HIP_RPC_FUNCTIONS = [
+    "hipInit",
+    "hipGetDeviceCount",
+    "hipDeviceGet",
+    # HIP's public macro resolves to this versioned ABI symbol.
+    "hipGetDevicePropertiesR0600",
+    "hipDeviceGetName",
+    "hipDeviceTotalMem",
+    "hipDeviceGetAttribute",
+    "hipDriverGetVersion",
+    "hipRuntimeGetVersion",
+]
+
+HIP_MANUAL_REMAPPINGS = [
+    ("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),
+]
+
 PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
     "cuGraphAddNode_v2",
@@ -217,6 +234,8 @@ REGISTRY_CPP_TEMPLATE = Template(
 $cuda_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
+#define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
+$hip_registry_entries
 // clang-format on
 
 #define LUPINE_DECLARE_HANDLER(operation, handler, backend)                    \
@@ -228,6 +247,10 @@ $cuda_guarded_declarations
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $nvml_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_HIP_BACKEND
+LUPINE_HIP_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$hip_guarded_declarations
 #endif
 #undef LUPINE_DECLARE_HANDLER
 
@@ -246,6 +269,10 @@ $cuda_guarded_handlers
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_HIP_BACKEND
+      LUPINE_HIP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$hip_guarded_handlers
+#endif
   };
   // clang-format on
 #undef LUPINE_REGISTER_HANDLER
@@ -254,6 +281,7 @@ $nvml_guarded_handlers
 
 #undef LUPINE_CUDA_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
+#undef LUPINE_HIP_RPC_HANDLERS
 '''
 )
 
@@ -273,6 +301,7 @@ class ServerBinding:
 SERVER_BACKENDS = {
     "CUDA": "rpc_backend::cuda",
     "NVML": "rpc_backend::nvml",
+    "HIP": "rpc_backend::hip",
 }
 
 
@@ -1072,6 +1101,8 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
 def error_const(return_type: str) -> str:
     if return_type == "nvmlReturn_t":
         return "NVML_ERROR_GPU_IS_LOST"
+    if return_type == "hipError_t":
+        return "hipErrorUnknown"
     if return_type == "CUresult":
         return "CUDA_ERROR_DEVICE_UNAVAILABLE"
     if return_type == "cudaError_t":
@@ -1096,6 +1127,8 @@ def invalid_device_const(return_type: str) -> str:
         return "CUDA_ERROR_INVALID_DEVICE"
     if return_type == "cudaError_t":
         return "cudaErrorInvalidDevice"
+    if return_type == "hipError_t":
+        return "hipErrorInvalidDevice"
     raise NotImplementedError(
         "No invalid-device error for return type: %s" % return_type
     )
@@ -1104,6 +1137,8 @@ def invalid_device_const(return_type: str) -> str:
 def invalid_argument_const(return_type: str) -> str:
     if return_type == "nvmlReturn_t":
         return "NVML_ERROR_INVALID_ARGUMENT"
+    if return_type == "hipError_t":
+        return "hipErrorInvalidValue"
     if return_type == "CUresult":
         return "CUDA_ERROR_INVALID_VALUE"
     if return_type == "cudaError_t":
@@ -1340,9 +1375,173 @@ def write_nvml_server_handler(f, function, operations):
     f.write("}\n\n")
 
 
+def collect_hip_functions(annotations: ParsedData):
+    by_name = {
+        function.name.format(): function
+        for function in annotations.namespace.functions
+    }
+    result = []
+    for name in HIP_RPC_FUNCTIONS:
+        function = by_name.get(name)
+        if function is None:
+            raise RuntimeError(f"HIP annotation for {name} not found")
+        metadata = parse_annotation(function.doxygen, function.parameters)
+        result.append((function, function, metadata.operations, metadata))
+    return result
+
+
+def write_hip_client_validation(f, function, operations):
+    checks = []
+    if function.name.format() == "hipDeviceGetName":
+        checks.append("len < 0")
+    for operation in operations:
+        name = operation.parameter.name
+        if isinstance(operation, NullTerminatedOperation) and operation.send:
+            checks.append(f"{name} == nullptr")
+        elif isinstance(operation, DereferenceOperation):
+            checks.append(f"{name} == nullptr")
+        elif isinstance(operation, ArrayOperation):
+            checks.append(
+                f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
+            )
+    if checks:
+        f.write("  if (" + " ||\n      ".join(checks) + ") {\n")
+        f.write("    return hipErrorInvalidValue;\n")
+        f.write("  }\n")
+
+
+def write_hip_client_rpc(f, function, operations):
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(f"static hipError_t lupine_rpc_{name}(conn_t *conn")
+    if params:
+        f.write(f", {params}")
+    f.write(") {\n")
+    f.write("  hipError_t return_value = rpc_error();\n")
+    f.write("  if (conn == nullptr ||\n")
+    f.write(f"      rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_write(f)
+    f.write("      rpc_wait_for_response(conn) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_read(f)
+    f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_read_end(conn) < 0) {\n")
+    if name == "hipGetDevicePropertiesR0600":
+        f.write("    prop->hdpMemFlushCntl = nullptr;\n")
+        f.write("    prop->hdpRegFlushCntl = nullptr;\n")
+    f.write("    return rpc_error();\n")
+    f.write("  }\n")
+    if name == "hipGetDevicePropertiesR0600":
+        f.write("  prop->hdpMemFlushCntl = nullptr;\n")
+        f.write("  prop->hdpRegFlushCntl = nullptr;\n")
+    f.write("  return return_value;\n")
+    f.write("}\n\n")
+
+
+def write_hip_client_wrapper(f, function, operations, metadata):
+    if metadata.disabled_client:
+        return
+
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(f'extern "C" hipError_t {name}({params}) {{\n')
+    write_hip_client_validation(f, function, operations)
+
+    call_args = format_call_args(function)
+    if metadata.routing_kind == "HIP_DEVICE":
+        if metadata.routing_parameter is None:
+            raise RuntimeError(f"{name}: HIP_DEVICE routing requires a parameter")
+        route_name = metadata.routing_parameter.name
+        f.write(f"  conn_t *conn = connection_for_device(&{route_name});\n")
+    elif metadata.routing_kind is None:
+        f.write("  conn_t *conn = connection();\n")
+    else:
+        raise RuntimeError(
+            f"{name}: unsupported HIP routing key {metadata.routing_kind}"
+        )
+    suffix = f", {', '.join(call_args)}" if call_args else ""
+    f.write(f"  return lupine_rpc_{name}(conn{suffix});\n")
+    f.write("}\n\n")
+
+
+def write_hip_server_handler(f, function, operations):
+    name = function.name.format()
+    fn_params = ", ".join(
+        parameter.type.format() for parameter in function.parameters
+    )
+    f.write(f"int handle_{name}(conn_t *conn) {{\n")
+    owned_buffers = []
+    for operation in operations:
+        f.write(operation.server_declaration)
+        if (
+            isinstance(operation, DereferenceOperation)
+            and operation.recv
+            and not operation.send
+        ):
+            if name == "hipGetDevicePropertiesR0600":
+                f.write("  std::memset(&prop, 0, sizeof(prop));\n")
+            else:
+                f.write(f"  {operation.parameter.name} = {{}};\n")
+    f.write("  int request_id;\n")
+    f.write("  hipError_t return_value;\n")
+    f.write(f"  using fn_t = hipError_t (*)({fn_params});\n")
+    f.write("  fn_t fn = nullptr;\n")
+    f.write("  if (\n")
+    for operation in operations:
+        if (
+            name == "hipDeviceGetName"
+            and isinstance(operation, ArrayOperation)
+            and operation.parameter.name == "name"
+        ):
+            # The length is read before the output buffer is allocated. Reject
+            # negative values before signed multiplication can become a huge
+            # allocation or wire size.
+            f.write("      len < 0 ||\n")
+        if owned_buffer := operation.server_rpc_read(f):
+            owned_buffers.append(owned_buffer)
+    f.write("      false)\n")
+    f.write("    goto ERROR_0;\n\n")
+    f.write("  request_id = rpc_read_end(conn);\n")
+    f.write("  if (request_id < 0)\n")
+    f.write("    goto ERROR_0;\n\n")
+
+    call_args = []
+    for parameter in function.parameters:
+        operation = next(
+            op for op in operations if op.parameter.name == parameter.name
+        )
+        call_args.append(operation.server_reference)
+    f.write(f'  fn = hip_symbol<fn_t>("{name}");\n')
+    f.write(
+        "  return_value = fn == nullptr ? function_not_found()\n"
+        f"                               : fn({', '.join(call_args)});\n\n"
+    )
+    if name == "hipGetDevicePropertiesR0600":
+        f.write("  prop.hdpMemFlushCntl = nullptr;\n")
+        f.write("  prop.hdpRegFlushCntl = nullptr;\n\n")
+    f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+    for operation in operations:
+        operation.server_rpc_write(f)
+    f.write("      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_write_end(conn) < 0)\n")
+    f.write("    goto ERROR_0;\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return 0;\n")
+    f.write("ERROR_0:\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return -1;\n")
+    f.write("}\n\n")
+
+
+HIP_ROOT = (
+    os.environ.get("HIP_PATH") or os.environ.get("ROCM_PATH") or "/opt/rocm"
+)
+
 # List of possible directories to search for header files
 COMMON_INCLUDE_DIRS = [
     "./",
+    os.path.join(HIP_ROOT, "include"),
     "/usr/local/cuda/include/",
     "/opt/cuda/include/",
     "/usr/local/include/",
@@ -1383,18 +1582,18 @@ def validate_async_annotation(
 
 
 def main():
+    cuda_header = find_header_file("cuda.h")
+    hip_header = find_header_file("hip_runtime_api.h")
+    annotations_header = find_header_file("annotations.h")
+
+    cuda_include_dir = os.path.dirname(cuda_header)
+    hip_include_dir = os.path.dirname(os.path.dirname(hip_header))
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            include_paths=["/usr/local/cuda/include"],
+            defines=["__HIP_PLATFORM_AMD__"],
+            include_paths=[cuda_include_dir, hip_include_dir],
         ),
     )
-
-    try:
-        cuda_header = find_header_file("cuda.h")
-        annotations_header = find_header_file("annotations.h")
-    except FileNotFoundError as e:
-        print(e)
-        return
 
     # Parse the files
     cuda_ast: ParsedData = parse_file(cuda_header, options=options)
@@ -1505,6 +1704,7 @@ def main():
     nvml_functions_with_annotations = collect_nvml_functions(
         annotations, server_bindings
     )
+    hip_functions_with_annotations = collect_hip_functions(annotations)
 
     annotated_names = sorted(
         set(annotated_rpc_names(annotations))
@@ -1546,6 +1746,8 @@ def main():
             write_rpc_define(f"RPC_{name}", name)
         for name in NVML_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
+        for name in HIP_RPC_FUNCTIONS:
+            write_rpc_define(f"RPC_{name}", name)
         f.write("\n")
         for name in PRIVATE_RPC_FUNCTIONS:
             write_rpc_define(f"LUPINE_RPC_{name}", name)
@@ -1568,6 +1770,50 @@ def main():
     with open("gen_nvml_server.h", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
         for function, _, _, metadata in nvml_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
+
+    with open("gen_hip_client.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        hip_client_functions = {}
+        for function, _, operations, metadata in hip_functions_with_annotations:
+            if metadata.disabled_client:
+                continue
+            hip_client_functions[function.name.format()] = function
+            write_hip_client_rpc(f, function, operations)
+            write_hip_client_wrapper(f, function, operations, metadata)
+        for alias, target in HIP_MANUAL_REMAPPINGS:
+            if alias in hip_client_functions:
+                continue
+            target_function = hip_client_functions.get(target)
+            if target_function is None:
+                continue
+            f.write(f"#ifdef {alias}\n#undef {alias}\n#endif\n")
+            f.write(
+                'extern "C" {return_type} {alias}({params}) {{\n'.format(
+                    return_type=target_function.return_type.format(),
+                    alias=alias,
+                    params=", ".join(format_function_params(target_function)),
+                )
+            )
+            f.write(
+                "  return {target}({args});\n}}\n\n".format(
+                    target=target,
+                    args=", ".join(format_call_args(target_function)),
+                )
+            )
+
+    with open("gen_hip_server.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function, _, operations, metadata in hip_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            write_hip_server_handler(f, function, operations)
+
+    with open("gen_hip_server.h", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function, _, _, metadata in hip_functions_with_annotations:
             if metadata.disabled_server:
                 continue
             f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
@@ -2191,14 +2437,19 @@ def main():
             REGISTRY_CPP_TEMPLATE.substitute(
                 cuda_registry_entries=" \\\n".join(registry_entries["CUDA"]),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
+                hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
                     guarded_declarations["CUDA"]
                 ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
+                hip_guarded_declarations="\n".join(
+                    guarded_declarations["HIP"]
+                ),
                 cuda_guarded_handlers="\n".join(guarded_handlers["CUDA"]),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
+                hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
         )
 
@@ -2212,6 +2463,9 @@ def main():
             "gen_nvml_server.inc",
             "gen_cuda_server.cpp",
             "registry.cpp",
+            "gen_hip_client.inc",
+            "gen_hip_server.inc",
+            "gen_hip_server.h",
         ],
         check=True,
     )
@@ -2225,18 +2479,24 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_nvml_server.inc",
             "gen_nvml_server.h",
         ],
+        "hip": [
+            "gen_hip_client.inc",
+            "gen_hip_server.inc",
+            "gen_hip_server.h",
+        ],
     }
-    backends = backend_files if backend == "all" else [backend]
-    for name in backends:
-        forbidden = (
-            ["nvml"]
-            if name == "cuda"
-            else ["cuda_compat", "<cuda.h>", "get_cuda_handler", "handle_cu"]
-        )
-        paths = backend_files[name]
+    forbidden = {
+        "cuda": ["nvml", "hip"],
+        "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
+        "hip": ["cuda", "nvml"],
+    }
+    selected = (
+        backend_files if backend == "all" else {backend: backend_files[backend]}
+    )
+    for name, paths in selected.items():
         for path in paths:
             contents = open(path, encoding="utf-8").read().lower()
-            for token in forbidden:
+            for token in forbidden[name]:
                 if token.lower() in contents:
                     raise RuntimeError(
                         f"{path} contains forbidden {name} boundary token: {token}"
@@ -2247,7 +2507,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "nvml"),
+        choices=("all", "cuda", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

@@ -228,11 +228,15 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images are also published with a `-slim` tag, for example
-`ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04-slim`. The
-default client tag keeps the CUDA runtime libraries for applications that link
-against them; the slim tag includes only the LUPINE shims, their runtime
-dependencies, and `nvidia-smi`.
+Client images contain the CUDA, NVML, and HIP shims, their runtime dependencies,
+and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
+SDK. The `-slim` tags remain available as compatibility aliases with the same
+SDK-free contents, for example
+`ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04-slim`.
+
+The server image is also based on Ubuntu. It installs the CUDA compatibility
+runtime and, on amd64, the ROCm HIP runtime so one image can serve either NVIDIA
+or AMD GPUs; the older separate HIP server Dockerfile is no longer needed.
 
 ## Slow Start for the Skeptics
 
@@ -296,8 +300,9 @@ microgpt_train: PASS
 ## Local development
 
 Building the binaries requires running codegen first. The repository provides a
-containerized runner so local development and CI use the same CUDA headers,
-Python, parser, and formatter versions. Docker is the only host dependency.
+containerized runner so local development and CI use the same CUDA and HIP
+headers, Python, parser, and formatter versions. Docker is the only host
+dependency.
 
 ### Run codegen
 
@@ -315,7 +320,8 @@ cmake --build build
 ```
 
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NVML shim at
-`build/libnvidia-ml.so.1`, and the server at `build/lupine_driver_server`.
+`build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
+server at `build/lupine_driver_server`.
 
 The Lupine server must be running before initiating client commands.
 

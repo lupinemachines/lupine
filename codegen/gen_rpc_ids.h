@@ -477,6 +477,15 @@
 #define RPC_nvmlDeviceGetNvLinkRemoteDeviceType 65527014
 #define RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2 1998574024
 #define RPC_nvmlDeviceGetCudaComputeCapability 1264755594
+#define RPC_hipInit 874444791
+#define RPC_hipGetDeviceCount 1401409107
+#define RPC_hipDeviceGet 1529875909
+#define RPC_hipGetDevicePropertiesR0600 768204638
+#define RPC_hipDeviceGetName 2031968752
+#define RPC_hipDeviceTotalMem 53957243
+#define RPC_hipDeviceGetAttribute 1095006000
+#define RPC_hipDriverGetVersion 380424251
+#define RPC_hipRuntimeGetVersion 392869969
 
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphAddNode_v2 1958016248
