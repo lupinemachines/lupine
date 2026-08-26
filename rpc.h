@@ -19,16 +19,58 @@ struct rpc_write_cursor {
   size_t size = 0;
   const unsigned char *source = nullptr;
   size_t source_size = 0;
+  // Pitched geometry. row_width == 0 means source is contiguous and blocks are
+  // compressed straight out of it; otherwise the transport gathers rows out of
+  // source as it fills the block it was going to materialize anyway, so the
+  // padding between rows never reaches the wire and never reaches LZ4.
+  size_t row_width = 0;
+  size_t rows_per_slice = 0;
+  size_t row_stride = 0;
+  size_t slice_stride = 0;
+  size_t packed_offset = 0;
 
   static rpc_write_cursor plain(const void *data, size_t size) {
-    return {static_cast<const unsigned char *>(data), size, nullptr, 0};
+    rpc_write_cursor cursor;
+    cursor.data = static_cast<const unsigned char *>(data);
+    cursor.size = size;
+    return cursor;
   }
 
   static rpc_write_cursor framed(const void *data, size_t size) {
-    return {nullptr, 0, static_cast<const unsigned char *>(data), size};
+    rpc_write_cursor cursor;
+    cursor.source = static_cast<const unsigned char *>(data);
+    cursor.source_size = size;
+    return cursor;
+  }
+
+  static rpc_write_cursor pitched(const void *base, size_t width, size_t rows,
+                                  size_t row_stride, size_t slices,
+                                  size_t slice_stride) {
+    rpc_write_cursor cursor;
+    cursor.source = static_cast<const unsigned char *>(base);
+    cursor.source_size = width * rows * slices;
+    cursor.row_width = width;
+    cursor.rows_per_slice = rows;
+    cursor.row_stride = row_stride;
+    cursor.slice_stride = slice_stride;
+    return cursor;
   }
 
   size_t remaining() const { return size + source_size; }
+
+  bool is_pitched() const { return row_width != 0; }
+
+  // Source address of the payload byte at `offset` in the packed stream, and
+  // how many bytes of that row follow it.
+  const unsigned char *packed_at(size_t offset, size_t *run) const {
+    size_t per_slice = row_width * rows_per_slice;
+    size_t slice = offset / per_slice;
+    size_t within = offset % per_slice;
+    size_t row = within / row_width;
+    size_t column = within % row_width;
+    *run = row_width - column;
+    return source + slice * slice_stride + row * row_stride + column;
+  }
 };
 
 struct rpc_http2_read_stats {
@@ -176,6 +218,15 @@ extern int rpc_write(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
                              size_t rows, size_t row_stride, size_t slices,
                              size_t slice_stride);
+// Pitched transfers sent as one compressed payload; the padding between rows
+// reaches neither LZ4 nor the wire.
+extern int rpc_write_pitched_payload(conn_t *conn, const void *data,
+                                     size_t width, size_t rows,
+                                     size_t row_stride, size_t slices,
+                                     size_t slice_stride);
+extern int rpc_read_pitched_payload(conn_t *conn, void *data, size_t width,
+                                    size_t rows, size_t row_stride,
+                                    size_t slices, size_t slice_stride);
 extern int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
                             size_t row_stride, size_t slices,
                             size_t slice_stride);

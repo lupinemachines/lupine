@@ -1375,35 +1375,6 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
   return return_value;
 }
 
-CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
-                         size_t ByteCount) {
-  lupine_route route = lupine_route_for_deviceptr(dstDevice);
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn("cuMemcpyHtoD_v2", dstDevice,
-                                            srcHost, ByteCount);
-    if (return_value == CUDA_SUCCESS)
-      return_value = lupine_sync_mapped_device_to_host();
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (ByteCount != 0 && srcHost == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  srcHost = lupine_mapped_host_read_source(srcHost, ByteCount);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
-      rpc_write_payload(conn, srcHost, ByteCount) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    return_value = lupine_sync_mapped_device_to_host();
-  return return_value;
-}
-
 CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                          size_t ByteCount) {
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
@@ -6679,14 +6650,6 @@ extern "C" CUresult cuMemAllocPitch(CUdeviceptr *dptr, size_t *pPitch,
                             ElementSizeBytes);
 }
 
-#ifdef cuMemcpyHtoD
-#undef cuMemcpyHtoD
-#endif
-extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
-                                 size_t ByteCount) {
-  return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
-}
-
 #ifdef cuMemcpyDtoD
 #undef cuMemcpyDtoD
 #endif
@@ -7111,7 +7074,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuIpcCloseMemHandle", (void *)cuIpcCloseMemHandle},
     {"cuMemcpy", (void *)cuMemcpy},
     {"cuMemcpyPeer", (void *)cuMemcpyPeer},
-    {"cuMemcpyHtoD_v2", (void *)cuMemcpyHtoD_v2},
     {"cuMemcpyDtoD_v2", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoA_v2", (void *)cuMemcpyDtoA_v2},
     {"cuMemcpyAtoD_v2", (void *)cuMemcpyAtoD_v2},
@@ -7439,7 +7401,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
-    {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
     {"cuMemcpyDtoD", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoDAsync", (void *)cuMemcpyDtoDAsync_v2},
     {"cuMemsetD8", (void *)cuMemsetD8_v2},

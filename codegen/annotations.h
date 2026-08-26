@@ -2784,13 +2784,12 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
                       size_t ByteCount);
 /**
- * @disabled server - manual server pipelines large host-to-device copies
+ * @disabled - lowered to lupineMemcpy by the manual client
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
  * @param srcHost SEND_ONLY LENGTH:ByteCount COMPRESSIBLE
- * @server CUDA
  */
 CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                          size_t ByteCount);
@@ -2863,19 +2862,16 @@ CUresult cuMemcpyAtoA_v2(CUarray dstArray, size_t dstOffset, CUarray srcArray,
 /**
  * @disabled
  * @param pCopy SEND_ONLY DEREF
- * @server CUDA
  */
 CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy);
 /**
  * @disabled
  * @param pCopy SEND_ONLY DEREF
- * @server CUDA
  */
 CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy);
 /**
@@ -2912,7 +2908,6 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
  * @param ByteCount SEND_ONLY
  * @param srcHost SEND_ONLY LENGTH:ByteCount COMPRESSIBLE
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
                               size_t ByteCount, CUstream hStream);
@@ -2962,14 +2957,12 @@ CUresult cuMemcpyAtoHAsync_v2(void *dstHost, CUarray srcArray, size_t srcOffset,
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy, CUstream hStream);
 /**
@@ -17377,6 +17370,8 @@ void cuStreamUpdateCaptureDependencies_v2();
 void cuStreamGetCaptureInfo_v3();
 /** @server CUDA */
 void lupineManagedHostFlush();
+/** @server CUDA */
+void lupineMemcpy();
 /** @server CUDA */
 void lupineDeviceSnapshot();
 /** @server NVML */

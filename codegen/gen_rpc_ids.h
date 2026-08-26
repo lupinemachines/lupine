@@ -490,3 +490,4 @@
 #define LUPINE_RPC_lupineLibraryAttributeSnapshot 1063587880
 #define LUPINE_RPC_lupineLibrarySnapshot 1662367389
 #define LUPINE_RPC_lupineManagedHostFlush 1450411892
+#define LUPINE_RPC_lupineMemcpy 615608765
