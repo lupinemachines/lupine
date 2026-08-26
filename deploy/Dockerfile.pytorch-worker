@@ -18,6 +18,7 @@ RUN apt-get update \
         gcc \
         libnghttp2-dev \
         libssl-dev \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/lupine-src
@@ -45,6 +46,7 @@ RUN apt-get update \
         libssl3t64 \
         python3 \
         python3-pip \
+        zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,target=/root/.cache/pip \

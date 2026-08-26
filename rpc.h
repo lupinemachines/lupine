@@ -5,30 +5,23 @@
 #include <stdint.h>
 #include <vector>
 
-// Uncompressed block size for LZ4 payload framing. The framed bytes are
-// produced lazily, one block at a time, by the HTTP/2 transport (h2.cpp) and
-// decoded by the rpc_read_payload helpers (compress.cpp).
-#define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
+// Chunk size shared by the client and server for transfers split across
+// multiple RPC responses. This bounds staging independently of HTTP content
+// encoding, which is transparent to the RPC layer.
+#define LUPINE_RPC_TRANSFER_CHUNK_BYTES (4 * 1024 * 1024)
 
-// References caller-owned bytes while an RPC is being serialized. Plain
-// cursors use data/size directly. Framed cursors keep uncompressed bytes in
-// source/source_size while HTTP/2 materializes one framed block at a time into
-// data/size.
+// References caller-owned bytes while an RPC is being serialized. Cursors are
+// consumed directly by the HTTP/2 transport.
 struct rpc_write_cursor {
   const unsigned char *data = nullptr;
   size_t size = 0;
-  const unsigned char *source = nullptr;
-  size_t source_size = 0;
 
-  static rpc_write_cursor plain(const void *data, size_t size) {
-    return {static_cast<const unsigned char *>(data), size, nullptr, 0};
-  }
+  rpc_write_cursor() = default;
 
-  static rpc_write_cursor framed(const void *data, size_t size) {
-    return {nullptr, 0, static_cast<const unsigned char *>(data), size};
-  }
+  rpc_write_cursor(const void *bytes, size_t byte_count)
+      : data(static_cast<const unsigned char *>(bytes)), size(byte_count) {}
 
-  size_t remaining() const { return size + source_size; }
+  size_t remaining() const { return size; }
 };
 
 struct rpc_http2_read_stats {
@@ -189,7 +182,6 @@ extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
-extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
@@ -289,11 +281,5 @@ extern void rpc_http2_window_hold_begin(conn_t *conn);
 extern rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn);
 extern void rpc_http2_window_release(conn_t *conn,
                                      rpc_http2_window_credit credit);
-
-// LZ4 framing for memory transfer payloads (see compress.cpp).
-extern int rpc_write_payload(conn_t *conn, const void *data, size_t size);
-extern int rpc_read_payload(conn_t *conn, void *data, size_t size);
-extern int rpc_read_payload_part(conn_t *conn, void *data, size_t size);
-extern int rpc_drain_payload(conn_t *conn, size_t size);
 
 #endif

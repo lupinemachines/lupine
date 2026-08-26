@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnghttp2-dev \
     libssl-dev \
     ninja-build \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/lupine
@@ -120,6 +121,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 \
     libnghttp2-14 \
     libstdc++6 \
+    zlib1g \
     # libssl3 on jammy, libssl3t64 on noble.
     && (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64) \
     && rm -rf /var/lib/apt/lists/*
@@ -175,6 +177,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnghttp2-14 \
     libstdc++6 \
     wget \
+    zlib1g \
     # libssl3 on jammy, libssl3t64 on noble.
     && (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64) \
     && arch="$(dpkg --print-architecture)" \

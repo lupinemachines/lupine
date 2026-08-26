@@ -74,7 +74,7 @@ jobs:
 
       - name: Install nghttp2 (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libnghttp2-dev
+        run: sudo apt-get update && sudo apt-get install -y libnghttp2-dev zlib1g-dev
 
       - name: Install nghttp2 (macOS)
         if: runner.os == 'macOS'
@@ -89,7 +89,8 @@ jobs:
             throw 'The runner vcpkg installation was not found'
           }
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-            "nghttp2:${{ matrix.vcpkg_triplet }}"
+            "nghttp2:${{ matrix.vcpkg_triplet }}" `
+            "zlib:${{ matrix.vcpkg_triplet }}"
 
       - name: Configure (Unix)
         if: runner.os != 'Windows'

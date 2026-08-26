@@ -60,7 +60,7 @@ jobs:
           # the executable. Left to CMake, the runner image's shared OpenSSL is
           # found instead and the published exe depends on libssl DLLs that the
           # artifact does not carry.
-          & "$env:VCPKG_ROOT\vcpkg.exe" install "nghttp2:$env:VCPKG_TARGET_TRIPLET" "openssl:$env:VCPKG_TARGET_TRIPLET"
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "nghttp2:$env:VCPKG_TARGET_TRIPLET" "openssl:$env:VCPKG_TARGET_TRIPLET" "zlib:$env:VCPKG_TARGET_TRIPLET"
 
       - name: Configure
         shell: pwsh
@@ -92,7 +92,7 @@ jobs:
           $deps | Write-Output
           # Anything here beyond the system DLLs and the driver has to ship with
           # the exe, and the artifact carries the exe alone.
-          $bad = $deps | Select-String -Pattern 'libssl|libcrypto|nghttp2|msvcp|vcruntime'
+          $bad = $deps | Select-String -Pattern 'libssl|libcrypto|nghttp2|zlib|msvcp|vcruntime'
           if ($bad) {
             throw "executable depends on DLLs the artifact does not ship: $bad"
           }

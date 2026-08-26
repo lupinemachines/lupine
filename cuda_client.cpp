@@ -1276,7 +1276,7 @@ static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
         rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-        rpc_write_payload(conn, record.image.data(), image_size) < 0 ||
+        rpc_write(conn, record.image.data(), image_size) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -1345,7 +1345,7 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   bool failed = lupine_prepare_rpc(conn) < 0 ||
                 rpc_write_start_request(conn, RPC_cuModuleLoad) < 0 ||
                 rpc_write(conn, &mapped_size, sizeof(mapped_size)) < 0 ||
-                rpc_write_payload(conn, mapping, mapped_size) < 0 ||
+                rpc_write(conn, mapping, mapped_size) < 0 ||
                 rpc_wait_for_response(conn) < 0 ||
                 rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
                 rpc_read(conn, &result, sizeof(result)) < 0 ||
@@ -1413,7 +1413,7 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
         rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-        rpc_write_payload(conn, record.image.data(), image_size) < 0 ||
+        rpc_write(conn, record.image.data(), image_size) < 0 ||
         rpc_write(conn, &zero_options, sizeof(zero_options)) < 0 ||
         rpc_write(conn, &zero_options, sizeof(zero_options)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -4188,7 +4188,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
     if (bytes == 0) {
       continue;
     }
-    if (rpc_read_payload(conn, dst, bytes) < 0) {
+    if (rpc_read(conn, dst, bytes) < 0) {
       return -1;
     }
   }
@@ -4583,7 +4583,7 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
       rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4817,7 +4817,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
                                : 0) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write_payload(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
       rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
       rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
       rpc_write(conn, jitOptionsValues,
@@ -4910,7 +4910,7 @@ lupine_kernel_param_cursors(void *const *kernel_params,
   std::vector<rpc_write_cursor> cursors;
   cursors.reserve(sizes.size());
   for (size_t i = 0; i < sizes.size(); ++i) {
-    cursors.push_back(rpc_write_cursor::plain(kernel_params[i], sizes[i]));
+    cursors.push_back(rpc_write_cursor(kernel_params[i], sizes[i]));
   }
   return cursors;
 }
@@ -8052,7 +8052,7 @@ void *rpc_client_dispatch_thread(void *arg) {
           goto close_connection;
         }
 
-        if (rpc_read_payload(conn, dst, count) < 0) {
+        if (rpc_read(conn, dst, count) < 0) {
           LUPINE_LOG_ERROR("Failed to read device data from server.");
           goto close_connection;
         }

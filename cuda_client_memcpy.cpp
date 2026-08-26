@@ -949,13 +949,13 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     CUdeviceptr dst = allocation.server_host_ptr + offset;
     memcpy(headers[count].data(), &dst, sizeof(dst));
     memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
-    cursors[count * 2] = rpc_write_cursor::plain(
+    cursors[count * 2] = rpc_write_cursor(
         headers[count].data(), LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES);
     const void *source = reinterpret_cast<void *>(start);
     if (allocation.io_alias != nullptr) {
       source = static_cast<unsigned char *>(allocation.io_alias) + offset;
     }
-    cursors[count * 2 + 1] = rpc_write_cursor::plain(source, bytes);
+    cursors[count * 2 + 1] = rpc_write_cursor(source, bytes);
     ++count;
     if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
       CUresult result = send_batch(count);
@@ -1249,10 +1249,10 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   size_t read_offset = 0;
   do {
     size_t chunk =
-        std::min(bytes - read_offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+        std::min(bytes - read_offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
     if (rpc_read(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS && chunk != 0 &&
-         rpc_read_payload(conn, dst + read_offset, chunk) < 0)) {
+         rpc_read(conn, dst + read_offset, chunk) < 0)) {
       rpc_read_end(conn);
       return false;
     }
@@ -2870,10 +2870,10 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
   size_t offset = 0;
   do {
     size_t chunk =
-        std::min(ByteCount - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+        std::min(ByteCount - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
     if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS && chunk != 0 &&
-         rpc_read_payload(conn, copy_dst + offset, chunk) < 0)) {
+         rpc_read(conn, copy_dst + offset, chunk) < 0)) {
       rpc_read_end(conn);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
@@ -2919,7 +2919,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write_payload(conn, srcHost, ByteCount) < 0) {
+      rpc_write(conn, srcHost, ByteCount) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : CUDA_SUCCESS;
@@ -2995,7 +2995,7 @@ extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
   size_t offset = 0;
   do {
     size_t chunk =
-        std::min(ByteCount - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+        std::min(ByteCount - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
     if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS && chunk != 0 &&
          rpc_read(conn, copy_dst + offset, chunk) < 0)) {
@@ -3062,10 +3062,10 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     size_t offset = 0;
     do {
       size_t chunk =
-          std::min(ByteCount - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+          std::min(ByteCount - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
       if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
           (return_value == CUDA_SUCCESS && chunk != 0 &&
-           rpc_read_payload(conn, copy_dst + offset, chunk) < 0)) {
+           rpc_read(conn, copy_dst + offset, chunk) < 0)) {
         rpc_read_end(conn);
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
       }

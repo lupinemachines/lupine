@@ -1403,7 +1403,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
       rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
-      rpc_write_payload(conn, srcHost, ByteCount) < 0 ||
+      rpc_write(conn, srcHost, ByteCount) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)

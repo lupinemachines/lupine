@@ -655,7 +655,7 @@ def parse_annotation(
                                 ptr=param.type,
                                 length=length_param,
                                 iter=False,
-                                compressible="COMPRESSIBLE" in args,
+                                mapped_source="MAPPED_SOURCE" in args,
                             )
                         )
                 elif size_arg:
