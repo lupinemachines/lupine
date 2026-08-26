@@ -15,8 +15,11 @@ permissions:
   contents: read
 
 jobs:
-  unit-tests:
-    name: CMake _test targets
+  # Full coverage, including the Unix-only tests and everything that needs the
+  # CUDA image. The matrix below cannot replace this; it covers the portable
+  # targets on the platforms this one cannot reach.
+  unit-tests-linux:
+    name: CMake _test targets (Linux x86_64, CUDA image)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -38,3 +41,91 @@ jobs:
         run: |
           docker run --rm --entrypoint bash lupine-unit-tests -lc \
             'BUILD_DIR=/opt/lupine/build /opt/lupine/test/run_unit_tests.sh'
+
+  # The portable test targets on every OS and architecture the client ships for.
+  # Needs no CUDA and no GPU, so each leg is a plain configure, build and ctest.
+  unit-tests-portable:
+    name: CMake _test targets (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+          - name: macOS arm64
+            runner: macos-26
+          - name: macOS x86_64
+            runner: macos-26-intel
+          - name: Windows x86_64
+            runner: windows-2022
+            cmake_arch: x64
+            vcpkg_triplet: x64-windows-static
+          - name: Windows arm64
+            runner: windows-11-arm
+            cmake_arch: ARM64
+            vcpkg_triplet: arm64-windows-static
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install nghttp2 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libnghttp2-dev
+
+      - name: Install nghttp2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libnghttp2
+
+      - name: Install nghttp2 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe")) {
+            throw 'The runner vcpkg installation was not found'
+          }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+            "nghttp2:${{ matrix.vcpkg_triplet }}"
+
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          # libnghttp2 is keg-only on macOS, so its prefix has to be named
+          # explicitly; on Linux the -dev package lands on the default path.
+          prefix=""
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            prefix="-DCMAKE_PREFIX_PATH=$(brew --prefix libnghttp2)"
+          fi
+          cmake -S . -B build/tests \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLUPINE_BUILD_SERVER=OFF \
+            -DLUPINE_BUILD_CUDA=OFF \
+            -DLUPINE_BUILD_NVML=OFF \
+            $prefix
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build/tests `
+            -A ${{ matrix.cmake_arch }} `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DLUPINE_BUILD_SERVER=OFF `
+            -DLUPINE_BUILD_CUDA=OFF `
+            -DLUPINE_BUILD_NVML=OFF `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }}" `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+
+      # Build everything the platform defines rather than named targets, so a
+      # later portable test is picked up without editing this workflow.
+      - name: Build and run
+        run: |
+          cmake --build build/tests --config Release --parallel
+          ctest --test-dir build/tests -C Release --output-on-failure

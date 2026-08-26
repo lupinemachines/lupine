@@ -69,6 +69,15 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
 
+#ifdef cuGraphInstantiate_v2
+#undef cuGraphInstantiate_v2
+#endif
+extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
+                                                  CUgraph hGraph,
+                                                  CUgraphNode *phErrorNode,
+                                                  char *logBuffer,
+                                                  size_t bufferSize);
+
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
@@ -650,6 +659,14 @@ lupine_graph_exec_resource_map() {
   static auto *resources =
       new libcuckoo::cuckoohash_map<CUgraphExec, lupine_graph_resources *>();
   return *resources;
+}
+
+static void lupine_associate_graph_exec_resources(CUgraphExec exec,
+                                                  CUgraph graph) {
+  lupine_graph_resources *resources = nullptr;
+  if (lupine_graph_resource_map().find(graph, resources)) {
+    lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
+  }
 }
 
 static libcuckoo::cuckoohash_map<CUstream, lupine_graph_resources *> &
@@ -3698,6 +3715,56 @@ int handle_cuGraphClone(conn_t *conn) {
   return 0;
 }
 
+int handle_cuGraphInstantiate_v2(conn_t *conn) {
+  CUgraphExec exec = nullptr;
+  CUgraph graph = nullptr;
+  CUgraphNode *error_node_out = nullptr;
+  CUgraphNode error_node = nullptr;
+  size_t log_buffer_size = 0;
+  char *log_buffer = nullptr;
+  uint8_t log_buffer_null = 0;
+
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &error_node_out, sizeof(error_node_out)) < 0 ||
+      rpc_read(conn, &log_buffer_size, sizeof(log_buffer_size)) < 0 ||
+      rpc_read(conn, &log_buffer_null, sizeof(log_buffer_null)) < 0) {
+    return -1;
+  }
+  if (!log_buffer_null) {
+    log_buffer = static_cast<char *>(
+        calloc(log_buffer_size != 0 ? log_buffer_size : 1, sizeof(char)));
+    if (log_buffer == nullptr) {
+      return -1;
+    }
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    free(log_buffer);
+    return -1;
+  }
+
+  CUresult result = cuGraphInstantiate_v2(
+      &exec, graph, error_node_out != nullptr ? &error_node : nullptr,
+      log_buffer, log_buffer_size);
+  if (result == CUDA_SUCCESS) {
+    lupine_associate_graph_exec_resources(exec, graph);
+  }
+
+  uint8_t log_buffer_has_data = !log_buffer_null && result != CUDA_SUCCESS;
+  bool failed =
+      rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_write(conn, &error_node_out, sizeof(error_node_out)) < 0 ||
+      (error_node_out != nullptr &&
+       rpc_write(conn, &error_node, sizeof(error_node)) < 0) ||
+      rpc_write(conn, &log_buffer_has_data, sizeof(log_buffer_has_data)) < 0 ||
+      (log_buffer_has_data != 0 && log_buffer_size != 0 &&
+       rpc_write(conn, log_buffer, log_buffer_size) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0;
+  free(log_buffer);
+  return failed ? -1 : 0;
+}
+
 int handle_cuGraphInstantiateWithFlags(conn_t *conn) {
   CUgraphExec exec = nullptr;
   CUgraph graph = nullptr;
@@ -3716,10 +3783,7 @@ int handle_cuGraphInstantiateWithFlags(conn_t *conn) {
 
   result = cuGraphInstantiateWithFlags(&exec, graph, flags);
   if (result == CUDA_SUCCESS) {
-    lupine_graph_resources *resources = nullptr;
-    if (lupine_graph_resource_map().find(graph, resources)) {
-      lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
-    }
+    lupine_associate_graph_exec_resources(exec, graph);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3748,10 +3812,7 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
 
   result = cuGraphInstantiateWithParams(&exec, graph, &params);
   if (result == CUDA_SUCCESS) {
-    lupine_graph_resources *resources = nullptr;
-    if (lupine_graph_resource_map().find(graph, resources)) {
-      lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
-    }
+    lupine_associate_graph_exec_resources(exec, graph);
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||

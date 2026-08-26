@@ -8235,6 +8235,15 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
   }
 #endif
 
+  if (symbol != nullptr && cudaVersion < 12000 &&
+      strcmp(symbol, "cuGraphInstantiate") == 0) {
+    *pfn = get_function_pointer("cuGraphInstantiate_v2");
+    if (symbolStatus != nullptr) {
+      *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
+    }
+    return CUDA_SUCCESS;
+  }
+
   if (strcmp(symbol, "cuFuncGetAttribute") == 0) {
     *pfn = reinterpret_cast<void *>(&lupine_cuFuncGetAttribute_safe);
     if (symbolStatus != nullptr) {

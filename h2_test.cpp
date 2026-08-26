@@ -1,26 +1,29 @@
 #include "lupine_log.h"
 #include "rpc.h"
+#include "test_platform.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <iostream>
-#include <netinet/in.h>
 #include <nghttp2/nghttp2.h>
-#include <poll.h>
 #include <string>
-#include <sys/mman.h>
-#include <sys/socket.h>
 #include <thread>
 #include <type_traits>
-#include <unistd.h>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -38,21 +41,30 @@ struct h2_pair {
   conn_t server = {};
 
   h2_pair() {
-    client.connfd = -1;
-    server.connfd = -1;
+    client.connfd = LUPINE_INVALID_SOCKET;
+    server.connfd = LUPINE_INVALID_SOCKET;
   }
 
   ~h2_pair() {
     rpc_conn_destroy(&client);
     rpc_conn_destroy(&server);
-    if (client.connfd >= 0) {
-      close(client.connfd);
+    if (client.connfd != LUPINE_INVALID_SOCKET) {
+      lupine_socket_close(client.connfd);
     }
-    if (server.connfd >= 0) {
-      close(server.connfd);
+    if (server.connfd != LUPINE_INVALID_SOCKET) {
+      lupine_socket_close(server.connfd);
     }
   }
 };
+
+// Announce each case before it runs so a hang in CI names the case that hung
+// rather than just timing out the suite.
+#define RUN_CASE(call)                                                         \
+  do {                                                                         \
+    printf("  -> %s\n", #call);                                                \
+    fflush(stdout);                                                            \
+    call;                                                                      \
+  } while (0)
 
 void require(bool condition, const char *message) {
   if (!condition) {
@@ -74,8 +86,8 @@ h2_pair make_pair() {
 }
 
 void init_pair_sockets(h2_pair *pair) {
-  int fds[2] = {-1, -1};
-  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
+  lupine_socket_t fds[2];
+  require(lupine_test_connected_pair(fds), "connected socket pair failed");
   require(rpc_conn_init(&pair->client, fds[0], 0) == 0,
           "client RPC init failed");
   require(rpc_conn_init(&pair->server, fds[1], 1) == 0,
@@ -178,8 +190,7 @@ void test_response_wait_sends_transport_heartbeat() {
   rpc_http2_response_wait_begin(&pair.client);
   bool received_ping = false;
   for (int frame_count = 0; frame_count < 8 && !received_ping; ++frame_count) {
-    pollfd descriptor = {pair.server.connfd, POLLIN, 0};
-    require(poll(&descriptor, 1, 1000) > 0,
+    require(lupine_test_wait_readable(pair.server.connfd, 1000),
             "response wait did not emit an HTTP/2 frame");
     std::array<unsigned char, 9> header = {};
     require(raw_read_frame(pair.server.connfd, &header),
@@ -206,7 +217,7 @@ void test_server_receives_session_id() {
   const char *original = getenv("LUPINE_SESSION");
   bool had_original = original != nullptr;
   std::string saved = original == nullptr ? "" : original;
-  setenv("LUPINE_SESSION", "lease-123", 1);
+  lupine_test_setenv("LUPINE_SESSION", "lease-123");
 
   {
     h2_pair pair = make_pair();
@@ -219,9 +230,9 @@ void test_server_receives_session_id() {
   }
 
   if (had_original) {
-    setenv("LUPINE_SESSION", saved.c_str(), 1);
+    lupine_test_setenv("LUPINE_SESSION", saved.c_str());
   } else {
-    unsetenv("LUPINE_SESSION");
+    lupine_test_unsetenv("LUPINE_SESSION");
   }
 }
 
@@ -371,7 +382,7 @@ void test_va_claim_is_disjoint_under_contention() {
   std::vector<std::thread> workers;
   for (auto &bucket : claims) {
     bucket.reserve(kPerThread);
-    workers.emplace_back([&bucket, &conn, &ready, &go] {
+    workers.emplace_back([&bucket, &conn, &ready, &go, kPerThread, kAlign] {
       ready.fetch_add(1, std::memory_order_release);
       while (!go.load(std::memory_order_acquire)) {
       }
@@ -464,7 +475,7 @@ void test_fragmented_frames_direct() {
   std::string received;
   std::thread reader(
       [&] { received = read_string(&pair.server, expected.size()); });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {"fragment"});
   write_all(&pair.client, {"ed"});
   write_all(&pair.client, {"-data"});
@@ -494,7 +505,7 @@ void test_partial_read_stages_only_overflow() {
                 static_cast<int>(received.size() - 7),
             "partial suffix read failed");
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {payload});
   reader.join();
   require(received == payload, "partial read payload mismatch");
@@ -521,9 +532,9 @@ void test_truncated_read_clears_direct_destination() {
   std::thread reader([&] {
     read_result = rpc_http2_read(&pair.server, guarded.data() + 8, 32);
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {prefix});
-  require(shutdown(pair.client.connfd, SHUT_WR) == 0,
+  require(shutdown(pair.client.connfd, LUPINE_TEST_SHUT_WR) == 0,
           "truncated writer shutdown failed");
   reader.join();
   require(read_result == -1, "truncated read unexpectedly succeeded");
@@ -593,28 +604,26 @@ void test_abort_failed_transport_with_queued_data() {
               user_timeout == 105000,
           "unacknowledged transport data has no dead-peer timeout");
 #endif
-  int buffer_size = 4096;
-  require(setsockopt(connection.connfd, SOL_SOCKET, SO_SNDBUF, &buffer_size,
-                     sizeof(buffer_size)) == 0,
+  const int buffer_size = 4096;
+  require(lupine_test_setsockopt_int(connection.connfd, SOL_SOCKET, SO_SNDBUF,
+                                     buffer_size) == 0,
           "queued close send buffer setup failed");
   require(connect(connection.connfd, reinterpret_cast<sockaddr *>(&address),
                   sizeof(address)) == 0,
           "queued close connect failed");
   int peer = accept(listener, nullptr, nullptr);
   require(peer >= 0, "queued close accept failed");
-  require(setsockopt(peer, SOL_SOCKET, SO_RCVBUF, &buffer_size,
-                     sizeof(buffer_size)) == 0,
-          "queued close receive buffer setup failed");
+  require(
+      lupine_test_setsockopt_int(peer, SOL_SOCKET, SO_RCVBUF, buffer_size) == 0,
+      "queued close receive buffer setup failed");
 
-  int flags = fcntl(connection.connfd, F_GETFL, 0);
-  require(flags >= 0 &&
-              fcntl(connection.connfd, F_SETFL, flags | O_NONBLOCK) == 0,
+  require(lupine_test_set_nonblocking(connection.connfd),
           "queued close nonblocking setup failed");
   std::array<char, 64 * 1024> payload = {};
   size_t queued = 0;
   for (;;) {
-    ssize_t sent =
-        send(connection.connfd, payload.data(), payload.size(), MSG_NOSIGNAL);
+    ssize_t sent = send(connection.connfd, payload.data(), payload.size(),
+                        LUPINE_TEST_MSG_NOSIGNAL);
     if (sent > 0) {
       queued += static_cast<size_t>(sent);
       continue;
@@ -635,8 +644,8 @@ void test_abort_failed_transport_with_queued_data() {
   require(received < 0 && errno == ECONNRESET,
           "queued transport close was not abortive");
 
-  close(peer);
-  close(listener);
+  lupine_socket_close(peer);
+  lupine_socket_close(listener);
 }
 
 void test_independent_stream_lanes() {
@@ -707,19 +716,19 @@ void test_socket_reader_hands_off_between_streams() {
     require(rpc_http2_read(&pair.client, &dispatch_value, 1) == 1,
             "dispatch stream handoff read failed");
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   std::thread lane_reader([&] {
     require(rpc_http2_read_stream(&pair.client, client_lane, &lane_value, 1) ==
                 1,
             "lane handoff read failed");
     lane_done.store(true, std::memory_order_release);
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
   require(write_stream_bytes(&pair.server, server_lane, "l", 1) == 0,
           "lane handoff write failed");
   for (int i = 0; i < 100 && !lane_done.load(std::memory_order_acquire); ++i) {
-    usleep(10 * 1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   bool handed_off = lane_done.load(std::memory_order_acquire);
 
@@ -765,6 +774,10 @@ void test_large_payload() {
   require(received == payload, "large payload mismatch");
 }
 
+#ifndef _WIN32
+// The payload is a >2 GiB read-only MAP_NORESERVE mapping that is never
+// faulted in; Windows cannot hand out readable pages without charging
+// commit, so this case stays Unix-only.
 void test_payload_larger_than_flow_control_window() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
@@ -806,11 +819,11 @@ void test_payload_larger_than_flow_control_window() {
 
   int write_result = write_bytes(&pair.client, payload, payload_size);
   if (write_result != 0) {
-    shutdown(pair.client.connfd, SHUT_RDWR);
-    shutdown(pair.server.connfd, SHUT_RDWR);
+    shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
+    shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
   }
   server_reader.join();
-  shutdown(pair.client.connfd, SHUT_RDWR);
+  shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
   client_control_reader.join();
   munmap(payload, payload_size);
 
@@ -818,6 +831,7 @@ void test_payload_larger_than_flow_control_window() {
   require(!read_failed, "flow-controlled read failed");
   require(received == payload_size, "flow-controlled payload was truncated");
 }
+#endif
 
 // A server-side hold keeps received payload bytes uncredited until the staging
 // they landed in retires. Held bytes saturate at a cap so the reader filling
@@ -968,8 +982,8 @@ void test_reset_wakes_flow_controlled_writer() {
 
   std::string payload(128 * 1024, 'x');
   int write_result = write_bytes(&pair.client, payload.data(), payload.size());
-  shutdown(pair.client.connfd, SHUT_RDWR);
-  shutdown(pair.server.connfd, SHUT_RDWR);
+  shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
+  shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
   server_reset.join();
 
   require(write_result < 0,
@@ -1355,7 +1369,8 @@ void test_request_start_rejects_null_and_closed_conn() {
 
 // TSan supports only narrow application VA bands and owns these fixed test
 // addresses itself. CUDA targets are not TSan-instrumented in this project.
-#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__)
+#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
+    !defined(_WIN32)
 void test_rpc_read_uses_w_offset() {
   long configured_page_size = sysconf(_SC_PAGESIZE);
   require(configured_page_size > 0, "page size lookup failed");
@@ -1436,41 +1451,44 @@ void test_rpc_read_uses_w_offset() {
 } // namespace
 
 int main() {
-  test_request_start_rejects_null_and_closed_conn();
-#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__)
-  test_rpc_read_uses_w_offset();
+  RUN_CASE(test_request_start_rejects_null_and_closed_conn());
+#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
+    !defined(_WIN32)
+  RUN_CASE(test_rpc_read_uses_w_offset());
 #endif
-  test_rpc_write_queue_grows();
-  test_rpc_write_buffer_uses_fixed_allocation();
-  test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
-  test_rpc_lz4_small_payload_round_trip();
-  test_rpc_repeated_responses_on_lane();
-  test_response_wait_sends_transport_heartbeat();
-  test_client_to_server();
-  test_server_receives_session_id();
-  test_server_to_client_after_request_headers();
-  test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION);
-  test_head_probe_cuda_version_metadata(nullptr);
-  test_wire_identity_compatibility_rule();
-  test_client_await_ready_reports_wire_identity();
-  test_client_await_ready_reports_va_window();
-  test_va_window_and_aliases_are_disjoint();
-  test_va_claim_bumps_within_arena();
-  test_va_claim_is_disjoint_under_contention();
-  test_fragmented_cursors();
-  test_fragmented_frames_direct();
-  test_partial_read_stages_only_overflow();
-  test_truncated_read_clears_direct_destination();
-  test_close_already_failed_transport_socket();
-  test_abort_failed_transport_with_queued_data();
-  test_independent_stream_lanes();
-  test_socket_reader_hands_off_between_streams();
-  test_large_payload();
-  test_framed_payload_round_trip();
-  test_fragmented_framed_payload_round_trip();
-  test_payload_larger_than_flow_control_window();
-  test_server_window_hold_caps_and_releases();
-  test_reset_wakes_flow_controlled_writer();
+  RUN_CASE(test_rpc_write_queue_grows());
+  RUN_CASE(test_rpc_write_buffer_uses_fixed_allocation());
+  RUN_CASE(test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy());
+  RUN_CASE(test_rpc_lz4_small_payload_round_trip());
+  RUN_CASE(test_rpc_repeated_responses_on_lane());
+  RUN_CASE(test_response_wait_sends_transport_heartbeat());
+  RUN_CASE(test_client_to_server());
+  RUN_CASE(test_server_receives_session_id());
+  RUN_CASE(test_server_to_client_after_request_headers());
+  RUN_CASE(test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION));
+  RUN_CASE(test_head_probe_cuda_version_metadata(nullptr));
+  RUN_CASE(test_wire_identity_compatibility_rule());
+  RUN_CASE(test_client_await_ready_reports_wire_identity());
+  RUN_CASE(test_client_await_ready_reports_va_window());
+  RUN_CASE(test_va_window_and_aliases_are_disjoint());
+  RUN_CASE(test_va_claim_bumps_within_arena());
+  RUN_CASE(test_va_claim_is_disjoint_under_contention());
+  RUN_CASE(test_fragmented_cursors());
+  RUN_CASE(test_fragmented_frames_direct());
+  RUN_CASE(test_partial_read_stages_only_overflow());
+  RUN_CASE(test_truncated_read_clears_direct_destination());
+  RUN_CASE(test_close_already_failed_transport_socket());
+  RUN_CASE(test_abort_failed_transport_with_queued_data());
+  RUN_CASE(test_independent_stream_lanes());
+  RUN_CASE(test_socket_reader_hands_off_between_streams());
+  RUN_CASE(test_large_payload());
+  RUN_CASE(test_framed_payload_round_trip());
+  RUN_CASE(test_fragmented_framed_payload_round_trip());
+#ifndef _WIN32
+  RUN_CASE(test_payload_larger_than_flow_control_window());
+#endif
+  RUN_CASE(test_server_window_hold_caps_and_releases());
+  RUN_CASE(test_reset_wakes_flow_controlled_writer());
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }

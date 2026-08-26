@@ -13,6 +13,8 @@
 #include <nvml.h>
 #endif
 
+#include <hip/hip_runtime_api.h>
+
 typedef struct {
   unsigned int version;
   nvmlTemperatureSensors_t sensorType;
@@ -4569,6 +4571,19 @@ CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
  * @param hNode SEND_ONLY
  */
 CUresult cuGraphDestroyNode(CUgraphNode hNode);
+/**
+ * @disabled server - manual server retains graph staging resources
+ * @recordowner GRAPH_EXEC phGraphExec
+ * @param phGraphExec RECV_ONLY
+ * @param hGraph SEND_ONLY
+ * @param phErrorNode RECV_ONLY NULLABLE
+ * @param bufferSize SEND_ONLY
+ * @param logBuffer RECV_ONLY NULLABLE LENGTH:bufferSize ON_ERROR
+ * @server CUDA
+ */
+CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
+                               CUgraphNode *phErrorNode, char *logBuffer,
+                               size_t bufferSize);
 /**
  * @recordowner GRAPH_EXEC phGraphExec
  * @param phGraphExec SEND_RECV
@@ -17334,6 +17349,71 @@ cublasStatus_t cublasGemmStridedBatchedEx(
     long long int strideB, const void *beta, void *C, cudaDataType Ctype,
     int ldc, long long int strideC, int batchCount, cudaDataType computeType,
     cublasGemmAlgo_t algo);
+
+// HIP runtime API. The initial generated surface covers device discovery and
+// properties.
+
+/**
+ * @server HIP
+ * @disabled client - manual client initializes every configured route
+ * @param flags SEND_ONLY
+ */
+hipError_t hipInit(unsigned int flags);
+/**
+ * @server HIP
+ * @disabled client - manual client reports the virtual device table size
+ * @param count RECV_ONLY
+ */
+hipError_t hipGetDeviceCount(int *count);
+/**
+ * @server HIP
+ * @disabled client - manual client maps the virtual device ordinal
+ * @param device RECV_ONLY
+ * @param ordinal SEND_ONLY
+ */
+hipError_t hipDeviceGet(int *device, int ordinal);
+/**
+ * @server HIP
+ * @param prop RECV_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipGetDevicePropertiesR0600(hipDeviceProp_tR0600 *prop,
+                                       int deviceId);
+/**
+ * @server HIP
+ * @param name RECV_ONLY LENGTH:len
+ * @param len SEND_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceGetName(char *name, int len, int deviceId);
+/**
+ * @server HIP
+ * @param bytes RECV_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceTotalMem(size_t *bytes, int deviceId);
+/**
+ * @server HIP
+ * @param pi RECV_ONLY
+ * @param attr SEND_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceGetAttribute(int *pi, hipDeviceAttribute_t attr,
+                                 int deviceId);
+/**
+ * @server HIP
+ * @param driverVersion RECV_ONLY
+ */
+hipError_t hipDriverGetVersion(int *driverVersion);
+/**
+ * @server HIP
+ * @param runtimeVersion RECV_ONLY
+ */
+hipError_t hipRuntimeGetVersion(int *runtimeVersion);
 
 // Registry-only operations without API declarations above. The code generator
 // reads these annotations directly; the C++ parser intentionally ignores them.
