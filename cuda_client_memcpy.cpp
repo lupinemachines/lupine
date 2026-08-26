@@ -2871,84 +2871,67 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
 // must not see the call return until the bytes have landed: true for the
 // synchronous entry points, and true for an asynchronous one whose host side is
 // pageable, because the driver completes those before returning.
-// UNIFIED addresses are client-space: a managed alias is already the server's
-// address for that allocation, a plain host pointer's bytes must travel, and a
-// device pointer is already server-valid.
-static void lupine_resolve_unified(CUDA_MEMCPY3D &copy) {
-  if (copy.srcMemoryType == CU_MEMORYTYPE_UNIFIED &&
-      !lupine_is_managed_host_alias(copy.srcDevice) &&
-      lupine_copy_pointer_is_host(copy.srcDevice)) {
-    copy.srcHost = reinterpret_cast<const void *>(copy.srcDevice);
-    copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+// Where a copy end's bytes live. A UNIFIED address is client-space: a managed
+// alias is already the server's address for that allocation and a plain device
+// pointer is server-valid, but an ordinary host pointer's bytes have to travel.
+// An array is device memory the client cannot address at all.
+static bool lupine_copy_end_is_host(CUmemorytype type, CUdeviceptr address) {
+  if (type == CU_MEMORYTYPE_HOST) {
+    return true;
   }
-  if (copy.dstMemoryType == CU_MEMORYTYPE_UNIFIED &&
-      !lupine_is_managed_host_alias(copy.dstDevice) &&
-      lupine_copy_pointer_is_host(copy.dstDevice)) {
-    copy.dstHost = reinterpret_cast<void *>(copy.dstDevice);
-    copy.dstMemoryType = CU_MEMORYTYPE_HOST;
-  }
+  return type == CU_MEMORYTYPE_UNIFIED &&
+         !lupine_is_managed_host_alias(address) &&
+         lupine_copy_pointer_is_host(address);
 }
 
-extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
-                                  bool blocking) {
-  CUDA_MEMCPY3D copy = *request;
-  lupine_resolve_unified(copy);
+// The address of a host end, which a UNIFIED descriptor carries in the device
+// field.
+static void *lupine_copy_host_end(CUmemorytype type, const void *host,
+                                  CUdeviceptr address) {
+  return type == CU_MEMORYTYPE_HOST ? const_cast<void *>(host)
+                                    : reinterpret_cast<void *>(address);
+}
+
+static CUresult lupine_memcpy_htoh(const CUDA_MEMCPY3D &copy) {
   const size_t run = copy.WidthInBytes;
   const size_t rows = copy.Height == 0 ? 1 : copy.Height;
   const size_t slices = copy.Depth == 0 ? 1 : copy.Depth;
-  const size_t total = run * rows * slices;
-  if (total == 0) {
-    return CUDA_SUCCESS;
-  }
-
-  const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
-  const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
   const size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
   const size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
-  if (host_source && host_destination) {
-    const char *from = static_cast<const char *>(copy.srcHost) +
-                       copy.srcZ * src_slice_pitch + copy.srcY * copy.srcPitch +
-                       copy.srcXInBytes;
-    char *to = static_cast<char *>(copy.dstHost) + copy.dstZ * dst_slice_pitch +
-               copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    for (size_t slice = 0; slice < slices; ++slice) {
-      for (size_t row = 0; row < rows; ++row) {
-        memmove(to + slice * dst_slice_pitch + row * copy.dstPitch,
-                from + slice * src_slice_pitch + row * copy.srcPitch, run);
-      }
+  const char *from = static_cast<const char *>(lupine_copy_host_end(
+                         copy.srcMemoryType, copy.srcHost, copy.srcDevice)) +
+                     copy.srcZ * src_slice_pitch + copy.srcY * copy.srcPitch +
+                     copy.srcXInBytes;
+  char *to = static_cast<char *>(lupine_copy_host_end(
+                 copy.dstMemoryType, copy.dstHost, copy.dstDevice)) +
+             copy.dstZ * dst_slice_pitch + copy.dstY * copy.dstPitch +
+             copy.dstXInBytes;
+  for (size_t slice = 0; slice < slices; ++slice) {
+    for (size_t row = 0; row < rows; ++row) {
+      memmove(to + slice * dst_slice_pitch + row * copy.dstPitch,
+              from + slice * src_slice_pitch + row * copy.srcPitch, run);
     }
-    return CUDA_SUCCESS;
   }
+  return CUDA_SUCCESS;
+}
 
-  if (copy.srcMemoryType == CU_MEMORYTYPE_DEVICE &&
-      copy.dstMemoryType == CU_MEMORYTYPE_DEVICE &&
-      !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
-    // The two ends live on different servers, so each run makes the trip
-    // through the client.
-    for (size_t slice = 0; slice < slices; ++slice) {
-      for (size_t row = 0; row < rows; ++row) {
-        CUresult result = lupine_cuMemcpyDtoD_via_client(
-            copy.dstDevice + (copy.dstZ + slice) * dst_slice_pitch +
-                (copy.dstY + row) * copy.dstPitch + copy.dstXInBytes,
-            copy.srcDevice + (copy.srcZ + slice) * src_slice_pitch +
-                (copy.srcY + row) * copy.srcPitch + copy.srcXInBytes,
-            run, stream, !blocking);
-        if (result != CUDA_SUCCESS) {
-          return result;
-        }
-      }
-    }
-    return CUDA_SUCCESS;
-  }
+static CUresult lupine_memcpy_htod(CUDA_MEMCPY3D copy, CUstream stream,
+                                   bool blocking) {
+  const size_t run = copy.WidthInBytes;
+  const size_t rows = copy.Height == 0 ? 1 : copy.Height;
+  const size_t slices = copy.Depth == 0 ? 1 : copy.Depth;
+  const size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
+  // The server stages the payload and hands it to the driver as host memory,
+  // so the wire descriptor names the host end that way however the caller
+  // spelled it.
+  void *host =
+      lupine_copy_host_end(copy.srcMemoryType, copy.srcHost, copy.srcDevice);
+  copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+  copy.srcHost = host;
 
-  lupine_route route =
-      copy.srcMemoryType == CU_MEMORYTYPE_DEVICE ||
-              copy.srcMemoryType == CU_MEMORYTYPE_UNIFIED
-          ? lupine_route_for_deviceptr(copy.srcDevice)
-          : (copy.dstMemoryType == CU_MEMORYTYPE_DEVICE ||
-                     copy.dstMemoryType == CU_MEMORYTYPE_UNIFIED
-                 ? lupine_route_for_deviceptr(copy.dstDevice)
-                 : lupine_route_for_stream(stream));
+  lupine_route route = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
+                           ? lupine_route_for_stream(stream)
+                           : lupine_route_for_deviceptr(copy.dstDevice);
   if (lupine_route_is_local(route)) {
     // Synchronizing the legacy stream would wait on every other stream's work
     // as well, so a blocking copy there is the driver's own synchronous copy
@@ -2966,60 +2949,84 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
+  // A mapped host allocation may be stale; reading it has to go through the
+  // mirror the fault handler maintains. That happens before the request opens,
+  // because servicing a fault is itself a request on this thread.
+  size_t span =
+      (slices - 1) * src_slice_pitch + (rows - 1) * copy.srcPitch + run;
+  const char *source_rows =
+      static_cast<const char *>(lupine_mapped_host_read_source(
+          static_cast<const char *>(host) + copy.srcZ * src_slice_pitch +
+              copy.srcY * copy.srcPitch + copy.srcXInBytes,
+          span));
   const uint8_t blocking_wire = blocking ? 1 : 0;
-  // Host-to-host returned above and a copy has at most one host end, so the
-  // two sides never both need staging.
-  if (host_source) {
-    // A mapped host allocation may be stale; reading it has to go through the
-    // mirror the fault handler maintains. That happens before the request
-    // opens, because servicing a fault is itself a request on this thread.
-    size_t span =
-        (slices - 1) * src_slice_pitch + (rows - 1) * copy.srcPitch + run;
-    const char *source_rows =
-        static_cast<const char *>(lupine_mapped_host_read_source(
-            static_cast<const char *>(copy.srcHost) +
-                copy.srcZ * src_slice_pitch + copy.srcY * copy.srcPitch +
-                copy.srcXInBytes,
-            span));
-    if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
-        rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write(conn, &stream, sizeof(stream)) < 0 ||
-        rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0 ||
-        rpc_write_pitched_payload(conn, source_rows, run, rows, copy.srcPitch,
-                                  slices, src_slice_pitch) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
+      rpc_write(conn, &copy, sizeof(copy)) < 0 ||
+      rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0 ||
+      rpc_write_pitched_payload(conn, source_rows, run, rows, copy.srcPitch,
+                                slices, src_slice_pitch) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (!blocking) {
+    // Fire and forget, as the driver's is: the payload is on its way and an
+    // execution failure surfaces from the caller's next synchronize rather
+    // than from here. The server answers nothing, so nothing is left unread.
+    return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                                   : CUDA_SUCCESS;
+  }
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
+static CUresult lupine_memcpy_dtoh(CUDA_MEMCPY3D copy, CUstream stream,
+                                   bool blocking) {
+  const size_t run = copy.WidthInBytes;
+  const size_t rows = copy.Height == 0 ? 1 : copy.Height;
+  const size_t slices = copy.Depth == 0 ? 1 : copy.Depth;
+  const size_t total = run * rows * slices;
+  const size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
+  void *host =
+      lupine_copy_host_end(copy.dstMemoryType, copy.dstHost, copy.dstDevice);
+  copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+  copy.dstHost = host;
+
+  lupine_route route = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
+                           ? lupine_route_for_stream(stream)
+                           : lupine_route_for_deviceptr(copy.srcDevice);
+  if (lupine_route_is_local(route)) {
+    // Synchronizing the legacy stream would wait on every other stream's work
+    // as well, so a blocking copy there is the driver's own synchronous copy
+    // rather than an asynchronous one plus a wait. A blocking copy on a real
+    // stream has to stay ordered behind that stream, so it keeps the wait.
+    if (blocking && (stream == CU_STREAM_LEGACY || stream == nullptr)) {
+      return lupine_call_real_cuda_fn("cuMemcpy3D_v2", &copy);
     }
-    if (!blocking) {
-      // A non-blocking upload is fire-and-forget, as the driver's is: the
-      // payload is on its way and an execution failure surfaces from the
-      // caller's next synchronize rather than from here. The server answers
-      // nothing, so nothing is left unread.
-      return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                                     : CUDA_SUCCESS;
-    }
-    CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-    if (rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    CUresult result =
+        lupine_call_real_cuda_fn("cuMemcpy3DAsync_v2", &copy, stream);
+    if (result == CUDA_SUCCESS && blocking) {
+      result = lupine_call_real_cuda_fn("cuStreamSynchronize", stream);
     }
     return result;
   }
 
+  conn_t *conn = lupine_route_remote_conn(route);
   // The response lands in the caller's buffer while the read is open, so a
   // stale mapped allocation is settled first: faulting mid-read would hand
   // this thread's read state to the fault handler's own request.
-  char *destination_rows = nullptr;
-  char *written_destination = nullptr;
+  char *written_destination = static_cast<char *>(host) +
+                              copy.dstZ * dst_slice_pitch +
+                              copy.dstY * copy.dstPitch + copy.dstXInBytes;
   size_t written_span =
       (slices - 1) * dst_slice_pitch + (rows - 1) * copy.dstPitch + run;
-  if (host_destination) {
-    written_destination = static_cast<char *>(copy.dstHost) +
-                          copy.dstZ * dst_slice_pitch +
-                          copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    destination_rows = const_cast<char *>(static_cast<const char *>(
-        lupine_mapped_host_read_source(written_destination, written_span)));
-  }
+  char *destination_rows = const_cast<char *>(static_cast<const char *>(
+      lupine_mapped_host_read_source(written_destination, written_span)));
+  const uint8_t blocking_wire = blocking ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
       rpc_write(conn, &copy, sizeof(copy)) < 0 ||
@@ -3028,25 +3035,15 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (!host_destination) {
-    // Neither end is host memory, so the answer is just the result, and it is
-    // always read: the server writes one whether or not the caller is waiting.
-    if (rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    return result;
-  }
-
-  // The server answers a host destination one chunk at a time and states each
-  // chunk's size, so the two ends never have to agree on how it was split.
+  // The server answers one chunk at a time and states each chunk's size, so
+  // the two ends never have to agree on how it was split.
   int request_id = rpc_write_end(conn);
   if (request_id < 0 || rpc_read_start(conn, request_id) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   const bool contiguous_destination =
       copy.dstPitch == run && (slices == 1 || dst_slice_pitch == run * rows);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   std::vector<unsigned char> staging;
   size_t offset = 0;
   while (offset < total) {
@@ -3105,6 +3102,92 @@ extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
     }
   }
   return result;
+}
+
+static CUresult lupine_memcpy_dtod(CUDA_MEMCPY3D copy, CUstream stream,
+                                   bool blocking) {
+  const size_t run = copy.WidthInBytes;
+  const size_t rows = copy.Height == 0 ? 1 : copy.Height;
+  const size_t slices = copy.Depth == 0 ? 1 : copy.Depth;
+  const size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
+  const size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
+  if (copy.srcMemoryType == CU_MEMORYTYPE_DEVICE &&
+      copy.dstMemoryType == CU_MEMORYTYPE_DEVICE &&
+      !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
+    // The two ends live on different servers, so each run makes the trip
+    // through the client.
+    for (size_t slice = 0; slice < slices; ++slice) {
+      for (size_t row = 0; row < rows; ++row) {
+        CUresult result = lupine_cuMemcpyDtoD_via_client(
+            copy.dstDevice + (copy.dstZ + slice) * dst_slice_pitch +
+                (copy.dstY + row) * copy.dstPitch + copy.dstXInBytes,
+            copy.srcDevice + (copy.srcZ + slice) * src_slice_pitch +
+                (copy.srcY + row) * copy.srcPitch + copy.srcXInBytes,
+            run, stream, !blocking);
+        if (result != CUDA_SUCCESS) {
+          return result;
+        }
+      }
+    }
+    return CUDA_SUCCESS;
+  }
+
+  lupine_route route = copy.srcMemoryType != CU_MEMORYTYPE_ARRAY
+                           ? lupine_route_for_deviceptr(copy.srcDevice)
+                           : (copy.dstMemoryType != CU_MEMORYTYPE_ARRAY
+                                  ? lupine_route_for_deviceptr(copy.dstDevice)
+                                  : lupine_route_for_stream(stream));
+  if (lupine_route_is_local(route)) {
+    // Synchronizing the legacy stream would wait on every other stream's work
+    // as well, so a blocking copy there is the driver's own synchronous copy
+    // rather than an asynchronous one plus a wait. A blocking copy on a real
+    // stream has to stay ordered behind that stream, so it keeps the wait.
+    if (blocking && (stream == CU_STREAM_LEGACY || stream == nullptr)) {
+      return lupine_call_real_cuda_fn("cuMemcpy3D_v2", &copy);
+    }
+    CUresult result =
+        lupine_call_real_cuda_fn("cuMemcpy3DAsync_v2", &copy, stream);
+    if (result == CUDA_SUCCESS && blocking) {
+      result = lupine_call_real_cuda_fn("cuStreamSynchronize", stream);
+    }
+    return result;
+  }
+
+  // Nothing is staged, so the answer is just the result, and it is always read:
+  // the server writes one whether or not the caller is waiting.
+  conn_t *conn = lupine_route_remote_conn(route);
+  const uint8_t blocking_wire = blocking ? 1 : 0;
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpy) < 0 ||
+      rpc_write(conn, &copy, sizeof(copy)) < 0 ||
+      rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_write(conn, &blocking_wire, sizeof(blocking_wire)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
+extern "C" CUresult lupine_memcpy(const CUDA_MEMCPY3D *request, CUstream stream,
+                                  bool blocking) {
+  const CUDA_MEMCPY3D &copy = *request;
+  const size_t rows = copy.Height == 0 ? 1 : copy.Height;
+  const size_t slices = copy.Depth == 0 ? 1 : copy.Depth;
+  if (copy.WidthInBytes * rows * slices == 0) {
+    return CUDA_SUCCESS;
+  }
+  const bool host_source =
+      lupine_copy_end_is_host(copy.srcMemoryType, copy.srcDevice);
+  const bool host_destination =
+      lupine_copy_end_is_host(copy.dstMemoryType, copy.dstDevice);
+  if (host_source) {
+    return host_destination ? lupine_memcpy_htoh(copy)
+                            : lupine_memcpy_htod(copy, stream, blocking);
+  }
+  return host_destination ? lupine_memcpy_dtoh(copy, stream, blocking)
+                          : lupine_memcpy_dtod(copy, stream, blocking);
 }
 
 extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
@@ -3345,9 +3428,9 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
   copy.Depth = 1;
   // The pitched entry points invalidate every mapped host allocation once the
   // device side has changed, which the linear ones have never done.
-  lupine_resolve_unified(copy);
   CUresult result = lupine_memcpy(&copy, CU_STREAM_LEGACY, true);
-  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+  if (result == CUDA_SUCCESS &&
+      !lupine_copy_end_is_host(copy.dstMemoryType, copy.dstDevice)) {
     result = lupine_sync_mapped_device_to_host();
   }
   return result;
@@ -3389,9 +3472,9 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
   copy.Depth = 1;
   // The pitched entry points invalidate every mapped host allocation once the
   // device side has changed, which the linear ones have never done.
-  lupine_resolve_unified(copy);
   CUresult result = lupine_memcpy(&copy, CU_STREAM_LEGACY, true);
-  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+  if (result == CUDA_SUCCESS &&
+      !lupine_copy_end_is_host(copy.dstMemoryType, copy.dstDevice)) {
     result = lupine_sync_mapped_device_to_host();
   }
   return result;
@@ -3434,9 +3517,9 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
   copy.Depth = 1;
   // The pitched entry points invalidate every mapped host allocation once the
   // device side has changed, which the linear ones have never done.
-  lupine_resolve_unified(copy);
   CUresult result = lupine_memcpy(&copy, hStream, false);
-  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+  if (result == CUDA_SUCCESS &&
+      !lupine_copy_end_is_host(copy.dstMemoryType, copy.dstDevice)) {
     result = lupine_sync_mapped_device_to_host();
   }
   return result;
@@ -3465,9 +3548,9 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
   CUDA_MEMCPY3D copy = *pCopy;
   // The pitched entry points invalidate every mapped host allocation once the
   // device side has changed, which the linear ones have never done.
-  lupine_resolve_unified(copy);
   CUresult result = lupine_memcpy(&copy, CU_STREAM_LEGACY, true);
-  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+  if (result == CUDA_SUCCESS &&
+      !lupine_copy_end_is_host(copy.dstMemoryType, copy.dstDevice)) {
     result = lupine_sync_mapped_device_to_host();
   }
   return result;
@@ -3481,9 +3564,9 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
   CUDA_MEMCPY3D copy = *pCopy;
   // The pitched entry points invalidate every mapped host allocation once the
   // device side has changed, which the linear ones have never done.
-  lupine_resolve_unified(copy);
   CUresult result = lupine_memcpy(&copy, hStream, false);
-  if (result == CUDA_SUCCESS && copy.dstMemoryType != CU_MEMORYTYPE_HOST) {
+  if (result == CUDA_SUCCESS &&
+      !lupine_copy_end_is_host(copy.dstMemoryType, copy.dstDevice)) {
     result = lupine_sync_mapped_device_to_host();
   }
   return result;
