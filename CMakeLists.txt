@@ -435,7 +435,9 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
     add_test(NAME h2_test COMMAND h2_test)
-    lupine_scaled_timeout(h2_timeout 30)
+    # Streaming incompressible window-limit payloads through gzip can exceed
+    # 30 seconds on slower CI runners (notably macOS x86_64).
+    lupine_scaled_timeout(h2_timeout 90)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
 endif()
 
