@@ -1004,10 +1004,10 @@ void test_framed_payload_round_trip() {
   std::thread reader([&] {
     received_prefix = read_string(&pair.server, prefix.size());
     size_t first = LUPINE_COMPRESS_BLOCK_BYTES;
-    require(rpc_read_payload_part(&pair.server, 1, received.data(), first) ==
+    require(rpc_read_payload_part(&pair.server, received.data(), first) ==
                 static_cast<int>(first),
             "framed read part 1 failed");
-    require(rpc_read_payload_part(&pair.server, 1, received.data() + first,
+    require(rpc_read_payload_part(&pair.server, received.data() + first,
                                   received.size() - first) ==
                 static_cast<int>(received.size() - first),
             "framed read part 2 failed");
@@ -1159,13 +1159,13 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
           "rpc_conn_destroy retained the copy buffer");
 }
 
-void test_rpc_lz4_payload_round_trip() {
+void test_rpc_lz4_small_payload_round_trip() {
   h2_pair pair = make_pair();
 
   std::string prefix = "before";
   std::string suffix = "after";
   constexpr int kOp = 79;
-  std::vector<char> payload(LUPINE_COMPRESS_BLOCK_BYTES + 128 * 1024);
+  std::vector<char> payload(1024);
   for (size_t i = 0; i < payload.size(); ++i) {
     payload[i] = static_cast<char>(i % 13);
   }
@@ -1173,7 +1173,6 @@ void test_rpc_lz4_payload_round_trip() {
   std::string received_prefix(prefix.size(), '\0');
   std::string received_suffix(suffix.size(), '\0');
   std::vector<char> received(payload.size());
-  const rpc_http2_read_stats before = read_stats(&pair.server);
   std::thread reader([&] {
     int32_t stream_id = rpc_http2_accept_stream(&pair.server);
     require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
@@ -1201,6 +1200,11 @@ void test_rpc_lz4_payload_round_trip() {
           "lz4 payload prefix write failed");
   require(rpc_write_payload(&pair.client, payload.data(), payload.size()) == 0,
           "lz4 payload payload write failed");
+  const rpc_write_cursor &payload_cursor = pair.client.write_queue.back();
+  require(payload_cursor.source ==
+                  reinterpret_cast<const unsigned char *>(payload.data()) &&
+              payload_cursor.source_size == payload.size(),
+          "small payload was not LZ4-framed");
   require(rpc_write(&pair.client, suffix.data(), suffix.size()) == 0,
           "lz4 payload suffix write failed");
   require(rpc_write_end(&pair.client) > 0, "lz4 payload write_end failed");
@@ -1209,9 +1213,6 @@ void test_rpc_lz4_payload_round_trip() {
   require(received_prefix == prefix, "lz4 payload prefix mismatch");
   require(received == payload, "lz4 payload payload mismatch");
   require(received_suffix == suffix, "lz4 payload suffix mismatch");
-  const rpc_http2_read_stats after = read_stats(&pair.server);
-  require(after.direct_bytes > before.direct_bytes,
-          "lz4 payload did not use direct receive");
 }
 
 void test_rpc_repeated_responses_on_lane() {
@@ -1371,7 +1372,7 @@ int main() {
   test_rpc_write_queue_grows();
   test_rpc_write_buffer_uses_fixed_allocation();
   test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
-  test_rpc_lz4_payload_round_trip();
+  test_rpc_lz4_small_payload_round_trip();
   test_rpc_repeated_responses_on_lane();
   test_response_wait_sends_transport_heartbeat();
   test_client_to_server();

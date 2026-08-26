@@ -588,8 +588,7 @@ static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
 }
 
 static int rpc_read_framed_payload(conn_t *conn, void *data, size_t size) {
-  return rpc_read_payload_part(conn, lupine_payload_framed(conn, size), data,
-                               size);
+  return rpc_read_payload_part(conn, data, size);
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {

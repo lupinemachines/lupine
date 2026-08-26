@@ -64,7 +64,6 @@ struct h2_transport {
   bool server = false;
   bool request_received = false;
   bool request_handled = false;
-  bool compress_lz4 = false;
   int32_t dispatch_stream_id = -1;
   nghttp2_session *session = nullptr;
   std::unordered_map<int32_t, h2_stream> streams;
@@ -266,8 +265,7 @@ ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
 void h2_materialize_block(h2_transport *transport, rpc_write_cursor &cursor) {
   size_t raw =
       std::min<size_t>(LUPINE_COMPRESS_BLOCK_BYTES, cursor.source_size);
-  size_t bound =
-      static_cast<size_t>(LZ4_compressBound(LUPINE_COMPRESS_BLOCK_BYTES));
+  size_t bound = static_cast<size_t>(LZ4_compressBound(static_cast<int>(raw)));
   if (transport->compress_scratch.size() < sizeof(uint32_t) + bound) {
     transport->compress_scratch.resize(sizeof(uint32_t) + bound);
   }
@@ -436,8 +434,6 @@ nghttp2_nv h2_nv(const char *name, const char *value) {
           NGHTTP2_NV_FLAG_NO_COPY_NAME | NGHTTP2_NV_FLAG_NO_COPY_VALUE};
 }
 
-constexpr char kLupineCompressHeader[] = "x-lupine-compress";
-constexpr char kLupineCompressLz4[] = "lz4";
 constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
@@ -628,13 +624,8 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
   if (transport->server) {
     if (frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
-      if (namelen == strlen(kLupineCompressHeader) &&
-          memcmp(name, kLupineCompressHeader, namelen) == 0 &&
-          valuelen == strlen(kLupineCompressLz4) &&
-          memcmp(value, kLupineCompressLz4, valuelen) == 0) {
-        transport->compress_lz4 = true;
-      } else if (namelen == strlen(kLupineSessionHeader) &&
-                 memcmp(name, kLupineSessionHeader, namelen) == 0) {
+      if (namelen == strlen(kLupineSessionHeader) &&
+          memcmp(name, kLupineSessionHeader, namelen) == 0) {
         transport->session_id.assign(reinterpret_cast<const char *>(value),
                                      valuelen);
       } else if (namelen == strlen(kLupineVaBaseHeader) &&
@@ -872,11 +863,9 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
         h2_nv(":authority", "lupine"),
     };
     if (!probe) {
-      headers.push_back(h2_nv(kLupineCompressHeader, kLupineCompressLz4));
       if (session_id != nullptr && session_id[0] != '\0') {
         headers.push_back(h2_nv(kLupineSessionHeader, session_id));
       }
-      transport->compress_lz4 = true;
       if (conn->va_size != 0) {
         transport->local_va_base = h2_hex(conn->va_base);
         transport->local_va_size = h2_hex(conn->va_size);
@@ -1150,11 +1139,6 @@ int32_t rpc_http2_accept_stream(conn_t *conn) {
   }
   pthread_mutex_unlock(&transport->session_mutex);
   return stream_id;
-}
-
-int rpc_http2_compress_lz4(conn_t *conn) {
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  return transport != nullptr && transport->compress_lz4 ? 1 : 0;
 }
 
 const char *rpc_http2_session_id(conn_t *conn) {

@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include <vector>
 
-// Uncompressed block size for the optional LZ4 payload framing. The framed
-// bytes are produced lazily, one block at a time, by the HTTP/2 transport
-// (h2.cpp) and decoded by the rpc_read_payload helpers (compress.cpp).
+// Uncompressed block size for LZ4 payload framing. The framed bytes are
+// produced lazily, one block at a time, by the HTTP/2 transport (h2.cpp) and
+// decoded by the rpc_read_payload helpers (compress.cpp).
 #define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
 
 // References caller-owned bytes while an RPC is being serialized. Plain
@@ -263,7 +263,6 @@ extern int rpc_http2_server_init(conn_t *conn);
 extern int
 rpc_http2_server_init_with_metadata(conn_t *conn,
                                     const rpc_http2_server_metadata *metadata);
-extern int rpc_http2_compress_lz4(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.
 extern const char *rpc_http2_session_id(conn_t *conn);
@@ -291,12 +290,10 @@ extern rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn);
 extern void rpc_http2_window_release(conn_t *conn,
                                      rpc_http2_window_credit credit);
 
-// Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
-extern int lupine_payload_framed(conn_t *conn, size_t total_size);
+// LZ4 framing for memory transfer payloads (see compress.cpp).
 extern int rpc_write_payload(conn_t *conn, const void *data, size_t size);
 extern int rpc_read_payload(conn_t *conn, void *data, size_t size);
-extern int rpc_read_payload_part(conn_t *conn, int framed, void *data,
-                                 size_t size);
-extern int rpc_drain_payload(conn_t *conn, int framed, size_t size);
+extern int rpc_read_payload_part(conn_t *conn, void *data, size_t size);
+extern int rpc_drain_payload(conn_t *conn, size_t size);
 
 #endif
