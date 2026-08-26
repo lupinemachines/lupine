@@ -169,7 +169,10 @@ endfunction()
 
 # Vendored LZ4 keeps the neutral core independent of host package versions.
 add_library(lupine_lz4 STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4frame.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4hc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/xxhash.c)
 set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(lupine_lz4 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib)
@@ -181,7 +184,6 @@ endif()
 add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
 )
 lupine_internal_target(lupine_rpc_core)
 target_include_directories(lupine_rpc_core

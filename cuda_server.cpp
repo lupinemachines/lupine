@@ -1068,7 +1068,7 @@ static int lupine_write_pending_dtoh_copies(
   for (const auto &copy : pending) {
     if (rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
         rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-        rpc_write_payload(conn, copy.server_src, copy.bytes) < 0) {
+        rpc_write(conn, copy.server_src, copy.bytes) < 0) {
       return -1;
     }
   }
@@ -1120,7 +1120,7 @@ int handle_cuModuleLoad(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size + 1, 0);
-  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
+  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
     return -1;
   }
 
@@ -1155,7 +1155,7 @@ int handle_cuModuleLoadData(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
+  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
     return -1;
   }
 
@@ -1251,7 +1251,7 @@ int handle_cuLibraryLoadData(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read_payload(conn, image.data(), image_size) < 0) {
+  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
     return -1;
   }
   if (lupine_read_jit_options(conn, &jit_state) < 0) {
@@ -2528,7 +2528,7 @@ static void CUDA_CB lupine_graph_host_callback(void *userData) {
   for (const auto &copy : copies) {
     if (rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
         rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-        rpc_write_payload(conn, copy.server_src, copy.bytes) < 0) {
+        rpc_write(conn, copy.server_src, copy.bytes) < 0) {
       return;
     }
   }
@@ -4430,14 +4430,14 @@ int handle_cuStreamSynchronize(conn_t *conn) {
       rpc_write_start_response(conn, request_id) < 0 ||
       rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
       rpc_write(conn, &copy_count, sizeof(copy_count)) < 0 ||
-      std::any_of(
-          graph_copies.begin(), graph_copies.end(),
-          [&](const lupine_graph_host_copy &copy) {
-            return rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) <
-                       0 ||
-                   rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-                   rpc_write_payload(conn, copy.server_src, copy.bytes) < 0;
-          }) ||
+      std::any_of(graph_copies.begin(), graph_copies.end(),
+                  [&](const lupine_graph_host_copy &copy) {
+                    return rpc_write(conn, &copy.client_dst,
+                                     sizeof(copy.client_dst)) < 0 ||
+                           rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) <
+                               0 ||
+                           rpc_write(conn, copy.server_src, copy.bytes) < 0;
+                  }) ||
       lupine_write_pending_dtoh_copies(conn, pending, false) < 0 ||
       lupine_write_captured_stdout(conn, capture) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0;

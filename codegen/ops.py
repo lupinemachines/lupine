@@ -138,9 +138,6 @@ class ArrayOperation:
     ptr: Pointer
     # if int, it's a constant length, if Parameter, it's a variable length.
     length: Union[int, Parameter]
-    # compressible payloads use the rpc_*_payload helpers which optionally
-    # apply LZ4 framing for large transfers (see compress.cpp).
-    compressible: bool = False
 
     @property
     def is_void_bytes(self) -> bool:
@@ -208,16 +205,6 @@ class ArrayOperation:
                 error_return=error_return,
             )
         )
-        if self.compressible:
-            # Refresh stale mapped mirrors and select their permanent R/W
-            # source before the connection is held.
-            f.write(
-                "    {param_name} = lupine_mapped_host_read_source({param_name}, {size});\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
     def client_rpc_write(self, f):
         if self.iter:
             loop_template = """
@@ -258,8 +245,7 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        {write_fn}(conn, {param_name}, {size}) < 0 ||\n".format(
-                    write_fn="rpc_write_payload" if self.compressible else "rpc_write",
+                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
@@ -414,8 +400,7 @@ class ArrayOperation:
             f.write("        goto ERROR_0;\n")
             f.write("    if(\n")
             f.write(
-                "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
-                    read_fn="rpc_read_payload" if self.compressible else "rpc_read",
+                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
                     param_name=self.parameter.name,
                     size=f"{self.parameter.name}_size",
                 )
@@ -468,8 +453,7 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        {write_fn}(conn, {param_name}, {size}) < 0 ||\n".format(
-                    write_fn="rpc_write_payload" if self.compressible else "rpc_write",
+                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
                     param_name=self.parameter.name,
                     size=self.server_transfer_size_expr(),
                 )
@@ -487,8 +471,7 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
-                    read_fn="rpc_read_payload" if self.compressible else "rpc_read",
+                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
