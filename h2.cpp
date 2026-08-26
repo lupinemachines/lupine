@@ -76,6 +76,9 @@ struct h2_transport {
   // flight (see h2_materialize_block). Writes are serialized per connection,
   // so a single buffer suffices and memory stays bounded by one block.
   std::vector<unsigned char> compress_scratch;
+  // Holds one gathered block of a pitched payload; only the cursor currently
+  // being materialized ever uses it, exactly like compress_scratch.
+  std::vector<unsigned char> gather_scratch;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
@@ -270,8 +273,31 @@ void h2_materialize_block(h2_transport *transport, rpc_write_cursor &cursor) {
     transport->compress_scratch.resize(sizeof(uint32_t) + bound);
   }
   unsigned char *out = transport->compress_scratch.data();
+
+  // A pitched source is gathered into a second scratch first: LZ4 needs its
+  // input contiguous, and the rows have padding between them that should reach
+  // neither the compressor nor the wire. The stored path below would copy the
+  // block anyway, so this costs a pass only when the block actually compresses.
+  const unsigned char *block = cursor.source;
+  if (cursor.is_pitched()) {
+    if (transport->gather_scratch.size() < LUPINE_COMPRESS_BLOCK_BYTES) {
+      transport->gather_scratch.resize(LUPINE_COMPRESS_BLOCK_BYTES);
+    }
+    unsigned char *packed = transport->gather_scratch.data();
+    size_t filled = 0;
+    while (filled < raw) {
+      size_t run = 0;
+      const unsigned char *from =
+          cursor.packed_at(cursor.packed_offset + filled, &run);
+      size_t take = std::min(run, raw - filled);
+      memcpy(packed + filled, from, take);
+      filled += take;
+    }
+    block = packed;
+  }
+
   int compressed =
-      LZ4_compress_default(reinterpret_cast<const char *>(cursor.source),
+      LZ4_compress_default(reinterpret_cast<const char *>(block),
                            reinterpret_cast<char *>(out + sizeof(uint32_t)),
                            static_cast<int>(raw), static_cast<int>(bound));
   uint32_t token = 0;
@@ -280,12 +306,15 @@ void h2_materialize_block(h2_transport *transport, rpc_write_cursor &cursor) {
     token = static_cast<uint32_t>(compressed);
     block_len = static_cast<size_t>(compressed);
   } else {
-    memcpy(out + sizeof(uint32_t), cursor.source, raw);
+    memcpy(out + sizeof(uint32_t), block, raw);
   }
   memcpy(out, &token, sizeof(token));
   cursor.data = out;
   cursor.size = sizeof(uint32_t) + block_len;
-  cursor.source += raw;
+  if (!cursor.is_pitched()) {
+    cursor.source += raw;
+  }
+  cursor.packed_offset += raw;
   cursor.source_size -= raw;
 }
 

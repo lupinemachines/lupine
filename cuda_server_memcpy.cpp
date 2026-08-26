@@ -1592,7 +1592,7 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
                                     (copy.Height - 1) * copy.srcPitch + offset +
                                     copy.WidthInBytes);
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
+    if (rpc_read_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                          copy.Height, copy.srcPitch, copy.Depth, slice) < 0) {
       return -1;
     }
@@ -1624,7 +1624,7 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
+         rpc_write_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                            copy.Height, copy.dstPitch, copy.Depth,
                            slice) < 0) ||
         rpc_write_end(conn) < 0) {
@@ -1673,7 +1673,7 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
                                     (copy.Height - 1) * copy.srcPitch + offset +
                                     copy.WidthInBytes);
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
+    if (rpc_read_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                          copy.Height, copy.srcPitch, copy.Depth, slice) < 0 ||
         rpc_read(conn, &stream, sizeof(stream)) < 0) {
       return -1;
@@ -1709,7 +1709,7 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
+         rpc_write_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                            copy.Height, copy.dstPitch, copy.Depth,
                            slice) < 0) ||
         rpc_write_end(conn) < 0) {
@@ -1760,7 +1760,7 @@ int handle_cuMemcpy3DPeer(conn_t *conn) {
                                     (copy.Height - 1) * copy.srcPitch + offset +
                                     copy.WidthInBytes);
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
+    if (rpc_read_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                          copy.Height, copy.srcPitch, copy.Depth, slice) < 0) {
       return -1;
     }
@@ -1792,7 +1792,7 @@ int handle_cuMemcpy3DPeer(conn_t *conn) {
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
+         rpc_write_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                            copy.Height, copy.dstPitch, copy.Depth,
                            slice) < 0) ||
         rpc_write_end(conn) < 0) {
@@ -1841,7 +1841,7 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
                                     (copy.Height - 1) * copy.srcPitch + offset +
                                     copy.WidthInBytes);
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
+    if (rpc_read_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                          copy.Height, copy.srcPitch, copy.Depth, slice) < 0 ||
         rpc_read(conn, &stream, sizeof(stream)) < 0) {
       return -1;
@@ -1877,7 +1877,7 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
+         rpc_write_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                            copy.Height, copy.dstPitch, copy.Depth,
                            slice) < 0) ||
         rpc_write_end(conn) < 0) {
@@ -1925,7 +1925,7 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
     std::vector<unsigned char> host((copy.Height - 1) * copy.srcPitch + offset +
                                     copy.WidthInBytes);
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
+    if (rpc_read_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                          copy.Height, copy.srcPitch, 1, 0) < 0) {
       return -1;
     }
@@ -1954,7 +1954,7 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
+         rpc_write_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                            copy.Height, copy.dstPitch, 1, 0) < 0) ||
         rpc_write_end(conn) < 0) {
       return -1;
@@ -1998,7 +1998,7 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
     std::vector<unsigned char> host((copy.Height - 1) * copy.srcPitch + offset +
                                     copy.WidthInBytes);
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
+    if (rpc_read_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                          copy.Height, copy.srcPitch, 1, 0) < 0) {
       return -1;
     }
@@ -2027,7 +2027,7 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
+         rpc_write_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                            copy.Height, copy.dstPitch, 1, 0) < 0) ||
         rpc_write_end(conn) < 0) {
       return -1;
@@ -2072,7 +2072,7 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
     std::vector<unsigned char> host((copy.Height - 1) * copy.srcPitch + offset +
                                     copy.WidthInBytes);
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
+    if (rpc_read_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                          copy.Height, copy.srcPitch, 1, 0) < 0 ||
         rpc_read(conn, &stream, sizeof(stream)) < 0) {
       return -1;
@@ -2105,7 +2105,7 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
+         rpc_write_pitched_payload(conn, host.data() + offset, copy.WidthInBytes,
                            copy.Height, copy.dstPitch, 1, 0) < 0) ||
         rpc_write_end(conn) < 0) {
       return -1;
