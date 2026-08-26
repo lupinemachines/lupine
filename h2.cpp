@@ -33,6 +33,9 @@ constexpr uint32_t kH2ServerWindow =
 constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2EncodeChunkBytes = 4 * 1024 * 1024;
+// Amortize DATA framing without making nghttp2 reserve a maximum-size frame
+// buffer for every highly compressed LZ4 block.
+constexpr size_t kH2ProviderFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Linux restarts slow start after an idle period of one retransmission
 // timeout. Keeping response waits below the usual 200 ms minimum RTO avoids
@@ -342,6 +345,7 @@ ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t, int32_t,
     return NGHTTP2_ERR_CALLBACK_FAILURE;
   }
   size_t max_len = std::min<size_t>(kH2MaxFrame, remote_max_frame_size);
+  max_len = std::min(max_len, kH2ProviderFrameBytes);
   max_len = std::min<size_t>(max_len, static_cast<size_t>(window));
   return static_cast<ssize_t>(std::max<size_t>(1, max_len));
 }
