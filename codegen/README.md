@@ -10,10 +10,14 @@ Specifically, the order of `@param` annotations indicates the order in which the
 available are `NULL_TERMINATED` (to indicate that this is a null-terminated string), or `LENGTH:<param>` and
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
-`NULLABLE` marks a pointer that may be null. It composes with `LENGTH`: `NULLABLE LENGTH:<count>`
-on a `RECV_ONLY` pointer whose `<count>` is `SEND_RECV` declares an optional out-array sized by an
-in/out count (the `cuGraphGetNodes` query pattern). Each such array leads with its own presence
-byte on the wire, and several arrays may share one count.
+`NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
+`RECV_ONLY` pointer to declare an optional out-array. A pointer count marked
+`SEND_RECV` supports the `cuGraphGetNodes` query pattern; a by-value count is a
+fixed capacity. Each array leads with its own presence byte on the wire, and
+several arrays may share one count.
+`ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
+writes the buffer on failure. The generated response preserves the caller's
+buffer on success.
 
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
@@ -39,6 +43,11 @@ route-local device back to its virtual client ordinal before returning it.
 `@disabled client` leaves server/RPC generation enabled while requiring a
 manual client implementation with the original API name. These manual symbols
 remain part of the generated client function map.
+
+`@hidden` generates both sides of an API declared only in CUDA's internal
+legacy section. Codegen emits the missing client and server declarations before
+the generated definitions, allowing old ABI entry points to use the ordinary
+annotation-driven marshalling path.
 
 `@guard <preprocessor-expression>` wraps the generated client wrapper, server
 handler, function-map entry, and server registration. Use it for APIs that are

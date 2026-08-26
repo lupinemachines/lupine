@@ -12,6 +12,15 @@
 
 #include "rpc.h"
 
+#ifdef cuGraphInstantiate_v2
+#undef cuGraphInstantiate_v2
+#endif
+extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
+                                                  CUgraph hGraph,
+                                                  CUgraphNode *phErrorNode,
+                                                  char *logBuffer,
+                                                  size_t bufferSize);
+
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
 #endif
@@ -8708,5 +8717,59 @@ int handle_cuMemAdvise(conn_t *conn) {
 
   return 0;
 ERROR_0:
+  return -1;
+}
+
+int handle_cuGraphInstantiate_v2(conn_t *conn) {
+  CUgraphExec phGraphExec;
+  CUgraph hGraph;
+  CUgraphNode *phErrorNode_null_check;
+  CUgraphNode phErrorNode;
+  size_t bufferSize;
+  char *logBuffer = nullptr;
+  uint8_t logBuffer_null = 0;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &phErrorNode_null_check, sizeof(CUgraphNode *)) < 0 ||
+      rpc_read(conn, &bufferSize, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &logBuffer_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!logBuffer_null) {
+    logBuffer =
+        (char *)calloc((bufferSize != 0 ? bufferSize : 1), sizeof(char));
+    if (logBuffer == nullptr)
+      goto ERROR_0;
+  }
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGraphInstantiate_v2(
+      &phGraphExec, hGraph, phErrorNode_null_check ? &phErrorNode : nullptr,
+      logBuffer, bufferSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &phGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_write(conn, &phErrorNode_null_check, sizeof(CUgraphNode *)) < 0 ||
+      (phErrorNode_null_check &&
+       rpc_write(conn, &phErrorNode, sizeof(CUgraphNode)) < 0) ||
+      ([&]() {
+        uint8_t logBuffer_has_data =
+            !logBuffer_null && lupine_intercept_result != CUDA_SUCCESS;
+        return rpc_write(conn, &logBuffer_has_data, sizeof(uint8_t)) < 0 ||
+               (logBuffer_has_data != 0 && bufferSize != 0 &&
+                rpc_write(conn, logBuffer, bufferSize * sizeof(char)) < 0);
+      }()) ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  free((void *)logBuffer);
+  return 0;
+ERROR_0:
+  free((void *)logBuffer);
   return -1;
 }

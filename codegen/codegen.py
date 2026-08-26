@@ -452,6 +452,8 @@ def parse_annotation(
                 raise RuntimeError("Invalid @guard annotation")
             metadata.guard = guard
             continue
+        if line.strip() == "@hidden":
+            continue
         if line.startswith("@server"):
             continue
         if line.startswith("@routingkey"):
@@ -562,6 +564,7 @@ def parse_annotation(
                 null_terminated = "NULL_TERMINATED" in args
                 nullable = "NULLABLE" in args
                 deref = "DEREF" in args
+                recv_on_error = "ON_ERROR" in args
 
                 # NULLABLE composes with LENGTH (an optional out-array
                 # sized by an in/out count); every other combination is
@@ -572,6 +575,12 @@ def parse_annotation(
                 ) and not (nullable and length_arg and not size_arg and not null_terminated):
                     raise NotImplementedError(
                         "Only one of LENGTH, SIZE, NULL_TERMINATED, or NULLABLE can be specified (except NULLABLE LENGTH)"
+                    )
+                if recv_on_error and not (
+                    nullable and length_arg and recv and not send
+                ):
+                    raise NotImplementedError(
+                        "ON_ERROR requires a RECV_ONLY NULLABLE LENGTH out-array"
                     )
 
                 if deref:
@@ -601,6 +610,7 @@ def parse_annotation(
                                 parameter=param,
                                 ptr=param.type,
                                 count=length_param,
+                                recv_on_error=recv_on_error,
                             )
                         )
                     else:
@@ -1423,15 +1433,15 @@ def main():
             (function, annotation, metadata.operations, metadata)
         )
 
-    # cuda.h hides some legacy ABI entry points behind macros. When such an
-    # entry point is explicitly declared in annotations.h, keep its manual
-    # client while generating the ordinary server marshalling from that
-    # declaration.
+    # cuda.h hides some legacy ABI entry points behind macros. @hidden
+    # generates both sides from annotations.h; @disabled client keeps a manual
+    # client while generating the ordinary server marshalling.
     server_functions_with_annotations = list(functions_with_annotations)
     server_function_names = {
         function.name.format()
         for function, _, _, _ in server_functions_with_annotations
     }
+    hidden_functions = []
     annotation_only_server_functions = []
     for annotation in annotations.namespace.functions:
         name = annotation.name.format()
@@ -1443,10 +1453,12 @@ def main():
         ):
             continue
         directives = annotation_directives(annotation.doxygen)
-        if not any(
+        hidden = "@hidden" in directives
+        client_disabled = any(
             directive.startswith("@disabled client")
             for directive in directives
-        ):
+        )
+        if not hidden and not client_disabled:
             continue
         if any(
             directive == "@disabled"
@@ -1462,8 +1474,14 @@ def main():
             metadata.operations,
             metadata,
         )
+        if hidden:
+            if metadata.disabled_client:
+                raise RuntimeError(f"{name}: @hidden cannot disable the client")
+            functions_with_annotations.append(annotated_function)
+            hidden_functions.append(annotated_function)
         server_functions_with_annotations.append(annotated_function)
-        annotation_only_server_functions.append(annotated_function)
+        if not hidden:
+            annotation_only_server_functions.append(annotated_function)
         server_function_names.add(name)
 
     nvml_functions_with_annotations = collect_nvml_functions(
@@ -1607,6 +1625,16 @@ def main():
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n'
             'extern "C" const void *lupine_mapped_host_read_source(const void *host, size_t size);\n\n'
         )
+        for function, _, _, _ in hidden_functions:
+            name = function.name.format()
+            f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
+            f.write(
+                'extern "C" {return_type} CUDAAPI {name}({params});\n\n'.format(
+                    return_type=function.return_type.format(),
+                    name=name,
+                    params=", ".join(format_function_params(function)),
+                )
+            )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
             # functions; their RPC/server definitions may still be generated.
@@ -1959,7 +1987,10 @@ def main():
             '#include <cstdio>\n\n'
             '#include "rpc.h"\n\n'
         )
-        for function, _, _, _ in annotation_only_server_functions:
+        annotation_only_functions = (
+            hidden_functions + annotation_only_server_functions
+        )
+        for function, _, _, _ in annotation_only_functions:
             name = function.name.format()
             f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
             f.write(
