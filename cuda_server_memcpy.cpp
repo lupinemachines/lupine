@@ -1979,7 +1979,11 @@ int handle_lupineMemcpy(conn_t *conn) {
   // than a slot is cut inside one row. Either shape is one band.
   auto chunk_bytes = [&](size_t offset) {
     size_t column = offset % run;
-    if (run > slot) {
+    // A band that starts mid-run can only reach that run's end: the staging
+    // block boundary does not have to land on a run boundary, and a band that
+    // ran past it would address the next row's bytes as if they were this
+    // row's.
+    if (column != 0 || run > slot) {
       return std::min(slot, run - column);
     }
     size_t rows_left = rows - (offset / run) % rows;
@@ -2075,6 +2079,12 @@ int handle_lupineMemcpy(conn_t *conn) {
                     CUresult *result) {
     for (size_t placed = 0; placed < bytes;) {
       size_t span = std::min(chunk_bytes(offset + placed), bytes - placed);
+      // A band carries either whole runs or a piece of one. Trimming the
+      // partial run off the end keeps that true when the staging block ends
+      // mid-run; the remainder opens the next band.
+      if (span > run) {
+        span -= span % run;
+      }
       CUDA_MEMCPY3D band =
           band_for(static_cast<char *>(slots[index].host) + placed,
                    offset + placed, span);
