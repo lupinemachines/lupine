@@ -1102,31 +1102,6 @@ static bool lupine_translate_client_host_range_to_server(
   return true;
 }
 
-// A tracked host allocation already has a host/managed address on its owning
-// server. Once dirty pages have been flushed, HtoD can read that address there
-// instead of sending the same bytes a second time as its own payload.
-static bool lupine_translate_client_host_range_to_server_source(
-    const void *host, size_t size, int route_id, CUdeviceptr *translated) {
-  if (host == nullptr || translated == nullptr) {
-    return false;
-  }
-  uintptr_t address = reinterpret_cast<uintptr_t>(host);
-  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-  auto it = lupine_find_host_allocation_locked(const_cast<void *>(host));
-  if (it == lupine_mutable_host_allocations_locked().end() ||
-      it->second.server_host_ptr == 0 || it->second.local_cuda ||
-      it->second.route_id != route_id) {
-    return false;
-  }
-  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
-  size_t offset = address - base;
-  if (offset > it->second.size || size > it->second.size - offset) {
-    return false;
-  }
-  *translated = it->second.server_host_ptr + offset;
-  return true;
-}
-
 static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
   void *host = reinterpret_cast<void *>(ptr);
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -2989,9 +2964,8 @@ static CUresult lupine_memcpy_htod(CUDA_MEMCPY3D copy, CUstream stream,
                        copy.srcZ * src_slice_pitch + copy.srcY * copy.srcPitch +
                        copy.srcXInBytes;
   CUdeviceptr server_source = 0;
-  const bool use_server_source =
-      lupine_translate_client_host_range_to_server_source(
-          source, span, lupine_route_identity(route), &server_source);
+  const bool use_server_source = lupine_translate_client_host_range_to_server(
+      source, span, lupine_route_identity(route), &server_source);
   const char *source_rows = source;
   if (use_server_source) {
     copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;

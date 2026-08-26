@@ -1848,7 +1848,6 @@ struct lupine_copy_ring {
   CUevent event[kLupineCopySlots] = {};
   size_t capacity = 0;
   CUcontext context = nullptr;
-  bool pinned = false;
 };
 
 lupine_copy_ring &lupine_lane_copy_ring() {
@@ -1856,35 +1855,25 @@ lupine_copy_ring &lupine_lane_copy_ring() {
   return ring;
 }
 
-// Ensures the lane's ring can stage `bytes` per slot. Returns false when even
-// pageable staging could not be provided.
-bool lupine_copy_ring_reserve(lupine_copy_ring &ring, size_t bytes,
-                              bool want_pinned) {
+// Ensures the lane's ring can stage `bytes` of pinned memory per slot.
+bool lupine_copy_ring_reserve(lupine_copy_ring &ring, size_t bytes) {
   CUcontext current = nullptr;
   cuCtxGetCurrent(&current);
   if (ring.context != current) {
     // Abandon rather than free: the previous context owns those pages.
     for (size_t i = 0; i < kLupineCopySlots; ++i) {
-      if (!ring.pinned) {
-        free(ring.host[i]);
-      }
       ring.host[i] = nullptr;
       ring.event[i] = nullptr;
     }
     ring.capacity = 0;
-    ring.pinned = false;
     ring.context = current;
   }
-  if (ring.capacity >= bytes && ring.pinned == want_pinned) {
+  if (ring.capacity >= bytes) {
     return true;
   }
   for (size_t i = 0; i < kLupineCopySlots; ++i) {
     if (ring.host[i] != nullptr) {
-      if (ring.pinned) {
-        cuMemFreeHost(ring.host[i]);
-      } else {
-        free(ring.host[i]);
-      }
+      cuMemFreeHost(ring.host[i]);
       ring.host[i] = nullptr;
     }
     if (ring.event[i] != nullptr) {
@@ -1893,105 +1882,68 @@ bool lupine_copy_ring_reserve(lupine_copy_ring &ring, size_t bytes,
     }
   }
   ring.capacity = 0;
-  ring.pinned = false;
   for (size_t i = 0; i < kLupineCopySlots; ++i) {
-    if (want_pinned) {
-      if (cuMemAllocHost(&ring.host[i], bytes) != CUDA_SUCCESS ||
-          cuEventCreate(&ring.event[i], CU_EVENT_DISABLE_TIMING) !=
-              CUDA_SUCCESS) {
-        want_pinned = false;
-        break;
+    if (cuMemAllocHost(&ring.host[i], bytes) != CUDA_SUCCESS ||
+        cuEventCreate(&ring.event[i], CU_EVENT_DISABLE_TIMING) !=
+            CUDA_SUCCESS) {
+      for (size_t j = 0; j <= i; ++j) {
+        if (ring.event[j] != nullptr) {
+          cuEventDestroy(ring.event[j]);
+          ring.event[j] = nullptr;
+        }
+        if (ring.host[j] != nullptr) {
+          cuMemFreeHost(ring.host[j]);
+          ring.host[j] = nullptr;
+        }
       }
-    }
-  }
-  if (!want_pinned) {
-    for (size_t i = 0; i < kLupineCopySlots; ++i) {
-      if (ring.event[i] != nullptr) {
-        cuEventDestroy(ring.event[i]);
-        ring.event[i] = nullptr;
-      }
-      if (ring.host[i] != nullptr) {
-        cuMemFreeHost(ring.host[i]);
-        ring.host[i] = nullptr;
-      }
-    }
-    for (size_t i = 0; i < kLupineCopySlots; ++i) {
-      ring.host[i] = malloc(bytes);
-      if (ring.host[i] == nullptr) {
-        return false;
-      }
+      return false;
     }
   }
   ring.capacity = bytes;
-  ring.pinned = want_pinned;
   return true;
 }
 } // namespace
 
-// The single copy handler. Every client-side cuMemcpy* lowers to one of these,
-// already widened to a CUDA_MEMCPY3D, so array, pitched and linear transfers
-// differ only in the descriptor's fields. A linear copy arrives as one run of
-// WidthInBytes with Height and Depth of one, which makes the run-boundary rule
-// below vacuous for it.
-//
-// Staging is bounded and pageable: a chunk never straddles a run or a slice, so
-// each one is a single banded copy, and the driver completes a copy against
-// pageable host memory before returning, so the staging buffer is free to be
-// refilled on the next turn of the loop.
-int handle_lupineMemcpy(conn_t *conn) {
-  uint8_t wire_flags = 0;
-  CUDA_MEMCPY3D copy = {};
-  CUstream stream = nullptr;
-  if (rpc_read(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+static int lupine_server_memcpy_dtod(conn_t *conn, const CUDA_MEMCPY3D &copy,
+                                     CUstream stream, bool blocking,
+                                     bool server_source) {
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
     return -1;
   }
-
-  const bool blocking = (wire_flags & LUPINE_MEMCPY_BLOCKING) != 0;
-  const bool server_source = (wire_flags & LUPINE_MEMCPY_SERVER_SOURCE) != 0;
-  const bool server_destination =
-      (wire_flags & LUPINE_MEMCPY_SERVER_DESTINATION) != 0;
-  const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
-  const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  CUdeviceptr mirrored_destination = 0;
-  if (server_destination) {
-    if (!host_destination || rpc_read(conn, &mirrored_destination,
-                                      sizeof(mirrored_destination)) < 0) {
+  CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
+  if (server_source && result != CUDA_SUCCESS) {
+    return -1;
+  }
+  if (server_source && blocking) {
+    // The caller may refill a synchronous HtoD source as soon as this answer
+    // arrives, so its persistent server mirror must no longer be in use.
+    result = cuStreamSynchronize(stream);
+    if (result != CUDA_SUCCESS) {
       return -1;
     }
   }
+  if (server_source && !blocking) {
+    return 0;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+// Host transfers share bounded staging and band construction; the directional
+// entry points below decide whether bytes enter or leave that staging ring.
+static int lupine_server_memcpy_host(conn_t *conn, const CUDA_MEMCPY3D &request,
+                                     CUstream stream, bool blocking,
+                                     CUdeviceptr mirrored_destination) {
+  CUDA_MEMCPY3D copy = request;
+  const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   const size_t run = copy.WidthInBytes;
   const size_t rows = copy.Height;
   const size_t slices = copy.Depth;
   const size_t total = run * rows * slices;
-
-  // Neither side is host memory, so nothing is staged and the descriptor
-  // reaches the driver as the caller wrote it. The driver's own synchronous
-  // copy is asynchronous with respect to the host when no host memory is
-  // involved, so this does not wait either: the stream orders the copy ahead
-  // of whatever the caller does with the destination next.
-  if (!host_source && !host_destination) {
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
-    if (result == CUDA_SUCCESS && server_source && blocking) {
-      // The caller may refill a synchronous HtoD source as soon as this answer
-      // arrives, so its persistent server mirror must no longer be in use.
-      result = cuStreamSynchronize(stream);
-    }
-    if (server_source && !blocking) {
-      return 0;
-    }
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
 
   const size_t slot = LUPINE_COMPRESS_BLOCK_BYTES;
   // A run shorter than a slot is carried whole rows at a time; a run longer
@@ -2043,9 +1995,7 @@ int handle_lupineMemcpy(conn_t *conn) {
   // Three staging buffers in rotation: while one is being filled from the wire
   // the others are still being DMA'd, so the link and the copy engine overlap.
   // Pinned staging is what makes that possible and also what makes it
-  // necessary -- a pinned copy is genuinely asynchronous, so a slot cannot be
-  // touched again until its event fires. Pageable staging is the fallback, and
-  // there the driver has already finished with the buffer when it returns.
+  // necessary: a slot cannot be touched again until its event fires.
   constexpr size_t kSlotCount = kLupineCopySlots;
   struct {
     void *host = nullptr;
@@ -2055,18 +2005,11 @@ int handle_lupineMemcpy(conn_t *conn) {
     size_t bytes = 0;
   } slots[kSlotCount];
 
-  // Page-locking is expensive enough to dominate a short transfer, so the ring
-  // only pins for copies long enough to amortize it; below that the staging is
-  // pageable, which the driver finishes with before it returns.
   const size_t slot_bytes = std::min(total, slot);
   lupine_copy_ring &ring = lupine_lane_copy_ring();
-  // The pinned buffers persist for the lane, so the only cost is the first
-  // call's page-locking. That makes it worth pinning as soon as a transfer
-  // spans more than one chunk, which is exactly when overlap is possible.
-  if (!lupine_copy_ring_reserve(ring, slot_bytes, total > slot)) {
+  if (!lupine_copy_ring_reserve(ring, slot_bytes)) {
     return -1;
   }
-  const bool pinned = ring.pinned;
   for (size_t i = 0; i < kSlotCount; ++i) {
     slots[i].host = ring.host[i];
     slots[i].event = ring.event[i];
@@ -2080,22 +2023,19 @@ int handle_lupineMemcpy(conn_t *conn) {
       }
     }
   };
-  auto reclaim = [&](size_t index, CUresult *result) {
+  auto reclaim = [&](size_t index) {
     if (!slots[index].in_flight) {
-      return;
+      return CUDA_SUCCESS;
     }
     CUresult waited = cuEventSynchronize(slots[index].event);
     slots[index].in_flight = false;
-    if (waited != CUDA_SUCCESS && *result == CUDA_SUCCESS) {
-      *result = waited;
-    }
+    return waited;
   };
   // A slot holds one compression block, which the run-boundary rule may cut
   // into several bands: a slice smaller than a block gives one band per slice.
   // They are all issued from the one staging buffer before its event is
   // recorded, so the slot stays owned until the last of them completes.
-  auto submit = [&](size_t index, size_t offset, size_t bytes,
-                    CUresult *result) {
+  auto submit = [&](size_t index, size_t offset, size_t bytes) {
     for (size_t placed = 0; placed < bytes;) {
       size_t span = std::min(chunk_bytes(offset + placed), bytes - placed);
       // A band carries either whole runs or a piece of one. Trimming the
@@ -2109,47 +2049,35 @@ int handle_lupineMemcpy(conn_t *conn) {
                    offset + placed, span);
       CUresult issued = cuMemcpy3DAsync_v2(&band, stream);
       if (issued != CUDA_SUCCESS) {
-        if (*result == CUDA_SUCCESS) {
-          *result = issued;
-        }
-        return;
+        return issued;
       }
       placed += span;
     }
-    if (pinned) {
-      if (cuEventRecord(slots[index].event, stream) == CUDA_SUCCESS) {
-        slots[index].in_flight = true;
-      } else if (*result == CUDA_SUCCESS) {
-        // Completion cannot be tracked, so fall back to waiting outright
-        // rather than risk refilling a slot under a live copy.
-        *result = cuStreamSynchronize(stream);
-      }
+    CUresult recorded = cuEventRecord(slots[index].event, stream);
+    if (recorded == CUDA_SUCCESS) {
+      slots[index].in_flight = true;
     }
+    return recorded;
   };
 
   if (host_source) {
-    CUresult result = CUDA_SUCCESS;
     size_t index = 0;
     for (size_t offset = 0; offset < total;) {
       size_t bytes = std::min(slot_bytes, total - offset);
-      reclaim(index, &result);
-      // The payload is drained even after a failure so the stream stays in
-      // step; only the copies stop.
-      if (rpc_read_payload_part(conn, slots[index].host, bytes) < 0) {
+      if (reclaim(index) != CUDA_SUCCESS ||
+          rpc_read_payload_part(conn, slots[index].host, bytes) < 0 ||
+          submit(index, offset, bytes) != CUDA_SUCCESS) {
         release_slots();
         return -1;
-      }
-      if (result == CUDA_SUCCESS) {
-        submit(index, offset, bytes, &result);
       }
       offset += bytes;
       index = (index + 1) % kSlotCount;
     }
     for (size_t i = 0; i < kSlotCount; ++i) {
-      reclaim(i, &result);
-    }
-    if (result == CUDA_SUCCESS && blocking != 0) {
-      result = cuStreamSynchronize(stream);
+      if (reclaim(i) != CUDA_SUCCESS) {
+        release_slots();
+        return -1;
+      }
     }
     release_slots();
     int request_id = rpc_read_end(conn);
@@ -2161,6 +2089,7 @@ int handle_lupineMemcpy(conn_t *conn) {
     if (blocking == 0) {
       return 0;
     }
+    CUresult result = CUDA_SUCCESS;
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -2198,12 +2127,18 @@ int handle_lupineMemcpy(conn_t *conn) {
     size_t bytes = std::min(slot_bytes, total - submitted);
     slots[i].offset = submitted;
     slots[i].bytes = bytes;
-    submit(i, submitted, bytes, &result);
+    CUresult submitted_result = submit(i, submitted, bytes);
+    if (result == CUDA_SUCCESS) {
+      result = submitted_result;
+    }
     submitted += bytes;
   }
   size_t index = 0;
   for (size_t sent = 0; sent < total;) {
-    reclaim(index, &result);
+    CUresult reclaimed = reclaim(index);
+    if (result == CUDA_SUCCESS) {
+      result = reclaimed;
+    }
     size_t bytes = slots[index].bytes;
     uint64_t carried = result == CUDA_SUCCESS ? bytes : 0;
     if (carried != 0 && mirrored_destination != 0) {
@@ -2228,11 +2163,65 @@ int handle_lupineMemcpy(conn_t *conn) {
       size_t next = std::min(slot_bytes, total - submitted);
       slots[index].offset = submitted;
       slots[index].bytes = next;
-      submit(index, submitted, next, &result);
+      CUresult submitted_result = submit(index, submitted, next);
+      if (result == CUDA_SUCCESS) {
+        result = submitted_result;
+      }
       submitted += next;
     }
     index = (index + 1) % kSlotCount;
   }
   release_slots();
   return 0;
+}
+
+static int lupine_server_memcpy_htod(conn_t *conn, const CUDA_MEMCPY3D &copy,
+                                     CUstream stream, bool blocking) {
+  return lupine_server_memcpy_host(conn, copy, stream, blocking, 0);
+}
+
+static int lupine_server_memcpy_dtoh(conn_t *conn, const CUDA_MEMCPY3D &copy,
+                                     CUstream stream, bool blocking,
+                                     bool server_destination) {
+  CUdeviceptr mirrored_destination = 0;
+  if (server_destination &&
+      rpc_read(conn, &mirrored_destination, sizeof(mirrored_destination)) < 0) {
+    return -1;
+  }
+  return lupine_server_memcpy_host(conn, copy, stream, blocking,
+                                   mirrored_destination);
+}
+
+// Every client-side cuMemcpy* arrives as flags, a widened CUDA_MEMCPY3D, and a
+// stream. HtoH is completed entirely by the client and never reaches here.
+int handle_lupineMemcpy(conn_t *conn) {
+  uint8_t wire_flags = 0;
+  CUDA_MEMCPY3D copy = {};
+  CUstream stream = nullptr;
+  if (rpc_read(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
+      rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    return -1;
+  }
+
+  const bool blocking = (wire_flags & LUPINE_MEMCPY_BLOCKING) != 0;
+  const bool server_source = (wire_flags & LUPINE_MEMCPY_SERVER_SOURCE) != 0;
+  const bool server_destination =
+      (wire_flags & LUPINE_MEMCPY_SERVER_DESTINATION) != 0;
+  const bool host_source = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
+  const bool host_destination = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
+  if (host_source && host_destination) {
+    return -1;
+  }
+  if (server_destination && !host_destination) {
+    return -1;
+  }
+  if (host_source) {
+    return lupine_server_memcpy_htod(conn, copy, stream, blocking);
+  }
+  if (host_destination) {
+    return lupine_server_memcpy_dtoh(conn, copy, stream, blocking,
+                                     server_destination);
+  }
+  return lupine_server_memcpy_dtod(conn, copy, stream, blocking, server_source);
 }
