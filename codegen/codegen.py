@@ -1438,8 +1438,8 @@ def main():
         )
 
     # Generate explicitly listed legacy ABI entry points that cuda.h hides
-    # behind macros. @disabled client keeps a manual client while generating
-    # the ordinary server marshalling.
+    # behind macros. A legacy entry point may still use @disabled server when
+    # its server handler needs lifecycle management beyond ordinary marshalling.
     server_functions_with_annotations = list(functions_with_annotations)
     server_function_names = {
         function.name.format()
@@ -1464,7 +1464,7 @@ def main():
         )
         if not legacy_abi and not client_disabled:
             continue
-        if any(
+        if not legacy_abi and any(
             directive == "@disabled"
             or directive.startswith("@disabled server")
             for directive in directives
