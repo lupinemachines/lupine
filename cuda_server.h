@@ -112,10 +112,6 @@ int handle_cuTensorMapEncodeTiled(conn_t *conn);
 bool lupine_server_initialize_connection(conn_t *conn);
 void lupine_server_cleanup_connection(conn_t *conn);
 
-int lupine_server_copy_htod_async(conn_t *conn, CUdeviceptr destination,
-                                  size_t bytes, CUstream stream,
-                                  CUresult &result);
-
 int handle_cuDevicePrimaryCtxRetain(conn_t *conn);
 int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn);
 int handle_cuDevicePrimaryCtxReset_v2(conn_t *conn);

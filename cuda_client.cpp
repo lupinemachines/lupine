@@ -53,6 +53,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
 #include "cuda_profiler_compat.h"
+#include "cuda_side_effect.h"
 #include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
@@ -1400,11 +1401,11 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     if (record.code == nullptr) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    result = lupine_call_real_cuda_fn(
-        "cuLibraryLoadData", &loaded, record.code,
-        static_cast<CUjit_option *>(nullptr), static_cast<void **>(nullptr), 0u,
-        static_cast<CUlibraryOption *>(nullptr), static_cast<void **>(nullptr),
-        0u);
+    result = lupine_call_real_cuda_fn("cuLibraryLoadData", &loaded, record.code,
+                                      static_cast<CUjit_option *>(nullptr),
+                                      static_cast<void **>(nullptr), 0u,
+                                      static_cast<CUlibraryOption *>(nullptr),
+                                      static_cast<void **>(nullptr), 0u);
   } else {
     conn_t *conn = lupine_route_remote_conn(route);
     size_t image_size = record.image.size();
@@ -3826,9 +3827,10 @@ extern "C" CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count,
 }
 #endif
 
-extern "C" CUresult cuMemRangeGetAttributes(
-    void **data, size_t *dataSizes, CUmem_range_attribute *attributes,
-    size_t numAttributes, CUdeviceptr devPtr, size_t count) {
+extern "C" CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
+                                            CUmem_range_attribute *attributes,
+                                            size_t numAttributes,
+                                            CUdeviceptr devPtr, size_t count) {
   lupine_route route = lupine_route_for_deviceptr(devPtr);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuMemRangeGetAttributes", data, dataSizes,
@@ -8032,7 +8034,7 @@ void *rpc_client_dispatch_thread(void *arg) {
   while (true) {
     op = rpc_dispatch(conn, 1);
 
-    if (op == 1) {
+    if (op == static_cast<int>(lupine_side_effect_op::host_function)) {
       std::cout << "Transferring memory..." << std::endl;
 
       int found = 0;
@@ -8085,7 +8087,7 @@ void *rpc_client_dispatch_thread(void *arg) {
         LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
         goto close_connection;
       }
-    } else if (op == 2) {
+    } else if (op == static_cast<int>(lupine_side_effect_op::stream_callback)) {
       CUstream stream = nullptr;
       CUresult status = CUDA_ERROR_UNKNOWN;
       CUstreamCallback callback = nullptr;
@@ -8113,6 +8115,56 @@ void *rpc_client_dispatch_thread(void *arg) {
           rpc_write(conn, &res, sizeof(void *)) < 0 ||
           rpc_write_end(conn) < 0) {
         LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
+        break;
+      }
+    } else if (op ==
+               static_cast<int>(lupine_side_effect_op::read_host_memory)) {
+      uint64_t count = 0;
+      if (rpc_read(conn, &count, sizeof(count)) < 0 ||
+          count > SIZE_MAX / sizeof(lupine_host_memory_view)) {
+        LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
+        break;
+      }
+      std::vector<lupine_host_memory_view> views(count);
+      std::vector<size_t> spans(count);
+      bool valid = true;
+      for (size_t index = 0; index < views.size(); ++index) {
+        auto &view = views[index];
+        size_t packed_bytes = 0;
+        if (rpc_read(conn, &view, sizeof(view)) < 0 ||
+            !lupine_host_memory_view_sizes(view, &packed_bytes,
+                                           &spans[index])) {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid) {
+        LUPINE_LOG_ERROR("Invalid host-memory side-effect request.");
+        break;
+      }
+      int request_id = rpc_read_end(conn);
+      if (request_id < 0) {
+        LUPINE_LOG_ERROR("Invalid host-memory side-effect request.");
+        break;
+      }
+
+      if (rpc_write_start_response(conn, request_id) < 0) {
+        LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
+        break;
+      }
+      for (size_t index = 0; index < views.size(); ++index) {
+        const auto &view = views[index];
+        const void *source =
+            lupine_mapped_host_read_source(view.data, spans[index]);
+        if (rpc_write_pitched(conn, source, view.width, view.rows,
+                              view.row_stride, view.slices,
+                              view.slice_stride) < 0) {
+          LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
+          goto close_connection;
+        }
+      }
+      if (rpc_write_end(conn) < 0) {
+        LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
         break;
       }
     } else if (op < 0 || conn->closed) {

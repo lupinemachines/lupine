@@ -41,6 +41,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
+#include "cuda_side_effect.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
@@ -1734,8 +1735,8 @@ int handle_cuMemRangeGetAttributes(conn_t *conn) {
     return -1;
   }
 
-  size_t *data_sizes = static_cast<size_t *>(
-      std::malloc(num_attributes * sizeof(*data_sizes)));
+  size_t *data_sizes =
+      static_cast<size_t *>(std::malloc(num_attributes * sizeof(*data_sizes)));
   CUmem_range_attribute *attributes = static_cast<CUmem_range_attribute *>(
       std::malloc(num_attributes * sizeof(*attributes)));
   CUdeviceptr dev_ptr = 0;
@@ -2521,7 +2522,8 @@ static void CUDA_CB lupine_graph_host_callback(void *userData) {
   int transfer_count = static_cast<int>(copies.size());
 
   conn_t *conn = callback->conn;
-  if (rpc_write_start_request(conn, 1) < 0 ||
+  if (rpc_write_start_request(
+          conn, static_cast<int>(lupine_side_effect_op::host_function)) < 0 ||
       rpc_write(conn, &transfer_count, sizeof(transfer_count)) < 0) {
     return;
   }
@@ -2558,7 +2560,9 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   void *client_user_data = callback->userData;
   void *response = nullptr;
   auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false);
-  if (rpc_write_start_request(conn, 2) >= 0 &&
+  if (rpc_write_start_request(
+          conn, static_cast<int>(lupine_side_effect_op::stream_callback)) >=
+          0 &&
       rpc_copy_alloc(conn, sizeof(uint32_t)) >= 0 &&
       lupine_write_pending_dtoh_copies(conn, pending, true) >= 0 &&
       rpc_write(conn, &stream, sizeof(stream)) >= 0 &&

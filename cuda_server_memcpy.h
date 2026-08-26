@@ -8,7 +8,6 @@
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
-struct lupine_staging_state;
 struct lupine_graph_resources;
 
 // A device-to-host copy the server holds until a synchronize collects it. The
@@ -58,7 +57,5 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context);
 void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device);
 int lupine_write_lifecycle_response(conn_t *conn, int request_id,
                                     CUresult result);
-int lupine_copy_htod_serial(conn_t *conn, CUdeviceptr destination, size_t bytes,
-                            lupine_staging_state &state, CUresult *result);
 
 #endif
