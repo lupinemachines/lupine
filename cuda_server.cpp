@@ -735,6 +735,15 @@ lupine_graph_resources *lupine_get_stream_resources(CUstream stream) {
   return resources;
 }
 
+static lupine_graph_resources *
+lupine_begin_stream_capture_resources(CUstream stream) {
+  // The map also tracks resources from the last graph launched on a stream.
+  // A new capture needs independent callback ordering and owned storage.
+  auto *resources = new lupine_graph_resources();
+  lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
+  return resources;
+}
+
 lupine_graph_resources *lupine_captured_stream_resources(CUstream stream) {
   lupine_graph_resources *resources = nullptr;
   (void)lupine_stream_capture_resource_map().find(stream, resources);
@@ -3548,7 +3557,7 @@ int handle_cuStreamBeginCaptureToGraph(conn_t *conn) {
     return -1;
   }
 
-  (void)lupine_get_stream_resources(stream);
+  (void)lupine_begin_stream_capture_resources(stream);
   result = lupine_server_prepare_htod_capture(conn);
   if (result == CUDA_SUCCESS) {
     result = cuStreamBeginCaptureToGraph(stream, graph,
@@ -3657,7 +3666,7 @@ int handle_cuStreamBeginCapture(conn_t *conn) {
     return -1;
   }
 
-  auto *resources = lupine_get_stream_resources(stream);
+  auto *resources = lupine_begin_stream_capture_resources(stream);
   if (!resources->has_capture_scratch()) {
     static constexpr size_t scratch_size = 128ull * 1024ull * 1024ull;
     void *scratch = nullptr;
@@ -4489,10 +4498,12 @@ int handle_cuGraphLaunch(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  CUresult result = cuGraphLaunch(exec, stream);
   lupine_graph_resources *resources = nullptr;
-  if (result == CUDA_SUCCESS &&
-      lupine_graph_exec_resource_map().find(exec, resources)) {
+  (void)lupine_graph_exec_resource_map().find(exec, resources);
+  lupine_graph_begin_htod_execution(resources);
+  CUresult result = cuGraphLaunch(exec, stream);
+  result = lupine_graph_finish_htod_execution(resources, stream, result);
+  if (result == CUDA_SUCCESS && resources != nullptr) {
     lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||

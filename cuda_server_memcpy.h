@@ -33,6 +33,10 @@ lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
 bool lupine_graph_retain_resource(lupine_graph_resources *resources,
                                   std::shared_ptr<void> resource);
+void lupine_graph_begin_htod_execution(lupine_graph_resources *resources);
+CUresult lupine_graph_finish_htod_execution(lupine_graph_resources *resources,
+                                            CUstream stream,
+                                            CUresult launch_result);
 void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,
                                    size_t bytes);
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,

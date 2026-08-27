@@ -94,6 +94,83 @@ static int check_captured_host_order(CUdeviceptr destination, CUstream stream,
   return 0;
 }
 
+static int check_multiple_captured_copies(CUdeviceptr first_destination,
+                                          CUdeviceptr second_destination,
+                                          CUstream stream,
+                                          unsigned char *first_source,
+                                          unsigned char *second_source,
+                                          size_t bytes) {
+  CHECK(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpyHtoDAsync(first_destination, first_source, bytes, stream));
+  CHECK(cuMemcpyHtoDAsync(second_destination, second_source, bytes, stream));
+  CUgraph graph = nullptr;
+  CHECK(cuStreamEndCapture(stream, &graph));
+  CUgraphExec executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
+  CHECK(cuGraphLaunch(executable, stream));
+  CHECK(cuStreamSynchronize(stream));
+
+  std::vector<unsigned char> readback(bytes);
+  CHECK(cuMemcpyDtoH(readback.data(), first_destination, bytes));
+  if (!std::equal(readback.begin(), readback.end(), first_source)) {
+    std::fprintf(stderr, "first copy in a captured HtoD sequence failed\n");
+    return 1;
+  }
+  CHECK(cuMemcpyDtoH(readback.data(), second_destination, bytes));
+  if (!std::equal(readback.begin(), readback.end(), second_source)) {
+    std::fprintf(stderr, "second copy in a captured HtoD sequence failed\n");
+    return 1;
+  }
+
+  CHECK(cuGraphExecDestroy(executable));
+  CHECK(cuGraphDestroy(graph));
+  return 0;
+}
+
+static int check_concurrent_captured_copies(
+    CUdeviceptr first_destination, CUdeviceptr second_destination,
+    CUstream first_stream, CUstream second_stream, unsigned char *first_source,
+    unsigned char *second_source, size_t bytes) {
+  CHECK(cuStreamBeginCapture(first_stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(
+      cuMemcpyHtoDAsync(first_destination, first_source, bytes, first_stream));
+  CUgraph first_graph = nullptr;
+  CHECK(cuStreamEndCapture(first_stream, &first_graph));
+  CUgraphExec first_executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&first_executable, first_graph, 0));
+
+  CHECK(cuStreamBeginCapture(second_stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpyHtoDAsync(second_destination, second_source, bytes,
+                          second_stream));
+  CUgraph second_graph = nullptr;
+  CHECK(cuStreamEndCapture(second_stream, &second_graph));
+  CUgraphExec second_executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&second_executable, second_graph, 0));
+
+  CHECK(cuGraphLaunch(first_executable, first_stream));
+  CHECK(cuGraphLaunch(second_executable, second_stream));
+  CHECK(cuStreamSynchronize(first_stream));
+  CHECK(cuStreamSynchronize(second_stream));
+
+  std::vector<unsigned char> readback(bytes);
+  CHECK(cuMemcpyDtoH(readback.data(), first_destination, bytes));
+  if (!std::equal(readback.begin(), readback.end(), first_source)) {
+    std::fprintf(stderr, "first concurrent captured HtoD was corrupted\n");
+    return 1;
+  }
+  CHECK(cuMemcpyDtoH(readback.data(), second_destination, bytes));
+  if (!std::equal(readback.begin(), readback.end(), second_source)) {
+    std::fprintf(stderr, "second concurrent captured HtoD was corrupted\n");
+    return 1;
+  }
+
+  CHECK(cuGraphExecDestroy(second_executable));
+  CHECK(cuGraphDestroy(second_graph));
+  CHECK(cuGraphExecDestroy(first_executable));
+  CHECK(cuGraphDestroy(first_graph));
+  return 0;
+}
+
 int main() {
   // Five 8 MiB chunks force the two-slot server ring to wrap twice.
   constexpr size_t bytes = 40 * 1024 * 1024;
@@ -152,6 +229,16 @@ int main() {
   }
   if (check_captured_host_order(destination, stream, source.data(),
                                 4 * 1024 * 1024) != 0) {
+    return 1;
+  }
+  if (check_multiple_captured_copies(destination, second_destination, stream,
+                                     source.data(), second_source.data(),
+                                     12 * 1024 * 1024) != 0) {
+    return 1;
+  }
+  if (check_concurrent_captured_copies(
+          destination, second_destination, stream, second_stream, source.data(),
+          second_source.data(), 12 * 1024 * 1024) != 0) {
     return 1;
   }
 
