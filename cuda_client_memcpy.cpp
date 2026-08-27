@@ -1071,7 +1071,7 @@ static bool lupine_translate_client_host_ptr_to_server(
 }
 
 static bool lupine_translate_client_host_range_to_server(
-    const void *host, size_t size, int route_id, CUdeviceptr *translated) {
+    CUdeviceptr *translated, const void *host, size_t size, int route_id) {
   if (host == nullptr || translated == nullptr) {
     return false;
   }
@@ -2940,7 +2940,7 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   conn_t *conn = lupine_route_remote_conn(route);
   CUdeviceptr server_source = 0;
   bool is_server_authoritative = lupine_translate_client_host_range_to_server(
-      srcHost, ByteCount, lupine_route_identity(route), &server_source);
+      &server_source, srcHost, ByteCount, lupine_route_identity(route));
   const void *wire_source = is_server_authoritative
                                 ? reinterpret_cast<const void *>(server_source)
                                 : srcHost;
@@ -2984,7 +2984,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   conn_t *conn = lupine_route_remote_conn(route);
   CUdeviceptr server_source = 0;
   bool is_server_authoritative = lupine_translate_client_host_range_to_server(
-      srcHost, ByteCount, lupine_route_identity(route), &server_source);
+      &server_source, srcHost, ByteCount, lupine_route_identity(route));
   const void *wire_source = is_server_authoritative
                                 ? reinterpret_cast<const void *>(server_source)
                                 : srcHost;
@@ -3239,9 +3239,8 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
                                                 copy.WidthInBytes;
     CUdeviceptr server_source = 0;
     is_server_authoritative = lupine_translate_client_host_range_to_server(
-        src_base, source_span,
-        lupine_route_identity(lupine_remote_route_for_conn(conn)),
-        &server_source);
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
       copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
       copy.srcDevice = server_source;
@@ -3388,9 +3387,8 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
                                                 copy.WidthInBytes;
     CUdeviceptr server_source = 0;
     is_server_authoritative = lupine_translate_client_host_range_to_server(
-        src_base, source_span,
-        lupine_route_identity(lupine_remote_route_for_conn(conn)),
-        &server_source);
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
       copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
       copy.srcDevice = server_source;
@@ -3538,9 +3536,8 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
                                                 copy.WidthInBytes;
     CUdeviceptr server_source = 0;
     is_server_authoritative = lupine_translate_client_host_range_to_server(
-        src_base, source_span,
-        lupine_route_identity(lupine_remote_route_for_conn(conn)),
-        &server_source);
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
       copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
       copy.srcDevice = server_source;
@@ -3707,9 +3704,8 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                                    copy.WidthInBytes;
     CUdeviceptr server_source = 0;
     is_server_authoritative = lupine_translate_client_host_range_to_server(
-        src_base, source_span,
-        lupine_route_identity(lupine_remote_route_for_conn(conn)),
-        &server_source);
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
       copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
       copy.srcDevice = server_source;
@@ -3861,9 +3857,8 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                                    copy.WidthInBytes;
     CUdeviceptr server_source = 0;
     is_server_authoritative = lupine_translate_client_host_range_to_server(
-        src_base, source_span,
-        lupine_route_identity(lupine_remote_route_for_conn(conn)),
-        &server_source);
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
       copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
       copy.srcDevice = server_source;
