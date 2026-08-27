@@ -2948,15 +2948,13 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                        : lupine_htod_source_location::client;
   const void *wire_source =
       source_on_server ? reinterpret_cast<const void *>(server_source)
-                       : lupine_mapped_host_read_source(srcHost, ByteCount);
+                       : srcHost;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &source_location, sizeof(source_location)) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
-      (source_on_server &&
-       rpc_write(conn, &wire_source, sizeof(wire_source)) < 0) ||
-      (!source_on_server && rpc_write(conn, wire_source, ByteCount) < 0) ||
+      rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -3282,18 +3280,10 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     size_t source_span = copy.Height == 0 ? 0
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
-    bool source_on_server =
-        lupine_use_server_htod_source(copy, src_base, source_span, conn);
-    if (!source_on_server) {
-      src_base = static_cast<const char *>(
-          lupine_mapped_host_read_source(src_base, source_span));
-    }
+    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        (!source_on_server &&
-         rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                           copy.srcPitch, 1, 0) < 0) ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {
@@ -3419,18 +3409,10 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     size_t source_span = copy.Height == 0 ? 0
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
-    bool source_on_server =
-        lupine_use_server_htod_source(copy, src_base, source_span, conn);
-    if (!source_on_server) {
-      src_base = static_cast<const char *>(
-          lupine_mapped_host_read_source(src_base, source_span));
-    }
+    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        (!source_on_server &&
-         rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                           copy.srcPitch, 1, 0) < 0) ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {
@@ -3706,18 +3688,10 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                              : (copy.Depth - 1) * src_slice_pitch +
                                    (copy.Height - 1) * copy.srcPitch +
                                    copy.WidthInBytes;
-    bool source_on_server =
-        lupine_use_server_htod_source(copy, src_base, source_span, conn);
-    if (!source_on_server) {
-      src_base = static_cast<const char *>(
-          lupine_mapped_host_read_source(src_base, source_span));
-    }
+    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        (!source_on_server &&
-         rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                           copy.srcPitch, copy.Depth, src_slice_pitch) < 0) ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {

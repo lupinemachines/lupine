@@ -18,7 +18,6 @@
 #include <memory>
 #include <mutex>
 #include <new>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -34,7 +33,8 @@ struct lupine_htod_plan;
 
 struct lupine_htod_callback_data {
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  std::shared_ptr<const lupine_htod_plan> plan;
+  lupine_host_memory_view source;
+  size_t bytes = 0;
   bool persistent = false;
 };
 
@@ -48,7 +48,6 @@ struct lupine_staging_state {
   std::unordered_set<CUcontext> created_contexts;
   std::unordered_set<CUcontext> teardown_contexts;
   std::unordered_set<CUdevice> teardown_devices;
-  std::shared_ptr<lupine_htod_side_effect_ring> side_effect_htod;
   std::vector<std::unique_ptr<lupine_htod_callback_data>>
       captured_htod_callbacks;
 };
@@ -145,39 +144,9 @@ static CUresult lupine_current_htod_context(conn_t *conn,
   return result == CUDA_SUCCESS ? cuCtxGetDevice(device) : result;
 }
 
-class lupine_scoped_context {
-public:
-  explicit lupine_scoped_context(CUcontext target) {
-    status_ = cuCtxGetCurrent(&previous_);
-    if (status_ == CUDA_SUCCESS && previous_ != target) {
-      status_ = cuCtxSetCurrent(target);
-      changed_ = status_ == CUDA_SUCCESS;
-    }
-  }
-
-  ~lupine_scoped_context() {
-    if (changed_) {
-      CUresult result = cuCtxSetCurrent(previous_);
-      if (result != CUDA_SUCCESS) {
-        LUPINE_LOG_ERROR("Failed to restore CUDA context after staging "
-                         "cleanup: "
-                         << result);
-      }
-    }
-  }
-
-  CUresult status() const { return status_; }
-
-private:
-  CUcontext previous_ = nullptr;
-  CUresult status_ = CUDA_ERROR_INVALID_CONTEXT;
-  bool changed_ = false;
-};
-
 enum class lupine_htod_copy_kind {
   linear,
   two_dimensional,
-  two_dimensional_unaligned,
   three_dimensional
 };
 
@@ -195,422 +164,56 @@ struct lupine_htod_plan {
   std::vector<lupine_htod_chunk> chunks;
 };
 
-struct lupine_htod_execution {
-  std::mutex mutex;
-  std::condition_variable condition;
-  size_t pending = 0;
-  CUresult result = CUDA_SUCCESS;
-};
-
-// CUDA host functions cannot call CUDA APIs. They fill this pinned ring over
-// the reverse RPC channel while a normal worker submits the corresponding DMA.
-// Slot completion is therefore signaled by the worker, never by another CUDA
-// callback; a callback waiting for the next open slot cannot starve the CUDA
-// callback executor that would otherwise have to release it.
+// A host node reads one chunk into this pinned slot and the following CUDA node
+// consumes it. Stream ordering makes slot reuse safe without a worker thread or
+// a second synchronization mechanism.
 class lupine_htod_side_effect_ring {
 public:
-  static constexpr size_t slot_count = 2;
   static constexpr size_t slot_bytes = 8 * 1024 * 1024;
 
-  explicit lupine_htod_side_effect_ring(conn_t *conn)
-      : conn_(conn), worker_([this] { worker_loop(); }) {}
+  explicit lupine_htod_side_effect_ring(conn_t *conn) : conn_(conn) {}
 
   ~lupine_htod_side_effect_ring() {
-    shutdown();
-    for (auto &slot : slots_) {
-      if (slot.ptr != nullptr) {
-        (void)cuMemFreeHost(slot.ptr);
-      }
+    if (slot_ != nullptr) {
+      (void)cuMemFreeHost(slot_);
     }
   }
 
-  CUresult prepare(CUcontext context) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    if (stopping_) {
-      return CUDA_ERROR_DEINITIALIZED;
-    }
-    retired_contexts_.erase(context);
-    if (prepared_) {
-      return CUDA_SUCCESS;
-    }
-    lock.unlock();
-
-    std::array<void *, slot_count> allocated = {};
-    CUresult result = CUDA_SUCCESS;
-    for (void *&ptr : allocated) {
-      result = cuMemHostAlloc(&ptr, slot_bytes, CU_MEMHOSTALLOC_PORTABLE);
-      if (result != CUDA_SUCCESS) {
-        break;
-      }
-    }
-    if (result != CUDA_SUCCESS) {
-      for (void *ptr : allocated) {
-        if (ptr != nullptr) {
-          (void)cuMemFreeHost(ptr);
-        }
-      }
-      return result;
-    }
-
-    lock.lock();
-    if (!prepared_) {
-      for (size_t index = 0; index < slot_count; ++index) {
-        slots_[index].ptr = allocated[index];
-        allocated[index] = nullptr;
-      }
-      prepared_ = true;
-    }
-    lock.unlock();
-    for (void *ptr : allocated) {
-      if (ptr != nullptr) {
-        (void)cuMemFreeHost(ptr);
-      }
-    }
-    return CUDA_SUCCESS;
+  CUresult prepare() {
+    return cuMemHostAlloc(&slot_, slot_bytes, CU_MEMHOSTALLOC_PORTABLE);
   }
 
-  int execute(const lupine_htod_plan &plan, bool legacy_stream,
-              bool reverse_source, CUresult &result) {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (stopping_ || retired_contexts_.count(plan.context) != 0) {
-        result = CUDA_ERROR_DEINITIALIZED;
-        return -1;
-      }
-      ++active_executions_[plan.context];
-    }
+  void *data() const { return slot_; }
 
-    lupine_htod_execution execution;
-    bool transport_ok = true;
-    bool remote_response_open = false;
-    if (reverse_source) {
-      transport_ok = begin_remote_fetch(plan) == 0;
-      remote_response_open = transport_ok;
-    }
-
-    for (const auto &chunk : plan.chunks) {
-      if (!transport_ok) {
-        break;
-      }
-      size_t slot_index = 0;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        available_.wait(lock, [&] {
-          if (stopping_) {
-            return true;
-          }
-          for (const auto &slot : slots_) {
-            if (!slot.busy) {
-              return true;
-            }
-          }
-          return false;
-        });
-        if (stopping_) {
-          transport_ok = false;
-          break;
-        }
-        slot_index = next_slot_;
-        while (slots_[slot_index].busy) {
-          slot_index = (slot_index + 1) % slot_count;
-        }
-        slots_[slot_index].busy = true;
-        next_slot_ = (slot_index + 1) % slot_count;
-      }
-
-      int fetch_result = rpc_read(conn_, slots_[slot_index].ptr, chunk.bytes);
-      if (fetch_result < 0) {
-        {
-          std::lock_guard<std::mutex> lock(mutex_);
-          slots_[slot_index].busy = false;
-        }
-        available_.notify_all();
-        transport_ok = false;
-        break;
-      }
-
-      if (legacy_stream && plan.chunks.size() == 1) {
-        job direct{plan.context, chunk, slot_index, true, &execution};
-        execution.result = transfer_sync(direct);
-        {
-          std::lock_guard<std::mutex> lock(mutex_);
-          slots_[slot_index].busy = false;
-        }
-        available_.notify_all();
-        continue;
-      }
-
-      {
-        std::lock_guard<std::mutex> lock(execution.mutex);
-        ++execution.pending;
-      }
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        if (stopping_) {
-          slots_[slot_index].busy = false;
-          lock.unlock();
-          std::lock_guard<std::mutex> execution_lock(execution.mutex);
-          --execution.pending;
-          transport_ok = false;
-          break;
-        }
-        jobs_[job_tail_] = {plan.context, chunk, slot_index, legacy_stream,
-                            &execution};
-        job_tail_ = (job_tail_ + 1) % slot_count;
-        ++job_count_;
-      }
-      work_.notify_one();
-    }
-
-    if (remote_response_open && transport_ok && rpc_read_end(conn_) < 0) {
-      transport_ok = false;
-    }
-
-    std::unique_lock<std::mutex> lock(execution.mutex);
-    execution.condition.wait(lock, [&] { return execution.pending == 0; });
-    result = execution.result;
-    lock.unlock();
-    {
-      std::lock_guard<std::mutex> ring_lock(mutex_);
-      auto active = active_executions_.find(plan.context);
-      if (--active->second == 0) {
-        active_executions_.erase(active);
-      }
-    }
-    context_idle_.notify_all();
-    return transport_ok ? 0 : -1;
-  }
-
-  void retire_context(CUcontext context) {
-    if (context == nullptr) {
-      return;
-    }
-    CUstream stream = nullptr;
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      retired_contexts_.insert(context);
-      context_idle_.wait(
-          lock, [&] { return active_executions_.count(context) == 0; });
-      auto found = streams_.find(context);
-      if (found != streams_.end()) {
-        stream = found->second;
-        streams_.erase(found);
-      }
-    }
-    if (stream != nullptr) {
-      lupine_scoped_context current(context);
-      if (current.status() == CUDA_SUCCESS) {
-        (void)cuStreamDestroy_v2(stream);
-      }
-    }
-  }
-
-  void shutdown() {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (stopping_) {
-        return;
-      }
-      stopping_ = true;
-    }
-    work_.notify_all();
-    available_.notify_all();
-    if (worker_.joinable()) {
-      worker_.join();
-    }
-    std::unique_lock<std::mutex> lock(mutex_);
-    context_idle_.wait(lock, [&] { return active_executions_.empty(); });
-  }
-
-private:
-  struct slot {
-    void *ptr = nullptr;
-    bool busy = false;
-  };
-
-  struct job {
-    CUcontext context = nullptr;
-    lupine_htod_chunk chunk;
-    size_t slot_index = 0;
-    bool legacy_stream = false;
-    lupine_htod_execution *execution = nullptr;
-  };
-
-  int begin_remote_fetch(const lupine_htod_plan &plan) {
-    uint64_t count = plan.chunks.size();
+  int fetch(const lupine_host_memory_view &source, size_t bytes) {
+    uint64_t count = 1;
     if (rpc_write_start_request(
             conn_, static_cast<int>(lupine_side_effect_op::read_host_memory)) <
             0 ||
-        rpc_write(conn_, &count, sizeof(count)) < 0) {
+        rpc_write(conn_, &count, sizeof(count)) < 0 ||
+        rpc_write(conn_, &source, sizeof(source)) < 0 ||
+        rpc_wait_for_response(conn_) < 0 || rpc_read(conn_, slot_, bytes) < 0 ||
+        rpc_read_end(conn_) < 0) {
       return -1;
     }
-    for (const auto &chunk : plan.chunks) {
-      if (rpc_write(conn_, &chunk.source, sizeof(chunk.source)) < 0) {
-        return -1;
-      }
-    }
-    return rpc_wait_for_response(conn_);
+    return 0;
   }
 
-  CUresult transfer(const job &item, CUstream stream) {
-    void *source = slots_[item.slot_index].ptr;
-    CUresult result = CUDA_ERROR_INVALID_VALUE;
-    switch (item.chunk.kind) {
-    case lupine_htod_copy_kind::linear:
-      result = cuMemcpyHtoDAsync_v2(item.chunk.linear_destination, source,
-                                    item.chunk.bytes, stream);
-      break;
-    case lupine_htod_copy_kind::two_dimensional: {
-      CUDA_MEMCPY2D copy = item.chunk.copy_2d;
-      copy.srcHost = source;
-      result = cuMemcpy2DAsync_v2(&copy, stream);
-      break;
-    }
-    case lupine_htod_copy_kind::two_dimensional_unaligned: {
-      CUDA_MEMCPY2D copy = item.chunk.copy_2d;
-      copy.srcHost = source;
-      return cuMemcpy2DUnaligned_v2(&copy);
-    }
-    case lupine_htod_copy_kind::three_dimensional: {
-      CUDA_MEMCPY3D copy = item.chunk.copy_3d;
-      copy.srcHost = source;
-      result = cuMemcpy3DAsync_v2(&copy, stream);
-      break;
-    }
-    }
-    if (result == CUDA_SUCCESS) {
-      result = cuStreamSynchronize(stream);
-    }
-    return result;
-  }
-
-  CUresult transfer_sync(const job &item) {
-    void *source = slots_[item.slot_index].ptr;
-    switch (item.chunk.kind) {
-    case lupine_htod_copy_kind::linear:
-      return cuMemcpyHtoD_v2(item.chunk.linear_destination, source,
-                             item.chunk.bytes);
-    case lupine_htod_copy_kind::two_dimensional: {
-      CUDA_MEMCPY2D copy = item.chunk.copy_2d;
-      copy.srcHost = source;
-      return cuMemcpy2D_v2(&copy);
-    }
-    case lupine_htod_copy_kind::two_dimensional_unaligned: {
-      CUDA_MEMCPY2D copy = item.chunk.copy_2d;
-      copy.srcHost = source;
-      return cuMemcpy2DUnaligned_v2(&copy);
-    }
-    case lupine_htod_copy_kind::three_dimensional: {
-      CUDA_MEMCPY3D copy = item.chunk.copy_3d;
-      copy.srcHost = source;
-      return cuMemcpy3D_v2(&copy);
-    }
-    }
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  CUstream transfer_stream(CUcontext context, CUresult *result) {
-    auto found = streams_.find(context);
-    if (found != streams_.end()) {
-      *result = CUDA_SUCCESS;
-      return found->second;
-    }
-    CUstream stream = nullptr;
-    *result = cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING);
-    if (*result == CUDA_SUCCESS) {
-      streams_[context] = stream;
-    }
-    return stream;
-  }
-
-  void worker_loop() {
-    for (;;) {
-      job item;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        work_.wait(lock, [&] { return stopping_ || job_count_ != 0; });
-        if (job_count_ == 0) {
-          if (stopping_) {
-            break;
-          }
-          continue;
-        }
-        item = std::move(jobs_[job_head_]);
-        jobs_[job_head_] = {};
-        job_head_ = (job_head_ + 1) % slot_count;
-        --job_count_;
-      }
-
-      lupine_scoped_context current(item.context);
-      CUresult result = current.status();
-      CUstream stream = CU_STREAM_LEGACY;
-      if (result == CUDA_SUCCESS && !item.legacy_stream) {
-        stream = transfer_stream(item.context, &result);
-      }
-      if (result == CUDA_SUCCESS) {
-        result = transfer(item, stream);
-      }
-
-      {
-        std::lock_guard<std::mutex> lock(item.execution->mutex);
-        if (item.execution->result == CUDA_SUCCESS && result != CUDA_SUCCESS) {
-          item.execution->result = result;
-        }
-        --item.execution->pending;
-        item.execution->condition.notify_all();
-      }
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        slots_[item.slot_index].busy = false;
-      }
-      available_.notify_all();
-    }
-
-    for (const auto &entry : streams_) {
-      lupine_scoped_context current(entry.first);
-      if (current.status() == CUDA_SUCCESS) {
-        (void)cuStreamDestroy_v2(entry.second);
-      }
-    }
-  }
-
+private:
   conn_t *conn_ = nullptr;
-  std::mutex mutex_;
-  std::condition_variable work_;
-  std::condition_variable available_;
-  std::condition_variable context_idle_;
-  std::array<slot, slot_count> slots_;
-  std::array<job, slot_count> jobs_;
-  std::unordered_map<CUcontext, CUstream> streams_;
-  std::unordered_map<CUcontext, size_t> active_executions_;
-  std::unordered_set<CUcontext> retired_contexts_;
-  size_t next_slot_ = 0;
-  size_t job_head_ = 0;
-  size_t job_tail_ = 0;
-  size_t job_count_ = 0;
-  bool prepared_ = false;
-  bool stopping_ = false;
-  std::thread worker_;
+  void *slot_ = nullptr;
 };
 
 static std::shared_ptr<lupine_htod_side_effect_ring>
-lupine_prepare_htod_side_effect_ring(lupine_staging_state &state,
-                                     CUcontext context, CUresult &result) {
+lupine_prepare_htod_side_effect_ring(conn_t *conn, CUresult &result) {
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  {
-    std::lock_guard<std::mutex> lock(state.mutex);
-    ring = state.side_effect_htod;
-    if (ring == nullptr) {
-      try {
-        ring = std::make_shared<lupine_htod_side_effect_ring>(state.conn);
-        state.side_effect_htod = ring;
-      } catch (...) {
-        result = CUDA_ERROR_OUT_OF_MEMORY;
-        return nullptr;
-      }
-    }
+  try {
+    ring = std::make_shared<lupine_htod_side_effect_ring>(conn);
+  } catch (...) {
+    result = CUDA_ERROR_OUT_OF_MEMORY;
+    return nullptr;
   }
-  result = ring->prepare(context);
+  result = ring->prepare();
   return result == CUDA_SUCCESS ? ring : nullptr;
 }
 
@@ -619,35 +222,23 @@ static void CUDA_CB lupine_htod_side_effect_callback(void *opaque) {
   if (data == nullptr) {
     return;
   }
-  auto ring = data->ring;
-  auto plan = data->plan;
   bool persistent = data->persistent;
-  CUresult result = CUDA_SUCCESS;
-  if (ring->execute(*plan, false, true, result) < 0) {
+  if (data->bytes != 0 && data->ring->fetch(data->source, data->bytes) < 0) {
     LUPINE_LOG_ERROR("HtoD side-effect transport failed");
-  } else if (result != CUDA_SUCCESS) {
-    LUPINE_LOG_ERROR("HtoD side-effect copy failed: " << result);
   }
   if (!persistent) {
     delete data;
   }
 }
 
-static CUresult lupine_enqueue_htod_side_effect(
+static CUresult lupine_enqueue_htod_callback(
     lupine_staging_state &state,
     const std::shared_ptr<lupine_htod_side_effect_ring> &ring,
-    const std::shared_ptr<const lupine_htod_plan> &plan, CUstream stream) {
-  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
-  CUresult result = CUDA_SUCCESS;
-  if (stream != nullptr) {
-    result = cuStreamIsCapturing(stream, &capture_status);
-  }
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-  bool persistent = capture_status != CU_STREAM_CAPTURE_STATUS_NONE;
+    const lupine_host_memory_view &source, size_t bytes, CUstream stream,
+    bool persistent) {
   auto callback = std::unique_ptr<lupine_htod_callback_data>(
-      new (std::nothrow) lupine_htod_callback_data{ring, plan, persistent});
+      new (std::nothrow)
+          lupine_htod_callback_data{ring, source, bytes, persistent});
   if (callback == nullptr) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -659,7 +250,7 @@ static CUresult lupine_enqueue_htod_side_effect(
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
   }
-  result =
+  CUresult result =
       cuLaunchHostFunc(stream, lupine_htod_side_effect_callback, callback_ptr);
   if (result != CUDA_SUCCESS) {
     if (persistent) {
@@ -669,6 +260,68 @@ static CUresult lupine_enqueue_htod_side_effect(
     (void)callback.release();
   }
   return result;
+}
+
+static CUresult lupine_enqueue_htod_chunk(const lupine_htod_chunk &chunk,
+                                          void *source, CUstream stream) {
+  switch (chunk.kind) {
+  case lupine_htod_copy_kind::linear:
+    return cuMemcpyHtoDAsync_v2(chunk.linear_destination, source, chunk.bytes,
+                                stream);
+  case lupine_htod_copy_kind::two_dimensional: {
+    CUDA_MEMCPY2D copy = chunk.copy_2d;
+    copy.srcHost = source;
+    return cuMemcpy2DAsync_v2(&copy, stream);
+  }
+  case lupine_htod_copy_kind::three_dimensional: {
+    CUDA_MEMCPY3D copy = chunk.copy_3d;
+    copy.srcHost = source;
+    return cuMemcpy3DAsync_v2(&copy, stream);
+  }
+  }
+  return CUDA_ERROR_INVALID_VALUE;
+}
+
+static CUresult lupine_copy_client_host_to_device(
+    lupine_staging_state &state,
+    const std::shared_ptr<const lupine_htod_plan> &plan, CUstream stream,
+    bool blocking) {
+  if (plan->chunks.empty()) {
+    return CUDA_SUCCESS;
+  }
+
+  CUresult result = CUDA_SUCCESS;
+  auto ring = lupine_prepare_htod_side_effect_ring(state.conn, result);
+  if (ring == nullptr) {
+    return result;
+  }
+
+  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (stream != nullptr) {
+    result = cuStreamIsCapturing(stream, &capture_status);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+  }
+  bool persistent = capture_status != CU_STREAM_CAPTURE_STATUS_NONE;
+  for (const auto &chunk : plan->chunks) {
+    result = lupine_enqueue_htod_callback(state, ring, chunk.source,
+                                          chunk.bytes, stream, persistent);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    result = lupine_enqueue_htod_chunk(chunk, ring->data(), stream);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+  }
+
+  // Keep the per-copy slot alive until the final DMA has consumed it.
+  result = lupine_enqueue_htod_callback(state, ring, {}, 0, stream, persistent);
+  if (result != CUDA_SUCCESS || !blocking) {
+    return result;
+  }
+  return cuStreamSynchronize(stream);
 }
 
 static std::shared_ptr<lupine_htod_plan>
@@ -711,8 +364,6 @@ lupine_make_2d_htod_plan(CUcontext context, const CUDA_MEMCPY2D &original,
 
   const auto *source = static_cast<const unsigned char *>(original.srcHost) +
                        original.srcY * original.srcPitch + original.srcXInBytes;
-  const auto kind = unaligned ? lupine_htod_copy_kind::two_dimensional_unaligned
-                              : lupine_htod_copy_kind::two_dimensional;
   auto append = [&](const void *chunk_source, size_t chunk_width,
                     size_t chunk_rows, size_t source_stride,
                     size_t destination_x, size_t destination_y) {
@@ -720,7 +371,7 @@ lupine_make_2d_htod_plan(CUcontext context, const CUDA_MEMCPY2D &original,
     chunk.source = {chunk_source,  chunk_width, chunk_rows,
                     source_stride, 1,           chunk_width * chunk_rows};
     chunk.bytes = chunk_width * chunk_rows;
-    chunk.kind = kind;
+    chunk.kind = lupine_htod_copy_kind::two_dimensional;
     chunk.copy_2d = original;
     chunk.copy_2d.srcMemoryType = CU_MEMORYTYPE_HOST;
     chunk.copy_2d.srcHost = nullptr;
@@ -735,7 +386,11 @@ lupine_make_2d_htod_plan(CUcontext context, const CUDA_MEMCPY2D &original,
   };
 
   if (width <= lupine_htod_side_effect_ring::slot_bytes) {
-    size_t rows_per_chunk = lupine_htod_side_effect_ring::slot_bytes / width;
+    // cuMemcpy2DUnaligned has no asynchronous entry point. Splitting it into
+    // single-row cuMemcpy2DAsync calls preserves its relaxed source-pitch
+    // behavior because each staged row is tightly packed.
+    size_t rows_per_chunk =
+        unaligned ? 1 : lupine_htod_side_effect_ring::slot_bytes / width;
     for (size_t row = 0; row < height; row += rows_per_chunk) {
       size_t rows = std::min(rows_per_chunk, height - row);
       append(source + row * original.srcPitch, width, rows, original.srcPitch,
@@ -832,16 +487,8 @@ lupine_make_3d_htod_plan(CUcontext context, const CUDA_MEMCPY3D &original) {
   return plan;
 }
 
-static void lupine_retire_htod_side_effects(lupine_staging_state &state,
-                                            CUcontext context) {
-  if (state.side_effect_htod != nullptr) {
-    state.side_effect_htod->retire_context(context);
-  }
-}
-
 static void lupine_server_forget_context_metadata(lupine_staging_state &state,
                                                   CUcontext context) {
-  lupine_retire_htod_side_effects(state, context);
   state.created_contexts.erase(context);
   for (auto it = state.primary_contexts.begin();
        it != state.primary_contexts.end();) {
@@ -925,7 +572,7 @@ void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device) {
   auto it = state->primary_contexts.find(device);
   if (it != state->primary_contexts.end()) {
     state->teardown_contexts.insert(it->second);
-    lupine_retire_htod_side_effects(*state, it->second);
+    state->captured_htod_callbacks.clear();
   }
 }
 
@@ -968,7 +615,7 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context) {
   std::unique_lock<std::mutex> lock(state->mutex);
   state->teardown_contexts.insert(context);
   state->condition.wait(lock, [&] { return !state->staging_operation_active; });
-  lupine_retire_htod_side_effects(*state, context);
+  state->captured_htod_callbacks.clear();
 }
 
 void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,
@@ -1012,10 +659,6 @@ void lupine_server_cleanup_connection(conn_t *conn) {
           })) {
     return;
   }
-  auto *state = owned_state.get();
-  if (state->side_effect_htod != nullptr) {
-    state->side_effect_htod->shutdown();
-  }
 }
 
 int lupine_write_lifecycle_response(conn_t *conn, int request_id,
@@ -1038,49 +681,41 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (rpc_read(conn, &source_location, sizeof(source_location)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
-      (source_location == lupine_htod_source_location::server &&
-       rpc_read(conn, &source, sizeof(source)) < 0)) {
-    return -1;
-  }
-
-  lupine_staging_state *state = nullptr;
-  CUcontext context = nullptr;
-  CUdevice device = 0;
-  result = lupine_current_htod_context(conn, &state, &context, &device);
-  lupine_staging_operation operation(result == CUDA_SUCCESS ? state : nullptr,
-                                     context, device);
-  if (result == CUDA_SUCCESS && !operation.acquired()) {
-    result = CUDA_ERROR_INVALID_CONTEXT;
-  }
-
-  std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  std::shared_ptr<lupine_htod_plan> plan;
-  bool source_on_server =
-      source_location == lupine_htod_source_location::server;
-  if (result == CUDA_SUCCESS && bytes != 0 && !source_on_server) {
-    ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-  }
-  if (result == CUDA_SUCCESS && bytes != 0 && !source_on_server) {
-    try {
-      plan = lupine_make_linear_htod_plan(context, destination, nullptr, bytes);
-    } catch (...) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-    }
-  }
-  if (result == CUDA_SUCCESS && bytes != 0 && !source_on_server &&
-      ring->execute(*plan, true, false, result) < 0) {
-    return -1;
-  }
-  if (result == CUDA_SUCCESS && bytes != 0 && source_on_server) {
-    result = cuMemcpyHtoD_v2(destination, source, bytes);
-  }
-  if (result != CUDA_SUCCESS && plan == nullptr && !source_on_server &&
-      rpc_drain(conn, bytes) < 0) {
+      rpc_read(conn, &source, sizeof(source)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
+  }
+
+  bool source_on_server =
+      source_location == lupine_htod_source_location::server;
+  if (bytes != 0 && source_on_server) {
+    result = cuMemcpyHtoD_v2(destination, source, bytes);
+  } else if (bytes != 0) {
+    lupine_staging_state *state = nullptr;
+    CUcontext context = nullptr;
+    CUdevice device = 0;
+    result = lupine_current_htod_context(conn, &state, &context, &device);
+    lupine_staging_operation operation(
+        result == CUDA_SUCCESS ? state : nullptr, context, device);
+    if (result == CUDA_SUCCESS && !operation.acquired()) {
+      result = CUDA_ERROR_INVALID_CONTEXT;
+    }
+    std::shared_ptr<lupine_htod_plan> plan;
+    if (result == CUDA_SUCCESS) {
+      try {
+        plan =
+            lupine_make_linear_htod_plan(context, destination, source, bytes);
+      } catch (...) {
+        result = CUDA_ERROR_OUT_OF_MEMORY;
+      }
+    }
+    if (result == CUDA_SUCCESS) {
+      result = lupine_copy_client_host_to_device(
+          *state, plan, CU_STREAM_LEGACY, true);
+    }
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -1388,6 +1023,10 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
                  : lupine_copy_direction::device_to_device);
   switch (direction) {
   case lupine_copy_direction::host_to_device: {
+    int request_id = rpc_read_end(conn);
+    if (request_id < 0) {
+      return -1;
+    }
     lupine_staging_state *state = nullptr;
     CUcontext context = nullptr;
     CUdevice device = 0;
@@ -1398,32 +1037,17 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
     if (result == CUDA_SUCCESS && !operation.acquired()) {
       result = CUDA_ERROR_INVALID_CONTEXT;
     }
-    std::shared_ptr<lupine_htod_side_effect_ring> ring;
     std::shared_ptr<lupine_htod_plan> plan;
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0 &&
-        copy.Depth != 0) {
-      ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-    }
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0 &&
-        copy.Depth != 0) {
+    if (result == CUDA_SUCCESS) {
       try {
         plan = lupine_make_3d_htod_plan(context, copy);
       } catch (...) {
         result = CUDA_ERROR_OUT_OF_MEMORY;
       }
     }
-    if (result == CUDA_SUCCESS && plan != nullptr &&
-        ring->execute(*plan, true, false, result) < 0) {
-      return -1;
-    }
-    size_t payload_bytes = copy.WidthInBytes * copy.Height * copy.Depth;
-    if (result != CUDA_SUCCESS && plan == nullptr &&
-        rpc_drain(conn, payload_bytes) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
+    if (result == CUDA_SUCCESS) {
+      result = lupine_copy_client_host_to_device(
+          *state, plan, CU_STREAM_LEGACY, true);
     }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
@@ -1507,22 +1131,17 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
     if (result == CUDA_SUCCESS && !operation.acquired()) {
       result = CUDA_ERROR_INVALID_CONTEXT;
     }
-    std::shared_ptr<lupine_htod_side_effect_ring> ring;
     std::shared_ptr<lupine_htod_plan> plan;
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0 &&
-        copy.Depth != 0) {
-      ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-    }
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0 &&
-        copy.Depth != 0) {
+    if (result == CUDA_SUCCESS) {
       try {
         plan = lupine_make_3d_htod_plan(context, copy);
       } catch (...) {
         result = CUDA_ERROR_OUT_OF_MEMORY;
       }
     }
-    if (result == CUDA_SUCCESS && plan != nullptr) {
-      result = lupine_enqueue_htod_side_effect(*state, ring, plan, stream);
+    if (result == CUDA_SUCCESS) {
+      result =
+          lupine_copy_client_host_to_device(*state, plan, stream, false);
     }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
@@ -1762,6 +1381,10 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
                  : lupine_copy_direction::device_to_device);
   switch (direction) {
   case lupine_copy_direction::host_to_device: {
+    int request_id = rpc_read_end(conn);
+    if (request_id < 0) {
+      return -1;
+    }
     lupine_staging_state *state = nullptr;
     CUcontext context = nullptr;
     CUdevice device = 0;
@@ -1772,30 +1395,17 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
     if (result == CUDA_SUCCESS && !operation.acquired()) {
       result = CUDA_ERROR_INVALID_CONTEXT;
     }
-    std::shared_ptr<lupine_htod_side_effect_ring> ring;
     std::shared_ptr<lupine_htod_plan> plan;
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0) {
-      ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-    }
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0) {
+    if (result == CUDA_SUCCESS) {
       try {
         plan = lupine_make_2d_htod_plan(context, copy, false);
       } catch (...) {
         result = CUDA_ERROR_OUT_OF_MEMORY;
       }
     }
-    if (result == CUDA_SUCCESS && plan != nullptr &&
-        ring->execute(*plan, true, false, result) < 0) {
-      return -1;
-    }
-    size_t payload_bytes = copy.WidthInBytes * copy.Height;
-    if (result != CUDA_SUCCESS && plan == nullptr &&
-        rpc_drain(conn, payload_bytes) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
+    if (result == CUDA_SUCCESS) {
+      result = lupine_copy_client_host_to_device(
+          *state, plan, CU_STREAM_LEGACY, true);
     }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
@@ -1857,6 +1467,10 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
                  : lupine_copy_direction::device_to_device);
   switch (direction) {
   case lupine_copy_direction::host_to_device: {
+    int request_id = rpc_read_end(conn);
+    if (request_id < 0) {
+      return -1;
+    }
     lupine_staging_state *state = nullptr;
     CUcontext context = nullptr;
     CUdevice device = 0;
@@ -1867,30 +1481,17 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
     if (result == CUDA_SUCCESS && !operation.acquired()) {
       result = CUDA_ERROR_INVALID_CONTEXT;
     }
-    std::shared_ptr<lupine_htod_side_effect_ring> ring;
     std::shared_ptr<lupine_htod_plan> plan;
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0) {
-      ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-    }
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0) {
+    if (result == CUDA_SUCCESS) {
       try {
         plan = lupine_make_2d_htod_plan(context, copy, true);
       } catch (...) {
         result = CUDA_ERROR_OUT_OF_MEMORY;
       }
     }
-    if (result == CUDA_SUCCESS && plan != nullptr &&
-        ring->execute(*plan, true, false, result) < 0) {
-      return -1;
-    }
-    size_t payload_bytes = copy.WidthInBytes * copy.Height;
-    if (result != CUDA_SUCCESS && plan == nullptr &&
-        rpc_drain(conn, payload_bytes) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
+    if (result == CUDA_SUCCESS) {
+      result = lupine_copy_client_host_to_device(
+          *state, plan, CU_STREAM_LEGACY, true);
     }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
@@ -1970,20 +1571,17 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
     if (result == CUDA_SUCCESS && !operation.acquired()) {
       result = CUDA_ERROR_INVALID_CONTEXT;
     }
-    std::shared_ptr<lupine_htod_side_effect_ring> ring;
     std::shared_ptr<lupine_htod_plan> plan;
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0) {
-      ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-    }
-    if (result == CUDA_SUCCESS && copy.WidthInBytes != 0 && copy.Height != 0) {
+    if (result == CUDA_SUCCESS) {
       try {
         plan = lupine_make_2d_htod_plan(context, copy, false);
       } catch (...) {
         result = CUDA_ERROR_OUT_OF_MEMORY;
       }
     }
-    if (result == CUDA_SUCCESS && plan != nullptr) {
-      result = lupine_enqueue_htod_side_effect(*state, ring, plan, stream);
+    if (result == CUDA_SUCCESS) {
+      result =
+          lupine_copy_client_host_to_device(*state, plan, stream, false);
     }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
@@ -2055,37 +1653,33 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     return -1;
   }
 
-  lupine_staging_state *state = nullptr;
-  CUcontext context = nullptr;
-  CUdevice device = 0;
-  result = lupine_current_htod_context(conn, &state, &context, &device);
-  lupine_staging_operation operation(result == CUDA_SUCCESS ? state : nullptr,
-                                     context, device);
-  if (result == CUDA_SUCCESS && !operation.acquired()) {
-    result = CUDA_ERROR_INVALID_CONTEXT;
-  }
-
-  std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  std::shared_ptr<lupine_htod_plan> plan;
   bool source_on_server =
       source_location == lupine_htod_source_location::server;
-  if (result == CUDA_SUCCESS && byteCount != 0 && !source_on_server) {
-    ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-  }
-  if (result == CUDA_SUCCESS && byteCount != 0 && !source_on_server) {
-    try {
-      plan =
-          lupine_make_linear_htod_plan(context, dstDevice, srcHost, byteCount);
-    } catch (...) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-    }
-  }
-
-  if (result == CUDA_SUCCESS && byteCount != 0 && !source_on_server) {
-    result = lupine_enqueue_htod_side_effect(*state, ring, plan, stream);
-  }
-  if (result == CUDA_SUCCESS && byteCount != 0 && source_on_server) {
+  if (byteCount != 0 && source_on_server) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, srcHost, byteCount, stream);
+  } else if (byteCount != 0) {
+    lupine_staging_state *state = nullptr;
+    CUcontext context = nullptr;
+    CUdevice device = 0;
+    result = lupine_current_htod_context(conn, &state, &context, &device);
+    lupine_staging_operation operation(
+        result == CUDA_SUCCESS ? state : nullptr, context, device);
+    if (result == CUDA_SUCCESS && !operation.acquired()) {
+      result = CUDA_ERROR_INVALID_CONTEXT;
+    }
+    std::shared_ptr<lupine_htod_plan> plan;
+    if (result == CUDA_SUCCESS) {
+      try {
+        plan = lupine_make_linear_htod_plan(context, dstDevice, srcHost,
+                                             byteCount);
+      } catch (...) {
+        result = CUDA_ERROR_OUT_OF_MEMORY;
+      }
+    }
+    if (result == CUDA_SUCCESS) {
+      result =
+          lupine_copy_client_host_to_device(*state, plan, stream, false);
+    }
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
