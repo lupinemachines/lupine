@@ -211,7 +211,7 @@ public:
       return result;
     }
     for (size_t slot = 0; slot < slot_count; ++slot) {
-      __atomic_store_n(&signals[slot].value, slot_free, __ATOMIC_RELEASE);
+      new (&signals[slot]) slot_signal();
     }
     storage_ = storage;
     signals_ = signals;
@@ -233,9 +233,9 @@ public:
 
   int fetch(size_t slot, const lupine_host_memory_view &source, size_t bytes) {
     uint32_t expected = slot_free;
-    while (!__atomic_compare_exchange_n(&signals_[slot].value, &expected,
-                                        slot_busy, false, __ATOMIC_ACQ_REL,
-                                        __ATOMIC_ACQUIRE)) {
+    while (!signals_[slot].value.compare_exchange_weak(
+        expected, slot_busy, std::memory_order_acq_rel,
+        std::memory_order_acquire)) {
       expected = slot_free;
       std::this_thread::yield();
     }
@@ -247,7 +247,7 @@ public:
         rpc_write(conn_, &source, sizeof(source)) < 0 ||
         rpc_wait_for_response(conn_) < 0 ||
         rpc_read(conn_, data(slot), bytes) < 0 || rpc_read_end(conn_) < 0) {
-      __atomic_store_n(&signals_[slot].value, slot_free, __ATOMIC_RELEASE);
+      signals_[slot].value.store(slot_free, std::memory_order_release);
       return -1;
     }
     return 0;
@@ -255,8 +255,10 @@ public:
 
 private:
   struct alignas(64) slot_signal {
-    uint32_t value = slot_free;
+    std::atomic<uint32_t> value{slot_free};
   };
+
+  static_assert(std::atomic<uint32_t>::is_always_lock_free);
 
   conn_t *conn_ = nullptr;
   std::mutex prepare_mutex_;
