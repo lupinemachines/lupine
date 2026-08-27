@@ -55,6 +55,7 @@ void lupine_server_note_primary_context(conn_t *conn, CUdevice device,
                                         CUcontext context, CUresult result);
 void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context);
 void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device);
+CUresult lupine_server_prepare_htod_capture(conn_t *conn);
 int lupine_write_lifecycle_response(conn_t *conn, int request_id,
                                     CUresult result);
 

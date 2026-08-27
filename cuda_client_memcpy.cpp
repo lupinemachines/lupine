@@ -3265,6 +3265,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
+  lupine_memcpy_wire_flags wire_flags{direction};
   CUresult return_value;
   switch (direction) {
   case lupine_copy_direction::host_to_host:
@@ -3280,9 +3281,12 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     size_t source_span = copy.Height == 0 ? 0
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
-    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
+    if (lupine_use_server_htod_source(copy, src_base, source_span, conn)) {
+      wire_flags.htod_source = lupine_htod_source_location::server;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3300,6 +3304,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3339,6 +3344,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3394,6 +3400,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
+  lupine_memcpy_wire_flags wire_flags{direction};
   CUresult return_value;
   switch (direction) {
   case lupine_copy_direction::host_to_host:
@@ -3409,9 +3416,12 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     size_t source_span = copy.Height == 0 ? 0
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
-    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
+    if (lupine_use_server_htod_source(copy, src_base, source_span, conn)) {
+      wire_flags.htod_source = lupine_htod_source_location::server;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3429,6 +3439,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3468,6 +3479,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3524,6 +3536,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
+  lupine_memcpy_wire_flags wire_flags{direction};
   CUresult return_value;
   switch (direction) {
   case lupine_copy_direction::host_to_host:
@@ -3539,9 +3552,12 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     size_t source_span = copy.Height == 0 ? 0
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
-    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
+    if (lupine_use_server_htod_source(copy, src_base, source_span, conn)) {
+      wire_flags.htod_source = lupine_htod_source_location::server;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3560,6 +3576,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3600,6 +3617,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3668,6 +3686,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                          copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base = (char *)copy.dstHost + copy.dstZ * dst_slice_pitch +
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
+  lupine_memcpy_wire_flags wire_flags{direction};
   CUresult return_value;
   switch (direction) {
   case lupine_copy_direction::host_to_host:
@@ -3688,9 +3707,12 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                              : (copy.Depth - 1) * src_slice_pitch +
                                    (copy.Height - 1) * copy.srcPitch +
                                    copy.WidthInBytes;
-    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
+    if (lupine_use_server_htod_source(copy, src_base, source_span, conn)) {
+      wire_flags.htod_source = lupine_htod_source_location::server;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3708,6 +3730,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3749,6 +3772,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3801,6 +3825,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                          copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base = (char *)copy.dstHost + copy.dstZ * dst_slice_pitch +
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
+  lupine_memcpy_wire_flags wire_flags{direction};
   CUresult return_value;
   switch (direction) {
   case lupine_copy_direction::host_to_host:
@@ -3821,9 +3846,12 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                              : (copy.Depth - 1) * src_slice_pitch +
                                    (copy.Height - 1) * copy.srcPitch +
                                    copy.WidthInBytes;
-    (void)lupine_use_server_htod_source(copy, src_base, source_span, conn);
+    if (lupine_use_server_htod_source(copy, src_base, source_span, conn)) {
+      wire_flags.htod_source = lupine_htod_source_location::server;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3842,6 +3870,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3884,6 +3913,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
+        rpc_write(conn, &wire_flags, sizeof(wire_flags)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||

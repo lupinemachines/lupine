@@ -3526,9 +3526,12 @@ int handle_cuStreamBeginCaptureToGraph(conn_t *conn) {
     return -1;
   }
 
-  result = cuStreamBeginCaptureToGraph(stream, graph,
-                                       deps.empty() ? nullptr : deps.data(),
-                                       nullptr, deps.size(), mode);
+  result = lupine_server_prepare_htod_capture(conn);
+  if (result == CUDA_SUCCESS) {
+    result = cuStreamBeginCaptureToGraph(stream, graph,
+                                         deps.empty() ? nullptr : deps.data(),
+                                         nullptr, deps.size(), mode);
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3644,7 +3647,10 @@ int handle_cuStreamBeginCapture(conn_t *conn) {
 
   result = !resources->has_capture_scratch()
                ? CUDA_ERROR_OUT_OF_MEMORY
-               : cuStreamBeginCapture_v2(stream, mode);
+               : lupine_server_prepare_htod_capture(conn);
+  if (result == CUDA_SUCCESS) {
+    result = cuStreamBeginCapture_v2(stream, mode);
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;

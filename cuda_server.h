@@ -3,16 +3,8 @@
 
 #include <cuda.h>
 
+#include "cuda_side_effect.h"
 #include "rpc.h"
-
-// Which side of a copy is host memory, and therefore which side the handler
-// has to stage locally.
-enum class lupine_copy_direction {
-  host_to_host,
-  host_to_device,
-  device_to_host,
-  device_to_device,
-};
 
 int handle_cuGetErrorName(conn_t *conn);
 int handle_cuGetErrorString(conn_t *conn);

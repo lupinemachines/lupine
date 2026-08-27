@@ -18,6 +18,24 @@ enum class lupine_htod_source_location : uint8_t {
   server = 1,
 };
 
+enum class lupine_copy_direction : uint8_t {
+  host_to_host = 0,
+  host_to_device = 1,
+  device_to_host = 2,
+  device_to_device = 3,
+};
+
+// Dimensional memcpy RPCs carry this before the CUDA descriptor so the server
+// can choose the direction handler and, for HtoD, whether the source is already
+// authoritative on the server.
+struct lupine_memcpy_wire_flags {
+  lupine_copy_direction direction = lupine_copy_direction::device_to_device;
+  lupine_htod_source_location htod_source =
+      lupine_htod_source_location::client;
+};
+
+static_assert(sizeof(lupine_memcpy_wire_flags) == 2);
+
 // A possibly pitched client host-memory region. The response contains the
 // selected bytes packed as slices of adjacent rows; padding never travels.
 struct lupine_host_memory_view {
