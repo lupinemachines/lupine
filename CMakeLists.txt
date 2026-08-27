@@ -184,6 +184,7 @@ endif()
 add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
 )
 lupine_internal_target(lupine_rpc_core)
 target_include_directories(lupine_rpc_core
@@ -449,6 +450,13 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 30)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
+
+    add_executable(dispatch_test ${CMAKE_CURRENT_SOURCE_DIR}/dispatch_test.cpp)
+    target_link_libraries(dispatch_test PRIVATE lupine_rpc_core)
+    lupine_apply_sanitizer(dispatch_test)
+    add_test(NAME dispatch_test COMMAND dispatch_test)
+    lupine_scaled_timeout(dispatch_timeout 30)
+    set_tests_properties(dispatch_test PROPERTIES TIMEOUT ${dispatch_timeout})
 endif()
 
 # Linux-only, not merely Unix: these pair sockets with socketpair(), place

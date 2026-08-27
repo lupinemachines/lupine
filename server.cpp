@@ -22,6 +22,7 @@
 #include <vector>
 #endif
 
+#include "dispatch.h"
 #include "ipc.h"
 #include "lupine_log.h"
 #include "rpc.h"
@@ -167,6 +168,26 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 
 int client_handler(lupine_socket_t connfd) {
   const rpc_handler_registry &handlers = lupine_rpc_handlers();
+  const rpc_http2_server_metadata metadata = {
+#ifdef LUPINE_BACKEND_VERSION
+      LUPINE_BACKEND_VERSION,
+#else
+      nullptr,
+#endif
+  };
+
+  // Identify the protocol before any RPC state exists: HTTP/2 preface means
+  // an RPC client, anything else is answered as plain HTTP/1.x and the
+  // connection is done.
+  if (lupine_connection_dispatch(connfd, &metadata) != 0) {
+    lupine_socket_close(connfd);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+    return lupine_server_checkpoint_child_finish();
+#else
+    return 0;
+#endif
+  }
+
   conn_t conn = {};
   if (rpc_conn_init(&conn, connfd, 1) < 0) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
@@ -177,13 +198,6 @@ int client_handler(lupine_socket_t connfd) {
 #endif
   }
 
-  const rpc_http2_server_metadata metadata = {
-#ifdef LUPINE_BACKEND_VERSION
-      LUPINE_BACKEND_VERSION,
-#else
-      nullptr,
-#endif
-  };
   int http2_init_result = rpc_http2_server_init_with_metadata(&conn, &metadata);
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");
