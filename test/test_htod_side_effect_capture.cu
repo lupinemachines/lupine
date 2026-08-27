@@ -132,7 +132,7 @@ int main() {
   // either callback from overwriting a slot whose previous DMA is in flight.
   CHECK(cuMemcpyHtoDAsync(destination, source.data(), bytes, stream));
   CHECK(cuMemcpyHtoDAsync(second_destination, second_source.data(), bytes,
-                         second_stream));
+                          second_stream));
   CHECK(cuStreamSynchronize(stream));
   CHECK(cuStreamSynchronize(second_stream));
   CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));

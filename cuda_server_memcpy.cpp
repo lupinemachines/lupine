@@ -10,8 +10,8 @@
 #include "cuda_side_effect.h"
 #include "rpc.h"
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -147,11 +147,7 @@ static CUresult lupine_current_htod_context(conn_t *conn,
   return result == CUDA_SUCCESS ? cuCtxGetDevice(device) : result;
 }
 
-enum class lupine_htod_copy_kind {
-  linear,
-  two_dimensional,
-  three_dimensional
-};
+enum class lupine_htod_copy_kind { linear, two_dimensional, three_dimensional };
 
 struct lupine_htod_chunk {
   lupine_host_memory_view source;
@@ -200,10 +196,9 @@ public:
       return result;
     }
     slot_signal *signals = nullptr;
-    result = cuMemHostAlloc(reinterpret_cast<void **>(&signals),
-                            slot_count * sizeof(slot_signal),
-                            CU_MEMHOSTALLOC_PORTABLE |
-                                CU_MEMHOSTALLOC_DEVICEMAP);
+    result = cuMemHostAlloc(
+        reinterpret_cast<void **>(&signals), slot_count * sizeof(slot_signal),
+        CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP);
     if (result != CUDA_SUCCESS) {
       (void)cuMemFreeHost(storage);
       return result;
@@ -251,8 +246,7 @@ public:
         rpc_write(conn_, &count, sizeof(count)) < 0 ||
         rpc_write(conn_, &source, sizeof(source)) < 0 ||
         rpc_wait_for_response(conn_) < 0 ||
-        rpc_read(conn_, data(slot), bytes) < 0 ||
-        rpc_read_end(conn_) < 0) {
+        rpc_read(conn_, data(slot), bytes) < 0 || rpc_read_end(conn_) < 0) {
       __atomic_store_n(&signals_[slot].value, slot_free, __ATOMIC_RELEASE);
       return -1;
     }
@@ -314,8 +308,8 @@ static CUresult lupine_enqueue_htod_callback(
     const lupine_host_memory_view &source, size_t bytes, size_t slot,
     CUstream stream, bool persistent) {
   auto callback = std::unique_ptr<lupine_htod_callback_data>(
-      new (std::nothrow) lupine_htod_callback_data{ring, source, bytes, slot,
-                                                   persistent});
+      new (std::nothrow)
+          lupine_htod_callback_data{ring, source, bytes, slot, persistent});
   if (callback == nullptr) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -359,9 +353,10 @@ static CUresult lupine_enqueue_htod_chunk(const lupine_htod_chunk &chunk,
   return CUDA_ERROR_INVALID_VALUE;
 }
 
-static CUresult lupine_enqueue_client_htod_plan(
-    lupine_staging_state &state,
-    const lupine_htod_plan &plan, CUstream stream, bool blocking) {
+static CUresult lupine_enqueue_client_htod_plan(lupine_staging_state &state,
+                                                const lupine_htod_plan &plan,
+                                                CUstream stream,
+                                                bool blocking) {
   if (plan.chunks.empty()) {
     return CUDA_SUCCESS;
   }
@@ -382,9 +377,8 @@ static CUresult lupine_enqueue_client_htod_plan(
   bool persistent = capture_status != CU_STREAM_CAPTURE_STATUS_NONE;
   for (const auto &chunk : plan.chunks) {
     size_t slot = ring->next_slot();
-    result = lupine_enqueue_htod_callback(state, ring, chunk.source,
-                                          chunk.bytes, slot, stream,
-                                          persistent);
+    result = lupine_enqueue_htod_callback(
+        state, ring, chunk.source, chunk.bytes, slot, stream, persistent);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -392,9 +386,9 @@ static CUresult lupine_enqueue_client_htod_plan(
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    result = cuStreamWriteValue32_v2(stream, ring->device_signal(slot),
-                                     lupine_htod_side_effect_ring::slot_free,
-                                     0);
+    result =
+        cuStreamWriteValue32_v2(stream, ring->device_signal(slot),
+                                lupine_htod_side_effect_ring::slot_free, 0);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -407,8 +401,7 @@ static CUresult lupine_enqueue_client_htod_plan(
 }
 
 template <typename MakePlan>
-static CUresult lupine_copy_client_host_to_device(conn_t *conn,
-                                                  CUstream stream,
+static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
                                                   bool blocking,
                                                   MakePlan make_plan) {
   lupine_staging_state *state = nullptr;
@@ -437,8 +430,8 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn,
 }
 
 static lupine_htod_plan lupine_make_linear_htod_plan(CUdeviceptr destination,
-                                                      const void *source,
-                                                      size_t bytes) {
+                                                     const void *source,
+                                                     size_t bytes) {
   lupine_htod_plan plan;
   plan.chunks.reserve(bytes / lupine_htod_side_effect_ring::slot_bytes +
                       (bytes % lupine_htod_side_effect_ring::slot_bytes != 0));
@@ -462,8 +455,8 @@ static lupine_htod_plan lupine_make_linear_htod_plan(CUdeviceptr destination,
   return plan;
 }
 
-static lupine_htod_plan
-lupine_make_2d_htod_plan(const CUDA_MEMCPY2D &original, bool unaligned) {
+static lupine_htod_plan lupine_make_2d_htod_plan(const CUDA_MEMCPY2D &original,
+                                                 bool unaligned) {
   lupine_htod_plan plan;
   const size_t width = original.WidthInBytes;
   const size_t height = original.Height;
@@ -812,8 +805,8 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (bytes != 0 && source_on_server) {
     result = cuMemcpyHtoD_v2(destination, source, bytes);
   } else if (bytes != 0) {
-    result = lupine_copy_client_host_to_device(
-        conn, CU_STREAM_LEGACY, true, [&] {
+    result =
+        lupine_copy_client_host_to_device(conn, CU_STREAM_LEGACY, true, [&] {
           return lupine_make_linear_htod_plan(destination, source, bytes);
         });
   }
@@ -1128,9 +1121,8 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
         wire_flags.htod_source == lupine_htod_source_location::server
             ? cuMemcpy3D_v2(&copy)
             : lupine_copy_client_host_to_device(
-                  conn, CU_STREAM_LEGACY, true, [&] {
-                    return lupine_make_3d_htod_plan(copy);
-                  });
+                  conn, CU_STREAM_LEGACY, true,
+                  [&] { return lupine_make_3d_htod_plan(copy); });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1203,10 +1195,9 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
     CUresult result =
         wire_flags.htod_source == lupine_htod_source_location::server
             ? cuMemcpy3DAsync_v2(&copy, stream)
-            : lupine_copy_client_host_to_device(
-                  conn, stream, false, [&] {
-                    return lupine_make_3d_htod_plan(copy);
-                  });
+            : lupine_copy_client_host_to_device(conn, stream, false, [&] {
+                return lupine_make_3d_htod_plan(copy);
+              });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1450,9 +1441,8 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
         wire_flags.htod_source == lupine_htod_source_location::server
             ? cuMemcpy2D_v2(&copy)
             : lupine_copy_client_host_to_device(
-                  conn, CU_STREAM_LEGACY, true, [&] {
-                    return lupine_make_2d_htod_plan(copy, false);
-                  });
+                  conn, CU_STREAM_LEGACY, true,
+                  [&] { return lupine_make_2d_htod_plan(copy, false); });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1518,9 +1508,8 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
         wire_flags.htod_source == lupine_htod_source_location::server
             ? cuMemcpy2DUnaligned_v2(&copy)
             : lupine_copy_client_host_to_device(
-                  conn, CU_STREAM_LEGACY, true, [&] {
-                    return lupine_make_2d_htod_plan(copy, true);
-                  });
+                  conn, CU_STREAM_LEGACY, true,
+                  [&] { return lupine_make_2d_htod_plan(copy, true); });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1589,10 +1578,9 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
     CUresult result =
         wire_flags.htod_source == lupine_htod_source_location::server
             ? cuMemcpy2DAsync_v2(&copy, stream)
-            : lupine_copy_client_host_to_device(
-                  conn, stream, false, [&] {
-                    return lupine_make_2d_htod_plan(copy, false);
-                  });
+            : lupine_copy_client_host_to_device(conn, stream, false, [&] {
+                return lupine_make_2d_htod_plan(copy, false);
+              });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1668,10 +1656,9 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   if (byteCount != 0 && source_on_server) {
     result = cuMemcpyHtoDAsync_v2(dstDevice, srcHost, byteCount, stream);
   } else if (byteCount != 0) {
-    result = lupine_copy_client_host_to_device(
-        conn, stream, false, [&] {
-          return lupine_make_linear_htod_plan(dstDevice, srcHost, byteCount);
-        });
+    result = lupine_copy_client_host_to_device(conn, stream, false, [&] {
+      return lupine_make_linear_htod_plan(dstDevice, srcHost, byteCount);
+    });
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {

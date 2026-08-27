@@ -2946,9 +2946,9 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   lupine_htod_source_location source_location =
       source_on_server ? lupine_htod_source_location::server
                        : lupine_htod_source_location::client;
-  const void *wire_source =
-      source_on_server ? reinterpret_cast<const void *>(server_source)
-                       : srcHost;
+  const void *wire_source = source_on_server
+                                ? reinterpret_cast<const void *>(server_source)
+                                : srcHost;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &source_location, sizeof(source_location)) < 0 ||

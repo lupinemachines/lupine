@@ -30,8 +30,7 @@ enum class lupine_copy_direction : uint8_t {
 // authoritative on the server.
 struct lupine_memcpy_wire_flags {
   lupine_copy_direction direction = lupine_copy_direction::device_to_device;
-  lupine_htod_source_location htod_source =
-      lupine_htod_source_location::client;
+  lupine_htod_source_location htod_source = lupine_htod_source_location::client;
 };
 
 static_assert(sizeof(lupine_memcpy_wire_flags) == 2);
