@@ -51,8 +51,6 @@ struct lupine_staging_state {
   std::unordered_set<CUcontext> teardown_contexts;
   std::unordered_set<CUdevice> teardown_devices;
   std::shared_ptr<lupine_htod_side_effect_ring> htod_ring;
-  std::vector<std::unique_ptr<lupine_htod_callback_data>>
-      captured_htod_callbacks;
 };
 
 using lupine_staging_registry =
@@ -305,31 +303,36 @@ static void CUDA_CB lupine_htod_side_effect_callback(void *opaque) {
 }
 
 static CUresult lupine_enqueue_htod_callback(
-    lupine_staging_state &state,
     const std::shared_ptr<lupine_htod_side_effect_ring> &ring,
     const lupine_host_memory_view &source, size_t bytes, size_t slot,
-    CUstream stream, bool persistent) {
+    CUstream stream) {
+  auto *resources = lupine_captured_stream_resources(stream);
+  if (resources != nullptr) {
+    std::shared_ptr<lupine_htod_callback_data> callback;
+    try {
+      callback = std::make_shared<lupine_htod_callback_data>(
+          lupine_htod_callback_data{ring, source, bytes, slot, true});
+    } catch (...) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    auto *callback_ptr = callback.get();
+    if (!lupine_graph_retain_resource(resources, std::move(callback))) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    return cuLaunchHostFunc(stream, lupine_htod_side_effect_callback,
+                            callback_ptr);
+  }
+
   auto callback = std::unique_ptr<lupine_htod_callback_data>(
       new (std::nothrow)
-          lupine_htod_callback_data{ring, source, bytes, slot, persistent});
+          lupine_htod_callback_data{ring, source, bytes, slot, false});
   if (callback == nullptr) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
   auto *callback_ptr = callback.get();
-  if (persistent) {
-    try {
-      state.captured_htod_callbacks.push_back(std::move(callback));
-    } catch (...) {
-      return CUDA_ERROR_OUT_OF_MEMORY;
-    }
-  }
   CUresult result =
       cuLaunchHostFunc(stream, lupine_htod_side_effect_callback, callback_ptr);
-  if (result != CUDA_SUCCESS) {
-    if (persistent) {
-      state.captured_htod_callbacks.pop_back();
-    }
-  } else if (!persistent) {
+  if (result == CUDA_SUCCESS) {
     (void)callback.release();
   }
   return result;
@@ -369,18 +372,10 @@ static CUresult lupine_enqueue_client_htod_plan(lupine_staging_state &state,
     return result;
   }
 
-  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
-  if (stream != nullptr) {
-    result = cuStreamIsCapturing(stream, &capture_status);
-    if (result != CUDA_SUCCESS) {
-      return result;
-    }
-  }
-  bool persistent = capture_status != CU_STREAM_CAPTURE_STATUS_NONE;
   for (const auto &chunk : plan.chunks) {
     size_t slot = ring->next_slot();
-    result = lupine_enqueue_htod_callback(
-        state, ring, chunk.source, chunk.bytes, slot, stream, persistent);
+    result = lupine_enqueue_htod_callback(ring, chunk.source, chunk.bytes, slot,
+                                          stream);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -685,7 +680,6 @@ void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device) {
   auto it = state->primary_contexts.find(device);
   if (it != state->primary_contexts.end()) {
     state->teardown_contexts.insert(it->second);
-    state->captured_htod_callbacks.clear();
   }
 }
 
@@ -728,7 +722,6 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context) {
   std::unique_lock<std::mutex> lock(state->mutex);
   state->teardown_contexts.insert(context);
   state->condition.wait(lock, [&] { return !state->staging_operation_active; });
-  state->captured_htod_callbacks.clear();
 }
 
 void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,

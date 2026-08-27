@@ -3,6 +3,7 @@
 
 #include <cuda.h>
 
+#include <memory>
 #include <vector>
 
 #include "rpc.h"
@@ -29,6 +30,9 @@ using lupine_pending_dtoh_streams =
 libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
 lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
+lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
+bool lupine_graph_retain_resource(lupine_graph_resources *resources,
+                                  std::shared_ptr<void> resource);
 void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,
                                    size_t bytes);
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
