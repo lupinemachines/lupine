@@ -4,8 +4,6 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
-#include "cuda_side_effect.h"
-
 extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr);
 extern "C" bool lupine_host_ptr_is_page_locked(const void *host);
 extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr);

@@ -41,7 +41,6 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
-#include "cuda_side_effect.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
@@ -2553,8 +2552,7 @@ static void CUDA_CB lupine_graph_host_callback(void *userData) {
   int transfer_count = static_cast<int>(copies.size());
 
   conn_t *conn = callback->conn;
-  if (rpc_write_start_request(
-          conn, static_cast<int>(lupine_side_effect_op::host_function)) < 0 ||
+  if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_HOST_FUNCTION) < 0 ||
       rpc_write(conn, &transfer_count, sizeof(transfer_count)) < 0) {
     return;
   }
@@ -2591,9 +2589,7 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   void *client_user_data = callback->userData;
   void *response = nullptr;
   auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false);
-  if (rpc_write_start_request(
-          conn, static_cast<int>(lupine_side_effect_op::stream_callback)) >=
-          0 &&
+  if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_STREAM_CALLBACK) >= 0 &&
       rpc_copy_alloc(conn, sizeof(uint32_t)) >= 0 &&
       lupine_write_pending_dtoh_copies(conn, pending, true) >= 0 &&
       rpc_write(conn, &stream, sizeof(stream)) >= 0 &&

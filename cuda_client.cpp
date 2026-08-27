@@ -53,7 +53,6 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
 #include "cuda_profiler_compat.h"
-#include "cuda_side_effect.h"
 #include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
@@ -8034,7 +8033,7 @@ void *rpc_client_dispatch_thread(void *arg) {
   while (true) {
     op = rpc_dispatch(conn, 1);
 
-    if (op == static_cast<int>(lupine_side_effect_op::host_function)) {
+    if (op == LUPINE_SIDE_EFFECT_HOST_FUNCTION) {
       std::cout << "Transferring memory..." << std::endl;
 
       int found = 0;
@@ -8087,7 +8086,7 @@ void *rpc_client_dispatch_thread(void *arg) {
         LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
         goto close_connection;
       }
-    } else if (op == static_cast<int>(lupine_side_effect_op::stream_callback)) {
+    } else if (op == LUPINE_SIDE_EFFECT_STREAM_CALLBACK) {
       CUstream stream = nullptr;
       CUresult status = CUDA_ERROR_UNKNOWN;
       CUstreamCallback callback = nullptr;
@@ -8117,30 +8116,40 @@ void *rpc_client_dispatch_thread(void *arg) {
         LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
         break;
       }
-    } else if (op ==
-               static_cast<int>(lupine_side_effect_op::read_host_memory)) {
+    } else if (op == LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) {
       uint64_t count = 0;
-      if (rpc_read(conn, &count, sizeof(count)) < 0 ||
-          count > SIZE_MAX / sizeof(lupine_host_memory_view)) {
+      if (rpc_read(conn, &count, sizeof(count)) < 0) {
         LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
         break;
       }
-      std::vector<lupine_host_memory_view> views(count);
-      std::vector<size_t> spans(count);
-      bool valid = true;
-      for (size_t index = 0; index < views.size(); ++index) {
-        auto &view = views[index];
-        size_t packed_bytes = 0;
-        if (rpc_read(conn, &view, sizeof(view)) < 0 ||
-            !lupine_host_memory_view_sizes(view, &packed_bytes,
-                                           &spans[index])) {
-          valid = false;
-          break;
+      std::vector<rpc_write_cursor> cursors;
+      for (uint64_t index = 0; index < count; ++index) {
+        const void *data = nullptr;
+        size_t width = 0;
+        size_t rows = 0;
+        size_t row_stride = 0;
+        size_t slices = 0;
+        size_t slice_stride = 0;
+        if (rpc_read(conn, &data, sizeof(data)) < 0 ||
+            rpc_read(conn, &width, sizeof(width)) < 0 ||
+            rpc_read(conn, &rows, sizeof(rows)) < 0 ||
+            rpc_read(conn, &row_stride, sizeof(row_stride)) < 0 ||
+            rpc_read(conn, &slices, sizeof(slices)) < 0 ||
+            rpc_read(conn, &slice_stride, sizeof(slice_stride)) < 0) {
+          LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
+          goto close_connection;
         }
-      }
-      if (!valid) {
-        LUPINE_LOG_ERROR("Invalid host-memory side-effect request.");
-        break;
+
+        size_t span =
+            width + (rows - 1) * row_stride + (slices - 1) * slice_stride;
+        const auto *source = static_cast<const unsigned char *>(
+            lupine_mapped_host_read_source(data, span));
+        for (size_t slice = 0; slice < slices; ++slice) {
+          for (size_t row = 0; row < rows; ++row) {
+            cursors.emplace_back(
+                source + slice * slice_stride + row * row_stride, width);
+          }
+        }
       }
       int request_id = rpc_read_end(conn);
       if (request_id < 0) {
@@ -8152,18 +8161,8 @@ void *rpc_client_dispatch_thread(void *arg) {
         LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
         break;
       }
-      for (size_t index = 0; index < views.size(); ++index) {
-        const auto &view = views[index];
-        const void *source =
-            lupine_mapped_host_read_source(view.data, spans[index]);
-        if (rpc_write_pitched(conn, source, view.width, view.rows,
-                              view.row_stride, view.slices,
-                              view.slice_stride) < 0) {
-          LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
-          goto close_connection;
-        }
-      }
-      if (rpc_write_end(conn) < 0) {
+      if (rpc_write_cursors(conn, cursors.data(), cursors.size()) < 0 ||
+          rpc_write_end(conn) < 0) {
         LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
         break;
       }

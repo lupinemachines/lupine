@@ -3,7 +3,6 @@
 
 #include <cuda.h>
 
-#include "cuda_side_effect.h"
 #include "rpc.h"
 
 int handle_cuGetErrorName(conn_t *conn);
