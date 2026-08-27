@@ -109,9 +109,14 @@ int main() {
 
   CUdeviceptr destination = 0;
   CHECK(cuMemAlloc(&destination, bytes));
+  CUdeviceptr second_destination = 0;
+  CHECK(cuMemAlloc(&second_destination, bytes));
   CUstream stream = nullptr;
   CHECK(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
+  CUstream second_stream = nullptr;
+  CHECK(cuStreamCreate(&second_stream, CU_STREAM_NON_BLOCKING));
   std::vector<unsigned char> source(bytes, 0x11);
+  std::vector<unsigned char> second_source(bytes, 0x22);
   std::vector<unsigned char> readback(bytes);
 
   // Ordinary asynchronous HtoD also goes through the execution-time ring.
@@ -120,6 +125,24 @@ int main() {
   CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));
   if (!all_bytes_are(readback, 0x11)) {
     std::fprintf(stderr, "pageable async HtoD produced stale data\n");
+    return 1;
+  }
+
+  // Two streams contend for the fixed ring. GPU slot-release writes must keep
+  // either callback from overwriting a slot whose previous DMA is in flight.
+  CHECK(cuMemcpyHtoDAsync(destination, source.data(), bytes, stream));
+  CHECK(cuMemcpyHtoDAsync(second_destination, second_source.data(), bytes,
+                         second_stream));
+  CHECK(cuStreamSynchronize(stream));
+  CHECK(cuStreamSynchronize(second_stream));
+  CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));
+  if (!all_bytes_are(readback, 0x11)) {
+    std::fprintf(stderr, "first concurrent HtoD was corrupted\n");
+    return 1;
+  }
+  CHECK(cuMemcpyDtoH(readback.data(), second_destination, bytes));
+  if (!all_bytes_are(readback, 0x22)) {
+    std::fprintf(stderr, "second concurrent HtoD was corrupted\n");
     return 1;
   }
 
@@ -160,7 +183,9 @@ int main() {
   CHECK(cuMemFree(managed));
   CHECK(cuMemFreeHost(unified));
   CHECK(cuMemFreeHost(pinned));
+  CHECK(cuStreamDestroy(second_stream));
   CHECK(cuStreamDestroy(stream));
+  CHECK(cuMemFree(second_destination));
   CHECK(cuMemFree(destination));
   CHECK(cuCtxDestroy(context));
   std::printf(

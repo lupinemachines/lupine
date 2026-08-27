@@ -92,6 +92,15 @@ int main() {
     return 1;
   }
 
+  fill_rows(source_2d, width_2d, height_2d, source_pitch_2d, 1, 0, 0x27);
+  CHECK(cuMemcpy2DUnaligned(&copy_2d));
+  CHECK(cuMemcpy2D(&read_2d));
+  if (!check_rows(readback_2d, width_2d, height_2d, source_pitch_2d, 1, 0,
+                  0x27)) {
+    std::fprintf(stderr, "unaligned 2D HtoD mismatch\n");
+    return 1;
+  }
+
   CHECK(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
   CHECK(cuMemcpy2DAsync(&copy_2d, stream));
   CUgraph graph_2d = nullptr;
