@@ -3221,7 +3221,6 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
-  bool is_server_authoritative = false;
   CUresult return_value;
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOH:
@@ -3238,7 +3237,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
     CUdeviceptr server_source = 0;
-    is_server_authoritative = lupine_translate_client_host_range_to_server(
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
         &server_source, src_base, source_span,
         lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
@@ -3271,8 +3270,6 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3313,8 +3310,6 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3369,7 +3364,6 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
-  bool is_server_authoritative = false;
   CUresult return_value;
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOH:
@@ -3386,7 +3380,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
     CUdeviceptr server_source = 0;
-    is_server_authoritative = lupine_translate_client_host_range_to_server(
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
         &server_source, src_base, source_span,
         lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
@@ -3419,8 +3413,6 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3461,8 +3453,6 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3518,7 +3508,6 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
-  bool is_server_authoritative = false;
   CUresult return_value;
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOH:
@@ -3535,7 +3524,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
                                           : (copy.Height - 1) * copy.srcPitch +
                                                 copy.WidthInBytes;
     CUdeviceptr server_source = 0;
-    is_server_authoritative = lupine_translate_client_host_range_to_server(
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
         &server_source, src_base, source_span,
         lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
@@ -3569,8 +3558,6 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3612,8 +3599,6 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3681,7 +3666,6 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                          copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base = (char *)copy.dstHost + copy.dstZ * dst_slice_pitch +
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
-  bool is_server_authoritative = false;
   CUresult return_value;
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOH:
@@ -3703,7 +3687,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                                    (copy.Height - 1) * copy.srcPitch +
                                    copy.WidthInBytes;
     CUdeviceptr server_source = 0;
-    is_server_authoritative = lupine_translate_client_host_range_to_server(
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
         &server_source, src_base, source_span,
         lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
@@ -3737,8 +3721,6 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3781,8 +3763,6 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3834,7 +3814,6 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                          copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base = (char *)copy.dstHost + copy.dstZ * dst_slice_pitch +
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
-  bool is_server_authoritative = false;
   CUresult return_value;
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOH:
@@ -3856,7 +3835,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                                    (copy.Height - 1) * copy.srcPitch +
                                    copy.WidthInBytes;
     CUdeviceptr server_source = 0;
-    is_server_authoritative = lupine_translate_client_host_range_to_server(
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
         &server_source, src_base, source_span,
         lupine_route_identity(lupine_remote_route_for_conn(conn)));
     if (is_server_authoritative) {
@@ -3891,8 +3870,6 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3936,8 +3913,6 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||

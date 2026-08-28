@@ -1962,16 +1962,18 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
 // and only the copied rows travel.
 int handle_cuMemcpy3D_v2(conn_t *conn) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  bool is_server_authoritative = false;
   CUDA_MEMCPY3D copy = {};
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
-               sizeof(is_server_authoritative)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0) {
+  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOD: {
+    bool is_server_authoritative = false;
+    if (rpc_read(conn, &is_server_authoritative,
+                 sizeof(is_server_authoritative)) < 0 ||
+        rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     int request_id = rpc_read_end(conn);
     if (request_id < 0) {
       return -1;
@@ -1989,6 +1991,9 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
     return 0;
   }
   case LUPINE_COPY_DIRECTION_DTOH: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     size_t slice = copy.dstHeight * copy.dstPitch;
     size_t offset =
         copy.dstZ * slice + copy.dstY * copy.dstPitch + copy.dstXInBytes;
@@ -2013,6 +2018,9 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
     return 0;
   }
   default: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     int request_id = rpc_read_end(conn);
     if (request_id < 0) {
       return -1;
@@ -2034,18 +2042,18 @@ int handle_cuMemcpy3D_v2(conn_t *conn) {
 // and only the copied rows travel.
 int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  bool is_server_authoritative = false;
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
-               sizeof(is_server_authoritative)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0) {
+  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOD: {
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    bool is_server_authoritative = false;
+    if (rpc_read(conn, &is_server_authoritative,
+                 sizeof(is_server_authoritative)) < 0 ||
+        rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+        rpc_read(conn, &stream, sizeof(stream)) < 0) {
       return -1;
     }
     int request_id = rpc_read_end(conn);
@@ -2066,6 +2074,9 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
     return 0;
   }
   case LUPINE_COPY_DIRECTION_DTOH: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     size_t slice = copy.dstHeight * copy.dstPitch;
     size_t offset =
         copy.dstZ * slice + copy.dstY * copy.dstPitch + copy.dstXInBytes;
@@ -2093,7 +2104,8 @@ int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
     return 0;
   }
   default: {
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+        rpc_read(conn, &stream, sizeof(stream)) < 0) {
       return -1;
     }
     int request_id = rpc_read_end(conn);
@@ -2283,16 +2295,18 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
 // and only the copied rows travel.
 int handle_cuMemcpy2D_v2(conn_t *conn) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  bool is_server_authoritative = false;
   CUDA_MEMCPY2D copy = {};
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
-               sizeof(is_server_authoritative)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0) {
+  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOD: {
+    bool is_server_authoritative = false;
+    if (rpc_read(conn, &is_server_authoritative,
+                 sizeof(is_server_authoritative)) < 0 ||
+        rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     int request_id = rpc_read_end(conn);
     if (request_id < 0) {
       return -1;
@@ -2310,6 +2324,9 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
     return 0;
   }
   case LUPINE_COPY_DIRECTION_DTOH: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     size_t offset = copy.dstY * copy.dstPitch + copy.dstXInBytes;
     std::vector<unsigned char> host((copy.Height - 1) * copy.dstPitch + offset +
                                     copy.WidthInBytes);
@@ -2330,6 +2347,9 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
     return 0;
   }
   default: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     int request_id = rpc_read_end(conn);
     if (request_id < 0) {
       return -1;
@@ -2351,16 +2371,18 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
 // and only the copied rows travel.
 int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  bool is_server_authoritative = false;
   CUDA_MEMCPY2D copy = {};
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
-               sizeof(is_server_authoritative)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0) {
+  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOD: {
+    bool is_server_authoritative = false;
+    if (rpc_read(conn, &is_server_authoritative,
+                 sizeof(is_server_authoritative)) < 0 ||
+        rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     int request_id = rpc_read_end(conn);
     if (request_id < 0) {
       return -1;
@@ -2378,6 +2400,9 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
     return 0;
   }
   case LUPINE_COPY_DIRECTION_DTOH: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     size_t offset = copy.dstY * copy.dstPitch + copy.dstXInBytes;
     std::vector<unsigned char> host((copy.Height - 1) * copy.dstPitch + offset +
                                     copy.WidthInBytes);
@@ -2398,6 +2423,9 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
     return 0;
   }
   default: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     int request_id = rpc_read_end(conn);
     if (request_id < 0) {
       return -1;
@@ -2419,18 +2447,18 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
 // and only the copied rows travel.
 int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  bool is_server_authoritative = false;
   CUDA_MEMCPY2D copy = {};
   CUstream stream = nullptr;
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
-               sizeof(is_server_authoritative)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0) {
+  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
   switch (direction) {
   case LUPINE_COPY_DIRECTION_HTOD: {
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    bool is_server_authoritative = false;
+    if (rpc_read(conn, &is_server_authoritative,
+                 sizeof(is_server_authoritative)) < 0 ||
+        rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+        rpc_read(conn, &stream, sizeof(stream)) < 0) {
       return -1;
     }
     int request_id = rpc_read_end(conn);
@@ -2451,6 +2479,9 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
     return 0;
   }
   case LUPINE_COPY_DIRECTION_DTOH: {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+      return -1;
+    }
     size_t offset = copy.dstY * copy.dstPitch + copy.dstXInBytes;
     std::vector<unsigned char> host((copy.Height - 1) * copy.dstPitch + offset +
                                     copy.WidthInBytes);
@@ -2474,7 +2505,8 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
     return 0;
   }
   default: {
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+        rpc_read(conn, &stream, sizeof(stream)) < 0) {
       return -1;
     }
     int request_id = rpc_read_end(conn);
