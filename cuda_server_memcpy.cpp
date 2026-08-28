@@ -7,7 +7,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
-#include "ops/smemcpy.h"
+#include "ops/smemcpy_module.h"
 #include "rpc.h"
 
 #include <algorithm>
@@ -137,19 +137,6 @@ static CUresult lupine_current_htod_context(conn_t *conn,
     return CUDA_ERROR_INVALID_CONTEXT;
   }
   return result == CUDA_SUCCESS ? cuCtxGetDevice(device) : result;
-}
-
-static CUresult lupine_runtime_result(cudaError_t result) {
-  switch (result) {
-  case cudaSuccess:
-    return CUDA_SUCCESS;
-  case cudaErrorInvalidConfiguration:
-    return CUDA_ERROR_INVALID_VALUE;
-  case cudaErrorInvalidDeviceFunction:
-    return CUDA_ERROR_INVALID_IMAGE;
-  default:
-    return static_cast<CUresult>(result);
-  }
 }
 
 struct lupine_graph_host_copy_node {
@@ -557,6 +544,9 @@ public:
       if (transfer_stream_ != nullptr) {
         (void)cuStreamDestroy_v2(transfer_stream_);
       }
+      if (smemcpy_module_ != nullptr) {
+        (void)cuModuleUnload(smemcpy_module_);
+      }
       CUcontext popped = nullptr;
       (void)cuCtxPopCurrent_v2(&popped);
     }
@@ -622,25 +612,24 @@ public:
       free_storage(storage);
       return result;
     }
-    cudaFunction_t smemcpy_function = nullptr;
-    // Load the smemcpy module before any wait-value nodes can reach this
-    // stream. A first-use runtime launch may synchronize module loading with
-    // earlier stream work, which would deadlock if that work is waiting for
-    // the callback to publish a ring slot.
-    cudaError_t runtime_result =
-        cudaGetFuncBySymbol(&smemcpy_function, lupine_smemcpy_kernel());
-    if (runtime_result != cudaSuccess) {
+    // Load and JIT the fatbin before any wait-value nodes can reach this
+    // stream. First-use module work may synchronize with earlier stream work,
+    // which would deadlock if that work were waiting for the callback.
+    CUmodule smemcpy_module = nullptr;
+    result = lupine_smemcpy_module_load(&smemcpy_module);
+    if (result != CUDA_SUCCESS) {
       (void)cuStreamDestroy_v2(transfer_stream);
       (void)cuMemFreeHost(signals);
       (void)cuMemHostUnregister(storage);
       free_storage(storage);
-      return lupine_runtime_result(runtime_result);
+      return result;
     }
     storage_ = storage;
     device_storage_ = device_storage;
     signals_ = signals;
     device_signals_ = device_signals;
     transfer_stream_ = transfer_stream;
+    smemcpy_module_ = smemcpy_module;
     return CUDA_SUCCESS;
   }
 
@@ -736,6 +725,16 @@ public:
     return smemcpy_functions_.count(function) != 0;
   }
 
+  CUresult smemcpy_function(const lupine_smemcpy_launch_descriptor &launch,
+                            CUfunction *function) {
+    CUresult result =
+        lupine_smemcpy_module_function(smemcpy_module_, &launch, function);
+    if (result == CUDA_SUCCESS) {
+      note_smemcpy_function(*function);
+    }
+    return result;
+  }
+
   int fetch(const lupine_htod_copy &copy) {
     if (rpc_write_start_request(conn_, LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) <
             0 ||
@@ -810,6 +809,7 @@ private:
   slot_signal *signals_ = nullptr;
   CUdeviceptr device_signals_ = 0;
   CUstream transfer_stream_ = nullptr;
+  CUmodule smemcpy_module_ = nullptr;
   std::unordered_set<CUfunction> smemcpy_functions_;
 };
 
@@ -1463,21 +1463,24 @@ static CUresult lupine_enqueue_htod_fragment(
   params.source = ring->device_data(slot, ring_offset);
   params.logical_offset = fragment.logical_offset;
   params.bytes = fragment.bytes;
-  lupine_smemcpy_launch launch = {};
-  cudaError_t runtime_result = lupine_smemcpy_prepare_launch(&params, &launch);
-  if (runtime_result != cudaSuccess) {
-    return lupine_runtime_result(runtime_result);
+  lupine_smemcpy_launch_descriptor launch = {};
+  CUresult result = lupine_smemcpy_prepare_driver_launch(&params, &launch);
+  if (result != CUDA_SUCCESS) {
+    return result;
   }
   if (launch.use_cuda_memcpy) {
     return cuMemcpyHtoDAsync_v2(launch.params.destination, host_source,
                                 launch.params.bytes, stream);
   }
 
+  CUfunction function = nullptr;
+  result = ring->smemcpy_function(launch, &function);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
   void *arguments[] = {&launch.params};
-  runtime_result =
-      cudaLaunchKernel(launch.kernel, dim3(launch.blocks), dim3(launch.threads),
-                       arguments, 0, reinterpret_cast<cudaStream_t>(stream));
-  return lupine_runtime_result(runtime_result);
+  return cuLaunchKernel(function, launch.blocks, 1, 1, launch.threads, 1, 1, 0,
+                        stream, arguments, nullptr);
 }
 
 static CUresult lupine_prepare_htod_copy(
@@ -1496,19 +1499,17 @@ static CUresult lupine_prepare_htod_copy(
         slot, ring->ring_offset(copy, fragment.logical_offset));
     params.logical_offset = fragment.logical_offset;
     params.bytes = fragment.bytes;
-    lupine_smemcpy_launch launch = {};
-    cudaError_t runtime_result =
-        lupine_smemcpy_prepare_launch(&params, &launch);
-    if (runtime_result != cudaSuccess) {
-      return lupine_runtime_result(runtime_result);
+    lupine_smemcpy_launch_descriptor launch = {};
+    CUresult result = lupine_smemcpy_prepare_driver_launch(&params, &launch);
+    if (result != CUDA_SUCCESS) {
+      return result;
     }
     if (!launch.use_cuda_memcpy) {
-      cudaFunction_t function = nullptr;
-      runtime_result = cudaGetFuncBySymbol(&function, launch.kernel);
-      if (runtime_result != cudaSuccess) {
-        return lupine_runtime_result(runtime_result);
+      CUfunction function = nullptr;
+      result = ring->smemcpy_function(launch, &function);
+      if (result != CUDA_SUCCESS) {
+        return result;
       }
-      ring->note_smemcpy_function(reinterpret_cast<CUfunction>(function));
     }
     offset += fragment.bytes;
   }
@@ -1812,13 +1813,23 @@ void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device) {
   if (state == nullptr) {
     return;
   }
-  std::unique_lock<std::mutex> lock(state->mutex);
-  state->teardown_devices.insert(device);
-  state->condition.wait(lock, [&] { return !state->staging_operation_active; });
-  auto it = state->primary_contexts.find(device);
-  if (it != state->primary_contexts.end()) {
-    state->teardown_contexts.insert(it->second);
+  std::shared_ptr<lupine_htod_side_effect_ring> ring;
+  {
+    std::unique_lock<std::mutex> lock(state->mutex);
+    state->teardown_devices.insert(device);
+    state->condition.wait(lock,
+                          [&] { return !state->staging_operation_active; });
+    auto context = state->primary_contexts.find(device);
+    if (context != state->primary_contexts.end()) {
+      state->teardown_contexts.insert(context->second);
+      auto existing = state->htod_rings.find(context->second);
+      if (existing != state->htod_rings.end()) {
+        ring = std::move(existing->second);
+        state->htod_rings.erase(existing);
+      }
+    }
   }
+  ring.reset();
 }
 
 void lupine_server_finish_primary_context(conn_t *conn, CUdevice device,
@@ -1857,9 +1868,21 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context) {
   if (state == nullptr) {
     return;
   }
-  std::unique_lock<std::mutex> lock(state->mutex);
-  state->teardown_contexts.insert(context);
-  state->condition.wait(lock, [&] { return !state->staging_operation_active; });
+  std::shared_ptr<lupine_htod_side_effect_ring> ring;
+  {
+    std::unique_lock<std::mutex> lock(state->mutex);
+    state->teardown_contexts.insert(context);
+    state->condition.wait(lock,
+                          [&] { return !state->staging_operation_active; });
+    auto it = state->htod_rings.find(context);
+    if (it != state->htod_rings.end()) {
+      ring = std::move(it->second);
+      state->htod_rings.erase(it);
+    }
+  }
+  // Streams, modules, and mapped registrations belong to the live context.
+  // Drop the registry's ownership while the caller still has it current.
+  ring.reset();
 }
 
 void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,

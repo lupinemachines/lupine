@@ -13,21 +13,29 @@ FROM cuda-sdk AS smemcpy-build
 
 WORKDIR /opt/lupine
 
-COPY ops/smemcpy.cu ops/smemcpy.h /opt/lupine/ops/
+COPY ops/smemcpy.cu ops/smemcpy.h ops/smemcpy_dispatch.h /opt/lupine/ops/
 
 # Build the only CUDA translation unit before entering the SDK-neutral builder.
-# Include PTX for the oldest architecture accepted by this toolkit so the
-# driver can JIT it for every newer GPU supported by the selected CUDA image.
+# Include native code for every architecture accepted by this toolkit and PTX
+# for the oldest one as a forward-compatible fallback.
 RUN set -eux; \
-    arch="$(nvcc --list-gpu-code | sed -n '1s/^sm_//p')"; \
-    test -n "$arch"; \
+    set --; \
+    oldest=""; \
+    for code in $(nvcc --list-gpu-code); do \
+      arch="${code#sm_}"; \
+      if [ -z "$oldest" ] || [ "$arch" -lt "$oldest" ]; then \
+        oldest="$arch"; \
+      fi; \
+      set -- "$@" \
+        "--generate-code=arch=compute_${arch},code=sm_${arch}"; \
+    done; \
+    test -n "$oldest"; \
+    set -- "$@" \
+      "--generate-code=arch=compute_${oldest},code=compute_${oldest}"; \
     mkdir -p /opt/lupine-prebuilt; \
-    nvcc -std=c++17 -Xcompiler=-fPIC \
-      "--generate-code=arch=compute_${arch},code=[compute_${arch},sm_${arch}]" \
-      -I/opt/lupine --lib /opt/lupine/ops/smemcpy.cu \
-      -o /opt/lupine-prebuilt/liblupine_smemcpy.a; \
-    cp /usr/local/cuda/lib64/libcudart_static.a \
-      /usr/local/cuda/lib64/libcudadevrt.a /opt/lupine-prebuilt/
+    nvcc -std=c++17 --fatbin "$@" \
+      -I/opt/lupine /opt/lupine/ops/smemcpy.cu \
+      -o /opt/lupine-prebuilt/lupine_smemcpy.fatbin
 
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
@@ -64,7 +72,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
       -DLUPINE_CUDA_DRIVER_LIBRARY="${CUDA_HOME}/lib64/stubs/libcuda.so" \
       -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}" \
-      -DLUPINE_CUDA_SMEMCPY_LIBRARY=/opt/lupine-prebuilt/liblupine_smemcpy.a
+      -DLUPINE_CUDA_SMEMCPY_FATBIN=/opt/lupine-prebuilt/lupine_smemcpy.fatbin
 
 FROM builder AS client-build
 

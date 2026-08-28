@@ -11,9 +11,11 @@ no pointer, width, or stride alignment requirement for correctness.
 
 ## Dispatch
 
-Call `lupine_smemcpy_prepare_launch` instead of constructing a kernel launch
-from `lupine_smemcpy_kernel` when possible. The prepared operation selects
-among:
+Dispatch is shared between two front ends. `lupine_smemcpy_prepare_launch`
+provides the standalone CUDA Runtime API, while Lupine's server embeds a
+multi-architecture fatbin and uses the Driver API-only helpers in
+`smemcpy_module.h`. Both call the pure descriptor selection in
+`smemcpy_dispatch.h`, so they select the same operation:
 
 - native CUDA memcpy when the entire fragment is physically contiguous;
 - pitched 16-, 8-, 4-, and 2-byte copies when no vector can cross a row;
@@ -26,6 +28,12 @@ among:
 The vector paths peel at most 127 initial bytes so full mapped-host transactions
 begin on a 128-byte boundary. Packed rows and slices bypass the kernels and use
 CUDA's native copy engine.
+
+The embedded fatbin contains native code for every architecture supported by
+the build's CUDA toolkit and PTX for its oldest architecture as a
+forward-compatible fallback. Keeping module loading and launches on the Driver
+API avoids introducing a CUDA Runtime dependency or a second context into the
+server.
 
 ## Alignment for maximum throughput
 

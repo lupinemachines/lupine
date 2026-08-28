@@ -1,16 +1,11 @@
 #include "ops/smemcpy.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 
 namespace {
 
-constexpr unsigned int kThreadsPerBlock = 256;
-constexpr size_t kMaximumBlocks = 65535;
 constexpr size_t kSourceTransactionAlignment = 128;
-constexpr size_t kNarrowItemsPerThread = 4;
 
 template <size_t Bytes> struct word_type;
 template <> struct word_type<1> {
@@ -153,7 +148,8 @@ scatter_atomic_2d_store(const lupine_smemcpy_params &params,
 }
 
 template <size_t WordBytes>
-__global__ void smemcpy_pitched_vector_kernel(lupine_smemcpy_params params) {
+__device__ __forceinline__ void
+smemcpy_pitched_vector_body(lupine_smemcpy_params params) {
   using word = typename word_type<WordBytes>::type;
   const auto *__restrict__ source =
       reinterpret_cast<const unsigned char *>(params.source);
@@ -187,7 +183,7 @@ __global__ void smemcpy_pitched_vector_kernel(lupine_smemcpy_params params) {
   }
 }
 
-__global__ void smemcpy_2d_kernel(lupine_smemcpy_params params) {
+__device__ __forceinline__ void smemcpy_2d_body(lupine_smemcpy_params params) {
   const auto *__restrict__ source =
       reinterpret_cast<const unsigned char *>(params.source);
   auto *__restrict__ destination =
@@ -205,7 +201,8 @@ __global__ void smemcpy_2d_kernel(lupine_smemcpy_params params) {
 }
 
 template <size_t Width, size_t Items>
-__global__ void smemcpy_narrow_2d_kernel(lupine_smemcpy_params params) {
+__device__ __forceinline__ void
+smemcpy_narrow_2d_body(lupine_smemcpy_params params) {
   const auto *__restrict__ source =
       reinterpret_cast<const unsigned char *>(params.source);
   auto *__restrict__ destination =
@@ -251,7 +248,8 @@ __global__ void smemcpy_narrow_2d_kernel(lupine_smemcpy_params params) {
 }
 
 template <size_t Width, size_t Items>
-__global__ void smemcpy_narrow_3d_kernel(lupine_smemcpy_params params) {
+__device__ __forceinline__ void
+smemcpy_narrow_3d_body(lupine_smemcpy_params params) {
   const auto *__restrict__ source =
       reinterpret_cast<const unsigned char *>(params.source);
   auto *__restrict__ destination =
@@ -295,7 +293,8 @@ __global__ void smemcpy_narrow_3d_kernel(lupine_smemcpy_params params) {
 }
 
 template <unsigned int ByteOffset, unsigned int GroupThreads>
-__global__ void smemcpy_atomic_narrow_2d_kernel(lupine_smemcpy_params params) {
+__device__ __forceinline__ void
+smemcpy_atomic_narrow_2d_body(lupine_smemcpy_params params) {
   static_assert(GroupThreads == 4 || GroupThreads == 8 || GroupThreads == 16);
   const auto *__restrict__ source =
       reinterpret_cast<const unsigned char *>(params.source);
@@ -330,7 +329,8 @@ __global__ void smemcpy_atomic_narrow_2d_kernel(lupine_smemcpy_params params) {
 }
 
 template <size_t Width, unsigned int ByteOffset, unsigned int GroupThreads>
-__global__ void smemcpy_atomic_rows_kernel(lupine_smemcpy_params params) {
+__device__ __forceinline__ void
+smemcpy_atomic_rows_body(lupine_smemcpy_params params) {
   static_assert(Width == 2 || Width == 3);
   static_assert(GroupThreads == 4 || GroupThreads == 8 || GroupThreads == 16);
   const auto *__restrict__ source =
@@ -368,7 +368,7 @@ __global__ void smemcpy_atomic_rows_kernel(lupine_smemcpy_params params) {
   }
 }
 
-__global__ void smemcpy_3d_kernel(lupine_smemcpy_params params) {
+__device__ __forceinline__ void smemcpy_3d_body(lupine_smemcpy_params params) {
   const auto *__restrict__ source =
       reinterpret_cast<const unsigned char *>(params.source);
   auto *__restrict__ destination =
@@ -385,388 +385,200 @@ __global__ void smemcpy_3d_kernel(lupine_smemcpy_params params) {
   }
 }
 
-size_t blocks_for(size_t bytes, size_t bytes_per_thread) {
-  size_t block_bytes = kThreadsPerBlock * bytes_per_thread;
-  size_t blocks = bytes / block_bytes + (bytes % block_bytes != 0);
-  return std::min(std::max<size_t>(blocks, 1), kMaximumBlocks);
-}
+} // namespace
 
-CUdeviceptr destination_at(const lupine_smemcpy_params &params,
-                           size_t logical) {
-  size_t row_index = logical / params.width;
-  size_t x = logical - row_index * params.width;
-  size_t slice = row_index / params.rows;
-  size_t row = row_index - slice * params.rows;
-  return params.destination + slice * params.destination_slice_stride +
-         row * params.destination_row_stride + x;
-}
+#define LUPINE_SMEMCPY_KERNEL(name, ...)                                       \
+  extern "C" __global__ void name(lupine_smemcpy_params params) { __VA_ARGS__; }
 
-bool contiguous_destination(const lupine_smemcpy_params &params,
-                            size_t slice_bytes) {
-  size_t first_row = params.logical_offset / params.width;
-  size_t last_row = (params.logical_offset + params.bytes - 1) / params.width;
-  if (first_row == last_row) {
-    return true;
-  }
-  if (params.destination_row_stride != params.width) {
-    return false;
-  }
-  return first_row / params.rows == last_row / params.rows ||
-         params.destination_slice_stride == slice_bytes;
-}
+#define LUPINE_SMEMCPY_PITCHED(bytes)                                          \
+  LUPINE_SMEMCPY_KERNEL(lupine_smemcpy_pitched_##bytes,                        \
+                        smemcpy_pitched_vector_body<bytes>(params))
+LUPINE_SMEMCPY_PITCHED(2)
+LUPINE_SMEMCPY_PITCHED(4)
+LUPINE_SMEMCPY_PITCHED(8)
+LUPINE_SMEMCPY_PITCHED(16)
 
-template <size_t WordBytes>
-bool can_vectorize_pitched(const lupine_smemcpy_params &params,
-                           CUdeviceptr first_destination) {
-  constexpr size_t mask = WordBytes - 1;
-  return (params.width & mask) == 0 && (params.destination & mask) == 0 &&
-         (params.destination_row_stride & mask) == 0 &&
-         (params.destination_slice_stride & mask) == 0 &&
-         ((params.source ^ first_destination) & mask) == 0;
-}
+LUPINE_SMEMCPY_KERNEL(lupine_smemcpy_2d, smemcpy_2d_body(params))
+LUPINE_SMEMCPY_KERNEL(lupine_smemcpy_3d, smemcpy_3d_body(params))
 
-template <size_t WordBytes>
-void set_pitched_vector_launch(lupine_smemcpy_launch *launch) {
-  launch->kernel =
-      reinterpret_cast<const void *>(smemcpy_pitched_vector_kernel<WordBytes>);
-  launch->blocks =
-      static_cast<unsigned int>(blocks_for(launch->params.bytes, WordBytes));
-}
+#define LUPINE_SMEMCPY_NARROW(dimension, width, items)                         \
+  LUPINE_SMEMCPY_KERNEL(                                                       \
+      lupine_smemcpy_narrow_##dimension##_##width##_##items,                   \
+      smemcpy_narrow_##dimension##_body<width, items>(params))
+#define LUPINE_SMEMCPY_NARROW_WIDTH(dimension, width)                          \
+  LUPINE_SMEMCPY_NARROW(dimension, width, 1)                                   \
+  LUPINE_SMEMCPY_NARROW(dimension, width, 4)
+#define LUPINE_SMEMCPY_NARROW_DIMENSION(dimension)                             \
+  LUPINE_SMEMCPY_NARROW_WIDTH(dimension, 1)                                    \
+  LUPINE_SMEMCPY_NARROW_WIDTH(dimension, 2)                                    \
+  LUPINE_SMEMCPY_NARROW_WIDTH(dimension, 3)
+LUPINE_SMEMCPY_NARROW_DIMENSION(2d)
+LUPINE_SMEMCPY_NARROW_DIMENSION(3d)
 
-bool select_pitched_vector_launch(lupine_smemcpy_launch *launch,
-                                  CUdeviceptr first_destination) {
-  if (can_vectorize_pitched<16>(launch->params, first_destination)) {
-    set_pitched_vector_launch<16>(launch);
-  } else if (can_vectorize_pitched<8>(launch->params, first_destination)) {
-    set_pitched_vector_launch<8>(launch);
-  } else if (can_vectorize_pitched<4>(launch->params, first_destination)) {
-    set_pitched_vector_launch<4>(launch);
-  } else if (can_vectorize_pitched<2>(launch->params, first_destination)) {
-    set_pitched_vector_launch<2>(launch);
-  } else {
-    return false;
-  }
-  return true;
-}
+#define LUPINE_SMEMCPY_ATOMIC_2D(offset, group)                                \
+  LUPINE_SMEMCPY_KERNEL(lupine_smemcpy_atomic_2d_##offset##_##group,           \
+                        smemcpy_atomic_narrow_2d_body<offset, group>(params))
+#define LUPINE_SMEMCPY_ATOMIC_2D_GROUP(group)                                  \
+  LUPINE_SMEMCPY_ATOMIC_2D(0, group)                                           \
+  LUPINE_SMEMCPY_ATOMIC_2D(1, group)                                           \
+  LUPINE_SMEMCPY_ATOMIC_2D(2, group)                                           \
+  LUPINE_SMEMCPY_ATOMIC_2D(3, group)
+LUPINE_SMEMCPY_ATOMIC_2D_GROUP(4)
+LUPINE_SMEMCPY_ATOMIC_2D_GROUP(8)
+LUPINE_SMEMCPY_ATOMIC_2D_GROUP(16)
 
-template <size_t Items>
-void set_narrow_2d_launch(lupine_smemcpy_launch *launch, size_t width) {
-  switch (width) {
-  case 1:
-    launch->kernel =
-        reinterpret_cast<const void *>(smemcpy_narrow_2d_kernel<1, Items>);
-    break;
-  case 2:
-    launch->kernel =
-        reinterpret_cast<const void *>(smemcpy_narrow_2d_kernel<2, Items>);
-    break;
-  default:
-    launch->kernel =
-        reinterpret_cast<const void *>(smemcpy_narrow_2d_kernel<3, Items>);
-    break;
-  }
-  launch->blocks =
-      static_cast<unsigned int>(blocks_for(launch->params.bytes, Items));
-}
+#define LUPINE_SMEMCPY_ATOMIC_ROWS(width, offset, group)                       \
+  LUPINE_SMEMCPY_KERNEL(                                                       \
+      lupine_smemcpy_atomic_rows_##width##_##offset##_##group,                 \
+      smemcpy_atomic_rows_body<width, offset, group>(params))
+#define LUPINE_SMEMCPY_ATOMIC_ROWS_WIDTH_GROUP(width, group)                   \
+  LUPINE_SMEMCPY_ATOMIC_ROWS(width, 0, group)                                  \
+  LUPINE_SMEMCPY_ATOMIC_ROWS(width, 1, group)
+#define LUPINE_SMEMCPY_ATOMIC_ROWS_GROUP(group)                                \
+  LUPINE_SMEMCPY_ATOMIC_ROWS_WIDTH_GROUP(2, group)                             \
+  LUPINE_SMEMCPY_ATOMIC_ROWS(2, 2, group)                                      \
+  LUPINE_SMEMCPY_ATOMIC_ROWS_WIDTH_GROUP(3, group)
+LUPINE_SMEMCPY_ATOMIC_ROWS_GROUP(4)
+LUPINE_SMEMCPY_ATOMIC_ROWS_GROUP(8)
+LUPINE_SMEMCPY_ATOMIC_ROWS_GROUP(16)
 
-template <size_t Items>
-void set_narrow_3d_launch(lupine_smemcpy_launch *launch, size_t width) {
-  switch (width) {
-  case 1:
-    launch->kernel =
-        reinterpret_cast<const void *>(smemcpy_narrow_3d_kernel<1, Items>);
-    break;
-  case 2:
-    launch->kernel =
-        reinterpret_cast<const void *>(smemcpy_narrow_3d_kernel<2, Items>);
-    break;
-  default:
-    launch->kernel =
-        reinterpret_cast<const void *>(smemcpy_narrow_3d_kernel<3, Items>);
-    break;
-  }
-  launch->blocks =
-      static_cast<unsigned int>(blocks_for(launch->params.bytes, Items));
-}
+#undef LUPINE_SMEMCPY_ATOMIC_ROWS_GROUP
+#undef LUPINE_SMEMCPY_ATOMIC_ROWS_WIDTH_GROUP
+#undef LUPINE_SMEMCPY_ATOMIC_ROWS
+#undef LUPINE_SMEMCPY_ATOMIC_2D_GROUP
+#undef LUPINE_SMEMCPY_ATOMIC_2D
+#undef LUPINE_SMEMCPY_NARROW_DIMENSION
+#undef LUPINE_SMEMCPY_NARROW_WIDTH
+#undef LUPINE_SMEMCPY_NARROW
+#undef LUPINE_SMEMCPY_PITCHED
+#undef LUPINE_SMEMCPY_KERNEL
 
-template <size_t Width, unsigned int ByteOffset, unsigned int GroupThreads>
-void set_atomic_narrow_launch(lupine_smemcpy_launch *launch) {
-  if constexpr (Width == 1) {
-    launch->kernel = reinterpret_cast<const void *>(
-        smemcpy_atomic_narrow_2d_kernel<ByteOffset, GroupThreads>);
-  } else {
-    launch->kernel = reinterpret_cast<const void *>(
-        smemcpy_atomic_rows_kernel<Width, ByteOffset, GroupThreads>);
-  }
-  launch->blocks =
-      static_cast<unsigned int>(blocks_for(launch->params.bytes, Width));
-}
+namespace {
 
-template <size_t Width, unsigned int GroupThreads>
-void select_atomic_narrow_launch_for_width(lupine_smemcpy_launch *launch) {
-  constexpr size_t mask = sizeof(unsigned int) - 1;
-  switch (launch->params.destination & mask) {
-  case 0:
-    set_atomic_narrow_launch<Width, 0, GroupThreads>(launch);
-    break;
-  case 1:
-    set_atomic_narrow_launch<Width, 1, GroupThreads>(launch);
-    break;
-  case 2:
-    if constexpr (Width <= 2) {
-      set_atomic_narrow_launch<Width, 2, GroupThreads>(launch);
-    }
-    break;
-  default:
-    if constexpr (Width == 1) {
-      set_atomic_narrow_launch<Width, 3, GroupThreads>(launch);
-    }
-    break;
-  }
-}
-
-template <unsigned int GroupThreads>
-void select_atomic_narrow_launch_for_group(lupine_smemcpy_launch *launch,
-                                           size_t width) {
-  switch (width) {
-  case 1:
-    select_atomic_narrow_launch_for_width<1, GroupThreads>(launch);
-    break;
-  case 2:
-    select_atomic_narrow_launch_for_width<2, GroupThreads>(launch);
-    break;
-  default:
-    select_atomic_narrow_launch_for_width<3, GroupThreads>(launch);
-    break;
-  }
-}
-
-void select_atomic_narrow_launch(lupine_smemcpy_launch *launch,
-                                 unsigned int group_threads, size_t width) {
-  if (group_threads == 16) {
-    select_atomic_narrow_launch_for_group<16>(launch, width);
-  } else if (group_threads == 8) {
-    select_atomic_narrow_launch_for_group<8>(launch, width);
-  } else {
-    select_atomic_narrow_launch_for_group<4>(launch, width);
-  }
-}
-
-enum class atomic_narrow_target {
-  none,
-  pascal,
-  volta,
-  turing,
-  ampere,
-  l4,
+struct kernel_entry {
+  const char *name;
+  const void *function;
 };
 
-cudaError_t narrow_device_features(bool *latency_hiding,
-                                   atomic_narrow_target *atomic_target) {
-  int device = 0;
-  cudaError_t result = cudaGetDevice(&device);
-  if (result != cudaSuccess) {
-    return result;
-  }
-  static thread_local int cached_device = -1;
-  static thread_local int cached_major = 0;
-  static thread_local atomic_narrow_target cached_atomic_target =
-      atomic_narrow_target::none;
-  if (cached_device != device) {
-    cudaDeviceProp properties = {};
-    result = cudaGetDeviceProperties(&properties, device);
-    if (result != cudaSuccess) {
-      return result;
-    }
-    cached_major = properties.major;
-    cached_atomic_target = atomic_narrow_target::none;
-    if (properties.major == 6 && properties.minor == 0) {
-      cached_atomic_target = atomic_narrow_target::pascal;
-    } else if (properties.major == 7 && properties.minor == 0) {
-      cached_atomic_target = atomic_narrow_target::volta;
-    } else if (properties.major == 7 && properties.minor == 5) {
-      cached_atomic_target = atomic_narrow_target::turing;
-    } else if (properties.major == 8 && properties.minor == 0) {
-      cached_atomic_target = atomic_narrow_target::ampere;
-    } else if (properties.major == 8 && properties.minor == 9 &&
-               std::strcmp(properties.name, "NVIDIA L4") == 0) {
-      cached_atomic_target = atomic_narrow_target::l4;
-    }
-    cached_device = device;
-  }
-  // Pre-Ampere devices benefit from several independent mapped reads. Newer
-  // devices saturate the tested host links with one item per thread.
-  *latency_hiding = cached_major < 8;
-  *atomic_target = cached_atomic_target;
-  return cudaSuccess;
-}
+#define LUPINE_SMEMCPY_ENTRY(name)                                             \
+  { #name, reinterpret_cast<const void *>(name) }
+#define LUPINE_SMEMCPY_PITCHED_ENTRY(bytes)                                    \
+  LUPINE_SMEMCPY_ENTRY(lupine_smemcpy_pitched_##bytes)
+#define LUPINE_SMEMCPY_NARROW_ENTRY(dimension, width, items)                   \
+  LUPINE_SMEMCPY_ENTRY(lupine_smemcpy_narrow_##dimension##_##width##_##items)
+#define LUPINE_SMEMCPY_ATOMIC_2D_ENTRY(offset, group)                          \
+  LUPINE_SMEMCPY_ENTRY(lupine_smemcpy_atomic_2d_##offset##_##group)
+#define LUPINE_SMEMCPY_ATOMIC_ROWS_ENTRY(width, offset, group)                 \
+  LUPINE_SMEMCPY_ENTRY(lupine_smemcpy_atomic_rows_##width##_##offset##_##group)
 
-unsigned int atomic_group_threads(atomic_narrow_target target, size_t width,
-                                  size_t stride) {
-  // This is an empirical policy, not a compute-capability extrapolation.
-  if (stride < 64 || stride > 512 || (stride & (stride - 1)) != 0) {
-    return 0;
-  }
-  switch (target) {
-  case atomic_narrow_target::pascal:
-    if (width == 1) {
-      return stride >= 128 ? 4 : 0;
-    }
-    return stride == 64 ? 8 : 4;
-  case atomic_narrow_target::volta:
-    if (width == 1) {
-      return stride >= 128 ? 4 : 0;
-    }
-    if (stride == 64 || (width == 3 && stride == 128)) {
-      return 16;
-    }
-    return stride == 128 ? 8 : 4;
-  case atomic_narrow_target::turing:
-    if (width == 1) {
-      return stride == 64 ? 8 : 4;
-    }
-    if (width == 2) {
-      return stride == 128 || stride == 256 ? 4 : 0;
-    }
-    return stride == 64 ? 16 : 4;
-  case atomic_narrow_target::ampere:
-    return width == 1 && stride >= 256 ? 8 : 0;
-  case atomic_narrow_target::l4:
-    if (width == 1) {
-      return stride == 64 ? 16 : 8;
-    }
-    return 16;
-  case atomic_narrow_target::none:
-    return 0;
-  }
-  return 0;
-}
+const kernel_entry kKernels[] = {
+    LUPINE_SMEMCPY_ENTRY(lupine_smemcpy_3d),
+    LUPINE_SMEMCPY_ENTRY(lupine_smemcpy_2d),
+    LUPINE_SMEMCPY_PITCHED_ENTRY(2),
+    LUPINE_SMEMCPY_PITCHED_ENTRY(4),
+    LUPINE_SMEMCPY_PITCHED_ENTRY(8),
+    LUPINE_SMEMCPY_PITCHED_ENTRY(16),
+    LUPINE_SMEMCPY_NARROW_ENTRY(2d, 1, 1),
+    LUPINE_SMEMCPY_NARROW_ENTRY(2d, 1, 4),
+    LUPINE_SMEMCPY_NARROW_ENTRY(2d, 2, 1),
+    LUPINE_SMEMCPY_NARROW_ENTRY(2d, 2, 4),
+    LUPINE_SMEMCPY_NARROW_ENTRY(2d, 3, 1),
+    LUPINE_SMEMCPY_NARROW_ENTRY(2d, 3, 4),
+    LUPINE_SMEMCPY_NARROW_ENTRY(3d, 1, 1),
+    LUPINE_SMEMCPY_NARROW_ENTRY(3d, 1, 4),
+    LUPINE_SMEMCPY_NARROW_ENTRY(3d, 2, 1),
+    LUPINE_SMEMCPY_NARROW_ENTRY(3d, 2, 4),
+    LUPINE_SMEMCPY_NARROW_ENTRY(3d, 3, 1),
+    LUPINE_SMEMCPY_NARROW_ENTRY(3d, 3, 4),
+#define LUPINE_SMEMCPY_ATOMIC_2D_OFFSET(group)                                 \
+  LUPINE_SMEMCPY_ATOMIC_2D_ENTRY(0, group),                                    \
+      LUPINE_SMEMCPY_ATOMIC_2D_ENTRY(1, group),                                \
+      LUPINE_SMEMCPY_ATOMIC_2D_ENTRY(2, group),                                \
+      LUPINE_SMEMCPY_ATOMIC_2D_ENTRY(3, group)
+    LUPINE_SMEMCPY_ATOMIC_2D_OFFSET(4),
+    LUPINE_SMEMCPY_ATOMIC_2D_OFFSET(8),
+    LUPINE_SMEMCPY_ATOMIC_2D_OFFSET(16),
+#undef LUPINE_SMEMCPY_ATOMIC_2D_OFFSET
+#define LUPINE_SMEMCPY_ATOMIC_ROWS_OFFSET(group)                               \
+  LUPINE_SMEMCPY_ATOMIC_ROWS_ENTRY(2, 0, group),                               \
+      LUPINE_SMEMCPY_ATOMIC_ROWS_ENTRY(2, 1, group),                           \
+      LUPINE_SMEMCPY_ATOMIC_ROWS_ENTRY(2, 2, group),                           \
+      LUPINE_SMEMCPY_ATOMIC_ROWS_ENTRY(3, 0, group),                           \
+      LUPINE_SMEMCPY_ATOMIC_ROWS_ENTRY(3, 1, group)
+    LUPINE_SMEMCPY_ATOMIC_ROWS_OFFSET(4),
+    LUPINE_SMEMCPY_ATOMIC_ROWS_OFFSET(8),
+    LUPINE_SMEMCPY_ATOMIC_ROWS_OFFSET(16),
+#undef LUPINE_SMEMCPY_ATOMIC_ROWS_OFFSET
+};
 
-bool rows_fit_atomic_word(const lupine_smemcpy_params &params,
-                          CUdeviceptr first_destination) {
-  bool owns_complete_rows = params.logical_offset % params.width == 0 &&
-                            params.bytes % params.width == 0;
-  size_t byte_offset = first_destination & (sizeof(unsigned int) - 1);
-  return params.width <= 3 && owns_complete_rows &&
-         byte_offset + params.width <= sizeof(unsigned int);
+#undef LUPINE_SMEMCPY_ATOMIC_ROWS_ENTRY
+#undef LUPINE_SMEMCPY_ATOMIC_2D_ENTRY
+#undef LUPINE_SMEMCPY_NARROW_ENTRY
+#undef LUPINE_SMEMCPY_PITCHED_ENTRY
+#undef LUPINE_SMEMCPY_ENTRY
+
+const void *runtime_kernel(const lupine_smemcpy_launch_descriptor &descriptor) {
+  const char *name = lupine_smemcpy_kernel_name(&descriptor);
+  if (name == nullptr) {
+    return nullptr;
+  }
+  for (const auto &entry : kKernels) {
+    if (std::strcmp(name, entry.name) == 0) {
+      return entry.function;
+    }
+  }
+  return nullptr;
 }
 
 } // namespace
 
 extern "C" const void *lupine_smemcpy_kernel(void) {
-  return reinterpret_cast<const void *>(smemcpy_3d_kernel);
+  return reinterpret_cast<const void *>(lupine_smemcpy_3d);
 }
 
 extern "C" cudaError_t
 lupine_smemcpy_prepare_launch(const lupine_smemcpy_params *params,
                               lupine_smemcpy_launch *launch) {
-  if (params == nullptr || launch == nullptr || params->width == 0 ||
-      params->rows == 0 ||
-      (params->bytes != 0 &&
-       (params->source == 0 || params->destination == 0)) ||
-      params->width > std::numeric_limits<size_t>::max() / params->rows ||
-      params->bytes >
-          std::numeric_limits<size_t>::max() - params->logical_offset) {
+  if (launch == nullptr) {
     return cudaErrorInvalidValue;
   }
-
-  launch->params = *params;
-  launch->use_cuda_memcpy = false;
-  launch->kernel = reinterpret_cast<const void *>(smemcpy_3d_kernel);
-  launch->blocks = 0;
-  launch->threads = kThreadsPerBlock;
-  if (params->bytes == 0) {
-    return cudaSuccess;
+  lupine_smemcpy_launch_descriptor descriptor = {};
+  CUresult driver_result =
+      lupine_smemcpy_prepare_descriptor(params, nullptr, &descriptor);
+  if (driver_result != CUDA_SUCCESS) {
+    return static_cast<cudaError_t>(driver_result);
   }
-
-  size_t slice_bytes = params->width * params->rows;
-  CUdeviceptr first_destination =
-      destination_at(*params, params->logical_offset);
-  if (contiguous_destination(*params, slice_bytes)) {
-    launch->params.destination = first_destination;
-    launch->params.logical_offset = 0;
-    launch->use_cuda_memcpy = true;
-    launch->kernel = nullptr;
-    return cudaSuccess;
-  }
-
-  size_t first_row_index = params->logical_offset / params->width;
-  size_t first_slice = first_row_index / params->rows;
-  size_t last_logical = params->logical_offset + params->bytes - 1;
-  size_t last_row_index = last_logical / params->width;
-  size_t last_slice = last_row_index / params->rows;
-  bool latency_hiding_narrow = false;
-  atomic_narrow_target atomic_target = atomic_narrow_target::none;
-  unsigned int atomic_threads = 0;
-  if (params->width <= 3) {
-    cudaError_t result =
-        narrow_device_features(&latency_hiding_narrow, &atomic_target);
+  if (params->bytes != 0 && params->width <= 3 && !descriptor.use_cuda_memcpy) {
+    int device = 0;
+    cudaError_t result = cudaGetDevice(&device);
     if (result != cudaSuccess) {
       return result;
     }
-    atomic_threads = atomic_group_threads(atomic_target, params->width,
-                                          params->destination_row_stride);
-    if (atomic_threads != 0 &&
-        !rows_fit_atomic_word(*params, first_destination)) {
-      atomic_threads = 0;
+    cudaDeviceProp properties = {};
+    result = cudaGetDeviceProperties(&properties, device);
+    if (result != cudaSuccess) {
+      return result;
+    }
+    lupine_smemcpy_device features = {
+        properties.major, properties.minor,
+        properties.major == 8 && properties.minor == 9 &&
+            std::strcmp(properties.name, "NVIDIA L4") == 0};
+    driver_result =
+        lupine_smemcpy_prepare_descriptor(params, &features, &descriptor);
+    if (driver_result != CUDA_SUCCESS) {
+      return static_cast<cudaError_t>(driver_result);
     }
   }
 
-  bool regular_rows_across_slices =
-      params->destination_row_stride <=
-          std::numeric_limits<size_t>::max() / params->rows &&
-      params->destination_slice_stride ==
-          params->destination_row_stride * params->rows;
-  if (atomic_threads != 0 && first_slice != last_slice &&
-      !regular_rows_across_slices) {
-    atomic_threads = 0;
-  }
-
-  if (atomic_threads == 0 && !latency_hiding_narrow &&
-      select_pitched_vector_launch(launch, first_destination)) {
-    return cudaSuccess;
-  }
-
-  if (first_slice == last_slice) {
-    size_t first_row = first_row_index - first_slice * params->rows;
-    size_t first_x = params->logical_offset - first_row_index * params->width;
-    launch->params.destination =
-        params->destination + first_slice * params->destination_slice_stride +
-        first_row * params->destination_row_stride;
-    launch->params.logical_offset = first_x;
-    if (params->width <= 3) {
-      if (atomic_threads != 0) {
-        select_atomic_narrow_launch(launch, atomic_threads, params->width);
-      } else if (latency_hiding_narrow) {
-        set_narrow_2d_launch<kNarrowItemsPerThread>(launch, params->width);
-      } else {
-        set_narrow_2d_launch<1>(launch, params->width);
-      }
-    } else {
-      launch->kernel = reinterpret_cast<const void *>(smemcpy_2d_kernel);
-      launch->blocks = static_cast<unsigned int>(blocks_for(params->bytes, 1));
-    }
-    return cudaSuccess;
-  }
-
-  if (first_slice != 0) {
-    launch->params.destination +=
-        first_slice * params->destination_slice_stride;
-    launch->params.logical_offset -= first_slice * slice_bytes;
-  }
-  if (params->width <= 3) {
-    if (atomic_threads != 0) {
-      select_atomic_narrow_launch(launch, atomic_threads, params->width);
-    } else if (latency_hiding_narrow) {
-      set_narrow_3d_launch<kNarrowItemsPerThread>(launch, params->width);
-    } else {
-      set_narrow_3d_launch<1>(launch, params->width);
-    }
-  } else {
-    launch->kernel = reinterpret_cast<const void *>(smemcpy_3d_kernel);
-    launch->blocks = static_cast<unsigned int>(blocks_for(params->bytes, 1));
-  }
-  return cudaSuccess;
+  launch->params = descriptor.params;
+  launch->use_cuda_memcpy = descriptor.use_cuda_memcpy;
+  launch->kernel = runtime_kernel(descriptor);
+  launch->blocks = descriptor.blocks;
+  launch->threads = descriptor.threads;
+  return descriptor.blocks != 0 && !descriptor.use_cuda_memcpy &&
+                 launch->kernel == nullptr
+             ? cudaErrorInvalidDeviceFunction
+             : cudaSuccess;
 }
 
 extern "C" cudaError_t lupine_smemcpy_async(const lupine_smemcpy_params *params,

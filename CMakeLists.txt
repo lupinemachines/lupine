@@ -18,8 +18,8 @@ set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
     "CUDA driver library or stub to use without a complete CUDA Toolkit")
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
     "CUDA version reported by an SDK-free server build")
-set(LUPINE_CUDA_SMEMCPY_LIBRARY "" CACHE FILEPATH
-    "Precompiled CUDA smemcpy library for an SDK-free server build")
+set(LUPINE_CUDA_SMEMCPY_FATBIN "" CACHE FILEPATH
+    "Precompiled CUDA smemcpy fatbin for an SDK-free server build")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -142,41 +142,14 @@ endif()
 # than the headers and driver stub the rest of the server builds against. The
 # CUDA and HIP operations are independent, and either may be built alone.
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
-    if(LUPINE_CUDA_SMEMCPY_LIBRARY)
-        get_filename_component(lupine_cuda_smemcpy_library_dir
-            "${LUPINE_CUDA_SMEMCPY_LIBRARY}" DIRECTORY)
-        set(lupine_cudart_static_library
-            "${lupine_cuda_smemcpy_library_dir}/libcudart_static.a")
-        set(lupine_cudadevrt_library
-            "${lupine_cuda_smemcpy_library_dir}/libcudadevrt.a")
-        foreach(library
-                LUPINE_CUDA_SMEMCPY_LIBRARY
-                lupine_cudart_static_library
-                lupine_cudadevrt_library)
-            if(NOT EXISTS "${${library}}")
-                message(FATAL_ERROR "${library} does not exist: ${${library}}")
-            endif()
-        endforeach()
-        add_library(lupine_cuda_smemcpy STATIC IMPORTED)
-        set_target_properties(lupine_cuda_smemcpy PROPERTIES
-            IMPORTED_LOCATION "${LUPINE_CUDA_SMEMCPY_LIBRARY}")
-        target_include_directories(lupine_cuda_smemcpy INTERFACE
-            ${CMAKE_CURRENT_SOURCE_DIR})
-        target_link_libraries(lupine_cuda_smemcpy INTERFACE
-            "${lupine_cudadevrt_library}"
-            "${lupine_cudart_static_library}"
-            Threads::Threads
-            ${CMAKE_DL_LIBS})
-        if(UNIX AND NOT APPLE)
-            target_link_libraries(lupine_cuda_smemcpy INTERFACE rt)
-        endif()
+    if(LUPINE_CUDA_SMEMCPY_FATBIN)
         message(STATUS
-            "Using precompiled CUDA smemcpy: ${LUPINE_CUDA_SMEMCPY_LIBRARY}")
+            "Using precompiled CUDA smemcpy fatbin: ${LUPINE_CUDA_SMEMCPY_FATBIN}")
     elseif(NOT LUPINE_CUDA_DRIVER_LIBRARY)
         enable_language(CUDA)
     else()
         message(FATAL_ERROR
-            "LUPINE_CUDA_SMEMCPY_LIBRARY is required for an SDK-free CUDA server build")
+            "LUPINE_CUDA_SMEMCPY_FATBIN is required for an SDK-free CUDA server build")
     endif()
 endif()
 
@@ -202,7 +175,8 @@ if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
 endif()
 
 get_property(lupine_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
-if("CUDA" IN_LIST lupine_enabled_languages OR
+if(LUPINE_CUDA_SMEMCPY_FATBIN OR
+   "CUDA" IN_LIST lupine_enabled_languages OR
    "HIP" IN_LIST lupine_enabled_languages)
     add_subdirectory(ops)
 endif()
@@ -428,7 +402,7 @@ if(LUPINE_BUILD_SERVER)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
-            lupine_cuda_smemcpy CUDA::cuda_driver)
+            lupine_cuda_smemcpy_module CUDA::cuda_driver)
     endif()
 
     if(LUPINE_BUILD_NVML)
