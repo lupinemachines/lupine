@@ -90,7 +90,7 @@ jobs:
             "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
 
       - name: Build
-        run: cmake --build build/windows-server --config Release --target lupine_driver_server lupine_smemcpy --parallel
+        run: cmake --build build/windows-server --config Release --target lupine_driver_server lupine_cuda_smemcpy --parallel
 
       - name: Verify the executable is self-contained
         shell: pwsh
