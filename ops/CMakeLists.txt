@@ -27,18 +27,18 @@ endif()
 
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
     if(LUPINE_PRECOMPILED_OPS)
-        set(lupine_smemcpy_fatbin
-            "${LUPINE_PRECOMPILED_OPS}/cuda/smemcpy.fatbin")
-        if(NOT EXISTS "${lupine_smemcpy_fatbin}")
+        set(lupine_smemcpy_source
+            "${LUPINE_PRECOMPILED_OPS}/cuda/smemcpy.cpp")
+        if(NOT EXISTS "${lupine_smemcpy_source}")
             message(FATAL_ERROR
-                "Missing precompiled CUDA operation: ${lupine_smemcpy_fatbin}")
+                "Missing precompiled CUDA operation: ${lupine_smemcpy_source}")
         endif()
     else()
         set(lupine_built_ops "${CMAKE_CURRENT_BINARY_DIR}/precompiled-ops")
-        set(lupine_smemcpy_fatbin
-            "${lupine_built_ops}/cuda/smemcpy.fatbin")
+        set(lupine_smemcpy_source
+            "${lupine_built_ops}/cuda/smemcpy.cpp")
         add_custom_command(
-            OUTPUT "${lupine_smemcpy_fatbin}"
+            OUTPUT "${lupine_smemcpy_source}"
             COMMAND ${CMAKE_COMMAND}
                 "-DLUPINE_PRECOMPILED_OPS=${lupine_built_ops}"
                 "-DLUPINE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
@@ -51,22 +51,10 @@ if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
                 smemcpy_dispatch.h
             VERBATIM)
     endif()
-    set(lupine_smemcpy_fatbin_cpp
-        "${CMAKE_CURRENT_BINARY_DIR}/lupine_smemcpy_fatbin.cpp")
-    add_executable(lupine_embed_fatbin embed_fatbin.cpp)
-    add_custom_command(
-        OUTPUT "${lupine_smemcpy_fatbin_cpp}"
-        COMMAND $<TARGET_FILE:lupine_embed_fatbin>
-            "${lupine_smemcpy_fatbin}"
-            "${lupine_smemcpy_fatbin_cpp}"
-        DEPENDS
-            "${lupine_smemcpy_fatbin}"
-            lupine_embed_fatbin
-        VERBATIM)
     add_library(lupine_cuda_smemcpy_module STATIC
         smemcpy_dispatch.cpp
         smemcpy_module.cpp
-        "${lupine_smemcpy_fatbin_cpp}")
+        "${lupine_smemcpy_source}")
     target_include_directories(lupine_cuda_smemcpy_module PUBLIC
         ${PROJECT_SOURCE_DIR}
         ${CUDAToolkit_INCLUDE_DIRS})

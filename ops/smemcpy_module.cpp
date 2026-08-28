@@ -1,16 +1,14 @@
 #include "ops/smemcpy_module.h"
 
-#include <cstddef>
 #include <cstring>
 
-extern const unsigned char lupine_smemcpy_fatbin[];
-extern const std::size_t lupine_smemcpy_fatbin_size;
+extern "C" const void *lupine_cuda_smemcpy_image();
 
 extern "C" CUresult lupine_smemcpy_module_load(CUmodule *module) {
-  if (module == nullptr || lupine_smemcpy_fatbin_size == 0) {
+  if (module == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  return cuModuleLoadData(module, lupine_smemcpy_fatbin);
+  return cuModuleLoadData(module, lupine_cuda_smemcpy_image());
 }
 
 extern "C" CUresult

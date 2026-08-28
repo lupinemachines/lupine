@@ -35,7 +35,13 @@ RUN set -eux; \
     mkdir -p /opt/lupine-precompiled-ops/cuda; \
     nvcc -std=c++17 --fatbin "$@" \
       -I/opt/lupine /opt/lupine/ops/smemcpy.cu \
-      -o /opt/lupine-precompiled-ops/cuda/smemcpy.fatbin
+      -o /tmp/lupine_smemcpy.fatbin; \
+    bin2c --const --name lupine_smemcpy_fatbin \
+      /tmp/lupine_smemcpy.fatbin \
+      > /opt/lupine-precompiled-ops/cuda/smemcpy.cpp; \
+    printf '\nextern "C" const void *lupine_cuda_smemcpy_image() {\n  return lupine_smemcpy_fatbin;\n}\n' \
+      >> /opt/lupine-precompiled-ops/cuda/smemcpy.cpp; \
+    rm /tmp/lupine_smemcpy.fatbin
 
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 

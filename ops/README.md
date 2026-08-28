@@ -3,7 +3,7 @@
 Server builds compile operations with the available accelerator SDKs by
 default. SDK-neutral builds can instead set `LUPINE_PRECOMPILED_OPS` to a
 directory produced separately by each SDK. Artifacts live below a backend
-directory; the current CUDA artifact is `cuda/smemcpy.fatbin`, with HIP and
+directory; the current CUDA artifact is `cuda/smemcpy.cpp`, with HIP and
 additional operations able to share the same top-level path. Build a bundle
 with:
 
@@ -41,11 +41,11 @@ The vector paths peel at most 127 initial bytes so full mapped-host transactions
 begin on a 128-byte boundary. Packed rows and slices bypass the kernels and use
 CUDA's native copy engine.
 
-The embedded fatbin contains native code for every architecture supported by
-the build's CUDA toolkit and PTX for its oldest architecture as a
-forward-compatible fallback. Keeping module loading and launches on the Driver
-API avoids introducing a CUDA Runtime dependency or a second context into the
-server.
+The generated C++ blob contains a fatbin with native code for every
+architecture supported by the build's CUDA toolkit and PTX for its oldest
+architecture as a forward-compatible fallback. Keeping module loading and
+launches on the Driver API avoids introducing a CUDA Runtime dependency or a
+second context into the server.
 
 ## Alignment for maximum throughput
 
