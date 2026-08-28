@@ -1,14 +1,16 @@
-if(LUPINE_OPS_CUDA)
-    add_library(lupine_smemcpy STATIC smemcpy.cu)
-    target_include_directories(lupine_smemcpy PUBLIC ${PROJECT_SOURCE_DIR})
-    set_target_properties(lupine_smemcpy PROPERTIES
+get_property(enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+
+if("CUDA" IN_LIST enabled_languages)
+    add_library(lupine_cuda_smemcpy STATIC smemcpy.cu)
+    target_include_directories(lupine_cuda_smemcpy PUBLIC ${PROJECT_SOURCE_DIR})
+    set_target_properties(lupine_cuda_smemcpy PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON
         POSITION_INDEPENDENT_CODE ON)
 
     if(BUILD_TESTING)
         add_executable(smemcpy_test smemcpy_test.cu)
-        target_link_libraries(smemcpy_test PRIVATE lupine_smemcpy)
+        target_link_libraries(smemcpy_test PRIVATE lupine_cuda_smemcpy)
         set_target_properties(smemcpy_test PROPERTIES
             CUDA_STANDARD 17
             CUDA_STANDARD_REQUIRED ON)
@@ -19,7 +21,7 @@ if(LUPINE_OPS_CUDA)
     endif()
 endif()
 
-if(LUPINE_OPS_HIP)
+if("HIP" IN_LIST enabled_languages)
     add_library(lupine_hip_smemcpy STATIC hip_smemcpy.hip)
     target_include_directories(lupine_hip_smemcpy PUBLIC ${PROJECT_SOURCE_DIR})
     set_target_properties(lupine_hip_smemcpy PROPERTIES

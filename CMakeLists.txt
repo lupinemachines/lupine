@@ -139,13 +139,9 @@ endif()
 # ops holds device code, so each backend needs a real offline compiler rather
 # than the headers and driver stub the rest of the server builds against. The
 # CUDA and HIP operations are independent, and either may be built alone.
-set(LUPINE_OPS_CUDA OFF)
-set(LUPINE_OPS_HIP OFF)
-
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
    NOT LUPINE_CUDA_DRIVER_LIBRARY)
     enable_language(CUDA)
-    set(LUPINE_OPS_CUDA ON)
 endif()
 
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
@@ -166,11 +162,12 @@ if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
     check_language(HIP)
     if(CMAKE_HIP_COMPILER)
         enable_language(HIP)
-        set(LUPINE_OPS_HIP ON)
     endif()
 endif()
 
-if(LUPINE_OPS_CUDA OR LUPINE_OPS_HIP)
+get_property(lupine_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+if("CUDA" IN_LIST lupine_enabled_languages OR
+   "HIP" IN_LIST lupine_enabled_languages)
     add_subdirectory(ops)
 endif()
 
