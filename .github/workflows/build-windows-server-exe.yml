@@ -25,17 +25,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # CUDA 13 split the nvcc headers out of the nvcc component, and
-          # cuda_runtime.h includes crt/host_config.h.
+          # CUDA 13 split the nvcc component: crt holds the host_config.h that
+          # cuda_runtime.h includes, and nvvm holds cicc, the device frontend.
           - cuda: 13.3.1
-            crt_package: ', "crt"'
+            extra_packages: ', "crt", "nvvm"'
           - cuda: 12.9.1
           # The runner's MSVC both postdates the host compilers CUDA 11.8 knows
           # about and static_asserts on nvcc this old from its own STL headers.
           - cuda: 11.8.0
             cuda_flags: >-
               -allow-unsupported-compiler
-              -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+              -Xcompiler=-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
 
     env:
       VCPKG_TARGET_TRIPLET: x64-windows-static
@@ -51,7 +51,7 @@ jobs:
           method: network
           # nvcc and the MSBuild integration are what enable_language(CUDA)
           # needs; without them CMake fails with "No CUDA toolset found".
-          sub-packages: '["cudart", "nvml_dev", "nvcc", "visual_studio_integration"${{ matrix.crt_package }}]'
+          sub-packages: '["cudart", "nvml_dev", "nvcc", "visual_studio_integration"${{ matrix.extra_packages }}]'
 
       - name: Set up vcpkg
         shell: pwsh
