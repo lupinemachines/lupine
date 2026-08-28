@@ -344,12 +344,6 @@ if(NOT WIN32 AND LUPINE_BUILD_HIP)
 endif()
 
 if(LUPINE_BUILD_SERVER)
-    set(LUPINE_MONITORING_ENABLED OFF)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_CUDA AND
-       LUPINE_BUILD_NVML)
-        set(LUPINE_MONITORING_ENABLED ON)
-    endif()
-
     if(LUPINE_BUILD_CUDA)
         add_library(lupine_cuda_server STATIC
             ${CMAKE_CURRENT_SOURCE_DIR}/server_checkpoint.cpp
@@ -362,7 +356,7 @@ if(LUPINE_BUILD_SERVER)
             ${CUDAToolkit_INCLUDE_DIRS})
         target_compile_definitions(lupine_cuda_server PRIVATE
             LUPINE_RPC_SERVER)
-        if(LUPINE_MONITORING_ENABLED)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_NVML)
             target_compile_definitions(lupine_cuda_server PRIVATE
                 LUPINE_MONITORING_ENABLED)
         endif()
@@ -401,7 +395,8 @@ if(LUPINE_BUILD_SERVER)
     add_executable(lupine_driver_server
         ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/registry.cpp)
-    if(LUPINE_MONITORING_ENABLED)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_CUDA AND
+       LUPINE_BUILD_NVML)
         target_sources(lupine_driver_server PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/monitor_server.cpp)
         target_compile_definitions(lupine_driver_server PRIVATE
