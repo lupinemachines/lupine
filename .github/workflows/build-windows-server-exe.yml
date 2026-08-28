@@ -33,12 +33,14 @@ jobs:
           # The runner's MSVC both postdates the host compilers CUDA 11.8 knows
           # about and static_asserts on nvcc this old from its own STL headers.
           - cuda: 11.8.0
-            cuda_flags: >-
-              -allow-unsupported-compiler
-              -Xcompiler=-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+            cuda_flags: -allow-unsupported-compiler
+            host_defines: /D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
 
     env:
       VCPKG_TARGET_TRIPLET: x64-windows-static
+      # MSBuild's CUDA integration drops defines passed through nvcc, so the
+      # STL version override has to reach cl.exe by its own environment.
+      CL: ${{ matrix.host_defines }}
 
     steps:
       - name: Check out repository
