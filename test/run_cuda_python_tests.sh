@@ -5,9 +5,8 @@
 # and struct round-trips that cuda-samples never reach.
 #
 # Each pytest module and each example is a unit with its own server on
-# SERVER_PORT_BASE + index. Known failures live in
-# test/cuda-python/known_failures.txt (one pytest node id per line, with the
-# tracking issue) and are passed to pytest as --deselect.
+# SERVER_PORT_BASE + index. If CUDA_PYTHON_KNOWN_FAILURES names an existing
+# file, its pytest node ids are passed to pytest as --deselect.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,7 +53,8 @@ Environment:
   CUDA_PYTHON_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
   CUDA_PYTHON_KNOWN_FAILURES
                          pytest node ids (relative to the tests or examples
-                         directory) to --deselect. Default: $CUDA_PYTHON_KNOWN_FAILURES
+                         directory) to --deselect when the file exists.
+                         Default: $CUDA_PYTHON_KNOWN_FAILURES
   PYTHON_BIN             Interpreter. Default: $PYTHON_BIN
   SERVER_SSH_TARGET      GPU host. Default: $SERVER_SSH_TARGET
   SERVER_PORT_BASE       First per-unit server port. Default: $SERVER_PORT_BASE

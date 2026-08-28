@@ -1,2 +1,0 @@
-# pytest node ids (relative to the tests or examples directory) that run_cuda_python_tests.sh
-# deselects. One tracking issue per root cause; drop the lines when it closes.
