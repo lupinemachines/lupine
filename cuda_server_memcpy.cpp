@@ -565,7 +565,7 @@ public:
     }
     if (storage_ != nullptr) {
       (void)cuMemHostUnregister(storage_);
-      std::free(storage_);
+      free_storage(storage_);
     }
   }
 
@@ -575,22 +575,22 @@ public:
       return CUDA_SUCCESS;
     }
 
-    void *storage = nullptr;
-    if (posix_memalign(&storage, 4096, slot_count * slot_stride) != 0) {
+    void *storage = allocate_storage();
+    if (storage == nullptr) {
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
     CUresult result = cuMemHostRegister(storage, slot_count * slot_stride,
                                         CU_MEMHOSTREGISTER_PORTABLE |
                                             CU_MEMHOSTREGISTER_DEVICEMAP);
     if (result != CUDA_SUCCESS) {
-      std::free(storage);
+      free_storage(storage);
       return result;
     }
     CUdeviceptr device_storage = 0;
     result = cuMemHostGetDevicePointer_v2(&device_storage, storage, 0);
     if (result != CUDA_SUCCESS) {
       (void)cuMemHostUnregister(storage);
-      std::free(storage);
+      free_storage(storage);
       return result;
     }
     slot_signal *signals = nullptr;
@@ -599,7 +599,7 @@ public:
         CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP);
     if (result != CUDA_SUCCESS) {
       (void)cuMemHostUnregister(storage);
-      std::free(storage);
+      free_storage(storage);
       return result;
     }
     CUdeviceptr device_signals = 0;
@@ -607,7 +607,7 @@ public:
     if (result != CUDA_SUCCESS) {
       (void)cuMemFreeHost(signals);
       (void)cuMemHostUnregister(storage);
-      std::free(storage);
+      free_storage(storage);
       return result;
     }
     for (size_t slot = 0; slot < slot_count; ++slot) {
@@ -619,7 +619,7 @@ public:
     if (result != CUDA_SUCCESS) {
       (void)cuMemFreeHost(signals);
       (void)cuMemHostUnregister(storage);
-      std::free(storage);
+      free_storage(storage);
       return result;
     }
     cudaFunction_t smemcpy_function = nullptr;
@@ -633,7 +633,7 @@ public:
       (void)cuStreamDestroy_v2(transfer_stream);
       (void)cuMemFreeHost(signals);
       (void)cuMemHostUnregister(storage);
-      std::free(storage);
+      free_storage(storage);
       return lupine_runtime_result(runtime_result);
     }
     storage_ = storage;
@@ -781,6 +781,17 @@ public:
   }
 
 private:
+  static constexpr size_t storage_alignment = 4096;
+
+  static void *allocate_storage() noexcept {
+    return ::operator new(slot_count * slot_stride,
+                          std::align_val_t(storage_alignment), std::nothrow);
+  }
+
+  static void free_storage(void *storage) noexcept {
+    ::operator delete(storage, std::align_val_t(storage_alignment));
+  }
+
   struct alignas(64) slot_signal {
     std::atomic<uint32_t> value{slot_free};
   };
