@@ -136,6 +136,12 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
+   NOT LUPINE_CUDA_DRIVER_LIBRARY)
+    enable_language(CUDA)
+    add_subdirectory(ops)
+endif()
+
 function(lupine_internal_target target)
     set_target_properties(${target} PROPERTIES
         POSITION_INDEPENDENT_CODE ON
