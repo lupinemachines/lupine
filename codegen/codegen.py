@@ -113,6 +113,24 @@ MANUAL_REMAPPINGS = [
     ("cuMemAllocFromPoolAsync_ptsz", "cuMemAllocFromPoolAsync"),
 ]
 
+# Versioned graph-query ABIs are also exported under their public, unversioned
+# names. Unlike MANUAL_REMAPPINGS, these aliases must not emit C wrappers: the
+# literal unversioned symbols retain their older signatures for binary
+# compatibility, and cuGetProcAddress selects by the requested API version.
+FUNCTION_MAP_ALIASES = [
+    ("cuGraphGetEdges", "cuGraphGetEdges_v2", "CUDA_VERSION >= 12030"),
+    (
+        "cuGraphNodeGetDependencies",
+        "cuGraphNodeGetDependencies_v2",
+        "CUDA_VERSION >= 12030",
+    ),
+    (
+        "cuGraphNodeGetDependentNodes",
+        "cuGraphNodeGetDependentNodes_v2",
+        "CUDA_VERSION >= 12030",
+    ),
+]
+
 KERNEL_PARAM_LAYOUT_INVALIDATORS = {
     "cuLibraryUnload",
     "cuModuleUnload",
@@ -207,7 +225,6 @@ HIP_MANUAL_REMAPPINGS = [
 
 PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
-    "cuGraphAddNode_v2",
     "cuGraphConditionalHandleCreate",
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",
@@ -377,9 +394,6 @@ def annotated_rpc_names(annotations: ParsedData) -> list[str]:
 
 SKIP_FUNCTIONS = {
     "cuStreamUpdateCaptureDependencies_v2",
-    "cuGraphGetEdges_v2",
-    "cuGraphNodeGetDependencies_v2",
-    "cuGraphNodeGetDependentNodes_v2",
     "cuGraphAddDependencies_v2",
     "cuGraphRemoveDependencies_v2",
 }
@@ -2226,6 +2240,17 @@ def main():
                     y=y,
                 )
             )
+        for alias, target, guard in FUNCTION_MAP_ALIASES:
+            if target not in function_names:
+                continue
+            f.write(f"#if {guard}\n")
+            f.write(
+                '    {{"{alias}", (void *){target}}},\n'.format(
+                    alias=alias,
+                    target=target,
+                )
+            )
+            f.write("#endif\n")
         f.write("};\n\n")
 
         f.write("void *get_function_pointer(const char *name)\n")
