@@ -24,10 +24,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda:
-          - 13.3.1
-          - 12.9.1
-          - 11.8.0
+        include:
+          - cuda: 13.3.1
+          - cuda: 12.9.1
+          # The runner's MSVC postdates the host compilers CUDA 11.8 knows
+          # about, and nvcc rejects it outright without this.
+          - cuda: 11.8.0
+            cuda_flags: -allow-unsupported-compiler
 
     env:
       VCPKG_TARGET_TRIPLET: x64-windows-static
@@ -41,7 +44,9 @@ jobs:
         with:
           cuda: ${{ matrix.cuda }}
           method: network
-          sub-packages: '["cudart", "nvml_dev"]'
+          # nvcc and the MSBuild integration are what enable_language(CUDA)
+          # needs; without them CMake fails with "No CUDA toolset found".
+          sub-packages: '["cudart", "nvml_dev", "nvcc", "visual_studio_integration"]'
 
       - name: Set up vcpkg
         shell: pwsh
@@ -74,10 +79,11 @@ jobs:
             "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
             "-DOPENSSL_USE_STATIC_LIBS=ON" `
+            "-DCMAKE_CUDA_FLAGS=${{ matrix.cuda_flags }}" `
             "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
 
       - name: Build
-        run: cmake --build build/windows-server --config Release --target lupine_driver_server --parallel
+        run: cmake --build build/windows-server --config Release --target lupine_driver_server lupine_smemcpy --parallel
 
       - name: Verify the executable is self-contained
         shell: pwsh
