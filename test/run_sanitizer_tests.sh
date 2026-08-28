@@ -21,12 +21,12 @@ test_regex='^(h2_test|checkpoint_test|ipc_test|server_checkpoint_test|server_che
 cmake_args=(-DLUPINE_SANITIZE="$sanitizer")
 
 # The Docker builder is configured from copied CUDA headers, the driver stub,
-# and precompiled smemcpy, without nvcc. Carry those settings into this
+# and precompiled operations, without nvcc. Carry those settings into this
 # separate sanitizer build so it configures the same backends.
 builder_cache="$repo_root/build/CMakeCache.txt"
 if [[ -f "$builder_cache" ]]; then
   for setting in LUPINE_CUDA_DRIVER_LIBRARY LUPINE_CUDA_VERSION_OVERRIDE \
-                 LUPINE_CUDA_SMEMCPY_FATBIN; do
+                 LUPINE_PRECOMPILED_OPS; do
     value="$(sed -n "s/^${setting}:[^=]*=//p" "$builder_cache")"
     if [[ -n "$value" ]]; then
       cmake_args+=("-D${setting}=${value}")

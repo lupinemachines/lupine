@@ -74,6 +74,17 @@ jobs:
           # artifact does not carry.
           & "$env:VCPKG_ROOT\vcpkg.exe" install "nghttp2:$env:VCPKG_TARGET_TRIPLET" "openssl:$env:VCPKG_TARGET_TRIPLET"
 
+      - name: Precompile device operations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ops = Join-Path $env:RUNNER_TEMP 'lupine-precompiled-ops'
+          cmake "-DLUPINE_PRECOMPILED_OPS=$ops" `
+            "-DLUPINE_CUDA_COMPILER=$env:CUDA_PATH\bin\nvcc.exe" `
+            "-DLUPINE_CUDA_FLAGS=${{ matrix.cuda_flags }}" `
+            -P ops/precompile.cmake
+          "LUPINE_PRECOMPILED_OPS=$ops" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Configure
         shell: pwsh
         run: |
@@ -87,7 +98,8 @@ jobs:
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
             "-DOPENSSL_USE_STATIC_LIBS=ON" `
             "-DCMAKE_CUDA_FLAGS=${{ matrix.cuda_flags }}" `
-            "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+            "-DCUDAToolkit_ROOT=$env:CUDA_PATH" `
+            "-DLUPINE_PRECOMPILED_OPS=$env:LUPINE_PRECOMPILED_OPS"
 
       - name: Build
         run: cmake --build build/windows-server --config Release --target lupine_driver_server lupine_cuda_smemcpy --parallel

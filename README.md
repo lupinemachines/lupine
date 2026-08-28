@@ -319,9 +319,16 @@ Ensure there are no errors in the output of the codegen.
 ### Run cmake
 
 ```sh
-cmake -S . -B build
+cmake -DLUPINE_PRECOMPILED_OPS="$PWD/build/precompiled-ops" \
+  -P ops/precompile.cmake
+cmake -S . -B build \
+  -DLUPINE_PRECOMPILED_OPS="$PWD/build/precompiled-ops"
 cmake --build build
 ```
+
+Server builds require this precompiled operations directory. It is organized
+by accelerator backend so CUDA, HIP, and future device operations can be built
+with their own SDKs before the SDK-neutral server build.
 
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NVML shim at
 `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the

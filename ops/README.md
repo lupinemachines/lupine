@@ -1,5 +1,16 @@
 # Scatter memcpy
 
+Server builds consume a required precompiled operations directory rather than
+invoking an accelerator compiler during the server build. Each SDK writes its
+artifacts below a backend directory; the current CUDA artifact is
+`cuda/smemcpy.fatbin`, with HIP and additional operations able to share the
+same top-level path. Build the CUDA operations with:
+
+```sh
+cmake -DLUPINE_PRECOMPILED_OPS="$PWD/build/precompiled-ops" \
+  -P ops/precompile.cmake
+```
+
 `smemcpy.cu` copies a packed, device-visible source fragment into a pitched 2D
 or 3D destination. It is intended for HtoD ring slots mapped into the GPU
 address space: the network side fills one contiguous slot and this operation

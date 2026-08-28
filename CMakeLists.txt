@@ -18,8 +18,8 @@ set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
     "CUDA driver library or stub to use without a complete CUDA Toolkit")
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
     "CUDA version reported by an SDK-free server build")
-set(LUPINE_CUDA_SMEMCPY_FATBIN "" CACHE FILEPATH
-    "Precompiled CUDA smemcpy fatbin for an SDK-free server build")
+set(LUPINE_PRECOMPILED_OPS "" CACHE PATH
+    "Directory containing the precompiled device operations")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -138,18 +138,25 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
-# ops holds device code, so each backend needs a real offline compiler rather
-# than the headers and driver stub the rest of the server builds against. The
-# CUDA and HIP operations are independent, and either may be built alone.
+# The server consumes device operations precompiled by each backend's SDK. A
+# single directory keeps the SDK-neutral build independent of how many
+# backends and operations are added to it.
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
-    if(LUPINE_CUDA_SMEMCPY_FATBIN)
-        message(STATUS
-            "Using precompiled CUDA smemcpy fatbin: ${LUPINE_CUDA_SMEMCPY_FATBIN}")
-    elseif(NOT LUPINE_CUDA_DRIVER_LIBRARY)
-        enable_language(CUDA)
-    else()
+    if(NOT LUPINE_PRECOMPILED_OPS)
         message(FATAL_ERROR
-            "LUPINE_CUDA_SMEMCPY_FATBIN is required for an SDK-free CUDA server build")
+            "LUPINE_PRECOMPILED_OPS is required for the CUDA server backend")
+    endif()
+    if(NOT IS_DIRECTORY "${LUPINE_PRECOMPILED_OPS}")
+        message(FATAL_ERROR
+            "LUPINE_PRECOMPILED_OPS is not a directory: ${LUPINE_PRECOMPILED_OPS}")
+    endif()
+    message(STATUS
+        "Using precompiled device operations: ${LUPINE_PRECOMPILED_OPS}")
+
+    # A complete local SDK also builds the standalone operation and its tests.
+    # The server still embeds the required precompiled artifact above.
+    if(NOT LUPINE_CUDA_DRIVER_LIBRARY)
+        enable_language(CUDA)
     endif()
 endif()
 
@@ -175,7 +182,7 @@ if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
 endif()
 
 get_property(lupine_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
-if(LUPINE_CUDA_SMEMCPY_FATBIN OR
+if((LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA) OR
    "CUDA" IN_LIST lupine_enabled_languages OR
    "HIP" IN_LIST lupine_enabled_languages)
     add_subdirectory(ops)

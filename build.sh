@@ -3,6 +3,7 @@
 set -e
 
 build_dir="build"
+precompiled_ops="$PWD/$build_dir/precompiled-ops"
 
 cd codegen
 
@@ -13,5 +14,8 @@ python3 ./codegen.py
 cd ..
 
 # Run CMake to configure and build the project
-cmake -S . -B "$build_dir"
+cmake -DLUPINE_PRECOMPILED_OPS="$precompiled_ops" \
+  -P ops/precompile.cmake
+cmake -S . -B "$build_dir" \
+  -DLUPINE_PRECOMPILED_OPS="$precompiled_ops"
 cmake --build "$build_dir"

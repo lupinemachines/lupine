@@ -9,15 +9,15 @@ FROM nvidia/cuda:${CUDA_VERSION}-${CUDA_IMAGE_FLAVOR}-ubuntu${UBUNTU_VERSION} AS
 
 FROM --platform=${ROCM_SDK_PLATFORM} ${ROCM_SDK_IMAGE} AS rocm-sdk
 
-FROM cuda-sdk AS smemcpy-build
+FROM cuda-sdk AS cuda-ops
 
 WORKDIR /opt/lupine
 
 COPY ops/smemcpy.cu ops/smemcpy.h ops/smemcpy_dispatch.h /opt/lupine/ops/
 
-# Build the only CUDA translation unit before entering the SDK-neutral builder.
-# Include native code for every architecture accepted by this toolkit and PTX
-# for the oldest one as a forward-compatible fallback.
+# Precompile CUDA operations before entering the SDK-neutral builder. Include
+# native code for every architecture accepted by this toolkit and PTX for the
+# oldest one as a forward-compatible fallback.
 RUN set -eux; \
     set --; \
     oldest=""; \
@@ -32,10 +32,10 @@ RUN set -eux; \
     test -n "$oldest"; \
     set -- "$@" \
       "--generate-code=arch=compute_${oldest},code=compute_${oldest}"; \
-    mkdir -p /opt/lupine-prebuilt; \
+    mkdir -p /opt/lupine-precompiled-ops/cuda; \
     nvcc -std=c++17 --fatbin "$@" \
       -I/opt/lupine /opt/lupine/ops/smemcpy.cu \
-      -o /opt/lupine-prebuilt/lupine_smemcpy.fatbin
+      -o /opt/lupine-precompiled-ops/cuda/smemcpy.fatbin
 
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
@@ -43,12 +43,12 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG CMAKE_BUILD_TYPE=Release
 ARG CUDA_VERSION
 
-# The CUDA translation unit is precompiled in its own SDK stage. The main
-# builder needs only API headers, the link-time driver stub, and that artifact,
+# Device operations are precompiled in their own SDK stages. The main builder
+# needs only API headers, link-time stubs, and the combined operation directory,
 # so CUDA and ROCm compiler SDKs never have to coexist here.
 COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
-COPY --from=smemcpy-build /opt/lupine-prebuilt/ /opt/lupine-prebuilt/
+COPY --from=cuda-ops /opt/lupine-precompiled-ops/ /opt/lupine-precompiled-ops/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
 
 ENV CUDA_HOME=/usr/local/cuda
@@ -72,7 +72,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
       -DLUPINE_CUDA_DRIVER_LIBRARY="${CUDA_HOME}/lib64/stubs/libcuda.so" \
       -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}" \
-      -DLUPINE_CUDA_SMEMCPY_FATBIN=/opt/lupine-prebuilt/lupine_smemcpy.fatbin
+      -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops
 
 FROM builder AS client-build
 

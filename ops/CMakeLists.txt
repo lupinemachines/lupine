@@ -25,62 +25,13 @@ if("CUDA" IN_LIST enabled_languages)
     endif()
 endif()
 
-if(LUPINE_CUDA_SMEMCPY_FATBIN)
-    if(NOT EXISTS "${LUPINE_CUDA_SMEMCPY_FATBIN}")
-        message(FATAL_ERROR
-            "LUPINE_CUDA_SMEMCPY_FATBIN does not exist: ${LUPINE_CUDA_SMEMCPY_FATBIN}")
-    endif()
-    set(lupine_smemcpy_fatbin "${LUPINE_CUDA_SMEMCPY_FATBIN}")
-elseif("CUDA" IN_LIST enabled_languages)
-    execute_process(
-        COMMAND ${CMAKE_CUDA_COMPILER} --list-gpu-code
-        OUTPUT_VARIABLE lupine_cuda_gpu_codes
-        RESULT_VARIABLE lupine_cuda_gpu_codes_result)
-    if(NOT lupine_cuda_gpu_codes_result EQUAL 0)
-        message(FATAL_ERROR "nvcc --list-gpu-code failed")
-    endif()
-    string(REPLACE "\n" ";" lupine_cuda_gpu_codes
-        "${lupine_cuda_gpu_codes}")
-    set(lupine_cuda_oldest_arch "")
-    set(lupine_cuda_gencode_args "")
-    foreach(code IN LISTS lupine_cuda_gpu_codes)
-        if(code MATCHES "^sm_([0-9]+)$")
-            set(arch "${CMAKE_MATCH_1}")
-            if(NOT lupine_cuda_oldest_arch OR
-               arch LESS lupine_cuda_oldest_arch)
-                set(lupine_cuda_oldest_arch "${arch}")
-            endif()
-            list(APPEND lupine_cuda_gencode_args
-                "--generate-code=arch=compute_${arch},code=sm_${arch}")
-        endif()
-    endforeach()
-    if(NOT lupine_cuda_oldest_arch)
-        message(FATAL_ERROR "nvcc did not report a supported GPU target")
-    endif()
-    list(APPEND lupine_cuda_gencode_args
-        "--generate-code=arch=compute_${lupine_cuda_oldest_arch},code=compute_${lupine_cuda_oldest_arch}")
-    separate_arguments(lupine_cuda_fatbin_flags NATIVE_COMMAND
-        "${CMAKE_CUDA_FLAGS}")
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
     set(lupine_smemcpy_fatbin
-        "${CMAKE_CURRENT_BINARY_DIR}/lupine_smemcpy.fatbin")
-    add_custom_command(
-        OUTPUT "${lupine_smemcpy_fatbin}"
-        COMMAND ${CMAKE_CUDA_COMPILER}
-            --fatbin
-            --std=c++17
-            ${lupine_cuda_fatbin_flags}
-            ${lupine_cuda_gencode_args}
-            -I${PROJECT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/smemcpy.cu
-            -o "${lupine_smemcpy_fatbin}"
-        DEPENDS
-            smemcpy.cu
-            smemcpy.h
-            smemcpy_dispatch.h
-        VERBATIM)
-endif()
-
-if(lupine_smemcpy_fatbin)
+        "${LUPINE_PRECOMPILED_OPS}/cuda/smemcpy.fatbin")
+    if(NOT EXISTS "${lupine_smemcpy_fatbin}")
+        message(FATAL_ERROR
+            "Missing precompiled CUDA operation: ${lupine_smemcpy_fatbin}")
+    endif()
     set(lupine_smemcpy_fatbin_cpp
         "${CMAKE_CURRENT_BINARY_DIR}/lupine_smemcpy_fatbin.cpp")
     add_executable(lupine_embed_fatbin embed_fatbin.cpp)
