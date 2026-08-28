@@ -52,6 +52,7 @@ bool send_all(lupine_socket_t fd, const std::string &data) {
 
 std::string http1_response(int status, const char *reason,
                            const std::string &body, bool include_body,
+                           const char *content_type,
                            const rpc_http2_server_metadata *metadata) {
   std::string response = "HTTP/1.1 " + std::to_string(status) + " " + reason +
                          "\r\n";
@@ -63,7 +64,9 @@ std::string http1_response(int status, const char *reason,
     response += metadata->backend_version;
     response += "\r\n";
   }
-  response += "content-type: text/plain\r\n";
+  response += "content-type: ";
+  response += content_type;
+  response += "\r\n";
   response += "content-length: " + std::to_string(body.size()) + "\r\n";
   response += "connection: close\r\n\r\n";
   if (include_body) {
@@ -72,8 +75,23 @@ std::string http1_response(int status, const char *reason,
   return response;
 }
 
-int serve_http1(lupine_socket_t fd,
-                const rpc_http2_server_metadata *metadata) {
+void set_http_timeout(lupine_socket_t fd) {
+#ifdef _WIN32
+  DWORD timeout = 2000;
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+             reinterpret_cast<const char *>(&timeout), sizeof(timeout));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+             reinterpret_cast<const char *>(&timeout), sizeof(timeout));
+#else
+  timeval timeout = {2, 0};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#endif
+}
+
+int serve_http1(lupine_socket_t fd, const rpc_http2_server_metadata *metadata,
+                lupine_metrics_handler metrics) {
+  set_http_timeout(fd);
   std::string request;
   while (request.find("\r\n\r\n") == std::string::npos) {
     if (request.size() >= kMaxHttp1RequestBytes) {
@@ -97,7 +115,7 @@ int serve_http1(lupine_socket_t fd,
                                       : line.find(' ', method_end + 1);
   if (path_end == std::string::npos) {
     send_all(fd, http1_response(400, "Bad Request", "bad request\n", true,
-                                metadata));
+                                "text/plain", metadata));
     return 1;
   }
   std::string method = line.substr(0, method_end);
@@ -106,10 +124,16 @@ int serve_http1(lupine_socket_t fd,
 
   bool head = method == "HEAD";
   if (path == "/" && (head || method == "GET")) {
-    send_all(fd, http1_response(200, "OK", "lupine\n", !head, metadata));
+    send_all(fd, http1_response(200, "OK", "lupine\n", !head, "text/plain",
+                                metadata));
+  } else if (metrics != nullptr && method == "GET" &&
+             (path == "/metrics" || path.rfind("/metrics?", 0) == 0)) {
+    send_all(fd, http1_response(200, "OK", metrics(), true,
+                                "text/plain; version=0.0.4; charset=utf-8",
+                                metadata));
   } else {
-    send_all(fd,
-             http1_response(404, "Not Found", "not found\n", !head, metadata));
+    send_all(fd, http1_response(404, "Not Found", "not found\n", !head,
+                                "text/plain", metadata));
   }
   return 1;
 }
@@ -125,7 +149,8 @@ int lupine_h2_preface_check(const unsigned char *data, size_t len) {
 }
 
 int lupine_connection_dispatch(lupine_socket_t connfd,
-                               const rpc_http2_server_metadata *metadata) {
+                               const rpc_http2_server_metadata *metadata,
+                               lupine_metrics_handler metrics) {
   for (;;) {
     unsigned char data[kH2PrefaceLength];
     ssize_t received = peek_bytes(connfd, data, sizeof(data));
@@ -141,7 +166,7 @@ int lupine_connection_dispatch(lupine_socket_t connfd,
       return 0;
     }
     if (verdict < 0) {
-      return serve_http1(connfd, metadata);
+      return serve_http1(connfd, metadata, metrics);
     }
     // A preface prefix shorter than 24 bytes: the bytes stay queued because
     // of MSG_PEEK, so another blocking peek returns immediately. Sleep

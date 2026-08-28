@@ -2,6 +2,7 @@
 #define LUPINE_DISPATCH_H
 
 #include <cstddef>
+#include <string>
 
 #include "lupine_platform.h"
 #include "rpc.h"
@@ -21,7 +22,10 @@ int lupine_h2_preface_check(const unsigned char *data, size_t len);
 // decidable or the socket fails; the caller closes the socket for every
 // nonzero result. Reads block: a stalled peer holds only its own
 // per-connection child until the transport keepalive declares it dead.
+using lupine_metrics_handler = std::string (*)();
+
 int lupine_connection_dispatch(lupine_socket_t connfd,
-                               const rpc_http2_server_metadata *metadata);
+                               const rpc_http2_server_metadata *metadata,
+                               lupine_metrics_handler metrics = nullptr);
 
 #endif

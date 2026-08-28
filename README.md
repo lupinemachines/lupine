@@ -84,6 +84,24 @@ Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
 so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
 as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
 
+## Prometheus Metrics
+
+Linux servers built with CUDA and NVML expose Prometheus metrics on the RPC
+port without monitoring-specific configuration:
+
+```bash
+curl http://<server>:14833/metrics
+```
+
+The endpoint reports host GPU memory capacity, memory use and utilization,
+plus memory and utilization for each connected client process. It also exports
+the mapping between client identity, the Lupine connection child, and the host
+PID reported by NVML. Values are collected when `/metrics` is requested, so
+the server does no background NVML polling.
+
+Client metadata is optional. Servers advertise support during the HTTP/2
+handshake, and clients skip the report when that capability is absent.
+
 ## Graceful Server Checkpoints
 
 On Linux, `SIGTERM` stops the server from accepting connections, asks every

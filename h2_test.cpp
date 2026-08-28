@@ -1,4 +1,5 @@
 #include "lupine_log.h"
+#include "monitoring.h"
 #include "rpc.h"
 #include "test_platform.h"
 
@@ -457,6 +458,113 @@ void test_client_await_ready_reports_wire_identity() {
   require(ready == 0, "matching builds were not accepted");
   require(peer == lupine_wire_identity(),
           "response did not carry this build's wire identity");
+}
+
+void test_client_await_ready_reports_capabilities(bool advertise) {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  bool supported = false;
+  int ready = -1;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    ready = rpc_http2_client_await_ready(&pair.client);
+    supported = rpc_http2_peer_supports(
+        &pair.client, LUPINE_SERVER_CAPABILITY_CLIENT_METADATA);
+  });
+  const rpc_http2_server_metadata metadata = {
+      nullptr,
+      advertise ? LUPINE_SERVER_CAPABILITY_CLIENT_METADATA : 0,
+  };
+  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
+          "server h2 init failed");
+  client.join();
+
+  require(ready == 0, "matching builds were not accepted");
+  require(supported == advertise, "server capability was reported incorrectly");
+}
+
+void test_client_metadata_capability(bool advertise, int metadata_status) {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  constexpr int kFollowupOp = 0x12345;
+  constexpr int kFollowupValue = 17;
+  int report_result = -1;
+  int followup_result = -1;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    require(rpc_http2_client_await_ready(&pair.client) == 0,
+            "client h2 readiness failed");
+    report_result = lupine_report_client_metadata(&pair.client, "test");
+    require(rpc_write_start_request(&pair.client, kFollowupOp) == 0,
+            "follow-up request start failed");
+    require(rpc_write(&pair.client, &kFollowupValue, sizeof(kFollowupValue)) ==
+                0,
+            "follow-up request write failed");
+    require(rpc_wait_for_response(&pair.client) == 0,
+            "follow-up response wait failed");
+    require(rpc_read(&pair.client, &followup_result, sizeof(followup_result)) ==
+                sizeof(followup_result),
+            "follow-up response read failed");
+    require(rpc_read_end(&pair.client) > 0, "follow-up response end failed");
+  });
+
+  const rpc_http2_server_metadata metadata = {
+      nullptr,
+      advertise ? LUPINE_SERVER_CAPABILITY_CLIENT_METADATA : 0,
+  };
+  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
+          "server h2 init failed");
+  int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+  require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+          "metadata stream bind failed");
+
+  int op = rpc_dispatch(&pair.server, 0);
+  if (advertise) {
+    require(op == LUPINE_RPC_CLIENT_METADATA, "metadata RPC was not sent");
+    lupine_client_metadata_header header = {};
+    lupine_client_metadata received = {};
+    require(rpc_read(&pair.server, &header, sizeof(header)) == sizeof(header),
+            "metadata header read failed");
+    require(header.version == LUPINE_CLIENT_METADATA_VERSION &&
+                header.payload_size == sizeof(received),
+            "metadata header was invalid");
+    require(rpc_read(&pair.server, &received, sizeof(received)) ==
+                sizeof(received),
+            "metadata payload read failed");
+    require(received.client_pid != 0 &&
+                std::string(received.connection_kind) == "test",
+            "metadata payload was invalid");
+    int request_id = rpc_read_end(&pair.server);
+    require(request_id > 0, "metadata request end failed");
+    require(rpc_write_start_response(&pair.server, request_id) == 0 &&
+                rpc_write(&pair.server, &metadata_status,
+                          sizeof(metadata_status)) == 0 &&
+                rpc_write_end(&pair.server) == request_id,
+            "metadata response failed");
+    op = rpc_dispatch(&pair.server, 0);
+  }
+
+  require(op == kFollowupOp, "optional metadata blocked the next RPC");
+  int followup_value = 0;
+  require(rpc_read(&pair.server, &followup_value, sizeof(followup_value)) ==
+              sizeof(followup_value),
+          "follow-up request read failed");
+  int request_id = rpc_read_end(&pair.server);
+  require(request_id > 0 && followup_value == kFollowupValue,
+          "follow-up request was invalid");
+  int response = followup_value + 1;
+  require(rpc_write_start_response(&pair.server, request_id) == 0 &&
+              rpc_write(&pair.server, &response, sizeof(response)) == 0 &&
+              rpc_write_end(&pair.server) == request_id,
+          "follow-up response failed");
+  rpc_unbind_http2_stream(&pair.server);
+  client.join();
+
+  require(report_result == 0, "optional metadata report failed");
+  require(followup_result == kFollowupValue + 1,
+          "connection did not continue after metadata");
 }
 
 // Arena bookkeeping is pure arithmetic over the conn fields, so it is checked
@@ -1549,6 +1657,11 @@ int main() {
   RUN_CASE(test_head_probe_cuda_version_metadata(nullptr));
   RUN_CASE(test_wire_identity_compatibility_rule());
   RUN_CASE(test_client_await_ready_reports_wire_identity());
+  RUN_CASE(test_client_await_ready_reports_capabilities(true));
+  RUN_CASE(test_client_await_ready_reports_capabilities(false));
+  RUN_CASE(test_client_metadata_capability(true, 0));
+  RUN_CASE(test_client_metadata_capability(true, 3));
+  RUN_CASE(test_client_metadata_capability(false, 0));
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());

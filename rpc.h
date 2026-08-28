@@ -238,7 +238,9 @@ extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
 struct rpc_http2_server_metadata {
   const char *backend_version;
+  uint64_t capabilities;
 };
+constexpr uint64_t LUPINE_SERVER_CAPABILITY_CLIENT_METADATA = UINT64_C(1);
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or
@@ -247,6 +249,8 @@ extern const char *rpc_http2_client_probe(conn_t *conn);
 // Read after the peer's response headers arrive. Valid until the transport is
 // destroyed.
 extern const char *rpc_http2_peer_wire_identity(conn_t *conn);
+// Returns true when the server advertised every requested capability bit.
+extern bool rpc_http2_peer_supports(conn_t *conn, uint64_t capabilities);
 // The arena window the peer stated it can host. False when it stated none.
 extern bool rpc_http2_peer_va_window(conn_t *conn, lupine_va_window *window);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when

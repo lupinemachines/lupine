@@ -85,6 +85,7 @@ const lupine_client_transport_config &nvml_transport_config() {
     config.strict_endpoints = true;
     config.log_missing_server = true;
     config.dispatch = nvml_transport_dispatch;
+    config.connection_kind = "nvml";
     return config;
   }();
   return config;

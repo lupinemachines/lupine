@@ -1,6 +1,7 @@
 #include "transport.h"
 
 #include "lupine_log.h"
+#include "monitoring.h"
 
 #include <algorithm>
 #include <array>
@@ -232,6 +233,11 @@ int connect_endpoint(client_transport_state &state,
   }
 
   state.endpoints[index] = endpoint;
+  if (state.config.connection_kind != nullptr &&
+      lupine_report_client_metadata(conn, state.config.connection_kind) < 0) {
+    reset_connection(conn);
+    return -1;
+  }
   if (state.config.connection_opened != nullptr) {
     state.config.connection_opened(conn);
   }

@@ -97,7 +97,9 @@ struct h2_transport {
   bool transport_failed = false;
   std::string peer_cuda_version;
   std::string peer_wire_identity;
+  std::string peer_capabilities;
   std::string server_version;
+  std::string server_capabilities;
   std::string session_id;
   std::string peer_va_base;
   std::string peer_va_size;
@@ -550,6 +552,7 @@ constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
 constexpr char kLupineVaSizeHeader[] = "x-lupine-va-size";
 constexpr char kLupineWireIdentityHeader[] = "x-lupine-wire-identity";
+constexpr char kLupineCapabilitiesHeader[] = "x-lupine-capabilities";
 constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
 constexpr char kLupineVaWindowSizeHeader[] = "x-lupine-va-window-size";
 constexpr char kContentEncodingHeader[] = "content-encoding";
@@ -559,20 +562,29 @@ constexpr char kLz4Encoding[] = "lz4";
 #define LUPINE_WIRE_IDENTITY ""
 #endif
 
-std::string h2_hex(uintptr_t value) {
+std::string h2_hex(uint64_t value) {
   std::ostringstream result;
   result << std::hex << value;
   return result.str();
 }
 
-bool h2_parse_hex(const std::string &value, uintptr_t *parsed) {
+bool h2_parse_hex64(const std::string &value, uint64_t *parsed) {
   if (value.empty() || parsed == nullptr) {
     return false;
   }
   char *end = nullptr;
   errno = 0;
   unsigned long long number = strtoull(value.c_str(), &end, 16);
-  if (errno != 0 || end == value.c_str() || *end != '\0' ||
+  if (errno != 0 || end == value.c_str() || *end != '\0') {
+    return false;
+  }
+  *parsed = static_cast<uint64_t>(number);
+  return true;
+}
+
+bool h2_parse_hex(const std::string &value, uintptr_t *parsed) {
+  uint64_t number = 0;
+  if (parsed == nullptr || !h2_parse_hex64(value, &number) ||
       number > UINTPTR_MAX) {
     return false;
   }
@@ -615,6 +627,10 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   }
   if (LUPINE_WIRE_IDENTITY[0] != '\0') {
     headers.push_back(h2_nv(kLupineWireIdentityHeader, LUPINE_WIRE_IDENTITY));
+  }
+  if (!transport->server_capabilities.empty()) {
+    headers.push_back(h2_nv(kLupineCapabilitiesHeader,
+                            transport->server_capabilities.c_str()));
   }
   // State the window on every response, probe included: the client has to know
   // it before it reserves anything, and no single constant fits both platforms.
@@ -787,6 +803,12 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
       memcmp(name, kLupineWireIdentityHeader, namelen) == 0) {
     transport->peer_wire_identity.assign(reinterpret_cast<const char *>(value),
                                          valuelen);
+    return 0;
+  }
+  if (namelen == strlen(kLupineCapabilitiesHeader) &&
+      memcmp(name, kLupineCapabilitiesHeader, namelen) == 0) {
+    transport->peer_capabilities.assign(reinterpret_cast<const char *>(value),
+                                        valuelen);
     return 0;
   }
   if (namelen == strlen(kLupineVaWindowBaseHeader) &&
@@ -962,6 +984,9 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   transport->server = server;
   if (metadata != nullptr && metadata->backend_version != nullptr) {
     transport->server_version = metadata->backend_version;
+  }
+  if (metadata != nullptr && metadata->capabilities != 0) {
+    transport->server_capabilities = h2_hex(metadata->capabilities);
   }
 
   nghttp2_session_callbacks *callbacks = nullptr;
@@ -1493,6 +1518,18 @@ const char *rpc_http2_peer_wire_identity(conn_t *conn) {
   const char *identity = transport->peer_wire_identity.c_str();
   pthread_mutex_unlock(&transport->session_mutex);
   return identity;
+}
+
+bool rpc_http2_peer_supports(conn_t *conn, uint64_t capabilities) {
+  if (conn == nullptr || conn->http2 == nullptr || capabilities == 0) {
+    return false;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  uint64_t advertised = 0;
+  bool parsed = h2_parse_hex64(transport->peer_capabilities, &advertised);
+  pthread_mutex_unlock(&transport->session_mutex);
+  return parsed && (advertised & capabilities) == capabilities;
 }
 
 int rpc_http2_server_init(conn_t *conn) {
