@@ -9,16 +9,38 @@ FROM nvidia/cuda:${CUDA_VERSION}-${CUDA_IMAGE_FLAVOR}-ubuntu${UBUNTU_VERSION} AS
 
 FROM --platform=${ROCM_SDK_PLATFORM} ${ROCM_SDK_IMAGE} AS rocm-sdk
 
+FROM cuda-sdk AS smemcpy-build
+
+WORKDIR /opt/lupine
+
+COPY ops/smemcpy.cu ops/smemcpy.h /opt/lupine/ops/
+
+# Build the only CUDA translation unit before entering the SDK-neutral builder.
+# Include PTX for the oldest architecture accepted by this toolkit so the
+# driver can JIT it for every newer GPU supported by the selected CUDA image.
+RUN set -eux; \
+    arch="$(nvcc --list-gpu-code | sed -n '1s/^sm_//p')"; \
+    test -n "$arch"; \
+    mkdir -p /opt/lupine-prebuilt; \
+    nvcc -std=c++17 -Xcompiler=-fPIC \
+      "--generate-code=arch=compute_${arch},code=[compute_${arch},sm_${arch}]" \
+      -I/opt/lupine --lib /opt/lupine/ops/smemcpy.cu \
+      -o /opt/lupine-prebuilt/liblupine_smemcpy.a; \
+    cp /usr/local/cuda/lib64/libcudart_static.a \
+      /usr/local/cuda/lib64/libcudadevrt.a /opt/lupine-prebuilt/
+
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CMAKE_BUILD_TYPE=Release
 ARG CUDA_VERSION
 
-# The generated shims and server only need API headers and the link-time CUDA
-# driver stub; neither compiler SDK is installed in this Ubuntu build stage.
+# The CUDA translation unit is precompiled in its own SDK stage. The main
+# builder needs only API headers, the link-time driver stub, and that artifact,
+# so CUDA and ROCm compiler SDKs never have to coexist here.
 COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
+COPY --from=smemcpy-build /opt/lupine-prebuilt/ /opt/lupine-prebuilt/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
 
 ENV CUDA_HOME=/usr/local/cuda
@@ -41,7 +63,8 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -G Ninja \
       -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
       -DLUPINE_CUDA_DRIVER_LIBRARY="${CUDA_HOME}/lib64/stubs/libcuda.so" \
-      -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}"
+      -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}" \
+      -DLUPINE_SMEMCPY_LIBRARY=/opt/lupine-prebuilt/liblupine_smemcpy.a
 
 FROM builder AS client-build
 

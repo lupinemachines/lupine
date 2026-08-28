@@ -17,7 +17,9 @@ option(LUPINE_BUILD_SERVER "Build the RPC server"
 set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
     "CUDA driver library or stub to use without a complete CUDA Toolkit")
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
-    "CUDA version reported by a header-only server build")
+    "CUDA version reported by an SDK-free server build")
+set(LUPINE_SMEMCPY_LIBRARY "" CACHE FILEPATH
+    "Precompiled smemcpy library for an SDK-free server build")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -111,7 +113,7 @@ if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
             set_target_properties(CUDA::cuda_driver PROPERTIES
                 IMPORTED_LOCATION "${LUPINE_CUDA_DRIVER_LIBRARY}")
             message(STATUS
-                "Using CUDA driver stub for header-only server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
+                "Using CUDA driver stub for SDK-free server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
         endif()
     endif()
 endif()
@@ -137,8 +139,40 @@ if(LUPINE_BUILD_SERVER AND
 endif()
 
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
-    enable_language(CUDA)
-    add_subdirectory(ops)
+    if(LUPINE_SMEMCPY_LIBRARY)
+        get_filename_component(lupine_smemcpy_library_dir
+            "${LUPINE_SMEMCPY_LIBRARY}" DIRECTORY)
+        set(lupine_cudart_static_library
+            "${lupine_smemcpy_library_dir}/libcudart_static.a")
+        set(lupine_cudadevrt_library
+            "${lupine_smemcpy_library_dir}/libcudadevrt.a")
+        foreach(library
+                LUPINE_SMEMCPY_LIBRARY
+                lupine_cudart_static_library
+                lupine_cudadevrt_library)
+            if(NOT EXISTS "${${library}}")
+                message(FATAL_ERROR "${library} does not exist: ${${library}}")
+            endif()
+        endforeach()
+        add_library(lupine_smemcpy STATIC IMPORTED)
+        set_target_properties(lupine_smemcpy PROPERTIES
+            IMPORTED_LOCATION "${LUPINE_SMEMCPY_LIBRARY}")
+        target_include_directories(lupine_smemcpy INTERFACE
+            ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(lupine_smemcpy INTERFACE
+            "${lupine_cudadevrt_library}"
+            "${lupine_cudart_static_library}"
+            Threads::Threads
+            ${CMAKE_DL_LIBS})
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(lupine_smemcpy INTERFACE rt)
+        endif()
+        message(STATUS
+            "Using precompiled smemcpy: ${LUPINE_SMEMCPY_LIBRARY}")
+    else()
+        enable_language(CUDA)
+        add_subdirectory(ops)
+    endif()
 endif()
 
 function(lupine_internal_target target)
