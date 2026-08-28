@@ -5,15 +5,6 @@
 
 #include "rpc.h"
 
-// Which side of a copy is host memory, and therefore which side the handler
-// has to stage locally.
-enum class lupine_copy_direction {
-  host_to_host,
-  host_to_device,
-  device_to_host,
-  device_to_device,
-};
-
 int handle_cuGetErrorName(conn_t *conn);
 int handle_cuGetErrorString(conn_t *conn);
 int handle_cuGetExportTableMetadata(conn_t *conn);
@@ -108,10 +99,6 @@ int handle_cuTensorMapEncodeTiled(conn_t *conn);
 
 bool lupine_server_initialize_connection(conn_t *conn);
 void lupine_server_cleanup_connection(conn_t *conn);
-
-int lupine_server_copy_htod_async(conn_t *conn, CUdeviceptr destination,
-                                  size_t bytes, CUstream stream,
-                                  CUresult &result);
 
 int handle_cuDevicePrimaryCtxRetain(conn_t *conn);
 int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn);

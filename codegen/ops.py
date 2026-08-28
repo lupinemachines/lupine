@@ -1190,6 +1190,12 @@ class SynchronizeAnnotation:
 
 
 @dataclass
+class GraphExecNodeAnnotation:
+    graph_exec: Parameter
+    node: Parameter
+
+
+@dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
     guard: Optional[str] = None
@@ -1208,6 +1214,7 @@ class FunctionAnnotationMetadata:
     releases: list[ReleaseAnnotation] = None
     parents: list[ParentAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
+    graph_exec_node: Optional[GraphExecNodeAnnotation] = None
 
     def __post_init__(self):
         if self.record_owners is None:

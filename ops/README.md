@@ -1,5 +1,17 @@
 # Scatter memcpy
 
+Server builds compile operations with the available accelerator SDKs by
+default. SDK-neutral builds can instead set `LUPINE_PRECOMPILED_OPS` to a
+directory produced separately by each SDK. Artifacts live below a backend
+directory; the current CUDA artifact is `cuda/smemcpy.cpp`, with HIP and
+additional operations able to share the same top-level path. Build a bundle
+with:
+
+```sh
+cmake -DLUPINE_PRECOMPILED_OPS="$PWD/build/precompiled-ops" \
+  -P ops/precompile.cmake
+```
+
 `smemcpy.cu` copies a packed, device-visible source fragment into a pitched 2D
 or 3D destination. It is intended for HtoD ring slots mapped into the GPU
 address space: the network side fills one contiguous slot and this operation
@@ -11,10 +23,13 @@ no pointer, width, or stride alignment requirement for correctness.
 
 ## Dispatch
 
-Call `lupine_smemcpy_prepare_launch` instead of constructing a kernel launch
-from `lupine_smemcpy_kernel` when possible. The prepared launch selects among:
+Dispatch is shared between two front ends. `lupine_smemcpy_prepare_launch`
+provides the standalone CUDA Runtime API, while Lupine's server embeds a
+multi-architecture fatbin and uses the Driver API-only helpers in
+`smemcpy_module.h`. Both call the pure descriptor selection in
+`smemcpy_dispatch.h`, so they select the same operation:
 
-- packed 16-, 8-, 4-, 2-, and 1-byte copies;
+- native CUDA memcpy when the entire fragment is physically contiguous;
 - pitched 16-, 8-, 4-, and 2-byte copies when no vector can cross a row;
 - a rebased 2D kernel when the fragment remains in one slice;
 - architecture- and product-tuned, padding-preserving atomic paths for
@@ -23,12 +38,19 @@ from `lupine_smemcpy_kernel` when possible. The prepared launch selects among:
 - a general byte-addressed 3D fallback.
 
 The vector paths peel at most 127 initial bytes so full mapped-host transactions
-begin on a 128-byte boundary. The packed 16-byte path compiles to one
-`LDG.E.128` and one `STG.E.128` per thread on SM 7.5 and SM 8.9.
+begin on a 128-byte boundary. Packed rows and slices bypass the kernels and use
+CUDA's native copy engine.
+
+The generated C++ blob contains a fatbin with native code for every
+architecture supported by the build's CUDA toolkit and PTX for its oldest
+architecture as a forward-compatible fallback. Keeping module loading and
+launches on the Driver API avoids introducing a CUDA Runtime dependency or a
+second context into the server.
 
 ## Alignment for maximum throughput
 
-Correctness never depends on alignment. For the fastest 16-byte packed path,
+Correctness never depends on alignment. Contiguous fragments use native CUDA
+memcpy regardless of alignment. For the fastest 16-byte pitched kernel path,
 the source and the destination coordinate of the fragment must have the same
 low four address bits:
 
