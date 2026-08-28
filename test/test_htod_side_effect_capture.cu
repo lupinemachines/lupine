@@ -1,7 +1,9 @@
 #include <cuda.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 #define CHECK(call)                                                            \
@@ -83,6 +85,31 @@ struct fill_request {
 static void CUDA_CB fill_source(void *opaque) {
   auto *request = static_cast<fill_request *>(opaque);
   std::fill_n(request->source, request->bytes, request->value);
+}
+
+static void CUDA_CB delay_stream(void *) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+static int check_async_source_lifetime(CUdeviceptr destination, CUstream stream,
+                                       unsigned char *source, size_t bytes) {
+  constexpr unsigned char copied = 0x2a;
+  constexpr unsigned char reused = 0xa2;
+  std::fill_n(source, bytes, copied);
+  CHECK(cuLaunchHostFunc(stream, delay_stream, nullptr));
+  CHECK(cuMemcpyHtoDAsync(destination, source, bytes, stream));
+  // Pageable HtoD may stage synchronously. Once the API returns, reusing the
+  // source must not change the transfer queued above.
+  std::fill_n(source, bytes, reused);
+  CHECK(cuStreamSynchronize(stream));
+
+  std::vector<unsigned char> readback(bytes);
+  CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));
+  if (!all_bytes_are(readback, copied)) {
+    std::fprintf(stderr, "pageable async HtoD retained its source too long\n");
+    return 1;
+  }
+  return 0;
 }
 
 static int check_captured_host_order(CUdeviceptr destination, CUstream stream,
@@ -228,6 +255,37 @@ static int check_parallel_graph_instances(CUdeviceptr destination,
   return 0;
 }
 
+static int check_graph_memory_nodes(CUdeviceptr destination, CUstream stream,
+                                    unsigned char *source, size_t bytes) {
+  CUdeviceptr temporary = 0;
+  CHECK(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemAllocAsync(&temporary, bytes, stream));
+  CHECK(cuMemcpyHtoDAsync(temporary, source, bytes, stream));
+  CHECK(cuMemcpyDtoDAsync(destination, temporary, bytes, stream));
+  CHECK(cuMemFreeAsync(temporary, stream));
+  CUgraph graph = nullptr;
+  CHECK(cuStreamEndCapture(stream, &graph));
+
+  std::vector<unsigned char> readback(bytes);
+  for (unsigned char pattern :
+       {static_cast<unsigned char>(0x6a), static_cast<unsigned char>(0xa6)}) {
+    std::fill_n(source, bytes, pattern);
+    CUgraphExec executable = nullptr;
+    CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
+    CHECK(cuGraphLaunch(executable, stream));
+    CHECK(cuStreamSynchronize(stream));
+    CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));
+    if (!all_bytes_are(readback, pattern)) {
+      std::fprintf(stderr, "captured graph-memory HtoD was corrupted\n");
+      return 1;
+    }
+    CHECK(cuGraphExecDestroy(executable));
+  }
+
+  CHECK(cuGraphDestroy(graph));
+  return 0;
+}
+
 static int check_exec_node_set_params(CUdeviceptr destination, CUstream stream,
                                       CUfunction function) {
   unsigned int source = 5;
@@ -313,6 +371,12 @@ int main() {
   std::vector<unsigned char> second_source(bytes, 0x22);
   std::vector<unsigned char> readback(bytes);
 
+  if (check_async_source_lifetime(destination, stream, source.data(),
+                                  4 * 1024 * 1024) != 0) {
+    return 1;
+  }
+  std::fill(source.begin(), source.end(), 0x11);
+
   // Ordinary asynchronous HtoD also goes through the execution-time ring.
   CHECK(cuMemcpyHtoDAsync(destination, source.data(), bytes, stream));
   CHECK(cuStreamSynchronize(stream));
@@ -368,6 +432,10 @@ int main() {
   }
   if (check_parallel_graph_instances(destination, stream, second_stream,
                                      source.data(), 12 * 1024 * 1024) != 0) {
+    return 1;
+  }
+  if (check_graph_memory_nodes(destination, stream, source.data(),
+                               4 * 1024 * 1024) != 0) {
     return 1;
   }
   if (check_exec_node_set_params(destination, stream, add_function) != 0) {

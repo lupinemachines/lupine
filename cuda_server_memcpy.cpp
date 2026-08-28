@@ -1028,7 +1028,16 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
   }
   auto captured_execution = captured_state->execution;
 
+  bool prepared_in_place = false;
   CUresult result = cuGraphClone(&binding->prepared, graph);
+  // CUDA forbids cloning graphs that contain allocation or free nodes. Such
+  // graphs also permit only one executable at a time, so rebinding the graph
+  // itself still gives that executable an independent staging ring.
+  if (result == CUDA_ERROR_NOT_SUPPORTED) {
+    binding->prepared = graph;
+    prepared_in_place = true;
+    result = CUDA_SUCCESS;
+  }
   if (result != CUDA_SUCCESS) {
     binding->prepared = graph;
     return result;
@@ -1252,11 +1261,16 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
   }
   try {
     auto resources = std::make_shared<lupine_htod_exec_resources>();
-    resources->callbacks = std::move(callbacks);
+    resources->callbacks = callbacks;
     resources->original = binding->original;
     resources->prepared = binding->prepared;
     resources->context = ring->context();
     binding->resources = std::move(resources);
+    if (prepared_in_place) {
+      std::lock_guard<std::mutex> lock(captured_state->callbacks_mutex);
+      captured_state->execution = execution;
+      captured_state->callbacks = std::move(callbacks);
+    }
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -1608,7 +1622,11 @@ static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
     }
   }
 
-  return blocking ? cuStreamSynchronize(stream) : CUDA_SUCCESS;
+  // CUDA may stage pageable HtoD input before an asynchronous API returns.
+  // Preserve that source-lifetime guarantee: outside capture, the callback
+  // must finish pulling the client buffer before the caller can reuse it.
+  return blocking || resources == nullptr ? cuStreamSynchronize(stream)
+                                          : CUDA_SUCCESS;
 }
 
 static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
