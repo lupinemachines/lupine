@@ -136,9 +136,41 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
+# ops holds device code, so each backend needs a real offline compiler rather
+# than the headers and driver stub the rest of the server builds against. The
+# CUDA and HIP operations are independent, and either may be built alone.
+set(LUPINE_OPS_CUDA OFF)
+set(LUPINE_OPS_HIP OFF)
+
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
    NOT LUPINE_CUDA_DRIVER_LIBRARY)
     enable_language(CUDA)
+    set(LUPINE_OPS_CUDA ON)
+endif()
+
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
+   NOT CMAKE_VERSION VERSION_LESS 3.21)
+    # hipcc defaults to gfx906 alone, which loads but never runs on a newer
+    # card, and clang's "native" needs /dev/kfd, so it fails on GPU-less
+    # builders and under WSL. Ship a fat binary covering the supported CDNA and
+    # RDNA targets instead. This must precede the compiler probe so the probe
+    # and the build agree on the targets.
+    if(NOT CMAKE_HIP_ARCHITECTURES)
+        set(CMAKE_HIP_ARCHITECTURES
+            gfx90a gfx942 gfx1030 gfx1100 gfx1101 gfx1102 gfx1200 gfx1201)
+    endif()
+    # The HIP SDK check above only needs headers, which is all the client shim
+    # and the server dispatch require. Device code additionally needs a HIP
+    # compiler, so the operation is built only where one exists.
+    include(CheckLanguage)
+    check_language(HIP)
+    if(CMAKE_HIP_COMPILER)
+        enable_language(HIP)
+        set(LUPINE_OPS_HIP ON)
+    endif()
+endif()
+
+if(LUPINE_OPS_CUDA OR LUPINE_OPS_HIP)
     add_subdirectory(ops)
 endif()
 

@@ -45,3 +45,39 @@ jobs:
             test -e /opt/rocm/lib/libamdhip64.so
             ! ldd /opt/lupine/bin/lupine_driver_server | grep -q "not found"
           '
+
+  ops-device-code:
+    name: HIP device code
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The image builds above copy HIP headers only, so nothing there compiles
+    # ops. Build it against a real ROCm toolchain instead. No runner has an AMD
+    # GPU, so this is a compile check; smemcpy_test itself is run on hardware.
+    container:
+      image: rocm/dev-ubuntu-24.04:7.2.4
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build libnghttp2-dev libssl-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLUPINE_BUILD_CUDA=OFF \
+            -DLUPINE_BUILD_NVML=OFF \
+            -DLUPINE_BUILD_HIP=ON \
+            -DBUILD_TESTING=ON
+
+      - name: Verify ops selected the HIP toolchain
+        run: grep -q '^CMAKE_HIP_COMPILER:' build/CMakeCache.txt
+
+      # Naming the targets is itself the assertion that ops was added: if the
+      # HIP probe had failed, ops would be skipped and these would not exist.
+      - name: Build the HIP scatter memcpy and its test
+        run: cmake --build build --target lupine_hip_smemcpy hip_smemcpy_test
