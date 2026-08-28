@@ -10,7 +10,6 @@
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 struct lupine_graph_resources;
-struct lupine_htod_callback_data;
 
 // A device-to-host copy the server holds until a synchronize collects it. The
 // copy handlers here produce these; the stream, event and context synchronize
@@ -32,9 +31,6 @@ libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
 lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
-bool lupine_graph_add_htod_callback(
-    lupine_graph_resources *resources,
-    std::shared_ptr<lupine_htod_callback_data> callback);
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;

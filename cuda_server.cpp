@@ -639,26 +639,13 @@ struct lupine_graph_resources {
     }
   }
 
-  bool add_htod_callback(
-    std::shared_ptr<lupine_htod_callback_data> callback) {
-    try {
-      std::lock_guard<std::mutex> lock(callbacks_mutex);
-      callbacks.push_back(std::move(callback));
-      return true;
-    } catch (...) {
-      return false;
-    }
-  }
-
   std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
   std::atomic<lupine_graph_capture_scratch *> capture_scratch{nullptr};
-  std::mutex callbacks_mutex;
-  std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
 };
 
-// Graph host buffers and callback metadata must remain valid for any queued
-// launch or replay. Graph-resource objects intentionally have process lifetime;
-// maps use stable raw pointers while each object retains its owned allocations.
+// Graph host buffers must remain valid for any queued launch or replay.
+// Graph-resource objects intentionally have process lifetime; maps use stable
+// raw pointers while each object retains its owned allocations.
 static libcuckoo::cuckoohash_map<CUgraph, lupine_graph_resources *> &
 lupine_graph_resource_map() {
   static auto *resources =
@@ -791,13 +778,6 @@ lupine_graph_resources *lupine_captured_stream_resources(CUstream stream) {
   lupine_graph_resources *resources = nullptr;
   (void)lupine_active_stream_capture_resource_map().find(stream, resources);
   return resources;
-}
-
-bool lupine_graph_add_htod_callback(
-    lupine_graph_resources *resources,
-    std::shared_ptr<lupine_htod_callback_data> callback) {
-  return resources != nullptr &&
-         resources->add_htod_callback(std::move(callback));
 }
 
 static uint64_t lupine_fnv1a64(const void *data, size_t size) {

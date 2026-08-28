@@ -8117,11 +8117,6 @@ void *rpc_client_dispatch_thread(void *arg) {
         break;
       }
     } else if (op == LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) {
-      uint64_t count = 0;
-      if (rpc_read(conn, &count, sizeof(count)) < 0) {
-        LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
-        break;
-      }
       struct host_read {
         const unsigned char *source = nullptr;
         size_t width = 0;
@@ -8130,25 +8125,21 @@ void *rpc_client_dispatch_thread(void *arg) {
         size_t slices = 0;
         size_t slice_stride = 0;
       };
-      std::vector<host_read> reads(count);
-      for (uint64_t index = 0; index < count; ++index) {
-        auto &read = reads[index];
-        const void *data = nullptr;
-        if (rpc_read(conn, &data, sizeof(data)) < 0 ||
-            rpc_read(conn, &read.width, sizeof(read.width)) < 0 ||
-            rpc_read(conn, &read.rows, sizeof(read.rows)) < 0 ||
-            rpc_read(conn, &read.row_stride, sizeof(read.row_stride)) < 0 ||
-            rpc_read(conn, &read.slices, sizeof(read.slices)) < 0 ||
-            rpc_read(conn, &read.slice_stride, sizeof(read.slice_stride)) < 0) {
-          LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
-          goto close_connection;
-        }
-
-        size_t span = read.width + (read.rows - 1) * read.row_stride +
-                      (read.slices - 1) * read.slice_stride;
-        read.source = static_cast<const unsigned char *>(
-            lupine_mapped_host_read_source(data, span));
+      host_read read;
+      const void *data = nullptr;
+      if (rpc_read(conn, &data, sizeof(data)) < 0 ||
+          rpc_read(conn, &read.width, sizeof(read.width)) < 0 ||
+          rpc_read(conn, &read.rows, sizeof(read.rows)) < 0 ||
+          rpc_read(conn, &read.row_stride, sizeof(read.row_stride)) < 0 ||
+          rpc_read(conn, &read.slices, sizeof(read.slices)) < 0 ||
+          rpc_read(conn, &read.slice_stride, sizeof(read.slice_stride)) < 0) {
+        LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
+        goto close_connection;
       }
+      size_t span = read.width + (read.rows - 1) * read.row_stride +
+                    (read.slices - 1) * read.slice_stride;
+      read.source = static_cast<const unsigned char *>(
+          lupine_mapped_host_read_source(data, span));
       int request_id = rpc_read_end(conn);
       if (request_id < 0) {
         LUPINE_LOG_ERROR("Invalid host-memory side-effect request.");
@@ -8159,15 +8150,13 @@ void *rpc_client_dispatch_thread(void *arg) {
         LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
         break;
       }
-      for (const auto &read : reads) {
-        for (size_t slice = 0; slice < read.slices; ++slice) {
-          for (size_t row = 0; row < read.rows; ++row) {
-            const void *source =
-                read.source + slice * read.slice_stride + row * read.row_stride;
-            if (rpc_write(conn, source, read.width) < 0) {
-              LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
-              goto close_connection;
-            }
+      for (size_t slice = 0; slice < read.slices; ++slice) {
+        for (size_t row = 0; row < read.rows; ++row) {
+          const void *source =
+              read.source + slice * read.slice_stride + row * read.row_stride;
+          if (rpc_write(conn, source, read.width) < 0) {
+            LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
+            goto close_connection;
           }
         }
       }

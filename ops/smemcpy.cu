@@ -153,36 +153,6 @@ scatter_atomic_2d_store(const lupine_smemcpy_params &params,
 }
 
 template <size_t WordBytes>
-__global__ void smemcpy_linear_kernel(lupine_smemcpy_params params) {
-  using word = typename word_type<WordBytes>::type;
-  const auto *__restrict__ source =
-      reinterpret_cast<const unsigned char *>(params.source);
-  auto *__restrict__ destination =
-      reinterpret_cast<unsigned char *>(params.destination) +
-      params.logical_offset;
-  size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  size_t step = static_cast<size_t>(gridDim.x) * blockDim.x;
-  size_t prefix = source_prefix(params.source, params.bytes);
-
-  if (thread < prefix) {
-    destination[thread] = source[thread];
-  }
-
-  size_t bulk_bytes = (params.bytes - prefix) & ~(WordBytes - 1);
-  for (size_t index = prefix + thread * WordBytes; index < prefix + bulk_bytes;
-       index += step * WordBytes) {
-    *reinterpret_cast<word *>(destination + index) =
-        *reinterpret_cast<const word *>(source + index);
-  }
-
-  size_t tail = params.bytes - prefix - bulk_bytes;
-  if (thread < tail) {
-    size_t index = prefix + bulk_bytes + thread;
-    destination[index] = source[index];
-  }
-}
-
-template <size_t WordBytes>
 __global__ void smemcpy_pitched_vector_kernel(lupine_smemcpy_params params) {
   using word = typename word_type<WordBytes>::type;
   const auto *__restrict__ source =
@@ -421,12 +391,6 @@ size_t blocks_for(size_t bytes, size_t bytes_per_thread) {
   return std::min(std::max<size_t>(blocks, 1), kMaximumBlocks);
 }
 
-bool packed_destination(const lupine_smemcpy_params &params,
-                        size_t slice_bytes) {
-  return params.destination_row_stride == params.width &&
-         params.destination_slice_stride == slice_bytes;
-}
-
 CUdeviceptr destination_at(const lupine_smemcpy_params &params,
                            size_t logical) {
   size_t row_index = logical / params.width;
@@ -435,6 +399,20 @@ CUdeviceptr destination_at(const lupine_smemcpy_params &params,
   size_t row = row_index - slice * params.rows;
   return params.destination + slice * params.destination_slice_stride +
          row * params.destination_row_stride + x;
+}
+
+bool contiguous_destination(const lupine_smemcpy_params &params,
+                            size_t slice_bytes) {
+  size_t first_row = params.logical_offset / params.width;
+  size_t last_row = (params.logical_offset + params.bytes - 1) / params.width;
+  if (first_row == last_row) {
+    return true;
+  }
+  if (params.destination_row_stride != params.width) {
+    return false;
+  }
+  return first_row / params.rows == last_row / params.rows ||
+         params.destination_slice_stride == slice_bytes;
 }
 
 template <size_t WordBytes>
@@ -448,36 +426,11 @@ bool can_vectorize_pitched(const lupine_smemcpy_params &params,
 }
 
 template <size_t WordBytes>
-void set_linear_launch(lupine_smemcpy_launch *launch) {
-  launch->kernel =
-      reinterpret_cast<const void *>(smemcpy_linear_kernel<WordBytes>);
-  launch->blocks =
-      static_cast<unsigned int>(blocks_for(launch->params.bytes, WordBytes));
-}
-
-template <size_t WordBytes>
 void set_pitched_vector_launch(lupine_smemcpy_launch *launch) {
   launch->kernel =
       reinterpret_cast<const void *>(smemcpy_pitched_vector_kernel<WordBytes>);
   launch->blocks =
       static_cast<unsigned int>(blocks_for(launch->params.bytes, WordBytes));
-}
-
-void select_linear_launch(lupine_smemcpy_launch *launch,
-                          CUdeviceptr first_destination) {
-  uintptr_t different_alignment =
-      static_cast<uintptr_t>(launch->params.source ^ first_destination);
-  if ((different_alignment & 15) == 0) {
-    set_linear_launch<16>(launch);
-  } else if ((different_alignment & 7) == 0) {
-    set_linear_launch<8>(launch);
-  } else if ((different_alignment & 3) == 0) {
-    set_linear_launch<4>(launch);
-  } else if ((different_alignment & 1) == 0) {
-    set_linear_launch<2>(launch);
-  } else {
-    set_linear_launch<1>(launch);
-  }
 }
 
 bool select_pitched_vector_launch(lupine_smemcpy_launch *launch,
@@ -718,6 +671,7 @@ lupine_smemcpy_prepare_launch(const lupine_smemcpy_params *params,
   }
 
   launch->params = *params;
+  launch->use_cuda_memcpy = false;
   launch->kernel = reinterpret_cast<const void *>(smemcpy_3d_kernel);
   launch->blocks = 0;
   launch->threads = kThreadsPerBlock;
@@ -728,8 +682,11 @@ lupine_smemcpy_prepare_launch(const lupine_smemcpy_params *params,
   size_t slice_bytes = params->width * params->rows;
   CUdeviceptr first_destination =
       destination_at(*params, params->logical_offset);
-  if (packed_destination(*params, slice_bytes)) {
-    select_linear_launch(launch, first_destination);
+  if (contiguous_destination(*params, slice_bytes)) {
+    launch->params.destination = first_destination;
+    launch->params.logical_offset = 0;
+    launch->use_cuda_memcpy = true;
+    launch->kernel = nullptr;
     return cudaSuccess;
   }
 
@@ -816,8 +773,17 @@ extern "C" cudaError_t lupine_smemcpy_async(const lupine_smemcpy_params *params,
                                             cudaStream_t stream) {
   lupine_smemcpy_launch launch = {};
   cudaError_t result = lupine_smemcpy_prepare_launch(params, &launch);
-  if (result != cudaSuccess || launch.blocks == 0) {
+  if (result != cudaSuccess) {
     return result;
+  }
+
+  if (launch.use_cuda_memcpy) {
+    return cudaMemcpyAsync(reinterpret_cast<void *>(launch.params.destination),
+                           reinterpret_cast<const void *>(launch.params.source),
+                           launch.params.bytes, cudaMemcpyDefault, stream);
+  }
+  if (launch.blocks == 0) {
+    return cudaSuccess;
   }
 
   void *arguments[] = {&launch.params};

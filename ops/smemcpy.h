@@ -4,6 +4,7 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -34,11 +35,13 @@ typedef struct lupine_smemcpy_params {
   size_t destination_slice_stride;
 } lupine_smemcpy_params;
 
-// Fully describes the kernel launch selected for a set of parameters. Pass the
-// address of params as the kernel's sole argument. The prepared parameters may
-// be rebased relative to the input.
+// Describes the operation selected for a set of parameters. A contiguous
+// fragment uses CUDA memcpy; otherwise pass the address of params as the
+// selected kernel's sole argument. The prepared parameters may be rebased
+// relative to the input.
 typedef struct lupine_smemcpy_launch {
   lupine_smemcpy_params params;
+  bool use_cuda_memcpy;
   const void *kernel;
   unsigned int blocks;
   unsigned int threads;

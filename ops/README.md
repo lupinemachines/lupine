@@ -12,9 +12,10 @@ no pointer, width, or stride alignment requirement for correctness.
 ## Dispatch
 
 Call `lupine_smemcpy_prepare_launch` instead of constructing a kernel launch
-from `lupine_smemcpy_kernel` when possible. The prepared launch selects among:
+from `lupine_smemcpy_kernel` when possible. The prepared operation selects
+among:
 
-- packed 16-, 8-, 4-, 2-, and 1-byte copies;
+- native CUDA memcpy when the entire fragment is physically contiguous;
 - pitched 16-, 8-, 4-, and 2-byte copies when no vector can cross a row;
 - a rebased 2D kernel when the fragment remains in one slice;
 - architecture- and product-tuned, padding-preserving atomic paths for
@@ -23,12 +24,13 @@ from `lupine_smemcpy_kernel` when possible. The prepared launch selects among:
 - a general byte-addressed 3D fallback.
 
 The vector paths peel at most 127 initial bytes so full mapped-host transactions
-begin on a 128-byte boundary. The packed 16-byte path compiles to one
-`LDG.E.128` and one `STG.E.128` per thread on SM 7.5 and SM 8.9.
+begin on a 128-byte boundary. Packed rows and slices bypass the kernels and use
+CUDA's native copy engine.
 
 ## Alignment for maximum throughput
 
-Correctness never depends on alignment. For the fastest 16-byte packed path,
+Correctness never depends on alignment. Contiguous fragments use native CUDA
+memcpy regardless of alignment. For the fastest 16-byte pitched kernel path,
 the source and the destination coordinate of the fragment must have the same
 low four address bits:
 

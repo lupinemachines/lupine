@@ -136,8 +136,7 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
-if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
-   NOT LUPINE_CUDA_DRIVER_LIBRARY)
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
     enable_language(CUDA)
     add_subdirectory(ops)
 endif()
@@ -363,12 +362,7 @@ if(LUPINE_BUILD_SERVER)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
-            CUDA::cuda_driver)
-        if(TARGET lupine_smemcpy)
-            target_link_libraries(lupine_cuda_server PRIVATE lupine_smemcpy)
-            target_compile_definitions(lupine_cuda_server PRIVATE
-                LUPINE_HAVE_SMEMCPY)
-        endif()
+            lupine_smemcpy CUDA::cuda_driver)
     endif()
 
     if(LUPINE_BUILD_NVML)
