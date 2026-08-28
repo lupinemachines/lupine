@@ -1027,12 +1027,7 @@ static bool lupine_htod_smemcpy_params(const lupine_htod_chunk &chunk,
   params->bytes = chunk.bytes;
   switch (chunk.kind) {
   case lupine_htod_copy_kind::linear:
-    params->destination = chunk.linear_destination;
-    params->width = chunk.bytes;
-    params->rows = 1;
-    params->destination_row_stride = chunk.bytes;
-    params->destination_slice_stride = chunk.bytes;
-    return true;
+    return false;
   case lupine_htod_copy_kind::two_dimensional: {
     const auto &copy = chunk.copy_2d;
     if (copy.dstMemoryType != CU_MEMORYTYPE_DEVICE &&
