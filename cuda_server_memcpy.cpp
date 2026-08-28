@@ -575,13 +575,31 @@ struct lupine_htod_callback_data {
   size_t graph_plan = 0;
 };
 
-using lupine_htod_exec_resources =
-    std::vector<std::shared_ptr<lupine_htod_callback_data>>;
+struct lupine_htod_exec_resources {
+  ~lupine_htod_exec_resources() {
+    if (prepared == nullptr || prepared == original) {
+      return;
+    }
+    if (context != nullptr && cuCtxPushCurrent_v2(context) == CUDA_SUCCESS) {
+      (void)cuGraphDestroy(prepared);
+      CUcontext popped = nullptr;
+      (void)cuCtxPopCurrent_v2(&popped);
+    }
+  }
 
-static libcuckoo::cuckoohash_map<CUgraphExec, lupine_htod_exec_resources> &
+  std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
+  // Exec-node APIs require a node from the graph used for instantiation. Keep
+  // the private ring-rebound clone so client nodes can be translated to it.
+  CUgraph original = nullptr;
+  CUgraph prepared = nullptr;
+  CUcontext context = nullptr;
+};
+
+static libcuckoo::cuckoohash_map<CUgraphExec,
+                                 std::shared_ptr<lupine_htod_exec_resources>> &
 lupine_htod_exec_resource_map() {
-  static auto *resources =
-      new libcuckoo::cuckoohash_map<CUgraphExec, lupine_htod_exec_resources>();
+  static auto *resources = new libcuckoo::cuckoohash_map<
+      CUgraphExec, std::shared_ptr<lupine_htod_exec_resources>>();
   return *resources;
 }
 
@@ -659,7 +677,7 @@ CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
     nodes.resize(node_count);
   }
 
-  lupine_htod_exec_resources callbacks;
+  std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
   std::unordered_map<CUevent, CUevent> events;
 #ifdef LUPINE_HAVE_SMEMCPY
   std::unordered_set<CUfunction> smemcpy_functions;
@@ -853,8 +871,12 @@ CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
     return CUDA_ERROR_INVALID_VALUE;
   }
   try {
-    binding->resources =
-        std::make_shared<lupine_htod_exec_resources>(std::move(callbacks));
+    auto resources = std::make_shared<lupine_htod_exec_resources>();
+    resources->callbacks = std::move(callbacks);
+    resources->original = binding->original;
+    resources->prepared = binding->prepared;
+    resources->context = ring->context();
+    binding->resources = std::move(resources);
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -867,10 +889,11 @@ lupine_commit_htod_graph_exec(CUgraphExec exec,
   if (binding.resources == nullptr) {
     return CUDA_SUCCESS;
   }
-  auto callbacks =
+  auto resources =
       std::static_pointer_cast<lupine_htod_exec_resources>(binding.resources);
   try {
-    lupine_htod_exec_resource_map().insert_or_assign(exec, *callbacks);
+    lupine_htod_exec_resource_map().insert_or_assign(exec,
+                                                     std::move(resources));
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -908,15 +931,30 @@ lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
   return node;
 }
 
+CUgraphNode lupine_htod_graph_exec_node(CUgraphExec exec, CUgraphNode node) {
+  std::shared_ptr<lupine_htod_exec_resources> resources;
+  if (node == nullptr ||
+      !lupine_htod_exec_resource_map().find(exec, resources) ||
+      resources->prepared == resources->original) {
+    return node;
+  }
+  CUgraphNode prepared = nullptr;
+  return cuGraphNodeFindInClone(&prepared, node, resources->prepared) ==
+                 CUDA_SUCCESS
+             ? prepared
+             : node;
+}
+
 void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding) {
-  if (binding->prepared != nullptr && binding->prepared != binding->original) {
+  if (binding->resources == nullptr && binding->prepared != nullptr &&
+      binding->prepared != binding->original) {
     (void)cuGraphDestroy(binding->prepared);
   }
   *binding = {};
 }
 
 CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
-  lupine_htod_exec_resources resources;
+  std::shared_ptr<lupine_htod_exec_resources> resources;
   if (!lupine_htod_exec_resource_map().find(exec, resources)) {
     return CUDA_SUCCESS;
   }
@@ -925,7 +963,7 @@ CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
   // events, and the pinned ring alive until no launch can still reference
   // them. This synchronization is confined to destroying graph execs that
   // contain pageable HtoD side effects.
-  CUresult result = cuCtxPushCurrent_v2(resources.front()->ring->context());
+  CUresult result = cuCtxPushCurrent_v2(resources->context);
   if (result != CUDA_SUCCESS) {
     return result;
   }

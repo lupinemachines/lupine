@@ -24,6 +24,28 @@ static bool all_bytes_are(const std::vector<unsigned char> &bytes,
       [expected](unsigned char value) { return value == expected; });
 }
 
+static const char *kAddPtx = R"ptx(
+.version 7.0
+.target sm_50
+.address_size 64
+
+.visible .entry add_kernel(
+    .param .u64 out,
+    .param .u32 value
+)
+{
+    .reg .b64 %rd<2>;
+    .reg .b32 %r<4>;
+
+    ld.param.u64 %rd1, [out];
+    ld.param.u32 %r1, [value];
+    ld.global.u32 %r2, [%rd1];
+    add.u32 %r3, %r2, %r1;
+    st.global.u32 [%rd1], %r3;
+    ret;
+}
+)ptx";
+
 static int check_captured_source(CUdeviceptr destination, CUstream stream,
                                  unsigned char *source, size_t bytes,
                                  const char *label) {
@@ -206,6 +228,62 @@ static int check_parallel_graph_instances(CUdeviceptr destination,
   return 0;
 }
 
+static int check_exec_node_set_params(CUdeviceptr destination, CUstream stream,
+                                      CUfunction function) {
+  unsigned int source = 5;
+  unsigned int increment = 3;
+  void *arguments[] = {&destination, &increment};
+  CHECK(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpyHtoDAsync(destination, &source, sizeof(source), stream));
+  CHECK(cuLaunchKernel(function, 1, 1, 1, 1, 1, 1, 0, stream, arguments,
+                       nullptr));
+  CUgraph graph = nullptr;
+  CHECK(cuStreamEndCapture(stream, &graph));
+
+  size_t node_count = 0;
+  CHECK(cuGraphGetNodes(graph, nullptr, &node_count));
+  std::vector<CUgraphNode> nodes(node_count);
+  CHECK(cuGraphGetNodes(graph, nodes.data(), &node_count));
+  CUgraphNode kernel_node = nullptr;
+  CUDA_KERNEL_NODE_PARAMS params = {};
+  for (CUgraphNode node : nodes) {
+    CUgraphNodeType type = CU_GRAPH_NODE_TYPE_EMPTY;
+    CHECK(cuGraphNodeGetType(node, &type));
+    if (type != CU_GRAPH_NODE_TYPE_KERNEL) {
+      continue;
+    }
+    CHECK(cuGraphKernelNodeGetParams(node, &params));
+    if (params.func == function) {
+      kernel_node = node;
+      break;
+    }
+  }
+  if (kernel_node == nullptr || params.kernelParams == nullptr) {
+    std::fprintf(stderr, "captured application kernel node was not found\n");
+    return 1;
+  }
+
+  CUgraphExec executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
+  unsigned int updated_increment = 7;
+  params.kernelParams[1] = &updated_increment;
+  CHECK(cuGraphExecKernelNodeSetParams(executable, kernel_node, &params));
+  source = 11;
+  CHECK(cuGraphLaunch(executable, stream));
+  CHECK(cuStreamSynchronize(stream));
+  unsigned int readback = 0;
+  CHECK(cuMemcpyDtoH(&readback, destination, sizeof(readback)));
+  if (readback != source + updated_increment) {
+    std::fprintf(stderr, "graph-exec kernel update produced %u, expected %u\n",
+                 readback, source + updated_increment);
+    return 1;
+  }
+
+  CHECK(cuGraphExecDestroy(executable));
+  CHECK(cuGraphDestroy(graph));
+  return 0;
+}
+
 int main() {
   // Five 8 MiB chunks force the two-slot server ring to wrap twice.
   constexpr size_t bytes = 40 * 1024 * 1024;
@@ -223,6 +301,10 @@ int main() {
   CHECK(cuMemAlloc(&destination, bytes));
   CUdeviceptr second_destination = 0;
   CHECK(cuMemAlloc(&second_destination, bytes));
+  CUmodule module = nullptr;
+  CHECK(cuModuleLoadData(&module, kAddPtx));
+  CUfunction add_function = nullptr;
+  CHECK(cuModuleGetFunction(&add_function, module, "add_kernel"));
   CUstream stream = nullptr;
   CHECK(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
   CUstream second_stream = nullptr;
@@ -288,6 +370,9 @@ int main() {
                                      source.data(), 12 * 1024 * 1024) != 0) {
     return 1;
   }
+  if (check_exec_node_set_params(destination, stream, add_function) != 0) {
+    return 1;
+  }
 
   constexpr size_t tracked_bytes = 4 * 1024 * 1024;
   unsigned char *pinned = nullptr;
@@ -321,6 +406,7 @@ int main() {
   CHECK(cuStreamDestroy(stream));
   CHECK(cuMemFree(second_destination));
   CHECK(cuMemFree(destination));
+  CHECK(cuModuleUnload(module));
   CHECK(cuCtxDestroy(context));
   std::printf(
       "PASS: HtoD side effects preserve pageable and graph semantics\n");

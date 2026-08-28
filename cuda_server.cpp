@@ -2856,6 +2856,7 @@ int handle_cuGraphExecKernelNodeSetParams(conn_t *conn) {
   }
 
   if (result == CUDA_SUCCESS) {
+    hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
     result = cuGraphExecKernelNodeSetParams_v2(hGraphExec, hNode, &nodeParams);
   }
   for (size_t i = 0; i < param_count; ++i) {
@@ -3329,6 +3330,7 @@ int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
   CUDA_HOST_NODE_PARAMS serverParams{};
   serverParams.fn = lupine_graph_host_callback;
   serverParams.userData = callback;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   result = cuGraphExecHostNodeSetParams(hGraphExec, hNode, &serverParams);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -3950,10 +3952,12 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
   if (result == CUDA_SUCCESS) {
     result = cuGraphInstantiateWithParams(&exec, binding.prepared, &params);
   }
+#if CUDA_VERSION >= 12000
   if (result != CUDA_SUCCESS) {
     params.hErrNode_out =
         lupine_original_htod_graph_node(binding, params.hErrNode_out);
   }
+#endif
   if (result == CUDA_SUCCESS) {
     result = lupine_associate_graph_exec_resources(exec, resources, binding);
     if (result != CUDA_SUCCESS) {

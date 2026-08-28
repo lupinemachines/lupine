@@ -47,6 +47,7 @@ lupine_commit_htod_graph_exec(CUgraphExec exec,
 CUgraphNode
 lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
                                 CUgraphNode node);
+CUgraphNode lupine_htod_graph_exec_node(CUgraphExec exec, CUgraphNode node);
 void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding);
 CUresult lupine_release_htod_graph_exec(CUgraphExec exec);
 void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,

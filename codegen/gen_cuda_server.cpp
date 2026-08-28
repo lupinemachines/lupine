@@ -10,6 +10,7 @@
 
 #include <cstdio>
 
+#include "cuda_server_memcpy.h"
 #include "rpc.h"
 
 #ifdef cuGraphInstantiate_v2
@@ -5596,6 +5597,7 @@ int handle_cuGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result =
       cuGraphExecBatchMemOpNodeSetParams(hGraphExec, hNode, &nodeParams);
 
@@ -6116,6 +6118,7 @@ int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result =
       cuGraphExecMemcpyNodeSetParams(hGraphExec, hNode, &copyParams, ctx);
 
@@ -6146,6 +6149,7 @@ int handle_cuGraphExecMemsetNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result =
       cuGraphExecMemsetNodeSetParams(hGraphExec, hNode, &memsetParams, ctx);
 
@@ -6173,6 +6177,7 @@ int handle_cuGraphExecChildGraphNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result =
       cuGraphExecChildGraphNodeSetParams(hGraphExec, hNode, childGraph);
 
@@ -6200,6 +6205,7 @@ int handle_cuGraphExecEventRecordNodeSetEvent(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result =
       cuGraphExecEventRecordNodeSetEvent(hGraphExec, hNode, event);
 
@@ -6227,6 +6233,7 @@ int handle_cuGraphExecEventWaitNodeSetEvent(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result =
       cuGraphExecEventWaitNodeSetEvent(hGraphExec, hNode, event);
 
@@ -6275,6 +6282,7 @@ int handle_cuGraphExecExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result = cuGraphExecExternalSemaphoresSignalNodeSetParams(
       hGraphExec, hNode, &nodeParams);
 
@@ -6323,6 +6331,7 @@ int handle_cuGraphExecExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result = cuGraphExecExternalSemaphoresWaitNodeSetParams(
       hGraphExec, hNode, &nodeParams);
 
@@ -6350,6 +6359,7 @@ int handle_cuGraphNodeSetEnabled(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result = cuGraphNodeSetEnabled(hGraphExec, hNode, isEnabled);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6376,6 +6386,7 @@ int handle_cuGraphNodeGetEnabled(conn_t *conn) {
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   lupine_intercept_result =
       cuGraphNodeGetEnabled(hGraphExec, hNode, &isEnabled);
 

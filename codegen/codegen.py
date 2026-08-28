@@ -2247,6 +2247,7 @@ def main():
             '#include "gen_rpc_ids.h"\n\n'
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
+            '#include "cuda_server_memcpy.h"\n'
             '#include "rpc.h"\n\n'
         )
         annotation_only_functions = (
@@ -2316,6 +2317,14 @@ def main():
             f.write("    request_id = rpc_read_end(conn);\n")
             f.write("    if (request_id < 0)\n")
             f.write("        goto ERROR_0;\n")
+
+            parameter_names = {
+                parameter.name for parameter in function.parameters
+            }
+            if {"hGraphExec", "hNode"} <= parameter_names:
+                f.write(
+                    "    hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);\n"
+                )
 
             params: list[str] = []
             # these need to be in function param order, not operation order.
