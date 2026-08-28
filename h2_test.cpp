@@ -58,12 +58,18 @@ struct h2_pair {
 };
 
 // Announce each case before it runs so a hang in CI names the case that hung
-// rather than just timing out the suite.
+// rather than just timing out the suite, and time it so a suite that creeps up
+// on its timeout names the case that got slow.
 #define RUN_CASE(call)                                                         \
   do {                                                                         \
     printf("  -> %s\n", #call);                                                \
     fflush(stdout);                                                            \
+    auto case_start = std::chrono::steady_clock::now();                        \
     call;                                                                      \
+    printf("     %.2f s\n", std::chrono::duration<double>(                     \
+                                std::chrono::steady_clock::now() - case_start) \
+                                .count());                                     \
+    fflush(stdout);                                                            \
   } while (0)
 
 void require(bool condition, const char *message) {

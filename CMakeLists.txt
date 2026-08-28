@@ -454,7 +454,10 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
     add_test(NAME h2_test COMMAND h2_test)
-    lupine_scaled_timeout(h2_timeout 30)
+    # test_payload_larger_than_flow_control_window moves >2 GiB over loopback,
+    # so the suite is bandwidth-bound: it runs in ~4s here and has been measured
+    # anywhere from 6s to 29s on a contended macos-26-intel runner (issue #664).
+    lupine_scaled_timeout(h2_timeout 180)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
 
     add_executable(dispatch_test ${CMAKE_CURRENT_SOURCE_DIR}/dispatch_test.cpp)
