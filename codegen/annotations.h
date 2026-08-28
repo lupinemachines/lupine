@@ -4407,6 +4407,7 @@ cuGraphBatchMemOpNodeSetParams(CUgraphNode hNode,
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams paramArray count
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecBatchMemOpNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4630,6 +4631,7 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hNode SEND_ONLY
  * @param copyParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
                                         CUgraphNode hNode,
@@ -4640,6 +4642,7 @@ CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
  * @param hNode SEND_ONLY
  * @param memsetParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult
 cuGraphExecMemsetNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4658,6 +4661,7 @@ CUresult cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param childGraph SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
                                             CUgraphNode hNode,
@@ -4666,6 +4670,7 @@ CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
                                             CUgraphNode hNode, CUevent event);
@@ -4673,6 +4678,7 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
                                           CUgraphNode hNode, CUevent event);
@@ -4682,6 +4688,7 @@ CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4692,6 +4699,7 @@ CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4700,6 +4708,7 @@ CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param isEnabled SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
                                unsigned int isEnabled);
@@ -4707,6 +4716,7 @@ CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param isEnabled SEND_RECV
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphNodeGetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
                                unsigned int *isEnabled);

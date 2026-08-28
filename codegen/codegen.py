@@ -31,6 +31,7 @@ from ops import (
     ParentAnnotation,
     CrossServerCopyAnnotation,
     FunctionAnnotationMetadata,
+    GraphExecNodeAnnotation,
     RoutingFallbackAnnotation,
     SynchronizeAnnotation,
 )
@@ -566,6 +567,17 @@ def parse_annotation(
                     else None
                 ),
                 async_="ASYNC" in parts[4:],
+            )
+            continue
+        if line.startswith("@graphexecnode"):
+            parts = line.split()
+            if len(parts) != 3 or metadata.graph_exec_node is not None:
+                raise RuntimeError(
+                    "@graphexecnode requires graph exec and graph node parameters"
+                )
+            metadata.graph_exec_node = GraphExecNodeAnnotation(
+                graph_exec=annotation_param(params, parts[1]),
+                node=annotation_param(params, parts[2]),
             )
             continue
         if line.startswith("@deeparray"):
@@ -2318,12 +2330,11 @@ def main():
             f.write("    if (request_id < 0)\n")
             f.write("        goto ERROR_0;\n")
 
-            parameter_names = {
-                parameter.name for parameter in function.parameters
-            }
-            if {"hGraphExec", "hNode"} <= parameter_names:
+            if metadata.graph_exec_node is not None:
+                graph_exec = metadata.graph_exec_node.graph_exec.name
+                node = metadata.graph_exec_node.node.name
                 f.write(
-                    "    hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);\n"
+                    f"    {node} = lupine_htod_graph_exec_node({graph_exec}, {node});\n"
                 )
 
             params: list[str] = []
