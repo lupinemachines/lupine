@@ -26,7 +26,7 @@ cmake_args=(-DLUPINE_SANITIZE="$sanitizer")
 builder_cache="$repo_root/build/CMakeCache.txt"
 if [[ -f "$builder_cache" ]]; then
   for setting in LUPINE_CUDA_DRIVER_LIBRARY LUPINE_CUDA_VERSION_OVERRIDE \
-                 LUPINE_SMEMCPY_LIBRARY; do
+                 LUPINE_CUDA_SMEMCPY_LIBRARY; do
     value="$(sed -n "s/^${setting}:[^=]*=//p" "$builder_cache")"
     if [[ -n "$value" ]]; then
       cmake_args+=("-D${setting}=${value}")

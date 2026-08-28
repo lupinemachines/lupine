@@ -211,3 +211,109 @@ be accessed once and with coalesced operations:
 - [Volta Tuning Guide: Memory Throughput](https://docs.nvidia.com/cuda/volta-tuning-guide/index.html#memory-throughput)
 - [Ampere Tuning Guide: Memory System](https://docs.nvidia.com/cuda/ampere-tuning-guide/index.html#memory-system)
 - [Hopper Tuning Guide: Memory System](https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html#memory-system)
+
+# ROCm scatter memcpy
+
+`hip_smemcpy.hip` is the same operation for AMD GPUs. It is a separate kernel,
+not a portability layer over `smemcpy.cu`: the two hardware families reward
+different code, and keeping them apart lets each be tuned without regressing
+the other. The contract is identical — a packed, device-visible source
+fragment scattered into a pitched 2D or 3D destination — and the parameter
+struct differs only in that addresses are plain unsigned integers, because
+`hipDeviceptr_t` is `void *` and cannot carry the operation's arithmetic.
+
+## What differs from the CUDA operation
+
+**No atomic paths.** The CUDA dispatcher routes one- to three-byte rows through
+`atomicCAS` on selected NVIDIA parts, because a scattered warp store there is
+decomposed into serialized L1TEX wavefronts while atomics pass through to the
+L2 atomic hardware. That is an NVIDIA memory-system property. The whole CAS
+apparatus — the per-product table, the four destination-byte-offset kernel
+variants, the whole-row and word-containment rules — is absent here.
+
+**No device query.** With no per-product table, dispatch depends only on the
+descriptor. `lupine_hip_smemcpy_prepare_launch` is a pure function; there is no
+device property lookup and no cache.
+
+**No wave-width dependency.** The CUDA narrow kernels stagger stores across
+lane groups within a warp. On gfx1100 that measured as noise, winning and
+losing across repeats of the same shape, because these kernels are bound by
+mapped-read request rate rather than by their stores. Leaving it out means
+nothing here depends on the wave being 32 or 64 lanes wide, so the same source
+is correct on RDNA and CDNA without an architecture table.
+
+**Wide loads everywhere.** This is the change that matters on AMD.
+
+## Wide loads
+
+A one- to three-byte row sends every useful byte to a different destination
+sector, so no store can be widened. The load can be. Each thread pulls one
+aligned 8-byte word through the host link and unpacks it into that many
+scattered byte stores, rather than issuing the same bytes as separate loads.
+The scalar prefix that reaches a 128-byte source boundary is what makes the
+wide load aligned, and the bulk loop never reads past the fragment.
+
+Measured on an RX 7900 XTX (gfx1100), 8 MiB per copy, GB/s:
+
+| Shape | Byte loads | 8-byte loads |
+| --- | --- | --- |
+| width 1, pitch 64 | 2.49 | 6.42 |
+| width 2, pitch 256 | 2.45 | 6.19 |
+| width 3, pitch 256 | 2.86 | 6.44 |
+| width 5, pitch 13 | 2.28 | 6.43 |
+| width 33, pitch 67 | 2.30 | 6.44 |
+| width 1023, pitch 2047 | 2.29 | 6.45 |
+
+The same treatment applies to the general `width > 3` fallback, which is why
+the last three rows move as much as the narrow ones. Eight bytes beat both four
+and sixteen across widths and pitches.
+
+## Throughput
+
+End to end through the dispatcher on the same part, 8 MiB per copy:
+
+| Shape | GB/s |
+| --- | --- |
+| packed 4096 | 6.38 |
+| pitched vector, width 64, pitch 128 | 6.43 |
+| narrow width 1, pitch 64 | 6.42 |
+| narrow width 1, pitch 256 | 5.45 |
+| narrow width 1, pitch 512 | 3.74 |
+| narrow width 3, pitch 256 | 6.44 |
+| general width 127, pitch 255 | 6.44 |
+| general width 1023, pitch 2047 | 6.45 |
+
+A packed contiguous copy reaches 6.38 GB/s on this link, so almost every
+scattered shape now runs at the same rate as one. The exception is a one-byte
+row on a 512-byte pitch, where each useful byte necessarily causes its own
+destination sector transaction; that shape stays store-bound at 3.74 GB/s.
+Widening the destination representation is the only remaining lever there, as
+on NVIDIA.
+
+## Build
+
+CMake enables the HIP operation when a HIP compiler is found. The probe is a
+real try-compile, so the header-only container build — which copies HIP headers
+but no compiler — skips it. The CUDA and HIP operations are independent and
+either may be built alone.
+
+The build defaults to a fat binary over the supported CDNA and RDNA targets.
+`hipcc` alone emits `gfx906`, which loads but never runs on a newer card, and
+clang's `native` needs `/dev/kfd`, so it fails on GPU-less builders and under
+WSL. Override with `CMAKE_HIP_ARCHITECTURES`.
+
+## Correctness testing
+
+`hip_smemcpy_test` mirrors `smemcpy_test` case for case, comparing against
+native `hipMemcpy`, `hipMemcpy2DAsync`, and `hipMemcpy3DAsync` references
+rather than CUDA ones. The 156 comparisons plus the invalid-parameter checks
+pass on an RX 7900 XTX. Sizes around every load and vector boundary matter more
+here than on NVIDIA, since the unpacked wide load has its own prefix, bulk, and
+tail boundaries.
+
+```sh
+cmake --build build --target hip_smemcpy_test
+ctest --test-dir build -R hip_smemcpy_test --output-on-failure
+```
+
+GPU-less test hosts return CTest skip code 77.

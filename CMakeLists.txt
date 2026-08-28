@@ -18,8 +18,8 @@ set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
     "CUDA driver library or stub to use without a complete CUDA Toolkit")
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
     "CUDA version reported by an SDK-free server build")
-set(LUPINE_SMEMCPY_LIBRARY "" CACHE FILEPATH
-    "Precompiled smemcpy library for an SDK-free server build")
+set(LUPINE_CUDA_SMEMCPY_LIBRARY "" CACHE FILEPATH
+    "Precompiled CUDA smemcpy library for an SDK-free server build")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -138,41 +138,73 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
+# ops holds device code, so each backend needs a real offline compiler rather
+# than the headers and driver stub the rest of the server builds against. The
+# CUDA and HIP operations are independent, and either may be built alone.
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
-    if(LUPINE_SMEMCPY_LIBRARY)
-        get_filename_component(lupine_smemcpy_library_dir
-            "${LUPINE_SMEMCPY_LIBRARY}" DIRECTORY)
+    if(LUPINE_CUDA_SMEMCPY_LIBRARY)
+        get_filename_component(lupine_cuda_smemcpy_library_dir
+            "${LUPINE_CUDA_SMEMCPY_LIBRARY}" DIRECTORY)
         set(lupine_cudart_static_library
-            "${lupine_smemcpy_library_dir}/libcudart_static.a")
+            "${lupine_cuda_smemcpy_library_dir}/libcudart_static.a")
         set(lupine_cudadevrt_library
-            "${lupine_smemcpy_library_dir}/libcudadevrt.a")
+            "${lupine_cuda_smemcpy_library_dir}/libcudadevrt.a")
         foreach(library
-                LUPINE_SMEMCPY_LIBRARY
+                LUPINE_CUDA_SMEMCPY_LIBRARY
                 lupine_cudart_static_library
                 lupine_cudadevrt_library)
             if(NOT EXISTS "${${library}}")
                 message(FATAL_ERROR "${library} does not exist: ${${library}}")
             endif()
         endforeach()
-        add_library(lupine_smemcpy STATIC IMPORTED)
-        set_target_properties(lupine_smemcpy PROPERTIES
-            IMPORTED_LOCATION "${LUPINE_SMEMCPY_LIBRARY}")
-        target_include_directories(lupine_smemcpy INTERFACE
+        add_library(lupine_cuda_smemcpy STATIC IMPORTED)
+        set_target_properties(lupine_cuda_smemcpy PROPERTIES
+            IMPORTED_LOCATION "${LUPINE_CUDA_SMEMCPY_LIBRARY}")
+        target_include_directories(lupine_cuda_smemcpy INTERFACE
             ${CMAKE_CURRENT_SOURCE_DIR})
-        target_link_libraries(lupine_smemcpy INTERFACE
+        target_link_libraries(lupine_cuda_smemcpy INTERFACE
             "${lupine_cudadevrt_library}"
             "${lupine_cudart_static_library}"
             Threads::Threads
             ${CMAKE_DL_LIBS})
         if(UNIX AND NOT APPLE)
-            target_link_libraries(lupine_smemcpy INTERFACE rt)
+            target_link_libraries(lupine_cuda_smemcpy INTERFACE rt)
         endif()
         message(STATUS
-            "Using precompiled smemcpy: ${LUPINE_SMEMCPY_LIBRARY}")
-    else()
+            "Using precompiled CUDA smemcpy: ${LUPINE_CUDA_SMEMCPY_LIBRARY}")
+    elseif(NOT LUPINE_CUDA_DRIVER_LIBRARY)
         enable_language(CUDA)
-        add_subdirectory(ops)
+    else()
+        message(FATAL_ERROR
+            "LUPINE_CUDA_SMEMCPY_LIBRARY is required for an SDK-free CUDA server build")
     endif()
+endif()
+
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
+   NOT CMAKE_VERSION VERSION_LESS 3.21)
+    # hipcc defaults to gfx906 alone, which loads but never runs on a newer
+    # card, and clang's "native" needs /dev/kfd, so it fails on GPU-less
+    # builders and under WSL. Ship a fat binary covering the supported CDNA and
+    # RDNA targets instead. This must precede the compiler probe so the probe
+    # and the build agree on the targets.
+    if(NOT CMAKE_HIP_ARCHITECTURES)
+        set(CMAKE_HIP_ARCHITECTURES
+            gfx90a gfx942 gfx1030 gfx1100 gfx1101 gfx1102 gfx1200 gfx1201)
+    endif()
+    # The HIP SDK check above only needs headers, which is all the client shim
+    # and the server dispatch require. Device code additionally needs a HIP
+    # compiler, so the operation is built only where one exists.
+    include(CheckLanguage)
+    check_language(HIP)
+    if(CMAKE_HIP_COMPILER)
+        enable_language(HIP)
+    endif()
+endif()
+
+get_property(lupine_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+if("CUDA" IN_LIST lupine_enabled_languages OR
+   "HIP" IN_LIST lupine_enabled_languages)
+    add_subdirectory(ops)
 endif()
 
 function(lupine_internal_target target)
@@ -396,7 +428,7 @@ if(LUPINE_BUILD_SERVER)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
-            lupine_smemcpy CUDA::cuda_driver)
+            lupine_cuda_smemcpy CUDA::cuda_driver)
     endif()
 
     if(LUPINE_BUILD_NVML)

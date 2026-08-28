@@ -64,7 +64,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
       -DLUPINE_CUDA_DRIVER_LIBRARY="${CUDA_HOME}/lib64/stubs/libcuda.so" \
       -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}" \
-      -DLUPINE_SMEMCPY_LIBRARY=/opt/lupine-prebuilt/liblupine_smemcpy.a
+      -DLUPINE_CUDA_SMEMCPY_LIBRARY=/opt/lupine-prebuilt/liblupine_smemcpy.a
 
 FROM builder AS client-build
 

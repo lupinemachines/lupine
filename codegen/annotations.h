@@ -4532,31 +4532,33 @@ CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes);
 CUresult cuGraphGetRootNodes(CUgraph hGraph, CUgraphNode *rootNodes,
                              size_t *numRootNodes);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hGraph SEND_ONLY
- * @param from SEND_RECV
- * @param to SEND_RECV
  * @param numEdges SEND_RECV
+ * @param from RECV_ONLY NULLABLE LENGTH:numEdges
+ * @param to RECV_ONLY NULLABLE LENGTH:numEdges
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numEdges
  */
 CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from, CUgraphNode *to,
-                         size_t *numEdges);
+                         CUgraphEdgeData *edgeData, size_t *numEdges);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hNode SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_RECV
+ * @param dependencies RECV_ONLY NULLABLE LENGTH:numDependencies
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numDependencies
  */
 CUresult cuGraphNodeGetDependencies(CUgraphNode hNode,
                                     CUgraphNode *dependencies,
+                                    CUgraphEdgeData *edgeData,
                                     size_t *numDependencies);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hNode SEND_ONLY
- * @param dependentNodes SEND_RECV
  * @param numDependentNodes SEND_RECV
+ * @param dependentNodes RECV_ONLY NULLABLE LENGTH:numDependentNodes
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numDependentNodes
  */
 CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
                                       CUgraphNode *dependentNodes,
+                                      CUgraphEdgeData *edgeData,
                                       size_t *numDependentNodes);
 /**
  * @param hGraph SEND_ONLY
@@ -4616,6 +4618,21 @@ cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
  * @param flags SEND_RECV
  */
 CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
+/**
+ * @guard CUDA_VERSION >= 12020
+ * @param hNode SEND_ONLY
+ * @param nodeParams SEND_ONLY DEREF
+ */
+CUresult cuGraphNodeSetParams(CUgraphNode hNode,
+                              CUgraphNodeParams *nodeParams);
+/**
+ * @guard CUDA_VERSION >= 12020
+ * @param hGraphExec SEND_ONLY
+ * @param hNode SEND_ONLY
+ * @param nodeParams SEND_ONLY DEREF
+ */
+CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
+                                  CUgraphNodeParams *nodeParams);
 /**
  * @disabled both - manual kernel parameter packing
  * @param hGraphExec SEND_ONLY
@@ -17451,12 +17468,6 @@ void lupineLibraryAttributeSnapshot();
 void cuGraphConditionalHandleCreate();
 /** @server CUDA handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
-/** @server CUDA handle_cuGraphGetEdges */
-void cuGraphGetEdges_v2();
-/** @server CUDA handle_cuGraphNodeGetDependencies */
-void cuGraphNodeGetDependencies_v2();
-/** @server CUDA handle_cuGraphNodeGetDependentNodes */
-void cuGraphNodeGetDependentNodes_v2();
 /** @server CUDA */
 void lupineEventQueryBatch();
 /** @server CUDA */
