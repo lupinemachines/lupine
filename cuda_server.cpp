@@ -639,10 +639,11 @@ struct lupine_graph_resources {
     }
   }
 
-  bool retain(std::shared_ptr<void> resource) {
+  bool add_htod_callback(
+    std::shared_ptr<lupine_htod_callback_data> callback) {
     try {
-      std::lock_guard<std::mutex> lock(retained_mutex);
-      retained.push_back(std::move(resource));
+      std::lock_guard<std::mutex> lock(callbacks_mutex);
+      callbacks.push_back(std::move(callback));
       return true;
     } catch (...) {
       return false;
@@ -651,8 +652,8 @@ struct lupine_graph_resources {
 
   std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
   std::atomic<lupine_graph_capture_scratch *> capture_scratch{nullptr};
-  std::mutex retained_mutex;
-  std::vector<std::shared_ptr<void>> retained;
+  std::mutex callbacks_mutex;
+  std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
 };
 
 // Graph host buffers and callback metadata must remain valid for any queued
@@ -792,9 +793,11 @@ lupine_graph_resources *lupine_captured_stream_resources(CUstream stream) {
   return resources;
 }
 
-bool lupine_graph_retain_resource(lupine_graph_resources *resources,
-                                  std::shared_ptr<void> resource) {
-  return resources != nullptr && resources->retain(std::move(resource));
+bool lupine_graph_add_htod_callback(
+    lupine_graph_resources *resources,
+    std::shared_ptr<lupine_htod_callback_data> callback) {
+  return resources != nullptr &&
+         resources->add_htod_callback(std::move(callback));
 }
 
 static uint64_t lupine_fnv1a64(const void *data, size_t size) {

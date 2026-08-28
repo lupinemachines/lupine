@@ -996,7 +996,7 @@ static CUresult lupine_enqueue_htod_callback(
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
     auto *callback_ptr = callback.get();
-    if (!lupine_graph_retain_resource(resources, std::move(callback))) {
+    if (!lupine_graph_add_htod_callback(resources, std::move(callback))) {
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
     return cuLaunchHostFunc(stream, lupine_htod_side_effect_callback,
