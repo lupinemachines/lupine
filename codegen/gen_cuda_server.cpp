@@ -12,6 +12,15 @@
 
 #include "rpc.h"
 
+#ifdef cuGraphInstantiate_v2
+#undef cuGraphInstantiate_v2
+#endif
+extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
+                                                  CUgraph hGraph,
+                                                  CUgraphNode *phErrorNode,
+                                                  char *logBuffer,
+                                                  size_t bufferSize);
+
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
 #endif

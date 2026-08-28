@@ -1,0 +1,47 @@
+name: Build HIP
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unified-images:
+    name: Unified CUDA + HIP images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build unified client and server images
+        run: |
+          docker build --target client -t lupine-client .
+          docker build --target server -t lupine-server .
+
+      - name: Verify SDK-free client artifacts
+        run: |
+          docker run --rm --entrypoint bash lupine-client -lc '
+            set -euo pipefail
+            test -e /opt/lupine/lib/libcuda.so.1
+            test -e /opt/lupine/lib/libnvidia-ml.so.1
+            test -e /opt/lupine/lib/libamdhip64.so.1
+            test ! -d /usr/local/cuda
+            test ! -d /opt/rocm
+          '
+
+      - name: Verify unified server runtimes
+        run: |
+          docker run --rm --entrypoint bash lupine-server -lc '
+            set -euo pipefail
+            test -x /opt/lupine/bin/lupine_driver_server
+            test -e /usr/local/cuda/compat/libcuda.so.1
+            test -e /opt/rocm/lib/libamdhip64.so
+            ! ldd /opt/lupine/bin/lupine_driver_server | grep -q "not found"
+          '

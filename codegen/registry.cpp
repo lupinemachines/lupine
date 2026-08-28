@@ -80,6 +80,7 @@
   HANDLER(RPC_cuDeviceGetGraphMemAttribute, handle_cuDeviceGetGraphMemAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuDeviceSetGraphMemAttribute, handle_cuDeviceSetGraphMemAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphClone, handle_cuGraphClone, rpc_backend::cuda) \
+  HANDLER(RPC_cuGraphInstantiate_v2, handle_cuGraphInstantiate_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphInstantiateWithFlags, handle_cuGraphInstantiateWithFlags, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphInstantiateWithParams, handle_cuGraphInstantiateWithParams, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphExecKernelNodeSetParams_v2, handle_cuGraphExecKernelNodeSetParams, rpc_backend::cuda) \
@@ -444,6 +445,16 @@
   HANDLER(RPC_nvmlDeviceGetNvLinkRemoteDeviceType, handle_nvmlDeviceGetNvLinkRemoteDeviceType, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2, handle_nvmlDeviceGetNvLinkRemotePciInfo_v2, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetCudaComputeCapability, handle_nvmlDeviceGetCudaComputeCapability, rpc_backend::nvml)
+#define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_hipInit, handle_hipInit, rpc_backend::hip) \
+  HANDLER(RPC_hipGetDeviceCount, handle_hipGetDeviceCount, rpc_backend::hip) \
+  HANDLER(RPC_hipDeviceGet, handle_hipDeviceGet, rpc_backend::hip) \
+  HANDLER(RPC_hipGetDevicePropertiesR0600, handle_hipGetDevicePropertiesR0600, rpc_backend::hip) \
+  HANDLER(RPC_hipDeviceGetName, handle_hipDeviceGetName, rpc_backend::hip) \
+  HANDLER(RPC_hipDeviceTotalMem, handle_hipDeviceTotalMem, rpc_backend::hip) \
+  HANDLER(RPC_hipDeviceGetAttribute, handle_hipDeviceGetAttribute, rpc_backend::hip) \
+  HANDLER(RPC_hipDriverGetVersion, handle_hipDriverGetVersion, rpc_backend::hip) \
+  HANDLER(RPC_hipRuntimeGetVersion, handle_hipRuntimeGetVersion, rpc_backend::hip)
 // clang-format on
 
 #define LUPINE_DECLARE_HANDLER(operation, handler, backend)                    \
@@ -586,6 +597,10 @@ LUPINE_DECLARE_HANDLER(RPC_cuStreamGetDevResource,
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
 #endif
+#ifdef LUPINE_BUILD_HIP_BACKEND
+LUPINE_HIP_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+
+#endif
 #undef LUPINE_DECLARE_HANDLER
 
 const rpc_handler_registry &lupine_rpc_handlers() {
@@ -701,6 +716,10 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
 #endif
+#ifdef LUPINE_BUILD_HIP_BACKEND
+      LUPINE_HIP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+
+#endif
   };
   // clang-format on
 #undef LUPINE_REGISTER_HANDLER
@@ -709,3 +728,4 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 
 #undef LUPINE_CUDA_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
+#undef LUPINE_HIP_RPC_HANDLERS

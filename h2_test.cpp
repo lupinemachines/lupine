@@ -1,26 +1,29 @@
 #include "lupine_log.h"
 #include "rpc.h"
+#include "test_platform.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <iostream>
-#include <netinet/in.h>
 #include <nghttp2/nghttp2.h>
-#include <poll.h>
 #include <string>
-#include <sys/mman.h>
-#include <sys/socket.h>
 #include <thread>
 #include <type_traits>
-#include <unistd.h>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -38,21 +41,30 @@ struct h2_pair {
   conn_t server = {};
 
   h2_pair() {
-    client.connfd = -1;
-    server.connfd = -1;
+    client.connfd = LUPINE_INVALID_SOCKET;
+    server.connfd = LUPINE_INVALID_SOCKET;
   }
 
   ~h2_pair() {
     rpc_conn_destroy(&client);
     rpc_conn_destroy(&server);
-    if (client.connfd >= 0) {
-      close(client.connfd);
+    if (client.connfd != LUPINE_INVALID_SOCKET) {
+      lupine_socket_close(client.connfd);
     }
-    if (server.connfd >= 0) {
-      close(server.connfd);
+    if (server.connfd != LUPINE_INVALID_SOCKET) {
+      lupine_socket_close(server.connfd);
     }
   }
 };
+
+// Announce each case before it runs so a hang in CI names the case that hung
+// rather than just timing out the suite.
+#define RUN_CASE(call)                                                         \
+  do {                                                                         \
+    printf("  -> %s\n", #call);                                                \
+    fflush(stdout);                                                            \
+    call;                                                                      \
+  } while (0)
 
 void require(bool condition, const char *message) {
   if (!condition) {
@@ -74,8 +86,8 @@ h2_pair make_pair() {
 }
 
 void init_pair_sockets(h2_pair *pair) {
-  int fds[2] = {-1, -1};
-  require(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
+  lupine_socket_t fds[2];
+  require(lupine_test_connected_pair(fds), "connected socket pair failed");
   require(rpc_conn_init(&pair->client, fds[0], 0) == 0,
           "client RPC init failed");
   require(rpc_conn_init(&pair->server, fds[1], 1) == 0,
@@ -86,19 +98,19 @@ void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
   std::vector<rpc_write_cursor> cursors;
   cursors.reserve(chunks.size());
   for (const std::string &chunk : chunks) {
-    cursors.push_back(rpc_write_cursor::plain(chunk.data(), chunk.size()));
+    cursors.push_back(rpc_write_cursor(chunk.data(), chunk.size()));
   }
   require(rpc_http2_write(conn, cursors) == 0, "h2 write failed");
 }
 
 int write_bytes(conn_t *conn, const void *data, size_t size) {
-  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor::plain(data, size)};
+  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor(data, size)};
   return rpc_http2_write(conn, cursors);
 }
 
 int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
                        size_t size) {
-  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor::plain(data, size)};
+  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor(data, size)};
   return rpc_http2_write_stream(conn, stream_id, cursors);
 }
 
@@ -159,6 +171,51 @@ bool raw_read_frame(lupine_socket_t socket,
   return raw_read_exact(socket, payload.data(), payload.size());
 }
 
+ssize_t raw_h2_send_callback(nghttp2_session *, const uint8_t *data,
+                             size_t length, int, void *user_data) {
+  auto socket = *static_cast<lupine_socket_t *>(user_data);
+  return raw_write_all(socket, data, length) ? static_cast<ssize_t>(length)
+                                             : NGHTTP2_ERR_CALLBACK_FAILURE;
+}
+
+nghttp2_nv raw_h2_header(const char *name, const char *value) {
+  return {reinterpret_cast<uint8_t *>(const_cast<char *>(name)),
+          reinterpret_cast<uint8_t *>(const_cast<char *>(value)), strlen(name),
+          strlen(value), NGHTTP2_NV_FLAG_NONE};
+}
+
+void test_server_rejects_request_without_lz4_encoding() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  nghttp2_session_callbacks *callbacks = nullptr;
+  require(nghttp2_session_callbacks_new(&callbacks) == 0,
+          "raw client callback allocation failed");
+  nghttp2_session_callbacks_set_send_callback(callbacks, raw_h2_send_callback);
+  nghttp2_session *session = nullptr;
+  require(
+      nghttp2_session_client_new(&session, callbacks, &pair.client.connfd) == 0,
+      "raw client session allocation failed");
+  nghttp2_session_callbacks_del(callbacks);
+
+  std::array<nghttp2_nv, 4> headers = {
+      raw_h2_header(":method", "POST"),
+      raw_h2_header(":scheme", "http"),
+      raw_h2_header(":path", "/"),
+      raw_h2_header(":authority", "lupine"),
+  };
+  require(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0) == 0,
+          "raw client SETTINGS submission failed");
+  require(nghttp2_submit_headers(session, NGHTTP2_FLAG_NONE, -1, nullptr,
+                                 headers.data(), headers.size(), nullptr) > 0,
+          "raw client request submission failed");
+  require(nghttp2_session_send(session) == 0, "raw client request send failed");
+
+  require(rpc_http2_server_init(&pair.server) > 0,
+          "server accepted a request without content-encoding: lz4");
+  nghttp2_session_del(session);
+}
+
 void init_raw_server_peer(h2_pair *pair) {
   init_pair_sockets(pair);
   require(rpc_http2_client_init(&pair->client) == 0, "client h2 init failed");
@@ -178,8 +235,7 @@ void test_response_wait_sends_transport_heartbeat() {
   rpc_http2_response_wait_begin(&pair.client);
   bool received_ping = false;
   for (int frame_count = 0; frame_count < 8 && !received_ping; ++frame_count) {
-    pollfd descriptor = {pair.server.connfd, POLLIN, 0};
-    require(poll(&descriptor, 1, 1000) > 0,
+    require(lupine_test_wait_readable(pair.server.connfd, 1000),
             "response wait did not emit an HTTP/2 frame");
     std::array<unsigned char, 9> header = {};
     require(raw_read_frame(pair.server.connfd, &header),
@@ -189,6 +245,103 @@ void test_response_wait_sends_transport_heartbeat() {
   }
   rpc_http2_response_wait_end(&pair.client);
   require(received_ping, "response wait did not emit an HTTP/2 PING heartbeat");
+}
+
+void test_data_provider_frame_sizing() {
+  h2_pair pair;
+  init_raw_server_peer(&pair);
+
+  constexpr uint32_t kPeerFrameSize = 1024 * 1024;
+  std::array<unsigned char, 21> settings = {};
+  settings[2] = 12;
+  settings[3] = NGHTTP2_SETTINGS;
+  settings[9] = NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE >> 8;
+  settings[10] = NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+  settings[11] = static_cast<unsigned char>(kPeerFrameSize >> 24);
+  settings[12] = static_cast<unsigned char>(kPeerFrameSize >> 16);
+  settings[13] = static_cast<unsigned char>(kPeerFrameSize >> 8);
+  settings[14] = static_cast<unsigned char>(kPeerFrameSize);
+  settings[15] = NGHTTP2_SETTINGS_MAX_FRAME_SIZE >> 8;
+  settings[16] = NGHTTP2_SETTINGS_MAX_FRAME_SIZE;
+  settings[17] = static_cast<unsigned char>(kPeerFrameSize >> 24);
+  settings[18] = static_cast<unsigned char>(kPeerFrameSize >> 16);
+  settings[19] = static_cast<unsigned char>(kPeerFrameSize >> 8);
+  settings[20] = static_cast<unsigned char>(kPeerFrameSize);
+  require(raw_write_all(pair.server.connfd, settings.data(), settings.size()),
+          "failed to send large-frame SETTINGS");
+  std::array<unsigned char, 13> window_update = {};
+  window_update[2] = 4;
+  window_update[3] = NGHTTP2_WINDOW_UPDATE;
+  window_update[9] = static_cast<unsigned char>(kPeerFrameSize >> 24);
+  window_update[10] = static_cast<unsigned char>(kPeerFrameSize >> 16);
+  window_update[11] = static_cast<unsigned char>(kPeerFrameSize >> 8);
+  window_update[12] = static_cast<unsigned char>(kPeerFrameSize);
+  require(raw_write_all(pair.server.connfd, window_update.data(),
+                        window_update.size()),
+          "failed to enlarge the connection window");
+
+  bool received_ack = false;
+  while (!received_ack) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read large-frame SETTINGS acknowledgement");
+    received_ack =
+        header[3] == NGHTTP2_SETTINGS && (header[4] & NGHTTP2_FLAG_ACK) != 0;
+  }
+
+  std::vector<unsigned char> payload(256 * 1024);
+  uint32_t seed = 43;
+  for (unsigned char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
+
+  std::atomic<int> write_result{-1};
+  std::thread writer([&] {
+    write_result.store(
+        write_bytes(&pair.client, payload.data(), payload.size()));
+  });
+  size_t max_data_frame_size = 0;
+  int data_frame_count = 0;
+  for (int frame_count = 0; frame_count < 8 && data_frame_count < 2;
+       ++frame_count) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read compressed DATA frame");
+    if (header[3] == NGHTTP2_DATA) {
+      size_t data_frame_size = (static_cast<size_t>(header[0]) << 16) |
+                               (static_cast<size_t>(header[1]) << 8) |
+                               header[2];
+      max_data_frame_size = std::max(max_data_frame_size, data_frame_size);
+      ++data_frame_count;
+    }
+  }
+  writer.join();
+
+  require(write_result.load() == 0, "large-frame write failed");
+  require(max_data_frame_size > 16 * 1024,
+          "compressed provider fell back to 16 KiB DATA frames");
+
+  std::vector<unsigned char> zeros(16 * 1024 * 1024);
+  write_result.store(-1);
+  std::thread compressible_writer([&] {
+    write_result.store(write_bytes(&pair.client, zeros.data(), zeros.size()));
+  });
+  size_t data_frame_size = 0;
+  while (data_frame_size == 0) {
+    std::array<unsigned char, 9> header = {};
+    require(raw_read_frame(pair.server.connfd, &header),
+            "failed to read compressible DATA frame");
+    if (header[3] == NGHTTP2_DATA) {
+      data_frame_size = (static_cast<size_t>(header[0]) << 16) |
+                        (static_cast<size_t>(header[1]) << 8) | header[2];
+    }
+  }
+  compressible_writer.join();
+
+  require(write_result.load() == 0, "compressible streaming write failed");
+  require(data_frame_size < 32 * 1024,
+          "compressed provider buffered too much logical input");
 }
 
 void test_client_to_server() {
@@ -206,7 +359,7 @@ void test_server_receives_session_id() {
   const char *original = getenv("LUPINE_SESSION");
   bool had_original = original != nullptr;
   std::string saved = original == nullptr ? "" : original;
-  setenv("LUPINE_SESSION", "lease-123", 1);
+  lupine_test_setenv("LUPINE_SESSION", "lease-123");
 
   {
     h2_pair pair = make_pair();
@@ -219,9 +372,9 @@ void test_server_receives_session_id() {
   }
 
   if (had_original) {
-    setenv("LUPINE_SESSION", saved.c_str(), 1);
+    lupine_test_setenv("LUPINE_SESSION", saved.c_str());
   } else {
-    unsetenv("LUPINE_SESSION");
+    lupine_test_unsetenv("LUPINE_SESSION");
   }
 }
 
@@ -371,7 +524,7 @@ void test_va_claim_is_disjoint_under_contention() {
   std::vector<std::thread> workers;
   for (auto &bucket : claims) {
     bucket.reserve(kPerThread);
-    workers.emplace_back([&bucket, &conn, &ready, &go] {
+    workers.emplace_back([&bucket, &conn, &ready, &go, kPerThread, kAlign] {
       ready.fetch_add(1, std::memory_order_release);
       while (!go.load(std::memory_order_acquire)) {
       }
@@ -464,7 +617,7 @@ void test_fragmented_frames_direct() {
   std::string received;
   std::thread reader(
       [&] { received = read_string(&pair.server, expected.size()); });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {"fragment"});
   write_all(&pair.client, {"ed"});
   write_all(&pair.client, {"-data"});
@@ -494,7 +647,7 @@ void test_partial_read_stages_only_overflow() {
                 static_cast<int>(received.size() - 7),
             "partial suffix read failed");
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {payload});
   reader.join();
   require(received == payload, "partial read payload mismatch");
@@ -521,9 +674,9 @@ void test_truncated_read_clears_direct_destination() {
   std::thread reader([&] {
     read_result = rpc_http2_read(&pair.server, guarded.data() + 8, 32);
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {prefix});
-  require(shutdown(pair.client.connfd, SHUT_WR) == 0,
+  require(shutdown(pair.client.connfd, LUPINE_TEST_SHUT_WR) == 0,
           "truncated writer shutdown failed");
   reader.join();
   require(read_result == -1, "truncated read unexpectedly succeeded");
@@ -593,28 +746,26 @@ void test_abort_failed_transport_with_queued_data() {
               user_timeout == 105000,
           "unacknowledged transport data has no dead-peer timeout");
 #endif
-  int buffer_size = 4096;
-  require(setsockopt(connection.connfd, SOL_SOCKET, SO_SNDBUF, &buffer_size,
-                     sizeof(buffer_size)) == 0,
+  const int buffer_size = 4096;
+  require(lupine_test_setsockopt_int(connection.connfd, SOL_SOCKET, SO_SNDBUF,
+                                     buffer_size) == 0,
           "queued close send buffer setup failed");
   require(connect(connection.connfd, reinterpret_cast<sockaddr *>(&address),
                   sizeof(address)) == 0,
           "queued close connect failed");
   int peer = accept(listener, nullptr, nullptr);
   require(peer >= 0, "queued close accept failed");
-  require(setsockopt(peer, SOL_SOCKET, SO_RCVBUF, &buffer_size,
-                     sizeof(buffer_size)) == 0,
-          "queued close receive buffer setup failed");
+  require(
+      lupine_test_setsockopt_int(peer, SOL_SOCKET, SO_RCVBUF, buffer_size) == 0,
+      "queued close receive buffer setup failed");
 
-  int flags = fcntl(connection.connfd, F_GETFL, 0);
-  require(flags >= 0 &&
-              fcntl(connection.connfd, F_SETFL, flags | O_NONBLOCK) == 0,
+  require(lupine_test_set_nonblocking(connection.connfd),
           "queued close nonblocking setup failed");
   std::array<char, 64 * 1024> payload = {};
   size_t queued = 0;
   for (;;) {
-    ssize_t sent =
-        send(connection.connfd, payload.data(), payload.size(), MSG_NOSIGNAL);
+    ssize_t sent = send(connection.connfd, payload.data(), payload.size(),
+                        LUPINE_TEST_MSG_NOSIGNAL);
     if (sent > 0) {
       queued += static_cast<size_t>(sent);
       continue;
@@ -635,8 +786,8 @@ void test_abort_failed_transport_with_queued_data() {
   require(received < 0 && errno == ECONNRESET,
           "queued transport close was not abortive");
 
-  close(peer);
-  close(listener);
+  lupine_socket_close(peer);
+  lupine_socket_close(listener);
 }
 
 void test_independent_stream_lanes() {
@@ -707,19 +858,19 @@ void test_socket_reader_hands_off_between_streams() {
     require(rpc_http2_read(&pair.client, &dispatch_value, 1) == 1,
             "dispatch stream handoff read failed");
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   std::thread lane_reader([&] {
     require(rpc_http2_read_stream(&pair.client, client_lane, &lane_value, 1) ==
                 1,
             "lane handoff read failed");
     lane_done.store(true, std::memory_order_release);
   });
-  usleep(20 * 1000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
   require(write_stream_bytes(&pair.server, server_lane, "l", 1) == 0,
           "lane handoff write failed");
   for (int i = 0; i < 100 && !lane_done.load(std::memory_order_acquire); ++i) {
-    usleep(10 * 1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   bool handed_off = lane_done.load(std::memory_order_acquire);
 
@@ -765,6 +916,10 @@ void test_large_payload() {
   require(received == payload, "large payload mismatch");
 }
 
+#ifndef _WIN32
+// The payload is a >2 GiB read-only MAP_NORESERVE mapping that is never
+// faulted in; Windows cannot hand out readable pages without charging
+// commit, so this case stays Unix-only.
 void test_payload_larger_than_flow_control_window() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
@@ -806,11 +961,11 @@ void test_payload_larger_than_flow_control_window() {
 
   int write_result = write_bytes(&pair.client, payload, payload_size);
   if (write_result != 0) {
-    shutdown(pair.client.connfd, SHUT_RDWR);
-    shutdown(pair.server.connfd, SHUT_RDWR);
+    shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
+    shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
   }
   server_reader.join();
-  shutdown(pair.client.connfd, SHUT_RDWR);
+  shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
   client_control_reader.join();
   munmap(payload, payload_size);
 
@@ -818,6 +973,7 @@ void test_payload_larger_than_flow_control_window() {
   require(!read_failed, "flow-controlled read failed");
   require(received == payload_size, "flow-controlled payload was truncated");
 }
+#endif
 
 // A server-side hold keeps received payload bytes uncredited until the staging
 // they landed in retires. Held bytes saturate at a cap so the reader filling
@@ -828,7 +984,12 @@ void test_server_window_hold_caps_and_releases() {
   exchange_settings(&pair);
 
   constexpr size_t kBurst = LUPINE_FF_STAGING_WINDOW_BYTES;
-  std::vector<char> payload(kBurst, 'h');
+  std::vector<char> payload(kBurst);
+  uint32_t seed = 17;
+  for (char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<char>(seed >> 24);
+  }
   std::vector<char> received(kBurst, '\0');
   rpc_http2_window_credit held;
 
@@ -860,7 +1021,11 @@ void test_server_window_hold_caps_and_releases() {
   int32_t server_lane = rpc_http2_accept_stream(&pair.server);
   require(client_lane > 0 && server_lane == client_lane,
           "second held lane setup failed");
-  std::vector<char> second_payload(kSecondLaneBurst, 'i');
+  std::vector<char> second_payload(kSecondLaneBurst);
+  for (char &byte : second_payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<char>(seed >> 24);
+  }
   std::vector<char> second_received(kSecondLaneBurst, '\0');
   rpc_http2_window_credit second_held;
   std::thread second_reader([&] {
@@ -966,10 +1131,15 @@ void test_reset_wakes_flow_controlled_writer() {
     }
   });
 
-  std::string payload(128 * 1024, 'x');
+  std::string payload(128 * 1024, '\0');
+  uint32_t seed = 29;
+  for (char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<char>(seed >> 24);
+  }
   int write_result = write_bytes(&pair.client, payload.data(), payload.size());
-  shutdown(pair.client.connfd, SHUT_RDWR);
-  shutdown(pair.server.connfd, SHUT_RDWR);
+  shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
+  shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
   server_reset.join();
 
   require(write_result < 0,
@@ -977,18 +1147,15 @@ void test_reset_wakes_flow_controlled_writer() {
   require(!reset_failed, "failed to deliver RST_STREAM");
 }
 
-// Round-trips a multi-block LZ4-framed payload: the transport compresses it
-// lazily block by block (h2.cpp) and rpc_read_payload_part decodes it with
-// chunked, block-aligned reads (compress.cpp). The payload mixes
-// compressible and random data so both compressed and raw block tokens are
-// exercised, and plain cursors surround the framed one as in a real message.
-void test_framed_payload_round_trip() {
+// The transport LZ4-encodes the complete HTTP/2 body, including small RPC
+// fields and large transfer data spread across several caller-owned cursors.
+void test_lz4_content_encoding_round_trip() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
 
   std::string prefix = "head";
   std::string suffix = "tail";
-  std::vector<char> payload(2 * LUPINE_COMPRESS_BLOCK_BYTES + 123457);
+  std::vector<char> payload(2 * LUPINE_RPC_TRANSFER_CHUNK_BYTES + 123457);
   unsigned int seed = 42;
   for (size_t i = 0; i < payload.size() / 2; ++i) {
     payload[i] = static_cast<char>(i % 7);
@@ -1003,34 +1170,32 @@ void test_framed_payload_round_trip() {
   std::vector<char> received(payload.size());
   std::thread reader([&] {
     received_prefix = read_string(&pair.server, prefix.size());
-    size_t first = LUPINE_COMPRESS_BLOCK_BYTES;
-    require(rpc_read_payload_part(&pair.server, received.data(), first) ==
+    size_t first = LUPINE_RPC_TRANSFER_CHUNK_BYTES;
+    require(rpc_http2_read(&pair.server, received.data(), first) ==
                 static_cast<int>(first),
-            "framed read part 1 failed");
-    require(rpc_read_payload_part(&pair.server, received.data() + first,
-                                  received.size() - first) ==
+            "LZ4 read part 1 failed");
+    require(rpc_http2_read(&pair.server, received.data() + first,
+                           received.size() - first) ==
                 static_cast<int>(received.size() - first),
-            "framed read part 2 failed");
+            "LZ4 read part 2 failed");
     received_suffix = read_string(&pair.server, suffix.size());
   });
 
   std::vector<rpc_write_cursor> cursors = {
-      rpc_write_cursor::plain(prefix.data(), prefix.size()),
-      rpc_write_cursor::framed(payload.data(), payload.size()),
-      rpc_write_cursor::plain(suffix.data(), suffix.size())};
-  require(rpc_http2_write(&pair.client, cursors) == 0, "framed write failed");
+      rpc_write_cursor(prefix.data(), prefix.size()),
+      rpc_write_cursor(payload.data(), payload.size()),
+      rpc_write_cursor(suffix.data(), suffix.size())};
+  require(rpc_http2_write(&pair.client, cursors) == 0, "LZ4 write failed");
   reader.join();
-  require(received_prefix == prefix, "framed prefix mismatch");
-  require(received == payload, "framed payload mismatch");
-  require(received_suffix == suffix, "framed suffix mismatch");
+  require(received_prefix == prefix, "LZ4 prefix mismatch");
+  require(received == payload, "LZ4 payload mismatch");
+  require(received_suffix == suffix, "LZ4 suffix mismatch");
 }
 
 void test_rpc_write_queue_grows() {
   conn_t zero_length = {};
   require(rpc_write(&zero_length, nullptr, 0) == 0,
           "zero-length rpc_write failed");
-  require(rpc_write_payload(&zero_length, nullptr, 0) == 0,
-          "zero-length rpc_write_payload failed");
   require(zero_length.write_queue.empty(),
           "zero-length write consumed a queue entry");
 
@@ -1159,7 +1324,7 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
           "rpc_conn_destroy retained the copy buffer");
 }
 
-void test_rpc_lz4_small_payload_round_trip() {
+void test_rpc_small_payload_round_trip() {
   h2_pair pair = make_pair();
 
   std::string prefix = "before";
@@ -1176,43 +1341,42 @@ void test_rpc_lz4_small_payload_round_trip() {
   std::thread reader([&] {
     int32_t stream_id = rpc_http2_accept_stream(&pair.server);
     require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-            "lz4 payload stream bind failed");
-    require(rpc_dispatch(&pair.server, 0) == kOp,
-            "lz4 payload dispatch failed");
+            "payload stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp, "payload dispatch failed");
     require(rpc_read(&pair.server, received_prefix.data(),
                      received_prefix.size()) ==
                 static_cast<int>(received_prefix.size()),
-            "lz4 payload prefix read failed");
-    require(rpc_read_payload(&pair.server, received.data(), received.size()) ==
+            "payload prefix read failed");
+    require(rpc_read(&pair.server, received.data(), received.size()) ==
                 static_cast<int>(received.size()),
-            "lz4 payload payload read failed");
+            "payload read failed");
     require(rpc_read(&pair.server, received_suffix.data(),
                      received_suffix.size()) ==
                 static_cast<int>(received_suffix.size()),
-            "lz4 payload suffix read failed");
-    require(rpc_read_end(&pair.server) > 0, "lz4 payload read_end failed");
+            "payload suffix read failed");
+    require(rpc_read_end(&pair.server) > 0, "payload read_end failed");
     rpc_unbind_http2_stream(&pair.server);
   });
 
   require(rpc_write_start_request(&pair.client, kOp) == 0,
-          "lz4 payload request start failed");
+          "payload request start failed");
   require(rpc_write(&pair.client, prefix.data(), prefix.size()) == 0,
-          "lz4 payload prefix write failed");
-  require(rpc_write_payload(&pair.client, payload.data(), payload.size()) == 0,
-          "lz4 payload payload write failed");
+          "payload prefix write failed");
+  require(rpc_write(&pair.client, payload.data(), payload.size()) == 0,
+          "payload write failed");
   const rpc_write_cursor &payload_cursor = pair.client.write_queue.back();
-  require(payload_cursor.source ==
+  require(payload_cursor.data ==
                   reinterpret_cast<const unsigned char *>(payload.data()) &&
-              payload_cursor.source_size == payload.size(),
-          "small payload was not LZ4-framed");
+              payload_cursor.size == payload.size(),
+          "small payload cursor did not reference its bytes");
   require(rpc_write(&pair.client, suffix.data(), suffix.size()) == 0,
-          "lz4 payload suffix write failed");
-  require(rpc_write_end(&pair.client) > 0, "lz4 payload write_end failed");
+          "payload suffix write failed");
+  require(rpc_write_end(&pair.client) > 0, "payload write_end failed");
   reader.join();
 
-  require(received_prefix == prefix, "lz4 payload prefix mismatch");
-  require(received == payload, "lz4 payload payload mismatch");
-  require(received_suffix == suffix, "lz4 payload suffix mismatch");
+  require(received_prefix == prefix, "payload prefix mismatch");
+  require(received == payload, "payload mismatch");
+  require(received_suffix == suffix, "payload suffix mismatch");
 }
 
 void test_rpc_repeated_responses_on_lane() {
@@ -1220,7 +1384,7 @@ void test_rpc_repeated_responses_on_lane() {
 
   constexpr int kOp = 81;
   constexpr int kChunkCount = 2;
-  std::vector<char> payload(LUPINE_COMPRESS_BLOCK_BYTES, '\0');
+  std::vector<char> payload(LUPINE_RPC_TRANSFER_CHUNK_BYTES, '\0');
   for (size_t i = 0; i < payload.size(); ++i) {
     payload[i] = static_cast<char>(i % 17);
   }
@@ -1239,8 +1403,7 @@ void test_rpc_repeated_responses_on_lane() {
               "repeated response start failed");
       require(rpc_write(&pair.server, &chunk, sizeof(chunk)) == 0,
               "repeated response index write failed");
-      require(rpc_write_payload(&pair.server, payload.data(), payload.size()) ==
-                  0,
+      require(rpc_write(&pair.server, payload.data(), payload.size()) == 0,
               "repeated response payload write failed");
       require(rpc_write_end(&pair.server) == request_id,
               "repeated response write end failed");
@@ -1259,7 +1422,7 @@ void test_rpc_repeated_responses_on_lane() {
     std::vector<char> received(payload.size());
     require(rpc_read(&pair.client, &chunk, sizeof(chunk)) == sizeof(chunk),
             "repeated response index read failed");
-    require(rpc_read_payload(&pair.client, received.data(), received.size()) ==
+    require(rpc_read(&pair.client, received.data(), received.size()) ==
                 static_cast<int>(received.size()),
             "repeated response payload read failed");
     require(rpc_read_end(&pair.client) == request_id,
@@ -1284,7 +1447,8 @@ void test_request_start_rejects_null_and_closed_conn() {
 
 // TSan supports only narrow application VA bands and owns these fixed test
 // addresses itself. CUDA targets are not TSan-instrumented in this project.
-#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__)
+#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
+    !defined(_WIN32)
 void test_rpc_read_uses_w_offset() {
   long configured_page_size = sysconf(_SC_PAGESIZE);
   require(configured_page_size > 0, "page size lookup failed");
@@ -1365,40 +1529,45 @@ void test_rpc_read_uses_w_offset() {
 } // namespace
 
 int main() {
-  test_request_start_rejects_null_and_closed_conn();
-#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__)
-  test_rpc_read_uses_w_offset();
+  RUN_CASE(test_server_rejects_request_without_lz4_encoding());
+  RUN_CASE(test_request_start_rejects_null_and_closed_conn());
+#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
+    !defined(_WIN32)
+  RUN_CASE(test_rpc_read_uses_w_offset());
 #endif
-  test_rpc_write_queue_grows();
-  test_rpc_write_buffer_uses_fixed_allocation();
-  test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy();
-  test_rpc_lz4_small_payload_round_trip();
-  test_rpc_repeated_responses_on_lane();
-  test_response_wait_sends_transport_heartbeat();
-  test_client_to_server();
-  test_server_receives_session_id();
-  test_server_to_client_after_request_headers();
-  test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION);
-  test_head_probe_cuda_version_metadata(nullptr);
-  test_wire_identity_compatibility_rule();
-  test_client_await_ready_reports_wire_identity();
-  test_client_await_ready_reports_va_window();
-  test_va_window_and_aliases_are_disjoint();
-  test_va_claim_bumps_within_arena();
-  test_va_claim_is_disjoint_under_contention();
-  test_fragmented_cursors();
-  test_fragmented_frames_direct();
-  test_partial_read_stages_only_overflow();
-  test_truncated_read_clears_direct_destination();
-  test_close_already_failed_transport_socket();
-  test_abort_failed_transport_with_queued_data();
-  test_independent_stream_lanes();
-  test_socket_reader_hands_off_between_streams();
-  test_large_payload();
-  test_framed_payload_round_trip();
-  test_payload_larger_than_flow_control_window();
-  test_server_window_hold_caps_and_releases();
-  test_reset_wakes_flow_controlled_writer();
+  RUN_CASE(test_rpc_write_queue_grows());
+  RUN_CASE(test_rpc_write_buffer_uses_fixed_allocation());
+  RUN_CASE(test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy());
+  RUN_CASE(test_rpc_small_payload_round_trip());
+  RUN_CASE(test_rpc_repeated_responses_on_lane());
+  RUN_CASE(test_response_wait_sends_transport_heartbeat());
+  RUN_CASE(test_data_provider_frame_sizing());
+  RUN_CASE(test_client_to_server());
+  RUN_CASE(test_server_receives_session_id());
+  RUN_CASE(test_server_to_client_after_request_headers());
+  RUN_CASE(test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION));
+  RUN_CASE(test_head_probe_cuda_version_metadata(nullptr));
+  RUN_CASE(test_wire_identity_compatibility_rule());
+  RUN_CASE(test_client_await_ready_reports_wire_identity());
+  RUN_CASE(test_client_await_ready_reports_va_window());
+  RUN_CASE(test_va_window_and_aliases_are_disjoint());
+  RUN_CASE(test_va_claim_bumps_within_arena());
+  RUN_CASE(test_va_claim_is_disjoint_under_contention());
+  RUN_CASE(test_fragmented_cursors());
+  RUN_CASE(test_fragmented_frames_direct());
+  RUN_CASE(test_partial_read_stages_only_overflow());
+  RUN_CASE(test_truncated_read_clears_direct_destination());
+  RUN_CASE(test_close_already_failed_transport_socket());
+  RUN_CASE(test_abort_failed_transport_with_queued_data());
+  RUN_CASE(test_independent_stream_lanes());
+  RUN_CASE(test_socket_reader_hands_off_between_streams());
+  RUN_CASE(test_large_payload());
+  RUN_CASE(test_lz4_content_encoding_round_trip());
+#ifndef _WIN32
+  RUN_CASE(test_payload_larger_than_flow_control_window());
+#endif
+  RUN_CASE(test_server_window_hold_caps_and_releases());
+  RUN_CASE(test_reset_wakes_flow_controlled_writer());
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }
