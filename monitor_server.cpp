@@ -700,7 +700,10 @@ int handle_lupine_client_metadata(conn_t *conn) {
   int status = 0;
   lupine_client_metadata metadata = {};
   if (header.payload_size > LUPINE_CLIENT_METADATA_MAX_PAYLOAD) {
-    return -1;
+    status = 2;
+    if (rpc_drain(conn, header.payload_size) < 0) {
+      return -1;
+    }
   } else {
     std::array<unsigned char, LUPINE_CLIENT_METADATA_MAX_PAYLOAD> payload = {};
     if (header.payload_size != 0 &&
