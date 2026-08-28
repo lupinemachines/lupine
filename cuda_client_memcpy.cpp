@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <thread>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sched.h>
@@ -2862,6 +2864,270 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   return return_value;
 }
 
+// A destination server's ordinary HtoD callback treats its source address as
+// opaque. When that address belongs to another route, fill the unchanged
+// callback response with ordinary DtoH copies while the destination consumes
+// the other slot.
+struct lupine_cross_route_device_source {
+  enum slot_state { slot_free, slot_loading, slot_ready, slot_in_use };
+
+  struct slot {
+    std::vector<unsigned char> storage;
+    size_t logical_offset = 0;
+    size_t size = 0;
+    slot_state state = slot_free;
+  };
+
+  ~lupine_cross_route_device_source() {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      stopping = true;
+    }
+    condition.notify_all();
+    if (worker.joinable()) {
+      worker.join();
+    }
+  }
+
+  CUdeviceptr source = 0;
+  lupine_route source_route;
+  CUcontext source_context = nullptr;
+  size_t width = 0;
+  size_t rows = 0;
+  size_t row_stride = 0;
+  size_t slices = 0;
+  size_t slice_stride = 0;
+  size_t bytes = 0;
+  std::array<slot, 2> slots;
+  std::mutex mutex;
+  std::condition_variable condition;
+  std::thread worker;
+  size_t next_offset = 0;
+  int consumer_slot = -1;
+  CUresult error = CUDA_SUCCESS;
+  bool finished = false;
+  bool stopping = false;
+
+  CUresult read(void *destination, size_t logical_offset,
+                size_t byte_count) const {
+    if (row_stride == width && slice_stride == width * rows) {
+      return cuMemcpyDtoH_v2(destination, source + logical_offset, byte_count);
+    }
+
+    auto *output = static_cast<unsigned char *>(destination);
+    size_t copied = 0;
+    while (copied < byte_count) {
+      size_t position = logical_offset + copied;
+      size_t row_index = position / width;
+      size_t x = position - row_index * width;
+      size_t slice = row_index / rows;
+      size_t row = row_index - slice * rows;
+      CUdeviceptr row_source =
+          source + slice * slice_stride + row * row_stride + x;
+      size_t remaining = byte_count - copied;
+      CUresult result = CUDA_SUCCESS;
+      if (x != 0 || remaining < width) {
+        size_t segment = std::min(remaining, width - x);
+        result = cuMemcpyDtoH_v2(output + copied, row_source, segment);
+        copied += segment;
+      } else {
+        size_t copied_rows = std::min(remaining / width, rows - row);
+        CUDA_MEMCPY2D copy = {};
+        copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+        copy.srcDevice = row_source;
+        copy.srcPitch = row_stride;
+        copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+        copy.dstHost = output + copied;
+        copy.dstPitch = width;
+        copy.WidthInBytes = width;
+        copy.Height = copied_rows;
+        result = cuMemcpy2D_v2(&copy);
+        copied += copied_rows * width;
+      }
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+    }
+    return CUDA_SUCCESS;
+  }
+
+  void produce() {
+    CUresult context_result =
+        lupine_set_current_context_on_route(source_route, source_context);
+    if (context_result != CUDA_SUCCESS) {
+      std::lock_guard<std::mutex> lock(mutex);
+      error = context_result;
+      finished = true;
+      condition.notify_all();
+      return;
+    }
+    for (;;) {
+      size_t slot_index = 0;
+      size_t logical_offset = 0;
+      size_t chunk = 0;
+      {
+        std::unique_lock<std::mutex> lock(mutex);
+        condition.wait(lock, [&] {
+          return stopping || next_offset == bytes ||
+                 std::any_of(slots.begin(), slots.end(), [](const slot &entry) {
+                   return entry.state == slot_free;
+                 });
+        });
+        if (stopping) {
+          return;
+        }
+        if (next_offset == bytes) {
+          finished = true;
+          condition.notify_all();
+          return;
+        }
+        while (slots[slot_index].state != slot_free) {
+          ++slot_index;
+        }
+        slot &entry = slots[slot_index];
+        logical_offset = next_offset;
+        chunk = std::min(entry.storage.size(), bytes - next_offset);
+        next_offset += chunk;
+        entry.logical_offset = logical_offset;
+        entry.size = chunk;
+        entry.state = slot_loading;
+      }
+
+      CUresult result =
+          read(slots[slot_index].storage.data(), logical_offset, chunk);
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        slot &entry = slots[slot_index];
+        if (result != CUDA_SUCCESS) {
+          entry.state = slot_free;
+          error = result;
+          finished = true;
+          condition.notify_all();
+          return;
+        }
+        entry.state = slot_ready;
+      }
+      condition.notify_all();
+    }
+  }
+
+  bool start() {
+    try {
+      worker = std::thread(&lupine_cross_route_device_source::produce, this);
+    } catch (...) {
+      return false;
+    }
+    return true;
+  }
+
+  int refill(rpc_write_cursor *cursor) {
+    std::unique_lock<std::mutex> lock(mutex);
+    if (consumer_slot >= 0) {
+      slots[consumer_slot].state = slot_free;
+      consumer_slot = -1;
+      condition.notify_all();
+    }
+
+    condition.wait(lock, [&] {
+      return error != CUDA_SUCCESS || finished ||
+             std::any_of(slots.begin(), slots.end(), [](const slot &entry) {
+               return entry.state == slot_ready;
+             });
+    });
+    int ready_slot = -1;
+    for (size_t index = 0; index < slots.size(); ++index) {
+      if (slots[index].state == slot_ready &&
+          (ready_slot < 0 ||
+           slots[index].logical_offset < slots[ready_slot].logical_offset)) {
+        ready_slot = static_cast<int>(index);
+      }
+    }
+    if (ready_slot >= 0) {
+      slot &entry = slots[ready_slot];
+      entry.state = slot_in_use;
+      consumer_slot = ready_slot;
+      cursor->data = entry.storage.data();
+      cursor->size = entry.size;
+      return 1;
+    }
+    if (error != CUDA_SUCCESS) {
+      LUPINE_LOG_ERROR("Cross-route DtoD source read failed: " << error);
+      return -1;
+    }
+    return 0;
+  }
+};
+
+static int lupine_refill_cross_route_device_source(void *opaque,
+                                                   rpc_write_cursor *cursor) {
+  auto *source = static_cast<lupine_cross_route_device_source *>(opaque);
+  if (source == nullptr || cursor == nullptr) {
+    return -1;
+  }
+  return source->refill(cursor);
+}
+
+// Returns 1 when the address is not a cross-route device source, 0 after
+// writing its complete response, and -1 on a transport or source-copy error.
+extern "C" int lupine_write_cross_route_device_source(
+    conn_t *destination_conn, int request_id, CUdeviceptr source, size_t width,
+    size_t rows, size_t row_stride, size_t slices, size_t slice_stride) {
+  if (destination_conn == nullptr || source == 0 ||
+      !lupine_deviceptr_is_tracked(source) ||
+      lupine_copy_pointer_is_host(source)) {
+    return 1;
+  }
+  lupine_route source_route = lupine_route_for_deviceptr(source);
+  lupine_route destination_route =
+      lupine_remote_route_for_conn(destination_conn);
+  if (lupine_route_is_local(source_route) ||
+      lupine_routes_share_server(source_route, destination_route)) {
+    return 1;
+  }
+  if (width == 0 || rows == 0 || slices == 0 || width > SIZE_MAX / rows ||
+      width * rows > SIZE_MAX / slices) {
+    return -1;
+  }
+  CUcontext source_context = lupine_context_for_deviceptr(source);
+  if (source_context == nullptr) {
+    return -1;
+  }
+
+  lupine_cross_route_device_source producer;
+  producer.source = source;
+  producer.source_route = source_route;
+  producer.source_context = source_context;
+  producer.width = width;
+  producer.rows = rows;
+  producer.row_stride = row_stride;
+  producer.slices = slices;
+  producer.slice_stride = slice_stride;
+  producer.bytes = width * rows * slices;
+  try {
+    // The ordinary source DtoH path pipelines transfers at this size while
+    // keeping client memory independent of the complete copy size.
+    constexpr size_t source_chunk_bytes = 8 * LUPINE_RPC_TRANSFER_CHUNK_BYTES;
+    size_t remaining = producer.bytes;
+    for (auto &slot : producer.slots) {
+      size_t capacity = std::min(remaining, source_chunk_bytes);
+      slot.storage.resize(capacity);
+      remaining -= capacity;
+    }
+  } catch (...) {
+    return -1;
+  }
+  if (!producer.start()) {
+    return -1;
+  }
+
+  rpc_write_cursor cursor(lupine_refill_cross_route_device_source, &producer);
+  if (rpc_write_response_cursors(destination_conn, request_id, &cursor, 1) <
+      0) {
+    return -1;
+  }
+  return 0;
+}
+
 // The chunks are staged in a bounded pool on the server, so a copy of any size
 // costs the same fixed staging there.
 extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
@@ -3014,6 +3280,33 @@ extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
   return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
 }
 
+static bool lupine_device_copy_uses_remote_callback(CUdeviceptr destination,
+                                                    CUdeviceptr source) {
+  if (!lupine_deviceptr_is_tracked(source) ||
+      lupine_copy_pointer_is_host(source)) {
+    return false;
+  }
+  lupine_route destination_route = lupine_route_for_deviceptr(destination);
+  lupine_route source_route = lupine_route_for_deviceptr(source);
+  return !lupine_route_is_local(destination_route) &&
+         !lupine_route_is_local(source_route) &&
+         !lupine_routes_share_server(destination_route, source_route);
+}
+
+static CUDA_MEMCPY2D lupine_device_source_as_host(const CUDA_MEMCPY2D &copy) {
+  CUDA_MEMCPY2D staged = copy;
+  staged.srcMemoryType = CU_MEMORYTYPE_HOST;
+  staged.srcHost = reinterpret_cast<const void *>(copy.srcDevice);
+  return staged;
+}
+
+static CUDA_MEMCPY3D lupine_device_source_as_host(const CUDA_MEMCPY3D &copy) {
+  CUDA_MEMCPY3D staged = copy;
+  staged.srcMemoryType = CU_MEMORYTYPE_HOST;
+  staged.srcHost = reinterpret_cast<const void *>(copy.srcDevice);
+  return staged;
+}
+
 extern "C" CUresult
 lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                                size_t ByteCount, CUstream hStream, bool async) {
@@ -3024,6 +3317,12 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                    << " stream=" << hStream);
   if (ByteCount == 0) {
     return CUDA_SUCCESS;
+  }
+
+  if (lupine_device_copy_uses_remote_callback(dstDevice, srcDevice)) {
+    const void *source = reinterpret_cast<const void *>(srcDevice);
+    return async ? cuMemcpyHtoDAsync_v2(dstDevice, source, ByteCount, hStream)
+                 : cuMemcpyHtoD_v2(dstDevice, source, ByteCount);
   }
 
   constexpr size_t chunk_size = 16 * 1024 * 1024;
@@ -3285,7 +3584,11 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
-      // Different devices: the rows route through the client.
+      if (lupine_device_copy_uses_remote_callback(copy.dstDevice,
+                                                  copy.srcDevice)) {
+        CUDA_MEMCPY2D staged = lupine_device_source_as_host(copy);
+        return cuMemcpy2D_v2(&staged);
+      }
       for (size_t row = 0; row < copy.Height; ++row) {
         return_value = lupine_cuMemcpyDtoD_via_client(
             copy.dstDevice + (copy.dstY + row) * copy.dstPitch +
@@ -3428,7 +3731,11 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
-      // Different devices: the rows route through the client.
+      if (lupine_device_copy_uses_remote_callback(copy.dstDevice,
+                                                  copy.srcDevice)) {
+        CUDA_MEMCPY2D staged = lupine_device_source_as_host(copy);
+        return cuMemcpy2DUnaligned_v2(&staged);
+      }
       for (size_t row = 0; row < copy.Height; ++row) {
         return_value = lupine_cuMemcpyDtoD_via_client(
             copy.dstDevice + (copy.dstY + row) * copy.dstPitch +
@@ -3574,7 +3881,11 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
-      // Different devices: the rows route through the client.
+      if (lupine_device_copy_uses_remote_callback(copy.dstDevice,
+                                                  copy.srcDevice)) {
+        CUDA_MEMCPY2D staged = lupine_device_source_as_host(copy);
+        return cuMemcpy2DAsync_v2(&staged, hStream);
+      }
       for (size_t row = 0; row < copy.Height; ++row) {
         return_value = lupine_cuMemcpyDtoD_via_client(
             copy.dstDevice + (copy.dstY + row) * copy.dstPitch +
@@ -3736,7 +4047,11 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
-      // Different devices: the rows route through the client.
+      if (lupine_device_copy_uses_remote_callback(copy.dstDevice,
+                                                  copy.srcDevice)) {
+        CUDA_MEMCPY3D staged = lupine_device_source_as_host(copy);
+        return cuMemcpy3D_v2(&staged);
+      }
       for (size_t z = 0; z < copy.Depth; ++z) {
         for (size_t row = 0; row < copy.Height; ++row) {
           return_value = lupine_cuMemcpyDtoD_via_client(
@@ -3886,7 +4201,11 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
-      // Different devices: the rows route through the client.
+      if (lupine_device_copy_uses_remote_callback(copy.dstDevice,
+                                                  copy.srcDevice)) {
+        CUDA_MEMCPY3D staged = lupine_device_source_as_host(copy);
+        return cuMemcpy3DAsync_v2(&staged, hStream);
+      }
       for (size_t z = 0; z < copy.Depth; ++z) {
         for (size_t row = 0; row < copy.Height; ++row) {
           return_value = lupine_cuMemcpyDtoD_via_client(

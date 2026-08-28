@@ -7937,13 +7937,25 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
       size_t span = read.width + (read.rows - 1) * read.row_stride +
                     (read.slices - 1) * read.slice_stride;
-      read.source = static_cast<const unsigned char *>(
-          lupine_mapped_host_read_source(data, span));
       int request_id = rpc_read_end(conn);
       if (request_id < 0) {
         LUPINE_LOG_ERROR("Invalid host-memory side-effect request.");
         break;
       }
+
+      int device_source = lupine_write_cross_route_device_source(
+          conn, request_id, reinterpret_cast<CUdeviceptr>(data), read.width,
+          read.rows, read.row_stride, read.slices, read.slice_stride);
+      if (device_source < 0) {
+        LUPINE_LOG_ERROR("Failed to proxy cross-route device memory.");
+        break;
+      }
+      if (device_source == 0) {
+        continue;
+      }
+
+      read.source = static_cast<const unsigned char *>(
+          lupine_mapped_host_read_source(data, span));
 
       if (rpc_write_start_response(conn, request_id) < 0) {
         LUPINE_LOG_ERROR("Failed to return host-memory side effect.");

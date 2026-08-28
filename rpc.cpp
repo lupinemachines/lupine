@@ -869,6 +869,33 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
   return 0;
 }
 
+int rpc_write_response_cursors(conn_t *conn, int read_id,
+                               const rpc_write_cursor *cursors, size_t count) {
+  if (conn == nullptr || conn->closed || read_id < 0 ||
+      (count != 0 && cursors == nullptr) ||
+      count > static_cast<size_t>(INT_MAX) - 2) {
+    return -1;
+  }
+  int32_t stream_id = rpc_current_http2_stream(conn);
+  if (stream_id < 0) {
+    return -1;
+  }
+
+  int response_op = -1;
+  std::vector<rpc_write_cursor> response;
+  try {
+    response.reserve(count + 2);
+    response.emplace_back(&read_id, sizeof(read_id));
+    response.emplace_back(&response_op, sizeof(response_op));
+    if (count != 0) {
+      response.insert(response.end(), cursors, cursors + count);
+    }
+  } catch (const std::bad_alloc &) {
+    return -1;
+  }
+  return rpc_http2_write_stream(conn, stream_id, response);
+}
+
 // rpc_write_end finalizes the current request builder on the given connection
 // index and sends the request to the server.
 //

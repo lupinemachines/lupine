@@ -135,6 +135,7 @@ void h2_release_codecs(h2_stream &stream) {
 
 struct h2_write_source {
   std::vector<rpc_write_cursor> *cursors = nullptr;
+  rpc_write_cursor *refill_cursor = nullptr;
   size_t index = 0;
   uint64_t progress = 0;
   std::vector<unsigned char> pending;
@@ -348,12 +349,17 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
     rpc_write_cursor *cursor = nullptr;
     if (write_source->cursors != nullptr) {
       auto &cursors = *write_source->cursors;
-      while (write_source->index < cursors.size() &&
-             cursors[write_source->index].remaining() == 0) {
+      while (write_source->index < cursors.size()) {
+        auto &candidate = cursors[write_source->index];
+        if (candidate.remaining() != 0) {
+          cursor = &candidate;
+          break;
+        }
+        if (candidate.refill != nullptr && !candidate.exhausted) {
+          write_source->refill_cursor = &candidate;
+          return NGHTTP2_ERR_DEFERRED;
+        }
         ++write_source->index;
-      }
-      if (write_source->index < cursors.size()) {
-        cursor = &cursors[write_source->index];
       }
     }
 
@@ -408,7 +414,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
     cursor->size -= input;
     input_budget -= input;
     write_source->progress += input;
-    if (cursor->size == 0) {
+    if (cursor->size == 0 && cursor->refill == nullptr) {
       ++write_source->index;
     }
   }
@@ -871,6 +877,28 @@ int h2_send_source_locked(h2_transport *transport, int32_t stream_id,
       result = -1;
       break;
     }
+    if (source->refill_cursor != nullptr) {
+      rpc_write_cursor *cursor = source->refill_cursor;
+      pthread_mutex_unlock(&transport->session_mutex);
+      int refill = cursor->refill(cursor->refill_context, cursor);
+      pthread_mutex_lock(&transport->session_mutex);
+      source->refill_cursor = nullptr;
+      if (transport->transport_failed || refill < 0 ||
+          (refill == 0 && cursor->remaining() != 0) ||
+          (refill > 0 &&
+           (cursor->data == nullptr || cursor->remaining() == 0))) {
+        result = -1;
+        break;
+      }
+      if (refill == 0) {
+        cursor->exhausted = true;
+      }
+      if (nghttp2_session_resume_data(transport->session, stream_id) != 0) {
+        result = -1;
+        break;
+      }
+      continue;
+    }
     if (source->progress == progress &&
         pthread_cond_wait(&transport->session_progress,
                           &transport->session_mutex) != 0) {
@@ -1163,10 +1191,9 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
 int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
                            std::vector<rpc_write_cursor> &cursors) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  if (std::all_of(cursors.begin(), cursors.end(),
-                  [](const rpc_write_cursor &cursor) {
-                    return cursor.remaining() == 0;
-                  })) {
+  if (std::all_of(
+          cursors.begin(), cursors.end(),
+          [](const rpc_write_cursor &cursor) { return !cursor.pending(); })) {
     return 0;
   }
 

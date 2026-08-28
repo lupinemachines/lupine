@@ -50,6 +50,7 @@ extern "C" lupine_route lupine_route_for_graph(CUgraph graph);
 extern "C" lupine_route lupine_route_for_graph_node(CUgraphNode node);
 extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec);
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);
+extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr);
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
 extern "C" conn_t *lupine_rpc_conn_for_current_context();

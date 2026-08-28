@@ -1192,6 +1192,89 @@ void test_lz4_content_encoding_round_trip() {
   require(received_suffix == suffix, "LZ4 suffix mismatch");
 }
 
+struct refill_chunks {
+  std::vector<std::string> chunks;
+  size_t index = 0;
+  size_t calls = 0;
+};
+
+int refill_next_chunk(void *opaque, rpc_write_cursor *cursor) {
+  auto *source = static_cast<refill_chunks *>(opaque);
+  ++source->calls;
+  if (source->index == source->chunks.size()) {
+    return 0;
+  }
+  const std::string &chunk = source->chunks[source->index++];
+  cursor->data = reinterpret_cast<const unsigned char *>(chunk.data());
+  cursor->size = chunk.size();
+  return 1;
+}
+
+void test_refillable_cursor_round_trip() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  refill_chunks source;
+  source.chunks = {
+      "first", std::string(LUPINE_RPC_TRANSFER_CHUNK_BYTES + 17, 'x'), "last"};
+  std::string expected = "prefix";
+  for (const auto &chunk : source.chunks) {
+    expected += chunk;
+  }
+  expected += "suffix";
+
+  std::string received;
+  std::thread reader(
+      [&] { received = read_string(&pair.server, expected.size()); });
+  std::string prefix = "prefix";
+  std::string suffix = "suffix";
+  std::vector<rpc_write_cursor> cursors = {
+      rpc_write_cursor(prefix.data(), prefix.size()),
+      rpc_write_cursor(refill_next_chunk, &source),
+      rpc_write_cursor(suffix.data(), suffix.size())};
+  require(rpc_http2_write(&pair.client, cursors) == 0,
+          "refillable cursor write failed");
+  reader.join();
+
+  require(received == expected, "refillable cursor payload mismatch");
+  require(source.calls == source.chunks.size() + 1,
+          "refillable cursor did not reach EOF exactly once");
+}
+
+void test_refillable_cursor_across_flow_control_window() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  refill_chunks source;
+  constexpr size_t chunk_size = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
+  source.chunks.resize(3, std::string(chunk_size, '\0'));
+  uint32_t seed = 91;
+  for (auto &chunk : source.chunks) {
+    for (char &byte : chunk) {
+      seed = seed * 1664525u + 1013904223u;
+      byte = static_cast<char>(seed >> 24);
+    }
+  }
+
+  std::string received;
+  std::thread reader([&] {
+    received = read_string(&pair.server, chunk_size * source.chunks.size());
+  });
+  rpc_write_cursor cursor(refill_next_chunk, &source);
+  std::vector<rpc_write_cursor> cursors = {cursor};
+  require(rpc_http2_write(&pair.client, cursors) == 0,
+          "flow-controlled refillable cursor write failed");
+  reader.join();
+
+  for (size_t index = 0; index < source.chunks.size(); ++index) {
+    require(received.compare(index * chunk_size, chunk_size,
+                             source.chunks[index]) == 0,
+            "flow-controlled refillable cursor payload mismatch");
+  }
+  require(source.calls == source.chunks.size() + 1,
+          "flow-controlled refillable cursor did not reach EOF exactly once");
+}
+
 void test_rpc_write_queue_grows() {
   conn_t zero_length = {};
   require(rpc_write(&zero_length, nullptr, 0) == 0,
@@ -1563,7 +1646,9 @@ int main() {
   RUN_CASE(test_socket_reader_hands_off_between_streams());
   RUN_CASE(test_large_payload());
   RUN_CASE(test_lz4_content_encoding_round_trip());
+  RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
+  RUN_CASE(test_refillable_cursor_across_flow_control_window());
   RUN_CASE(test_payload_larger_than_flow_control_window());
 #endif
   RUN_CASE(test_server_window_hold_caps_and_releases());
