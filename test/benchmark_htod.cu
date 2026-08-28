@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,6 +16,16 @@ struct host_buffer {
   bool unified_descriptor = false;
   std::vector<unsigned char> pageable;
 };
+
+static void fill_incompressible(unsigned char *data, size_t bytes) {
+  uint32_t state = 0x9e3779b9u;
+  for (size_t index = 0; index < bytes; ++index) {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    data[index] = static_cast<unsigned char>(state);
+  }
+}
 
 static CUresult allocate_host(host_buffer *buffer, int kind, size_t bytes) {
   if (kind == 0) {
@@ -126,7 +137,10 @@ int main() {
         free_host(&source);
         continue;
       }
-      std::memset(source.data, 0x5a, host_bytes);
+      // The transport compresses its framing. Random-looking input keeps this
+      // benchmark focused on HtoD staging and network bandwidth rather than
+      // the compression ratio of a repeated-byte buffer.
+      fill_incompressible(source.data, host_bytes);
 
       auto print = [&](const char *api, const char *shape, double gbps) {
         std::printf("%s,%s,%s,%zu,%d,%.6f\n", source.name, api, shape, bytes,

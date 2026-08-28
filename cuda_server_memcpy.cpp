@@ -7,6 +7,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
+#include "ops/smemcpy.h"
 #include "rpc.h"
 
 #include <array>
@@ -137,6 +138,19 @@ static CUresult lupine_current_htod_context(conn_t *conn,
   return result == CUDA_SUCCESS ? cuCtxGetDevice(device) : result;
 }
 
+static CUresult lupine_runtime_result(cudaError_t result) {
+  switch (result) {
+  case cudaSuccess:
+    return CUDA_SUCCESS;
+  case cudaErrorInvalidConfiguration:
+    return CUDA_ERROR_INVALID_VALUE;
+  case cudaErrorInvalidDeviceFunction:
+    return CUDA_ERROR_INVALID_IMAGE;
+  default:
+    return static_cast<CUresult>(result);
+  }
+}
+
 enum class lupine_htod_copy_kind { linear, two_dimensional, three_dimensional };
 
 struct lupine_htod_chunk {
@@ -147,7 +161,10 @@ struct lupine_htod_chunk {
   size_t slices = 0;
   size_t slice_stride = 0;
   size_t bytes = 0;
+  size_t ring_offset = 0;
   lupine_htod_copy_kind kind = lupine_htod_copy_kind::linear;
+  CUfunction smemcpy_function = nullptr;
+  lupine_smemcpy_launch smemcpy = {};
   CUdeviceptr linear_destination = 0;
   CUDA_MEMCPY2D copy_2d = {};
   CUDA_MEMCPY3D copy_3d = {};
@@ -165,6 +182,9 @@ class lupine_htod_side_effect_ring {
 public:
   static constexpr size_t slot_count = 2;
   static constexpr size_t slot_bytes = 8 * 1024 * 1024;
+  static constexpr size_t slot_headroom = 15;
+  static constexpr size_t slot_stride =
+      (slot_bytes + slot_headroom + 127) & ~size_t(127);
   static constexpr uint32_t slot_free = 0;
   static constexpr uint32_t slot_ready = 1;
 
@@ -183,7 +203,8 @@ public:
       (void)cuMemFreeHost(signals_);
     }
     if (storage_ != nullptr) {
-      (void)cuMemFreeHost(storage_);
+      (void)cuMemHostUnregister(storage_);
+      std::free(storage_);
     }
   }
 
@@ -194,9 +215,21 @@ public:
     }
 
     void *storage = nullptr;
-    CUresult result = cuMemHostAlloc(&storage, slot_count * slot_bytes,
-                                     CU_MEMHOSTALLOC_PORTABLE);
+    if (posix_memalign(&storage, 4096, slot_count * slot_stride) != 0) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    CUresult result = cuMemHostRegister(storage, slot_count * slot_stride,
+                                        CU_MEMHOSTREGISTER_PORTABLE |
+                                            CU_MEMHOSTREGISTER_DEVICEMAP);
     if (result != CUDA_SUCCESS) {
+      std::free(storage);
+      return result;
+    }
+    CUdeviceptr device_storage = 0;
+    result = cuMemHostGetDevicePointer_v2(&device_storage, storage, 0);
+    if (result != CUDA_SUCCESS) {
+      (void)cuMemHostUnregister(storage);
+      std::free(storage);
       return result;
     }
     slot_signal *signals = nullptr;
@@ -204,14 +237,16 @@ public:
         reinterpret_cast<void **>(&signals), slot_count * sizeof(slot_signal),
         CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP);
     if (result != CUDA_SUCCESS) {
-      (void)cuMemFreeHost(storage);
+      (void)cuMemHostUnregister(storage);
+      std::free(storage);
       return result;
     }
     CUdeviceptr device_signals = 0;
     result = cuMemHostGetDevicePointer_v2(&device_signals, signals, 0);
     if (result != CUDA_SUCCESS) {
       (void)cuMemFreeHost(signals);
-      (void)cuMemFreeHost(storage);
+      (void)cuMemHostUnregister(storage);
+      std::free(storage);
       return result;
     }
     for (size_t slot = 0; slot < slot_count; ++slot) {
@@ -222,10 +257,26 @@ public:
     result = cuStreamCreate(&transfer_stream, CU_STREAM_NON_BLOCKING);
     if (result != CUDA_SUCCESS) {
       (void)cuMemFreeHost(signals);
-      (void)cuMemFreeHost(storage);
+      (void)cuMemHostUnregister(storage);
+      std::free(storage);
       return result;
     }
+    cudaFunction_t smemcpy_function = nullptr;
+    // Load the smemcpy module before any wait-value nodes can reach this
+    // stream. A first-use runtime launch may synchronize module loading with
+    // earlier stream work, which would deadlock if that work is waiting for
+    // the callback to publish a ring slot.
+    cudaError_t runtime_result =
+        cudaGetFuncBySymbol(&smemcpy_function, lupine_smemcpy_kernel());
+    if (runtime_result != cudaSuccess) {
+      (void)cuStreamDestroy_v2(transfer_stream);
+      (void)cuMemFreeHost(signals);
+      (void)cuMemHostUnregister(storage);
+      std::free(storage);
+      return lupine_runtime_result(runtime_result);
+    }
     storage_ = storage;
+    device_storage_ = device_storage;
     signals_ = signals;
     device_signals_ = device_signals;
     transfer_stream_ = transfer_stream;
@@ -246,8 +297,12 @@ public:
     execution_condition_.notify_all();
   }
 
-  void *data(size_t slot) const {
-    return static_cast<unsigned char *>(storage_) + slot * slot_bytes;
+  void *data(size_t slot, size_t offset = 0) const {
+    return static_cast<unsigned char *>(storage_) + slot * slot_stride + offset;
+  }
+
+  CUdeviceptr device_data(size_t slot, size_t offset = 0) const {
+    return device_storage_ + slot * slot_stride + offset;
   }
 
   CUdeviceptr device_signal(size_t slot) const {
@@ -255,6 +310,51 @@ public:
   }
 
   CUstream transfer_stream() const { return transfer_stream_; }
+
+  conn_t *connection() const { return conn_; }
+
+  CUcontext context() const { return context_; }
+
+  bool data_offset(const void *pointer, size_t *offset) const {
+    uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
+    uintptr_t begin = reinterpret_cast<uintptr_t>(storage_);
+    size_t bytes = slot_count * slot_stride;
+    if (address < begin || address - begin >= bytes) {
+      return false;
+    }
+    *offset = address - begin;
+    return true;
+  }
+
+  bool device_data_offset(CUdeviceptr pointer, size_t *offset) const {
+    size_t bytes = slot_count * slot_stride;
+    if (pointer < device_storage_ || pointer - device_storage_ >= bytes) {
+      return false;
+    }
+    *offset = static_cast<size_t>(pointer - device_storage_);
+    return true;
+  }
+
+  bool signal_offset(CUdeviceptr pointer, size_t *offset) const {
+    size_t bytes = slot_count * sizeof(slot_signal);
+    if (pointer < device_signals_ || pointer - device_signals_ >= bytes) {
+      return false;
+    }
+    *offset = static_cast<size_t>(pointer - device_signals_);
+    return true;
+  }
+
+  void *data_at(size_t offset) const {
+    return static_cast<unsigned char *>(storage_) + offset;
+  }
+
+  CUdeviceptr device_data_at(size_t offset) const {
+    return device_storage_ + offset;
+  }
+
+  CUdeviceptr signal_at(size_t offset) const {
+    return device_signals_ + offset;
+  }
 
   CUresult synchronize() const { return cuStreamSynchronize(transfer_stream_); }
 
@@ -286,7 +386,8 @@ public:
              slot_free) {
         std::this_thread::yield();
       }
-      if (rpc_read(conn_, data(slot), plan.chunks[index].bytes) < 0) {
+      if (rpc_read(conn_, data(slot, plan.chunks[index].ring_offset),
+                   plan.chunks[index].bytes) < 0) {
         return -1;
       }
       signals_[slot].value.store(slot_ready, std::memory_order_release);
@@ -317,6 +418,7 @@ private:
   std::condition_variable execution_condition_;
   bool execution_active_ = false;
   void *storage_ = nullptr;
+  CUdeviceptr device_storage_ = 0;
   slot_signal *signals_ = nullptr;
   CUdeviceptr device_signals_ = 0;
   CUstream transfer_stream_ = nullptr;
@@ -391,18 +493,12 @@ lupine_prepare_htod_side_effect_ring(lupine_staging_state &state,
 class lupine_htod_graph_execution {
 public:
   explicit lupine_htod_graph_execution(
-      std::shared_ptr<lupine_htod_side_effect_ring> ring)
-      : ring_(std::move(ring)) {}
+      std::shared_ptr<lupine_htod_side_effect_ring> ring, size_t plan_count = 0)
+      : ring_(std::move(ring)), plan_count_(plan_count) {}
 
   size_t reserve_plan() {
     std::lock_guard<std::mutex> lock(mutex_);
     return plan_count_++;
-  }
-
-  void begin() {
-    ring_->acquire_execution();
-    std::lock_guard<std::mutex> lock(mutex_);
-    running_plan_ = 0;
   }
 
   void wait_for_turn(size_t plan) {
@@ -413,16 +509,16 @@ public:
   void finish_turn() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      ++running_plan_;
+      running_plan_ = (running_plan_ + 1) % plan_count_;
     }
     condition_.notify_all();
   }
 
-  void finish() { ring_->release_execution(); }
-
   const std::shared_ptr<lupine_htod_side_effect_ring> &ring() const {
     return ring_;
   }
+
+  size_t plan_count() const { return plan_count_; }
 
 private:
   std::shared_ptr<lupine_htod_side_effect_ring> ring_;
@@ -465,11 +561,21 @@ lupine_htod_graph_execution_for(
 
 struct lupine_htod_callback_data {
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  std::shared_ptr<const lupine_htod_plan> plan;
+  std::shared_ptr<lupine_htod_plan> plan;
   std::shared_ptr<lupine_htod_graph_execution> graph_execution;
   std::shared_ptr<lupine_htod_capture_events> capture_events;
   size_t graph_plan = 0;
 };
+
+using lupine_htod_exec_resources =
+    std::vector<std::shared_ptr<lupine_htod_callback_data>>;
+
+static libcuckoo::cuckoohash_map<CUgraphExec, lupine_htod_exec_resources> &
+lupine_htod_exec_resource_map() {
+  static auto *resources =
+      new libcuckoo::cuckoohash_map<CUgraphExec, lupine_htod_exec_resources>();
+  return *resources;
+}
 
 static void CUDA_CB lupine_htod_side_effect_callback(void *opaque) {
   auto *data = static_cast<lupine_htod_callback_data *>(opaque);
@@ -492,10 +598,336 @@ static void CUDA_CB lupine_htod_side_effect_callback(void *opaque) {
   }
 }
 
+CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
+                                        lupine_graph_resources *resources,
+                                        lupine_htod_graph_binding *binding) {
+  *binding = {};
+  binding->original = graph;
+  binding->prepared = graph;
+  std::shared_ptr<lupine_htod_graph_execution> captured_execution;
+  if (resources == nullptr ||
+      !lupine_htod_graph_executions().find(resources, captured_execution)) {
+    return CUDA_SUCCESS;
+  }
+
+  CUresult result = cuGraphClone(&binding->prepared, graph);
+  if (result != CUDA_SUCCESS) {
+    binding->prepared = graph;
+    return result;
+  }
+
+  auto captured_ring = captured_execution->ring();
+  std::shared_ptr<lupine_htod_side_effect_ring> ring;
+  std::shared_ptr<lupine_htod_graph_execution> execution;
+  try {
+    ring = std::make_shared<lupine_htod_side_effect_ring>(
+        captured_ring->connection(), captured_ring->context());
+    execution = std::make_shared<lupine_htod_graph_execution>(
+        ring, captured_execution->plan_count());
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  result = ring->prepare();
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+
+  size_t node_count = 0;
+  result = cuGraphGetNodes(binding->prepared, nullptr, &node_count);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  std::vector<CUgraphNode> nodes;
+  try {
+    nodes.resize(node_count);
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  if (node_count != 0) {
+    result = cuGraphGetNodes(binding->prepared, nodes.data(), &node_count);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    nodes.resize(node_count);
+  }
+
+  lupine_htod_exec_resources callbacks;
+  std::unordered_map<CUevent, CUevent> events;
+  std::unordered_set<CUfunction> smemcpy_functions;
+  size_t expected_smemcpy_nodes = 0;
+  size_t rebound_smemcpy_nodes = 0;
+  try {
+    callbacks.reserve(captured_execution->plan_count());
+    events.reserve(captured_execution->plan_count() * 2);
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+
+  // Rebind host-node data first; this also establishes the event mapping used
+  // by the record/wait nodes in the second pass.
+  for (CUgraphNode node : nodes) {
+    CUgraphNodeType type = CU_GRAPH_NODE_TYPE_EMPTY;
+    result = cuGraphNodeGetType(node, &type);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    if (type != CU_GRAPH_NODE_TYPE_HOST) {
+      continue;
+    }
+
+    CUDA_HOST_NODE_PARAMS params = {};
+    result = cuGraphHostNodeGetParams(node, &params);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    if (params.fn != lupine_htod_side_effect_callback ||
+        params.userData == nullptr) {
+      continue;
+    }
+    auto *captured = static_cast<lupine_htod_callback_data *>(params.userData);
+    if (captured->graph_execution != captured_execution ||
+        captured->capture_events == nullptr) {
+      continue;
+    }
+
+    std::shared_ptr<lupine_htod_capture_events> callback_events;
+    result = lupine_make_htod_capture_events(ring->context(), callback_events);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    std::shared_ptr<lupine_htod_callback_data> callback;
+    try {
+      callback = std::make_shared<lupine_htod_callback_data>(
+          lupine_htod_callback_data{ring, captured->plan, execution,
+                                    callback_events, captured->graph_plan});
+      events.emplace(captured->capture_events->fork, callback_events->fork);
+      events.emplace(captured->capture_events->join, callback_events->join);
+      for (const auto &chunk : captured->plan->chunks) {
+        if (chunk.smemcpy_function != nullptr) {
+          smemcpy_functions.insert(chunk.smemcpy_function);
+          ++expected_smemcpy_nodes;
+        }
+      }
+      callbacks.push_back(callback);
+    } catch (...) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    params.userData = callback.get();
+    result = cuGraphHostNodeSetParams(node, &params);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+  }
+
+  for (CUgraphNode node : nodes) {
+    CUgraphNodeType type = CU_GRAPH_NODE_TYPE_EMPTY;
+    result = cuGraphNodeGetType(node, &type);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    if (type == CU_GRAPH_NODE_TYPE_KERNEL) {
+      CUDA_KERNEL_NODE_PARAMS params = {};
+      result = cuGraphKernelNodeGetParams(node, &params);
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+      if (params.func == nullptr || smemcpy_functions.count(params.func) == 0) {
+        continue;
+      }
+      if (params.kernelParams == nullptr || params.kernelParams[0] == nullptr) {
+        return CUDA_ERROR_INVALID_VALUE;
+      }
+      auto copy =
+          *static_cast<const lupine_smemcpy_params *>(params.kernelParams[0]);
+      size_t offset = 0;
+      if (!captured_ring->device_data_offset(copy.source, &offset)) {
+        continue;
+      }
+      copy.source = ring->device_data_at(offset);
+      void *arguments[] = {&copy};
+      params.kernelParams = arguments;
+      params.extra = nullptr;
+      result = cuGraphKernelNodeSetParams(node, &params);
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+      ++rebound_smemcpy_nodes;
+    } else if (type == CU_GRAPH_NODE_TYPE_MEMCPY) {
+      CUDA_MEMCPY3D params = {};
+      result = cuGraphMemcpyNodeGetParams(node, &params);
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+      size_t offset = 0;
+      if (params.srcMemoryType == CU_MEMORYTYPE_HOST &&
+          captured_ring->data_offset(params.srcHost, &offset)) {
+        params.srcHost = ring->data_at(offset);
+        result = cuGraphMemcpyNodeSetParams(node, &params);
+        if (result != CUDA_SUCCESS) {
+          return result;
+        }
+      }
+    } else if (type == CU_GRAPH_NODE_TYPE_BATCH_MEM_OP) {
+      CUDA_BATCH_MEM_OP_NODE_PARAMS params = {};
+      result = cuGraphBatchMemOpNodeGetParams(node, &params);
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+      std::vector<CUstreamBatchMemOpParams> operations;
+      try {
+        operations.assign(params.paramArray, params.paramArray + params.count);
+      } catch (...) {
+        return CUDA_ERROR_OUT_OF_MEMORY;
+      }
+      bool changed = false;
+      for (auto &operation : operations) {
+        CUdeviceptr *address = nullptr;
+        if (operation.operation == CU_STREAM_MEM_OP_WAIT_VALUE_32) {
+          address = &operation.waitValue.address;
+        } else if (operation.operation == CU_STREAM_MEM_OP_WRITE_VALUE_32) {
+          address = &operation.writeValue.address;
+        }
+        size_t offset = 0;
+        if (address != nullptr &&
+            captured_ring->signal_offset(*address, &offset)) {
+          *address = ring->signal_at(offset);
+          changed = true;
+        }
+      }
+      if (changed) {
+        params.ctx = ring->context();
+        params.paramArray = operations.data();
+        result = cuGraphBatchMemOpNodeSetParams(node, &params);
+        if (result != CUDA_SUCCESS) {
+          return result;
+        }
+      }
+    } else if (type == CU_GRAPH_NODE_TYPE_EVENT_RECORD) {
+      CUevent event = nullptr;
+      result = cuGraphEventRecordNodeGetEvent(node, &event);
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+      auto replacement = events.find(event);
+      if (replacement != events.end()) {
+        result = cuGraphEventRecordNodeSetEvent(node, replacement->second);
+        if (result != CUDA_SUCCESS) {
+          return result;
+        }
+      }
+    } else if (type == CU_GRAPH_NODE_TYPE_WAIT_EVENT) {
+      CUevent event = nullptr;
+      result = cuGraphEventWaitNodeGetEvent(node, &event);
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+      auto replacement = events.find(event);
+      if (replacement != events.end()) {
+        result = cuGraphEventWaitNodeSetEvent(node, replacement->second);
+        if (result != CUDA_SUCCESS) {
+          return result;
+        }
+      }
+    }
+  }
+
+  if (callbacks.size() != captured_execution->plan_count() ||
+      rebound_smemcpy_nodes != expected_smemcpy_nodes) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  try {
+    binding->resources =
+        std::make_shared<lupine_htod_exec_resources>(std::move(callbacks));
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  return CUDA_SUCCESS;
+}
+
+CUresult
+lupine_commit_htod_graph_exec(CUgraphExec exec,
+                              const lupine_htod_graph_binding &binding) {
+  if (binding.resources == nullptr) {
+    return CUDA_SUCCESS;
+  }
+  auto callbacks =
+      std::static_pointer_cast<lupine_htod_exec_resources>(binding.resources);
+  try {
+    lupine_htod_exec_resource_map().insert_or_assign(exec, *callbacks);
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  return CUDA_SUCCESS;
+}
+
+CUgraphNode
+lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
+                                CUgraphNode node) {
+  if (node == nullptr || binding.prepared == binding.original) {
+    return node;
+  }
+  size_t node_count = 0;
+  if (cuGraphGetNodes(binding.original, nullptr, &node_count) != CUDA_SUCCESS) {
+    return node;
+  }
+  std::vector<CUgraphNode> nodes;
+  try {
+    nodes.resize(node_count);
+  } catch (...) {
+    return node;
+  }
+  if (node_count != 0 && cuGraphGetNodes(binding.original, nodes.data(),
+                                         &node_count) != CUDA_SUCCESS) {
+    return node;
+  }
+  for (CUgraphNode original : nodes) {
+    CUgraphNode clone = nullptr;
+    if (cuGraphNodeFindInClone(&clone, original, binding.prepared) ==
+            CUDA_SUCCESS &&
+        clone == node) {
+      return original;
+    }
+  }
+  return node;
+}
+
+void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding) {
+  if (binding->prepared != nullptr && binding->prepared != binding->original) {
+    (void)cuGraphDestroy(binding->prepared);
+  }
+  *binding = {};
+}
+
+CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
+  lupine_htod_exec_resources resources;
+  if (!lupine_htod_exec_resource_map().find(exec, resources)) {
+    return CUDA_SUCCESS;
+  }
+
+  // cuGraphExecDestroy leaves in-flight launches running. Keep callback data,
+  // events, and the pinned ring alive until no launch can still reference
+  // them. This synchronization is confined to destroying graph execs that
+  // contain pageable HtoD side effects.
+  CUresult result = cuCtxPushCurrent_v2(resources.front()->ring->context());
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = cuCtxSynchronize();
+  CUcontext popped = nullptr;
+  CUresult pop_result = cuCtxPopCurrent_v2(&popped);
+  if (result == CUDA_SUCCESS) {
+    result = pop_result;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_htod_exec_resource_map().erase(exec);
+  }
+  return result;
+}
+
 static CUresult lupine_enqueue_htod_callback(
     lupine_graph_resources *resources,
     const std::shared_ptr<lupine_htod_side_effect_ring> &ring,
-    std::shared_ptr<const lupine_htod_plan> plan,
+    std::shared_ptr<lupine_htod_plan> plan,
     const std::shared_ptr<lupine_htod_graph_execution> &graph_execution,
     const std::shared_ptr<lupine_htod_capture_events> &capture_events,
     size_t graph_plan, CUstream stream) {
@@ -531,20 +963,103 @@ static CUresult lupine_enqueue_htod_callback(
   return result;
 }
 
-static CUresult lupine_enqueue_htod_chunk(const lupine_htod_chunk &chunk,
-                                          void *source, CUstream stream) {
+static bool lupine_htod_smemcpy_params(const lupine_htod_chunk &chunk,
+                                       CUdeviceptr source,
+                                       lupine_smemcpy_params *params) {
+  *params = {};
+  params->source = source;
+  params->bytes = chunk.bytes;
   switch (chunk.kind) {
   case lupine_htod_copy_kind::linear:
-    return cuMemcpyHtoDAsync_v2(chunk.linear_destination, source, chunk.bytes,
-                                stream);
+    params->destination = chunk.linear_destination;
+    params->width = chunk.bytes;
+    params->rows = 1;
+    params->destination_row_stride = chunk.bytes;
+    params->destination_slice_stride = chunk.bytes;
+    return true;
+  case lupine_htod_copy_kind::two_dimensional: {
+    const auto &copy = chunk.copy_2d;
+    if (copy.dstMemoryType != CU_MEMORYTYPE_DEVICE &&
+        copy.dstMemoryType != CU_MEMORYTYPE_UNIFIED) {
+      return false;
+    }
+    params->destination =
+        copy.dstDevice + copy.dstY * copy.dstPitch + copy.dstXInBytes;
+    params->width = copy.WidthInBytes;
+    params->rows = copy.Height;
+    params->destination_row_stride = copy.dstPitch;
+    params->destination_slice_stride = copy.dstPitch * copy.Height;
+    return true;
+  }
+  case lupine_htod_copy_kind::three_dimensional: {
+    const auto &copy = chunk.copy_3d;
+    if (copy.dstMemoryType != CU_MEMORYTYPE_DEVICE &&
+        copy.dstMemoryType != CU_MEMORYTYPE_UNIFIED) {
+      return false;
+    }
+    params->destination = copy.dstDevice +
+                          copy.dstZ * copy.dstHeight * copy.dstPitch +
+                          copy.dstY * copy.dstPitch + copy.dstXInBytes;
+    params->width = copy.WidthInBytes;
+    params->rows = copy.Height;
+    params->destination_row_stride = copy.dstPitch;
+    params->destination_slice_stride = copy.dstPitch * copy.dstHeight;
+    return true;
+  }
+  }
+  return false;
+}
+
+static CUresult lupine_prepare_htod_chunk(
+    lupine_htod_chunk &chunk,
+    const std::shared_ptr<lupine_htod_side_effect_ring> &ring, size_t slot) {
+  lupine_smemcpy_params params = {};
+  if (!lupine_htod_smemcpy_params(
+          chunk, ring->device_data(slot, chunk.ring_offset), &params)) {
+    return CUDA_SUCCESS;
+  }
+  cudaError_t result = lupine_smemcpy_prepare_launch(&params, &chunk.smemcpy);
+  if (result != cudaSuccess) {
+    return lupine_runtime_result(result);
+  }
+  cudaFunction_t function = nullptr;
+  result = cudaGetFuncBySymbol(&function, chunk.smemcpy.kernel);
+  if (result != cudaSuccess) {
+    return lupine_runtime_result(result);
+  }
+  chunk.smemcpy_function = reinterpret_cast<CUfunction>(function);
+  return CUDA_SUCCESS;
+}
+
+static CUresult lupine_enqueue_smemcpy(lupine_htod_chunk &chunk,
+                                       CUstream stream) {
+  void *arguments[] = {&chunk.smemcpy.params};
+  cudaError_t result =
+      cudaLaunchKernel(chunk.smemcpy.kernel, dim3(chunk.smemcpy.blocks),
+                       dim3(chunk.smemcpy.threads), arguments, 0,
+                       reinterpret_cast<cudaStream_t>(stream));
+  return lupine_runtime_result(result);
+}
+
+static CUresult lupine_enqueue_htod_chunk(
+    lupine_htod_chunk &chunk,
+    const std::shared_ptr<lupine_htod_side_effect_ring> &ring, size_t slot,
+    CUstream stream) {
+  void *host_source = ring->data(slot, chunk.ring_offset);
+  if (chunk.smemcpy.kernel != nullptr) {
+    return lupine_enqueue_smemcpy(chunk, stream);
+  }
+  switch (chunk.kind) {
+  case lupine_htod_copy_kind::linear:
+    return CUDA_ERROR_INVALID_VALUE;
   case lupine_htod_copy_kind::two_dimensional: {
     CUDA_MEMCPY2D copy = chunk.copy_2d;
-    copy.srcHost = source;
+    copy.srcHost = host_source;
     return cuMemcpy2DAsync_v2(&copy, stream);
   }
   case lupine_htod_copy_kind::three_dimensional: {
     CUDA_MEMCPY3D copy = chunk.copy_3d;
-    copy.srcHost = source;
+    copy.srcHost = host_source;
     return cuMemcpy3DAsync_v2(&copy, stream);
   }
   }
@@ -567,6 +1082,21 @@ static CUresult lupine_enqueue_client_htod_plan(lupine_staging_state &state,
   }
 
   auto *resources = lupine_captured_stream_resources(stream);
+  std::shared_ptr<lupine_htod_plan> plan_resource;
+  try {
+    plan_resource = std::make_shared<lupine_htod_plan>(std::move(plan));
+  } catch (...) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  for (size_t index = 0; index < plan_resource->chunks.size(); ++index) {
+    result = lupine_prepare_htod_chunk(
+        plan_resource->chunks[index], ring,
+        index % lupine_htod_side_effect_ring::slot_count);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+  }
+
   std::shared_ptr<lupine_htod_graph_execution> graph_execution;
   std::shared_ptr<lupine_htod_capture_events> capture_events;
   size_t graph_plan = 0;
@@ -592,25 +1122,14 @@ static CUresult lupine_enqueue_client_htod_plan(lupine_staging_state &state,
     ring->acquire_execution();
   }
 
-  std::shared_ptr<const lupine_htod_plan> plan_resource;
-  try {
-    plan_resource = std::make_shared<lupine_htod_plan>(std::move(plan));
-  } catch (...) {
-    if (resources == nullptr) {
-      ring->release_execution();
-    }
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-
   for (size_t index = 0; index < plan_resource->chunks.size(); ++index) {
     size_t slot = index % lupine_htod_side_effect_ring::slot_count;
     result = cuStreamWaitValue32_v2(
         ring->transfer_stream(), ring->device_signal(slot),
         lupine_htod_side_effect_ring::slot_ready, CU_STREAM_WAIT_VALUE_EQ);
     if (result == CUDA_SUCCESS) {
-      result =
-          lupine_enqueue_htod_chunk(plan_resource->chunks[index],
-                                    ring->data(slot), ring->transfer_stream());
+      result = lupine_enqueue_htod_chunk(plan_resource->chunks[index], ring,
+                                         slot, ring->transfer_stream());
     }
     if (result == CUDA_SUCCESS) {
       result = cuStreamWriteValue32_v2(
@@ -700,14 +1219,15 @@ static lupine_htod_plan lupine_make_linear_htod_plan(CUdeviceptr destination,
     chunk.slice_stride = chunk_bytes;
     chunk.bytes = chunk_bytes;
     chunk.linear_destination = destination + offset;
+    chunk.ring_offset = chunk.linear_destination & 15;
     plan.chunks.push_back(chunk);
     offset += chunk_bytes;
   }
   return plan;
 }
 
-static lupine_htod_plan lupine_make_2d_htod_plan(const CUDA_MEMCPY2D &original,
-                                                 bool unaligned) {
+static lupine_htod_plan
+lupine_make_2d_htod_plan(const CUDA_MEMCPY2D &original) {
   lupine_htod_plan plan;
   const size_t width = original.WidthInBytes;
   const size_t height = original.Height;
@@ -739,15 +1259,19 @@ static lupine_htod_plan lupine_make_2d_htod_plan(const CUDA_MEMCPY2D &original,
     chunk.copy_2d.dstY = original.dstY + destination_y;
     chunk.copy_2d.WidthInBytes = chunk_width;
     chunk.copy_2d.Height = chunk_rows;
+    if (chunk.copy_2d.dstMemoryType == CU_MEMORYTYPE_DEVICE ||
+        chunk.copy_2d.dstMemoryType == CU_MEMORYTYPE_UNIFIED) {
+      CUdeviceptr first_destination =
+          chunk.copy_2d.dstDevice +
+          chunk.copy_2d.dstY * chunk.copy_2d.dstPitch +
+          chunk.copy_2d.dstXInBytes;
+      chunk.ring_offset = first_destination & 15;
+    }
     plan.chunks.push_back(chunk);
   };
 
   if (width <= lupine_htod_side_effect_ring::slot_bytes) {
-    // cuMemcpy2DUnaligned has no asynchronous entry point. Splitting it into
-    // single-row cuMemcpy2DAsync calls preserves its relaxed source-pitch
-    // behavior because each staged row is tightly packed.
-    size_t rows_per_chunk =
-        unaligned ? 1 : lupine_htod_side_effect_ring::slot_bytes / width;
+    size_t rows_per_chunk = lupine_htod_side_effect_ring::slot_bytes / width;
     for (size_t row = 0; row < height; row += rows_per_chunk) {
       size_t rows = std::min(rows_per_chunk, height - row);
       append(source + row * original.srcPitch, width, rows, original.srcPitch,
@@ -808,6 +1332,16 @@ lupine_make_3d_htod_plan(const CUDA_MEMCPY3D &original) {
     chunk.copy_3d.WidthInBytes = chunk_width;
     chunk.copy_3d.Height = chunk_rows;
     chunk.copy_3d.Depth = chunk_slices;
+    if (chunk.copy_3d.dstMemoryType == CU_MEMORYTYPE_DEVICE ||
+        chunk.copy_3d.dstMemoryType == CU_MEMORYTYPE_UNIFIED) {
+      CUdeviceptr first_destination =
+          chunk.copy_3d.dstDevice +
+          chunk.copy_3d.dstZ * chunk.copy_3d.dstHeight *
+              chunk.copy_3d.dstPitch +
+          chunk.copy_3d.dstY * chunk.copy_3d.dstPitch +
+          chunk.copy_3d.dstXInBytes;
+      chunk.ring_offset = first_destination & 15;
+    }
     plan.chunks.push_back(chunk);
   };
 
@@ -886,41 +1420,6 @@ CUresult lupine_server_prepare_htod_capture(conn_t *conn) {
   }
   auto ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
   return ring == nullptr ? result : ring->synchronize();
-}
-
-void lupine_graph_begin_htod_execution(lupine_graph_resources *resources) {
-  std::shared_ptr<lupine_htod_graph_execution> execution;
-  if (resources != nullptr &&
-      lupine_htod_graph_executions().find(resources, execution)) {
-    execution->begin();
-  }
-}
-
-static void CUDA_CB lupine_finish_htod_graph_execution(void *opaque) {
-  static_cast<lupine_htod_graph_execution *>(opaque)->finish();
-}
-
-CUresult lupine_graph_finish_htod_execution(lupine_graph_resources *resources,
-                                            CUstream stream,
-                                            CUresult launch_result) {
-  std::shared_ptr<lupine_htod_graph_execution> execution;
-  if (resources == nullptr ||
-      !lupine_htod_graph_executions().find(resources, execution)) {
-    return launch_result;
-  }
-  if (launch_result != CUDA_SUCCESS) {
-    execution->finish();
-    return launch_result;
-  }
-
-  CUresult result = cuLaunchHostFunc(stream, lupine_finish_htod_graph_execution,
-                                     execution.get());
-  if (result == CUDA_SUCCESS) {
-    return CUDA_SUCCESS;
-  }
-  (void)cuStreamSynchronize(stream);
-  execution->finish();
-  return result;
 }
 
 void lupine_server_begin_lifecycle_transaction(conn_t *conn) {
@@ -1098,7 +1597,8 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
 
   if (bytes != 0 && is_server_authoritative) {
-    result = cuMemcpyHtoD_v2(destination, source, bytes);
+    result =
+        cuMemcpy(destination, reinterpret_cast<CUdeviceptr>(source), bytes);
   } else if (bytes != 0) {
     result =
         lupine_copy_client_host_to_device(conn, CU_STREAM_LEGACY, true, [&] {
@@ -1738,9 +2238,8 @@ int handle_cuMemcpy2D_v2(conn_t *conn) {
     CUresult result = is_server_authoritative
                           ? cuMemcpy2D_v2(&copy)
                           : lupine_copy_client_host_to_device(
-                                conn, CU_STREAM_LEGACY, true, [&] {
-                                  return lupine_make_2d_htod_plan(copy, false);
-                                });
+                                conn, CU_STREAM_LEGACY, true,
+                                [&] { return lupine_make_2d_htod_plan(copy); });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1807,9 +2306,8 @@ int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
     CUresult result = is_server_authoritative
                           ? cuMemcpy2DUnaligned_v2(&copy)
                           : lupine_copy_client_host_to_device(
-                                conn, CU_STREAM_LEGACY, true, [&] {
-                                  return lupine_make_2d_htod_plan(copy, true);
-                                });
+                                conn, CU_STREAM_LEGACY, true,
+                                [&] { return lupine_make_2d_htod_plan(copy); });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -1881,7 +2379,7 @@ int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
         is_server_authoritative
             ? cuMemcpy2DAsync_v2(&copy, stream)
             : lupine_copy_client_host_to_device(conn, stream, false, [&] {
-                return lupine_make_2d_htod_plan(copy, false);
+                return lupine_make_2d_htod_plan(copy);
               });
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
@@ -1954,7 +2452,8 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   }
 
   if (byteCount != 0 && is_server_authoritative) {
-    result = cuMemcpyHtoDAsync_v2(dstDevice, srcHost, byteCount, stream);
+    result = cuMemcpyAsync(dstDevice, reinterpret_cast<CUdeviceptr>(srcHost),
+                           byteCount, stream);
   } else if (byteCount != 0) {
     result = lupine_copy_client_host_to_device(conn, stream, false, [&] {
       return lupine_make_linear_htod_plan(dstDevice, srcHost, byteCount);

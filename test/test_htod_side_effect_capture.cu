@@ -171,6 +171,41 @@ static int check_concurrent_captured_copies(
   return 0;
 }
 
+static int check_parallel_graph_instances(CUdeviceptr destination,
+                                          CUstream first_stream,
+                                          CUstream second_stream,
+                                          unsigned char *source, size_t bytes) {
+  CHECK(cuStreamBeginCapture(first_stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpyHtoDAsync(destination, source, bytes, first_stream));
+  CUgraph graph = nullptr;
+  CHECK(cuStreamEndCapture(first_stream, &graph));
+  CUgraphExec first_executable = nullptr;
+  CUgraphExec second_executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&first_executable, graph, 0));
+  CHECK(cuGraphInstantiateWithFlags(&second_executable, graph, 0));
+
+  std::fill_n(source, bytes, 0x77);
+  CHECK(cuGraphLaunch(first_executable, first_stream));
+  CHECK(cuGraphLaunch(second_executable, second_stream));
+  // CUDA permits graph-exec destruction while launches are in flight. The
+  // server must retain each executable's callback data and ring until those
+  // launches complete.
+  CHECK(cuGraphExecDestroy(second_executable));
+  CHECK(cuGraphExecDestroy(first_executable));
+  CHECK(cuStreamSynchronize(first_stream));
+  CHECK(cuStreamSynchronize(second_stream));
+
+  std::vector<unsigned char> readback(bytes);
+  CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));
+  if (!all_bytes_are(readback, 0x77)) {
+    std::fprintf(stderr, "parallel instances of one graph were corrupted\n");
+    return 1;
+  }
+
+  CHECK(cuGraphDestroy(graph));
+  return 0;
+}
+
 int main() {
   // Five 8 MiB chunks force the two-slot server ring to wrap twice.
   constexpr size_t bytes = 40 * 1024 * 1024;
@@ -227,6 +262,14 @@ int main() {
                             "pageable") != 0) {
     return 1;
   }
+  std::fill_n(source.data(), bytes, 0x4d);
+  CHECK(cuMemcpyHtoDAsync(destination, source.data(), bytes, stream));
+  CHECK(cuStreamSynchronize(stream));
+  CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));
+  if (!all_bytes_are(readback, 0x4d)) {
+    std::fprintf(stderr, "ordinary HtoD after graph launch was corrupted\n");
+    return 1;
+  }
   if (check_captured_host_order(destination, stream, source.data(),
                                 4 * 1024 * 1024) != 0) {
     return 1;
@@ -239,6 +282,10 @@ int main() {
   if (check_concurrent_captured_copies(
           destination, second_destination, stream, second_stream, source.data(),
           second_source.data(), 12 * 1024 * 1024) != 0) {
+    return 1;
+  }
+  if (check_parallel_graph_instances(destination, stream, second_stream,
+                                     source.data(), 12 * 1024 * 1024) != 0) {
     return 1;
   }
 

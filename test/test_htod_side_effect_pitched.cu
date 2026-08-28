@@ -43,6 +43,68 @@ static bool check_rows(const std::vector<unsigned char> &storage, size_t width,
   return true;
 }
 
+static int check_array_htod(CUstream stream) {
+  constexpr size_t width = 4099;
+  constexpr size_t height = 257;
+  constexpr size_t source_pitch = width + 37;
+  std::vector<unsigned char> source(source_pitch * height);
+  std::vector<unsigned char> readback(source_pitch * height);
+
+  CUDA_ARRAY_DESCRIPTOR descriptor = {};
+  descriptor.Width = width;
+  descriptor.Height = height;
+  descriptor.Format = CU_AD_FORMAT_UNSIGNED_INT8;
+  descriptor.NumChannels = 1;
+  CUarray array = nullptr;
+  CHECK(cuArrayCreate(&array, &descriptor));
+
+  CUDA_MEMCPY2D copy = {};
+  copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+  copy.srcHost = source.data();
+  copy.srcPitch = source_pitch;
+  copy.dstMemoryType = CU_MEMORYTYPE_ARRAY;
+  copy.dstArray = array;
+  copy.WidthInBytes = width;
+  copy.Height = height;
+
+  fill_rows(source, width, height, source_pitch, 1, 0, 0x65);
+  CHECK(cuMemcpy2D(&copy));
+
+  CUDA_MEMCPY2D read = {};
+  read.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+  read.srcArray = array;
+  read.dstMemoryType = CU_MEMORYTYPE_HOST;
+  read.dstHost = readback.data();
+  read.dstPitch = source_pitch;
+  read.WidthInBytes = width;
+  read.Height = height;
+  CHECK(cuMemcpy2D(&read));
+  if (!check_rows(readback, width, height, source_pitch, 1, 0, 0x65)) {
+    std::fprintf(stderr, "synchronous array HtoD mismatch\n");
+    return 1;
+  }
+
+  CHECK(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpy2DAsync(&copy, stream));
+  CUgraph graph = nullptr;
+  CHECK(cuStreamEndCapture(stream, &graph));
+  CUgraphExec executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
+  fill_rows(source, width, height, source_pitch, 1, 0, 0x6b);
+  CHECK(cuGraphLaunch(executable, stream));
+  CHECK(cuStreamSynchronize(stream));
+  CHECK(cuMemcpy2D(&read));
+  if (!check_rows(readback, width, height, source_pitch, 1, 0, 0x6b)) {
+    std::fprintf(stderr, "captured array HtoD mismatch\n");
+    return 1;
+  }
+
+  CHECK(cuGraphExecDestroy(executable));
+  CHECK(cuGraphDestroy(graph));
+  CHECK(cuArrayDestroy(array));
+  return 0;
+}
+
 int main() {
   CHECK(cuInit(0));
   CUdevice device = 0;
@@ -177,6 +239,9 @@ int main() {
   if (!check_rows(readback_3d, width_3d, height_3d, source_pitch_3d, depth_3d,
                   source_slice_3d, 0x54)) {
     std::fprintf(stderr, "captured 3D HtoD mismatch\n");
+    return 1;
+  }
+  if (check_array_htod(stream) != 0) {
     return 1;
   }
 
