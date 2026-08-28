@@ -363,7 +363,12 @@ if(LUPINE_BUILD_SERVER)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
-            lupine_smemcpy CUDA::cuda_driver)
+            CUDA::cuda_driver)
+        if(TARGET lupine_smemcpy)
+            target_link_libraries(lupine_cuda_server PRIVATE lupine_smemcpy)
+            target_compile_definitions(lupine_cuda_server PRIVATE
+                LUPINE_HAVE_SMEMCPY)
+        endif()
     endif()
 
     if(LUPINE_BUILD_NVML)

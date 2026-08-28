@@ -7,7 +7,9 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
+#ifdef LUPINE_HAVE_SMEMCPY
 #include "ops/smemcpy.h"
+#endif
 #include "rpc.h"
 
 #include <array>
@@ -138,6 +140,7 @@ static CUresult lupine_current_htod_context(conn_t *conn,
   return result == CUDA_SUCCESS ? cuCtxGetDevice(device) : result;
 }
 
+#ifdef LUPINE_HAVE_SMEMCPY
 static CUresult lupine_runtime_result(cudaError_t result) {
   switch (result) {
   case cudaSuccess:
@@ -150,6 +153,7 @@ static CUresult lupine_runtime_result(cudaError_t result) {
     return static_cast<CUresult>(result);
   }
 }
+#endif
 
 enum class lupine_htod_copy_kind { linear, two_dimensional, three_dimensional };
 
@@ -163,8 +167,10 @@ struct lupine_htod_chunk {
   size_t bytes = 0;
   size_t ring_offset = 0;
   lupine_htod_copy_kind kind = lupine_htod_copy_kind::linear;
+#ifdef LUPINE_HAVE_SMEMCPY
   CUfunction smemcpy_function = nullptr;
   lupine_smemcpy_launch smemcpy = {};
+#endif
   CUdeviceptr linear_destination = 0;
   CUDA_MEMCPY2D copy_2d = {};
   CUDA_MEMCPY3D copy_3d = {};
@@ -261,6 +267,7 @@ public:
       std::free(storage);
       return result;
     }
+#ifdef LUPINE_HAVE_SMEMCPY
     cudaFunction_t smemcpy_function = nullptr;
     // Load the smemcpy module before any wait-value nodes can reach this
     // stream. A first-use runtime launch may synchronize module loading with
@@ -275,6 +282,7 @@ public:
       std::free(storage);
       return lupine_runtime_result(runtime_result);
     }
+#endif
     storage_ = storage;
     device_storage_ = device_storage;
     signals_ = signals;
@@ -653,9 +661,11 @@ CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
 
   lupine_htod_exec_resources callbacks;
   std::unordered_map<CUevent, CUevent> events;
+#ifdef LUPINE_HAVE_SMEMCPY
   std::unordered_set<CUfunction> smemcpy_functions;
   size_t expected_smemcpy_nodes = 0;
   size_t rebound_smemcpy_nodes = 0;
+#endif
   try {
     callbacks.reserve(captured_execution->plan_count());
     events.reserve(captured_execution->plan_count() * 2);
@@ -702,12 +712,14 @@ CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
                                     callback_events, captured->graph_plan});
       events.emplace(captured->capture_events->fork, callback_events->fork);
       events.emplace(captured->capture_events->join, callback_events->join);
+#ifdef LUPINE_HAVE_SMEMCPY
       for (const auto &chunk : captured->plan->chunks) {
         if (chunk.smemcpy_function != nullptr) {
           smemcpy_functions.insert(chunk.smemcpy_function);
           ++expected_smemcpy_nodes;
         }
       }
+#endif
       callbacks.push_back(callback);
     } catch (...) {
       return CUDA_ERROR_OUT_OF_MEMORY;
@@ -726,6 +738,7 @@ CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
       return result;
     }
     if (type == CU_GRAPH_NODE_TYPE_KERNEL) {
+#ifdef LUPINE_HAVE_SMEMCPY
       CUDA_KERNEL_NODE_PARAMS params = {};
       result = cuGraphKernelNodeGetParams(node, &params);
       if (result != CUDA_SUCCESS) {
@@ -752,6 +765,7 @@ CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
         return result;
       }
       ++rebound_smemcpy_nodes;
+#endif
     } else if (type == CU_GRAPH_NODE_TYPE_MEMCPY) {
       CUDA_MEMCPY3D params = {};
       result = cuGraphMemcpyNodeGetParams(node, &params);
@@ -831,8 +845,11 @@ CUresult lupine_prepare_htod_graph_exec(CUgraph graph,
     }
   }
 
-  if (callbacks.size() != captured_execution->plan_count() ||
-      rebound_smemcpy_nodes != expected_smemcpy_nodes) {
+  if (callbacks.size() != captured_execution->plan_count()
+#ifdef LUPINE_HAVE_SMEMCPY
+      || rebound_smemcpy_nodes != expected_smemcpy_nodes
+#endif
+  ) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   try {
@@ -963,6 +980,7 @@ static CUresult lupine_enqueue_htod_callback(
   return result;
 }
 
+#ifdef LUPINE_HAVE_SMEMCPY
 static bool lupine_htod_smemcpy_params(const lupine_htod_chunk &chunk,
                                        CUdeviceptr source,
                                        lupine_smemcpy_params *params) {
@@ -1040,18 +1058,29 @@ static CUresult lupine_enqueue_smemcpy(lupine_htod_chunk &chunk,
                        reinterpret_cast<cudaStream_t>(stream));
   return lupine_runtime_result(result);
 }
+#else
+static CUresult
+lupine_prepare_htod_chunk(lupine_htod_chunk &,
+                          const std::shared_ptr<lupine_htod_side_effect_ring> &,
+                          size_t) {
+  return CUDA_SUCCESS;
+}
+#endif
 
 static CUresult lupine_enqueue_htod_chunk(
     lupine_htod_chunk &chunk,
     const std::shared_ptr<lupine_htod_side_effect_ring> &ring, size_t slot,
     CUstream stream) {
   void *host_source = ring->data(slot, chunk.ring_offset);
+#ifdef LUPINE_HAVE_SMEMCPY
   if (chunk.smemcpy.kernel != nullptr) {
     return lupine_enqueue_smemcpy(chunk, stream);
   }
+#endif
   switch (chunk.kind) {
   case lupine_htod_copy_kind::linear:
-    return CUDA_ERROR_INVALID_VALUE;
+    return cuMemcpyHtoDAsync_v2(chunk.linear_destination, host_source,
+                                chunk.bytes, stream);
   case lupine_htod_copy_kind::two_dimensional: {
     CUDA_MEMCPY2D copy = chunk.copy_2d;
     copy.srcHost = host_source;
