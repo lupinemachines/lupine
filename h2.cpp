@@ -37,6 +37,8 @@ constexpr size_t kH2EncodeChunkBytes = 4 * 1024 * 1024;
 constexpr size_t kH2ProviderMinFrameBytes = 16 * 1024;
 constexpr size_t kH2ProviderMaxFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
+// Retained capacity for drained staging buffers, a few frames' worth.
+constexpr size_t kH2StagingPoolBytes = 4 * 1024 * 1024;
 // Linux restarts slow start after an idle period of one retransmission
 // timeout. Keeping response waits below the usual 200 ms minimum RTO avoids
 // collapsing the congestion window between bursts on high-latency links.
@@ -84,6 +86,12 @@ struct h2_transport {
   rpc_http2_read_stats read_stats = {};
   uint64_t staged_bytes = 0;
   uint64_t window_held = 0;
+  // Drained staging buffers, kept for their capacity. A saturated stream
+  // stages one buffer per DATA frame, and reallocating each one costs more
+  // than the copy into it. Capped because a reader that falls behind can stage
+  // far more than it will ever need again.
+  std::vector<h2_buffer> buffer_pool;
+  size_t buffer_pool_bytes = 0;
   // LZ4F_compressBound includes a full worst-case block even for tiny input.
   // Writes are serialized, so retain one connection-wide workspace and track
   // its valid prefix separately instead of resizing/zeroing it per RPC.
@@ -156,6 +164,12 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
     return;
   }
   h2_buffer buffer;
+  if (!transport->buffer_pool.empty()) {
+    buffer = std::move(transport->buffer_pool.back());
+    transport->buffer_pool.pop_back();
+    transport->buffer_pool_bytes -= buffer.data.capacity();
+  }
+  buffer.offset = 0;
   buffer.data.assign(data, data + len);
   stream.local_out.push_back(std::move(buffer));
   transport->read_stats.staged_bytes += len;
@@ -1098,6 +1112,11 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
     transport->read_stats.staged_read_bytes += chunk;
     transport->staged_bytes -= chunk;
     if (front.offset == front.data.size()) {
+      if (transport->buffer_pool_bytes + front.data.capacity() <=
+          kH2StagingPoolBytes) {
+        transport->buffer_pool_bytes += front.data.capacity();
+        transport->buffer_pool.push_back(std::move(front));
+      }
       stream.local_out.pop_front();
     }
   }
