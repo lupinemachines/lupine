@@ -641,16 +641,10 @@ jobs:
               /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
               export PYTHON_BIN=/tmp/venv-pytorch/bin/python
 
-              export LUPINE_PRECOMPILED_OPS=/tmp/lupine-precompiled-ops
-              cmake \
-                -DLUPINE_PRECOMPILED_OPS="$LUPINE_PRECOMPILED_OPS" \
-                -DLUPINE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc" \
-                -P /src/ops/precompile.cmake
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCUDAToolkit_ROOT="$CUDA_HOME" \
-                -DLUPINE_PRECOMPILED_OPS="$LUPINE_PRECOMPILED_OPS" \
                 -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache

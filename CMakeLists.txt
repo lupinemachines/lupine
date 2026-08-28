@@ -19,7 +19,7 @@ set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
     "CUDA version reported by an SDK-free server build")
 set(LUPINE_PRECOMPILED_OPS "" CACHE PATH
-    "Directory containing the precompiled device operations")
+    "Optional directory containing precompiled device operations")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -138,25 +138,22 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
-# The server consumes device operations precompiled by each backend's SDK. A
-# single directory keeps the SDK-neutral build independent of how many
-# backends and operations are added to it.
+# A precompiled operations directory lets the SDK-neutral server build consume
+# artifacts produced by each backend's SDK. Without one, build the operations
+# locally with the available accelerator compilers.
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
-    if(NOT LUPINE_PRECOMPILED_OPS)
-        message(FATAL_ERROR
-            "LUPINE_PRECOMPILED_OPS is required for the CUDA server backend")
-    endif()
-    if(NOT IS_DIRECTORY "${LUPINE_PRECOMPILED_OPS}")
-        message(FATAL_ERROR
-            "LUPINE_PRECOMPILED_OPS is not a directory: ${LUPINE_PRECOMPILED_OPS}")
-    endif()
-    message(STATUS
-        "Using precompiled device operations: ${LUPINE_PRECOMPILED_OPS}")
-
-    # A complete local SDK also builds the standalone operation and its tests.
-    # The server still embeds the required precompiled artifact above.
-    if(NOT LUPINE_CUDA_DRIVER_LIBRARY)
+    if(LUPINE_PRECOMPILED_OPS)
+        if(NOT IS_DIRECTORY "${LUPINE_PRECOMPILED_OPS}")
+            message(FATAL_ERROR
+                "LUPINE_PRECOMPILED_OPS is not a directory: ${LUPINE_PRECOMPILED_OPS}")
+        endif()
+        message(STATUS
+            "Using precompiled device operations: ${LUPINE_PRECOMPILED_OPS}")
+    elseif(NOT LUPINE_CUDA_DRIVER_LIBRARY)
         enable_language(CUDA)
+    else()
+        message(FATAL_ERROR
+            "LUPINE_PRECOMPILED_OPS is required for an SDK-free CUDA server build")
     endif()
 endif()
 

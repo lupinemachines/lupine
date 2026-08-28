@@ -26,11 +26,30 @@ if("CUDA" IN_LIST enabled_languages)
 endif()
 
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
-    set(lupine_smemcpy_fatbin
-        "${LUPINE_PRECOMPILED_OPS}/cuda/smemcpy.fatbin")
-    if(NOT EXISTS "${lupine_smemcpy_fatbin}")
-        message(FATAL_ERROR
-            "Missing precompiled CUDA operation: ${lupine_smemcpy_fatbin}")
+    if(LUPINE_PRECOMPILED_OPS)
+        set(lupine_smemcpy_fatbin
+            "${LUPINE_PRECOMPILED_OPS}/cuda/smemcpy.fatbin")
+        if(NOT EXISTS "${lupine_smemcpy_fatbin}")
+            message(FATAL_ERROR
+                "Missing precompiled CUDA operation: ${lupine_smemcpy_fatbin}")
+        endif()
+    else()
+        set(lupine_built_ops "${CMAKE_CURRENT_BINARY_DIR}/precompiled-ops")
+        set(lupine_smemcpy_fatbin
+            "${lupine_built_ops}/cuda/smemcpy.fatbin")
+        add_custom_command(
+            OUTPUT "${lupine_smemcpy_fatbin}"
+            COMMAND ${CMAKE_COMMAND}
+                "-DLUPINE_PRECOMPILED_OPS=${lupine_built_ops}"
+                "-DLUPINE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
+                "-DLUPINE_CUDA_FLAGS=${CMAKE_CUDA_FLAGS}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/precompile.cmake"
+            DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/precompile.cmake"
+                smemcpy.cu
+                smemcpy.h
+                smemcpy_dispatch.h
+            VERBATIM)
     endif()
     set(lupine_smemcpy_fatbin_cpp
         "${CMAKE_CURRENT_BINARY_DIR}/lupine_smemcpy_fatbin.cpp")

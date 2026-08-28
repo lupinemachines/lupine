@@ -1,10 +1,11 @@
 # Scatter memcpy
 
-Server builds consume a required precompiled operations directory rather than
-invoking an accelerator compiler during the server build. Each SDK writes its
-artifacts below a backend directory; the current CUDA artifact is
-`cuda/smemcpy.fatbin`, with HIP and additional operations able to share the
-same top-level path. Build the CUDA operations with:
+Server builds compile operations with the available accelerator SDKs by
+default. SDK-neutral builds can instead set `LUPINE_PRECOMPILED_OPS` to a
+directory produced separately by each SDK. Artifacts live below a backend
+directory; the current CUDA artifact is `cuda/smemcpy.fatbin`, with HIP and
+additional operations able to share the same top-level path. Build a bundle
+with:
 
 ```sh
 cmake -DLUPINE_PRECOMPILED_OPS="$PWD/build/precompiled-ops" \
