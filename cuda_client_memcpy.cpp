@@ -1509,20 +1509,33 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
       continue;
     }
     bool invalidated = false;
-    bool give_up = false;
-    for (int attempt = 0; !invalidated && !give_up; ++attempt) {
+    bool skip = false;
+    lupine_host_allocation *fallback_allocation = nullptr;
+    for (int attempt = 0;
+         !invalidated && !skip && fallback_allocation == nullptr; ++attempt) {
       {
         std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
         auto it = lupine_mutable_host_allocations_locked().find(mapping.host);
         if (it == lupine_mutable_host_allocations_locked().end()) {
+          skip = true;
           break;
         }
         auto &allocation = it->second;
+        auto hold_for_fallback = [&] {
+          // cuMemFreeHost waits for this reference before unmapping either
+          // client view, so the response can still land through the W alias.
+          __atomic_add_fetch(&allocation.pending_dirty_ranges, 1,
+                             __ATOMIC_ACQ_REL);
+          fallback_allocation = &allocation;
+        };
         conn_t *conn = lupine_route_remote_conn(
             lupine_route_from_identity(allocation.route_id));
-        if (!allocation.tracking_enabled || conn == nullptr ||
-            __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
-          give_up = true;
+        if (__atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
+          skip = true;
+          break;
+        }
+        if (!allocation.tracking_enabled || conn == nullptr) {
+          hold_for_fallback();
           break;
         }
         sig_atomic_t previous =
@@ -1545,25 +1558,27 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
             } else {
               __atomic_store_n(&allocation.device_stale, previous,
                                __ATOMIC_RELEASE);
-              give_up = true;
+              hold_for_fallback();
             }
           }
         }
-      }
-      if (!invalidated && !give_up) {
-        if (attempt >= LUPINE_MAPPED_INVALIDATE_MAX_ATTEMPTS) {
-          give_up = true;
-        } else {
-          sched_yield();
+        if (!invalidated && fallback_allocation == nullptr &&
+            attempt >= LUPINE_MAPPED_INVALIDATE_MAX_ATTEMPTS) {
+          hold_for_fallback();
         }
       }
+      if (!invalidated && !skip && fallback_allocation == nullptr) {
+        sched_yield();
+      }
     }
-    if (invalidated) {
+    if (invalidated || skip) {
       continue;
     }
     CUresult result = cuMemcpyDtoH_v2(
         static_cast<unsigned char *>(mapping.host) + mapping.data_offset,
         mapping.device_ptr + mapping.data_offset, mapping.data_bytes);
+    __atomic_sub_fetch(&fallback_allocation->pending_dirty_ranges, 1,
+                       __ATOMIC_RELEASE);
     if (result != CUDA_SUCCESS) {
       return result;
     }
