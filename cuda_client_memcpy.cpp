@@ -2958,38 +2958,6 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   return return_value;
 }
 
-// A destination server's ordinary HtoD callback treats its source address as
-// opaque. When that address belongs to another route, fill the unchanged
-// callback response with ordinary DtoH copies.
-struct lupine_cross_route_source_cursor {
-  CUdeviceptr address = 0;
-  size_t remaining = 0;
-  std::vector<unsigned char> storage;
-
-  int refill(rpc_write_cursor *cursor) {
-    if (remaining == 0) {
-      return 0;
-    }
-
-    size_t chunk = std::min(remaining, storage.size());
-    CUresult result = cuMemcpyDtoH_v2(storage.data(), address, chunk);
-    if (result != CUDA_SUCCESS) {
-      LUPINE_LOG_ERROR("Cross-route DtoD source read failed: " << result);
-      return -1;
-    }
-    cursor->data = storage.data();
-    cursor->size = chunk;
-    address += chunk;
-    remaining -= chunk;
-    return 1;
-  }
-
-  static int refill_cursor(void *opaque, rpc_write_cursor *cursor) {
-    auto *source = static_cast<lupine_cross_route_source_cursor *>(opaque);
-    return source == nullptr || cursor == nullptr ? -1 : source->refill(cursor);
-  }
-};
-
 // Returns 1 when the address is not a cross-route device source, 0 after
 // writing its complete response, and -1 on a transport or source-copy error.
 extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
@@ -3013,7 +2981,11 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
     return -1;
   }
 
-  lupine_cross_route_source_cursor source_cursor;
+  struct source_cursor_state {
+    CUdeviceptr address = 0;
+    size_t remaining = 0;
+    std::vector<unsigned char> storage;
+  } source_cursor;
   source_cursor.address = source;
   source_cursor.remaining = bytes;
   try {
@@ -3027,8 +2999,29 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
     return -1;
   }
 
-  rpc_write_cursor cursor(lupine_cross_route_source_cursor::refill_cursor,
-                          &source_cursor);
+  auto refill_source = [](void *opaque, rpc_write_cursor *cursor) -> int {
+    auto *source = static_cast<source_cursor_state *>(opaque);
+    if (source == nullptr || cursor == nullptr) {
+      return -1;
+    }
+    if (source->remaining == 0) {
+      return 0;
+    }
+
+    size_t chunk = std::min(source->remaining, source->storage.size());
+    CUresult result =
+        cuMemcpyDtoH_v2(source->storage.data(), source->address, chunk);
+    if (result != CUDA_SUCCESS) {
+      LUPINE_LOG_ERROR("Cross-route DtoD source read failed: " << result);
+      return -1;
+    }
+    cursor->data = source->storage.data();
+    cursor->size = chunk;
+    source->address += chunk;
+    source->remaining -= chunk;
+    return 1;
+  };
+  rpc_write_cursor cursor(refill_source, &source_cursor);
   if (rpc_write_start_response(destination_conn, request_id) < 0 ||
       rpc_write_cursors(destination_conn, &cursor, 1) < 0 ||
       rpc_write_end(destination_conn) < 0) {
