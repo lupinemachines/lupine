@@ -39,6 +39,7 @@ from ops import (
 # CUDA headers omit some legacy ABI entry points from their public declarations.
 # Keep the small set that still needs RPC wrappers explicit here.
 LEGACY_ABI_FUNCTIONS = {
+    "cuGraphExecUpdate",
     "cuGraphInstantiate_v2",
 }
 
@@ -67,7 +68,6 @@ MANUAL_REMAPPINGS = [
     ("cuMemsetD2D32", "cuMemsetD2D32_v2"),
     ("cuIpcOpenMemHandle", "cuIpcOpenMemHandle_v2"),
     ("cuStreamBeginCapture", "cuStreamBeginCapture_v2"),
-    ("cuGraphExecUpdate", "cuGraphExecUpdate_v2"),
     ("cuMemcpy_ptds", "cuMemcpy"),
     ("cuMemcpyAsync_ptsz", "cuMemcpyAsync"),
     ("cuMemcpyPeer_ptds", "cuMemcpyPeer"),
@@ -135,10 +135,6 @@ FUNCTION_MAP_ALIASES = [
 KERNEL_PARAM_LAYOUT_INVALIDATORS = {
     "cuLibraryUnload",
     "cuModuleUnload",
-}
-
-MANUAL_REMAPPING_GUARDS = {
-    "cuGraphExecUpdate": "CUDA_VERSION >= 12000",
 }
 
 NVML_RPC_FUNCTIONS = [
@@ -2178,9 +2174,6 @@ def main():
             if alias in function_by_name or target not in function_by_name:
                 continue
             target_function = function_by_name[target]
-            guard = MANUAL_REMAPPING_GUARDS.get(alias)
-            if guard is not None:
-                f.write("#if {guard}\n".format(guard=guard))
             f.write("#ifdef {name}\n#undef {name}\n#endif\n".format(name=alias))
             f.write(
                 'extern "C" {return_type} {name}({params})\n'.format(
@@ -2200,9 +2193,6 @@ def main():
             else:
                 f.write("    return {call};\n".format(call=call))
                 f.write("}\n\n")
-            if guard is not None:
-                f.write("#endif\n\n")
-
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
             if metadata.disabled_client and metadata.disabled_server:
