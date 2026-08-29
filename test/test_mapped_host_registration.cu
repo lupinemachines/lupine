@@ -213,6 +213,17 @@ int main() {
     return 1;
   }
 
+  auto *pinned_byte = static_cast<unsigned char *>(pinned);
+  pinned_byte[0] = 41;
+  increment_byte<<<1, 1>>>(pinned_byte);
+  if (cudaGetLastError() != cudaSuccess ||
+      cudaDeviceSynchronize() != cudaSuccess || pinned_byte[0] != 42) {
+    std::fprintf(stderr,
+                 "direct allocated host access produced %u, expected 42\n",
+                 static_cast<unsigned int>(pinned_byte[0]));
+    return 1;
+  }
+
   if (!cu_is(cuMemHostUnregister(pinned), CUDA_ERROR_INVALID_VALUE,
              "cuMemHostUnregister of a cuMemHostAlloc pointer")) {
     return 1;
