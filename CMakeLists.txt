@@ -4,7 +4,9 @@ project(LupineProject LANGUAGES C CXX)
 
 option(LUPINE_BUILD_CUDA "Build the CUDA client and server backend" ON)
 option(LUPINE_BUILD_NVML "Build the NVML client and server backend" ON)
-option(LUPINE_BUILD_HIP "Build the HIP client and server backend when present" ON)
+option(LUPINE_BUILD_HIP
+       "Build the HIP client and server backend when HIP SDK headers are available"
+       ON)
 if(APPLE)
     set(LUPINE_BUILD_SERVER_DEFAULT OFF)
 else()
@@ -12,6 +14,12 @@ else()
 endif()
 option(LUPINE_BUILD_SERVER "Build the RPC server"
        ${LUPINE_BUILD_SERVER_DEFAULT})
+set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
+    "CUDA driver library or stub to use without a complete CUDA Toolkit")
+set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
+    "CUDA version reported by an SDK-free server build")
+set(LUPINE_PRECOMPILED_OPS "" CACHE PATH
+    "Optional directory containing precompiled device operations")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -48,7 +56,8 @@ find_package(OpenSSL QUIET)
 
 set(MIN_CUDA_VERSION 11.0)
 if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
-    if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+    if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
+       NOT LUPINE_CUDA_DRIVER_LIBRARY)
         find_package(CUDAToolkit REQUIRED)
         if(NOT CUDAToolkit_VERSION)
             message(FATAL_ERROR
@@ -84,20 +93,96 @@ if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
         string(REGEX REPLACE ".*CUDA_VERSION +([0-9]+).*" "\\1"
                LUPINE_CUDA_HEADER_VERSION "${LUPINE_CUDA_VERSION_LINE}")
         message(STATUS
-            "Using client CUDA API headers version: ${LUPINE_CUDA_HEADER_VERSION}")
+            "Using CUDA API headers version: ${LUPINE_CUDA_HEADER_VERSION}")
+
+        if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+            if(NOT EXISTS "${LUPINE_CUDA_DRIVER_LIBRARY}")
+                message(FATAL_ERROR
+                    "LUPINE_CUDA_DRIVER_LIBRARY does not exist: ${LUPINE_CUDA_DRIVER_LIBRARY}")
+            endif()
+            if(NOT LUPINE_CUDA_VERSION_OVERRIDE)
+                message(FATAL_ERROR
+                    "LUPINE_CUDA_VERSION_OVERRIDE is required with LUPINE_CUDA_DRIVER_LIBRARY")
+            endif()
+            set(CUDAToolkit_VERSION "${LUPINE_CUDA_VERSION_OVERRIDE}")
+            if(CUDAToolkit_VERSION VERSION_LESS MIN_CUDA_VERSION)
+                message(FATAL_ERROR
+                    "CUDA Toolkit must be >= ${MIN_CUDA_VERSION}; found ${CUDAToolkit_VERSION}")
+            endif()
+            add_library(CUDA::cuda_driver UNKNOWN IMPORTED)
+            set_target_properties(CUDA::cuda_driver PROPERTIES
+                IMPORTED_LOCATION "${LUPINE_CUDA_DRIVER_LIBRARY}")
+            message(STATUS
+                "Using CUDA driver stub for SDK-free server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
+        endif()
     endif()
 endif()
 
-if(LUPINE_BUILD_SERVER AND NOT (LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML))
+if(LUPINE_BUILD_HIP)
+    find_path(LUPINE_HIP_INCLUDE_DIR hip/hip_runtime_api.h
+        HINTS
+            $ENV{HIP_PATH}/include
+            $ENV{ROCM_PATH}/include
+            /opt/rocm/include)
+    if(LUPINE_HIP_INCLUDE_DIR)
+        message(STATUS "Found HIP SDK headers: ${LUPINE_HIP_INCLUDE_DIR}")
+    else()
+        message(STATUS "HIP SDK headers not found; disabling the HIP backend")
+        set(LUPINE_BUILD_HIP OFF)
+    endif()
+endif()
+
+if(LUPINE_BUILD_SERVER AND
+   NOT (LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML OR LUPINE_BUILD_HIP))
     message(FATAL_ERROR
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
-# HIP implementation sources arrive in the final #487 rebase. Keeping the
-# option default-on here makes that backend part of the normal build as soon as
-# those sources are present, rather than introducing a hidden opt-in later.
-if(LUPINE_BUILD_HIP)
-    message(STATUS "HIP backend requested; implementation is supplied by PR #487")
+# A precompiled operations directory lets the SDK-neutral server build consume
+# artifacts produced by each backend's SDK. Without one, build the operations
+# locally with the available accelerator compilers.
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+    if(LUPINE_PRECOMPILED_OPS)
+        if(NOT IS_DIRECTORY "${LUPINE_PRECOMPILED_OPS}")
+            message(FATAL_ERROR
+                "LUPINE_PRECOMPILED_OPS is not a directory: ${LUPINE_PRECOMPILED_OPS}")
+        endif()
+        message(STATUS
+            "Using precompiled device operations: ${LUPINE_PRECOMPILED_OPS}")
+    elseif(NOT LUPINE_CUDA_DRIVER_LIBRARY)
+        enable_language(CUDA)
+    else()
+        message(FATAL_ERROR
+            "LUPINE_PRECOMPILED_OPS is required for an SDK-free CUDA server build")
+    endif()
+endif()
+
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
+   NOT CMAKE_VERSION VERSION_LESS 3.21)
+    # hipcc defaults to gfx906 alone, which loads but never runs on a newer
+    # card, and clang's "native" needs /dev/kfd, so it fails on GPU-less
+    # builders and under WSL. Ship a fat binary covering the supported CDNA and
+    # RDNA targets instead. This must precede the compiler probe so the probe
+    # and the build agree on the targets.
+    if(NOT CMAKE_HIP_ARCHITECTURES)
+        set(CMAKE_HIP_ARCHITECTURES
+            gfx90a gfx942 gfx1030 gfx1100 gfx1101 gfx1102 gfx1200 gfx1201)
+    endif()
+    # The HIP SDK check above only needs headers, which is all the client shim
+    # and the server dispatch require. Device code additionally needs a HIP
+    # compiler, so the operation is built only where one exists.
+    include(CheckLanguage)
+    check_language(HIP)
+    if(CMAKE_HIP_COMPILER)
+        enable_language(HIP)
+    endif()
+endif()
+
+get_property(lupine_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+if((LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA) OR
+   "CUDA" IN_LIST lupine_enabled_languages OR
+   "HIP" IN_LIST lupine_enabled_languages)
+    add_subdirectory(ops)
 endif()
 
 function(lupine_internal_target target)
@@ -133,7 +218,10 @@ endfunction()
 
 # Vendored LZ4 keeps the neutral core independent of host package versions.
 add_library(lupine_lz4 STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4frame.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4hc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/xxhash.c)
 set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(lupine_lz4 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib)
@@ -145,7 +233,7 @@ endif()
 add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/compress.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
 )
 lupine_internal_target(lupine_rpc_core)
 target_include_directories(lupine_rpc_core
@@ -277,6 +365,26 @@ if(LUPINE_BUILD_NVML)
     add_custom_target(lupine_nvml DEPENDS lupine_nvml_client)
 endif()
 
+if(NOT WIN32 AND LUPINE_BUILD_HIP)
+    add_library(lupine_hip_client SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/hip_client.cpp)
+    target_include_directories(lupine_hip_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${LUPINE_HIP_INCLUDE_DIR})
+    target_compile_definitions(lupine_hip_client PRIVATE
+        __HIP_PLATFORM_AMD__)
+    target_link_libraries(lupine_hip_client PRIVATE lupine_client_transport)
+    target_link_options(lupine_hip_client PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/hip.exports")
+    set_target_properties(lupine_hip_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME amdhip64
+        VERSION 1
+        SOVERSION 1)
+    add_custom_target(lupine_hip DEPENDS lupine_hip_client)
+endif()
+
 if(LUPINE_BUILD_SERVER)
     if(LUPINE_BUILD_CUDA)
         add_library(lupine_cuda_server STATIC
@@ -298,7 +406,7 @@ if(LUPINE_BUILD_SERVER)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
-            CUDA::cuda_driver)
+            lupine_cuda_smemcpy_module CUDA::cuda_driver)
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -308,6 +416,17 @@ if(LUPINE_BUILD_SERVER)
         target_include_directories(lupine_nvml_server PRIVATE
             ${CUDAToolkit_INCLUDE_DIRS})
         target_link_libraries(lupine_nvml_server PRIVATE lupine_server_core)
+    endif()
+
+    if(LUPINE_BUILD_HIP)
+        add_library(lupine_hip_server STATIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/hip_server.cpp)
+        lupine_internal_target(lupine_hip_server)
+        target_include_directories(lupine_hip_server PRIVATE
+            ${LUPINE_HIP_INCLUDE_DIR})
+        target_compile_definitions(lupine_hip_server PRIVATE
+            __HIP_PLATFORM_AMD__)
+        target_link_libraries(lupine_hip_server PRIVATE lupine_server_core)
     endif()
 
     add_executable(lupine_driver_server
@@ -331,8 +450,40 @@ if(LUPINE_BUILD_SERVER)
             LUPINE_BUILD_NVML_BACKEND)
         target_link_libraries(lupine_driver_server PRIVATE lupine_nvml_server)
     endif()
+    if(LUPINE_BUILD_HIP)
+        target_compile_definitions(lupine_driver_server PRIVATE
+            LUPINE_BUILD_HIP_BACKEND)
+        target_link_libraries(lupine_driver_server PRIVATE lupine_hip_server)
+    endif()
 endif()
 
+# Tests that build wherever the project does. The Linux-only block below leans
+# on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
+# those belongs here instead, so it covers every platform the client ships for.
+if(BUILD_TESTING)
+    add_executable(transport_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/transport_test.cpp)
+    target_link_libraries(transport_test PRIVATE lupine_rpc_core)
+    lupine_apply_sanitizer(transport_test)
+    add_test(NAME transport_test COMMAND transport_test)
+
+
+    add_executable(checkpoint_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp)
+    target_include_directories(checkpoint_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(checkpoint_test PRIVATE Threads::Threads)
+    lupine_apply_sanitizer(checkpoint_test)
+
+    add_test(NAME checkpoint_test COMMAND checkpoint_test)
+    lupine_scaled_timeout(ckpt_timeout 10)
+    set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
+endif()
+
+# Unix: h2_test needs no socketpair or mmap any more, but it hangs partway
+# through on Windows (issue #656, in test_rpc_write_queue_grows), so it stays
+# off that platform until the transport difference behind that is understood.
 if(BUILD_TESTING AND NOT WIN32)
     add_executable(h2_test ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
     target_include_directories(h2_test PRIVATE ${NGHTTP2_INCLUDE_DIR})
@@ -345,14 +496,22 @@ if(BUILD_TESTING AND NOT WIN32)
     endif()
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
+    add_test(NAME h2_test COMMAND h2_test)
+    lupine_scaled_timeout(h2_timeout 60)
+    set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
 
-    add_executable(checkpoint_test
-        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_test.cpp)
-    target_include_directories(checkpoint_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(checkpoint_test PRIVATE Threads::Threads)
-    lupine_apply_sanitizer(checkpoint_test)
+    add_executable(dispatch_test ${CMAKE_CURRENT_SOURCE_DIR}/dispatch_test.cpp)
+    target_link_libraries(dispatch_test PRIVATE lupine_rpc_core)
+    lupine_apply_sanitizer(dispatch_test)
+    add_test(NAME dispatch_test COMMAND dispatch_test)
+    lupine_scaled_timeout(dispatch_timeout 30)
+    set_tests_properties(dispatch_test PROPERTIES TIMEOUT ${dispatch_timeout})
+endif()
+
+# Linux-only, not merely Unix: these pair sockets with socketpair(), place
+# mappings with MAP_FIXED_NOREPLACE and back them with memfd_create(), none of
+# which macOS has. Portable tests belong in the block above.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     if(LUPINE_BUILD_CUDA)
         add_executable(events_test
@@ -386,12 +545,6 @@ if(BUILD_TESTING AND NOT WIN32)
         ${CMAKE_DL_LIBS} Threads::Threads)
     lupine_apply_sanitizer(server_checkpoint_test)
 
-    add_test(NAME h2_test COMMAND h2_test)
-    lupine_scaled_timeout(h2_timeout 30)
-    set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
-    add_test(NAME checkpoint_test COMMAND checkpoint_test)
-    lupine_scaled_timeout(ckpt_timeout 10)
-    set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
     if(TARGET events_test)
         add_test(NAME events_test COMMAND events_test)
         lupine_scaled_timeout(events_timeout 10)
@@ -420,12 +573,14 @@ if(BUILD_TESTING AND NOT WIN32)
             COMMAND server_sigterm_test $<TARGET_FILE:lupine_driver_server>)
         set_tests_properties(server_sigterm_test PROPERTIES
             TIMEOUT 10 SKIP_RETURN_CODE 77)
-        add_test(NAME server_sigterm_provider_test
-            COMMAND server_sigterm_test
-                    $<TARGET_FILE:lupine_driver_server>
-                    $<TARGET_FILE:test_lupinecr_provider>)
-        set_tests_properties(server_sigterm_provider_test PROPERTIES
-            TIMEOUT 10 SKIP_RETURN_CODE 77)
+        if(TARGET lupine_cuda_server)
+            add_test(NAME server_sigterm_provider_test
+                COMMAND server_sigterm_test
+                        $<TARGET_FILE:lupine_driver_server>
+                        $<TARGET_FILE:test_lupinecr_provider>)
+            set_tests_properties(server_sigterm_provider_test PROPERTIES
+                TIMEOUT 10 SKIP_RETURN_CODE 77)
+        endif()
     endif()
 
     if(TARGET lupine_nvml_client)
@@ -443,6 +598,9 @@ endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
         "Building NVML client: lupine_nvml_client (libnvidia-ml.so.1)")
+endif()
+if(TARGET lupine_hip_client)
+    message(STATUS "Building HIP client: lupine_hip_client (libamdhip64.so.1)")
 endif()
 if(TARGET lupine_driver_server)
     message(STATUS "Building server: lupine_driver_server")

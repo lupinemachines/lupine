@@ -5,9 +5,7 @@
 # and struct round-trips that cuda-samples never reach.
 #
 # Each pytest module and each example is a unit with its own server on
-# SERVER_PORT_BASE + index. Known failures live in
-# test/cuda-python/known_failures.txt (one pytest node id per line, with the
-# tracking issue) and are passed to pytest as --deselect.
+# SERVER_PORT_BASE + index.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,7 +14,6 @@ CUDA_PYTHON_URL="${CUDA_PYTHON_URL:-https://github.com/NVIDIA/cuda-python.git}"
 CUDA_PYTHON_REF="${CUDA_PYTHON_REF:-}"
 CUDA_PYTHON_DIR="${CUDA_PYTHON_DIR:-$repo_root/test/cuda-python/cuda-python}"
 CUDA_PYTHON_SKIP_LIST="${CUDA_PYTHON_SKIP_LIST:-}"
-CUDA_PYTHON_KNOWN_FAILURES="${CUDA_PYTHON_KNOWN_FAILURES:-$repo_root/test/cuda-python/known_failures.txt}"
 CUDA_PYTHON_INSTALL="${CUDA_PYTHON_INSTALL:-auto}"
 SERVER_HOST="${SERVER_HOST:-inferable-node-008}"
 SERVER_USER="${SERVER_USER:-kevin}"
@@ -52,9 +49,6 @@ Environment:
   CUDA_PYTHON_INSTALL    auto installs the bindings matching the CUDA toolkit
                          major plus pytest into PYTHON_BIN's environment; 0 skips.
   CUDA_PYTHON_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
-  CUDA_PYTHON_KNOWN_FAILURES
-                         pytest node ids (relative to the tests or examples
-                         directory) to --deselect. Default: $CUDA_PYTHON_KNOWN_FAILURES
   PYTHON_BIN             Interpreter. Default: $PYTHON_BIN
   SERVER_SSH_TARGET      GPU host. Default: $SERVER_SSH_TARGET
   SERVER_PORT_BASE       First per-unit server port. Default: $SERVER_PORT_BASE
@@ -167,15 +161,6 @@ if [[ "${LIST_TESTS:-0}" == "1" ]]; then
   exit 0
 fi
 
-deselect_args=()
-if [[ -f "$CUDA_PYTHON_KNOWN_FAILURES" ]]; then
-  while IFS= read -r line; do
-    line="${line%%#*}"
-    line="${line//[[:space:]]/}"
-    [[ -n "$line" ]] && deselect_args+=(--deselect "$line")
-  done < "$CUDA_PYTHON_KNOWN_FAILURES"
-fi
-
 ssh_with_timeout() {
   timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
     ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
@@ -232,7 +217,7 @@ pass=0
 fail=0
 skip=0
 
-echo "cuda-python $CUDA_PYTHON_REF ($package $installed), ${#UNITS[@]} units, $((${#deselect_args[@]} / 2)) known failures deselected" >&2
+echo "cuda-python $CUDA_PYTHON_REF ($package $installed), ${#UNITS[@]} units" >&2
 
 for i in "${!UNITS[@]}"; do
   unit="${UNITS[$i]}"
@@ -258,15 +243,13 @@ for i in "${!UNITS[@]}"; do
   # Examples are standalone scripts from 13.3 on and pytest files before that.
   # Scripts exit 100 when the machine cannot run them (peer GPUs, toolkit
   # version); pytest exits 5 when every test in a module was skipped/deselected.
-  # --rootdir keeps node ids relative to the tests directory so the known
-  # failures file can name them without the cuda_bindings/tests prefix.
   pytest_cmd=("$PYTHON_BIN" -m pytest -q --no-header -p no:cacheprovider -p no:randomly)
   if [[ "$unit" == test_*.py ]]; then
     cwd="$tests_dir"
-    cmd=("${pytest_cmd[@]}" --rootdir "$tests_dir" "${deselect_args[@]}" "$unit")
+    cmd=("${pytest_cmd[@]}" --rootdir "$tests_dir" "$unit")
   elif [[ "$unit" == *_test.py ]]; then
     cwd="$examples_dir"
-    cmd=("${pytest_cmd[@]}" --rootdir "$examples_dir" "${deselect_args[@]}" "$unit")
+    cmd=("${pytest_cmd[@]}" --rootdir "$examples_dir" "$unit")
   else
     cwd="$examples_dir"
     cmd=("$PYTHON_BIN" "$unit")
@@ -317,7 +300,6 @@ done
   echo "FAIL $fail"
   echo "SKIP $skip"
   echo "TOTAL $((pass + fail + skip))"
-  echo "DESELECTED $((${#deselect_args[@]} / 2))"
   echo "RESULTS $tsv"
 } | tee "$RESULTS_DIR/summary.txt"
 

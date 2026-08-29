@@ -26,7 +26,6 @@ permissions:
 jobs:
   gpu-integration:
     name: ${{ matrix.name }} GPU integration on GCE L4
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 300
 

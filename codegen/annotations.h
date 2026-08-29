@@ -13,6 +13,8 @@
 #include <nvml.h>
 #endif
 
+#include <hip/hip_runtime_api.h>
+
 typedef struct {
   unsigned int version;
   nvmlTemperatureSensors_t sensorType;
@@ -2784,12 +2786,12 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
                       size_t ByteCount);
 /**
- * @disabled server - manual server pipelines large host-to-device copies
+ * @disabled - manual client/server pipeline large host-to-device copies
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
- * @param srcHost SEND_ONLY LENGTH:ByteCount COMPRESSIBLE
+ * @param srcHost SEND_ONLY LENGTH:ByteCount
  * @server CUDA
  */
 CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
@@ -2799,7 +2801,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
  * @routingkey DEVICEPTR srcDevice
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
- * @param dstHost RECV_ONLY LENGTH:ByteCount COMPRESSIBLE
+ * @param dstHost RECV_ONLY LENGTH:ByteCount
  * @server CUDA
  */
 CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
@@ -2910,7 +2912,7 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
- * @param srcHost SEND_ONLY LENGTH:ByteCount COMPRESSIBLE
+ * @param srcHost SEND_ONLY LENGTH:ByteCount
  * @param hStream SEND_ONLY
  * @server CUDA
  */
@@ -4405,6 +4407,7 @@ cuGraphBatchMemOpNodeSetParams(CUgraphNode hNode,
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams paramArray count
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecBatchMemOpNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4529,31 +4532,33 @@ CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes);
 CUresult cuGraphGetRootNodes(CUgraph hGraph, CUgraphNode *rootNodes,
                              size_t *numRootNodes);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hGraph SEND_ONLY
- * @param from SEND_RECV
- * @param to SEND_RECV
  * @param numEdges SEND_RECV
+ * @param from RECV_ONLY NULLABLE LENGTH:numEdges
+ * @param to RECV_ONLY NULLABLE LENGTH:numEdges
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numEdges
  */
 CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from, CUgraphNode *to,
-                         size_t *numEdges);
+                         CUgraphEdgeData *edgeData, size_t *numEdges);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hNode SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_RECV
+ * @param dependencies RECV_ONLY NULLABLE LENGTH:numDependencies
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numDependencies
  */
 CUresult cuGraphNodeGetDependencies(CUgraphNode hNode,
                                     CUgraphNode *dependencies,
+                                    CUgraphEdgeData *edgeData,
                                     size_t *numDependencies);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hNode SEND_ONLY
- * @param dependentNodes SEND_RECV
  * @param numDependentNodes SEND_RECV
+ * @param dependentNodes RECV_ONLY NULLABLE LENGTH:numDependentNodes
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numDependentNodes
  */
 CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
                                       CUgraphNode *dependentNodes,
+                                      CUgraphEdgeData *edgeData,
                                       size_t *numDependentNodes);
 /**
  * @param hGraph SEND_ONLY
@@ -4576,6 +4581,19 @@ CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
  * @param hNode SEND_ONLY
  */
 CUresult cuGraphDestroyNode(CUgraphNode hNode);
+/**
+ * @disabled server - manual server retains graph staging resources
+ * @recordowner GRAPH_EXEC phGraphExec
+ * @param phGraphExec RECV_ONLY
+ * @param hGraph SEND_ONLY
+ * @param phErrorNode RECV_ONLY NULLABLE
+ * @param bufferSize SEND_ONLY
+ * @param logBuffer RECV_ONLY NULLABLE LENGTH:bufferSize ON_ERROR
+ * @server CUDA
+ */
+CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
+                               CUgraphNode *phErrorNode, char *logBuffer,
+                               size_t bufferSize);
 /**
  * @recordowner GRAPH_EXEC phGraphExec
  * @param phGraphExec SEND_RECV
@@ -4601,6 +4619,21 @@ cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
  */
 CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
 /**
+ * @guard CUDA_VERSION >= 12020
+ * @param hNode SEND_ONLY
+ * @param nodeParams SEND_ONLY DEREF
+ */
+CUresult cuGraphNodeSetParams(CUgraphNode hNode,
+                              CUgraphNodeParams *nodeParams);
+/**
+ * @guard CUDA_VERSION >= 12020
+ * @param hGraphExec SEND_ONLY
+ * @param hNode SEND_ONLY
+ * @param nodeParams SEND_ONLY DEREF
+ */
+CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
+                                  CUgraphNodeParams *nodeParams);
+/**
  * @disabled both - manual kernel parameter packing
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
@@ -4615,6 +4648,7 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hNode SEND_ONLY
  * @param copyParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
                                         CUgraphNode hNode,
@@ -4625,6 +4659,7 @@ CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
  * @param hNode SEND_ONLY
  * @param memsetParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult
 cuGraphExecMemsetNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4643,6 +4678,7 @@ CUresult cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param childGraph SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
                                             CUgraphNode hNode,
@@ -4651,6 +4687,7 @@ CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
                                             CUgraphNode hNode, CUevent event);
@@ -4658,6 +4695,7 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
                                           CUgraphNode hNode, CUevent event);
@@ -4667,6 +4705,7 @@ CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4677,6 +4716,7 @@ CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4685,6 +4725,7 @@ CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param isEnabled SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
                                unsigned int isEnabled);
@@ -4692,6 +4733,7 @@ CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param isEnabled SEND_RECV
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphNodeGetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
                                unsigned int *isEnabled);
@@ -17342,6 +17384,71 @@ cublasStatus_t cublasGemmStridedBatchedEx(
     int ldc, long long int strideC, int batchCount, cudaDataType computeType,
     cublasGemmAlgo_t algo);
 
+// HIP runtime API. The initial generated surface covers device discovery and
+// properties.
+
+/**
+ * @server HIP
+ * @disabled client - manual client initializes every configured route
+ * @param flags SEND_ONLY
+ */
+hipError_t hipInit(unsigned int flags);
+/**
+ * @server HIP
+ * @disabled client - manual client reports the virtual device table size
+ * @param count RECV_ONLY
+ */
+hipError_t hipGetDeviceCount(int *count);
+/**
+ * @server HIP
+ * @disabled client - manual client maps the virtual device ordinal
+ * @param device RECV_ONLY
+ * @param ordinal SEND_ONLY
+ */
+hipError_t hipDeviceGet(int *device, int ordinal);
+/**
+ * @server HIP
+ * @param prop RECV_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipGetDevicePropertiesR0600(hipDeviceProp_tR0600 *prop,
+                                       int deviceId);
+/**
+ * @server HIP
+ * @param name RECV_ONLY LENGTH:len
+ * @param len SEND_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceGetName(char *name, int len, int deviceId);
+/**
+ * @server HIP
+ * @param bytes RECV_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceTotalMem(size_t *bytes, int deviceId);
+/**
+ * @server HIP
+ * @param pi RECV_ONLY
+ * @param attr SEND_ONLY
+ * @param deviceId SEND_ONLY
+ * @routingkey HIP_DEVICE deviceId
+ */
+hipError_t hipDeviceGetAttribute(int *pi, hipDeviceAttribute_t attr,
+                                 int deviceId);
+/**
+ * @server HIP
+ * @param driverVersion RECV_ONLY
+ */
+hipError_t hipDriverGetVersion(int *driverVersion);
+/**
+ * @server HIP
+ * @param runtimeVersion RECV_ONLY
+ */
+hipError_t hipRuntimeGetVersion(int *runtimeVersion);
+
 // Registry-only operations without API declarations above. The code generator
 // reads these annotations directly; the C++ parser intentionally ignores them.
 #if 0
@@ -17361,12 +17468,6 @@ void lupineLibraryAttributeSnapshot();
 void cuGraphConditionalHandleCreate();
 /** @server CUDA handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
-/** @server CUDA handle_cuGraphGetEdges */
-void cuGraphGetEdges_v2();
-/** @server CUDA handle_cuGraphNodeGetDependencies */
-void cuGraphNodeGetDependencies_v2();
-/** @server CUDA handle_cuGraphNodeGetDependentNodes */
-void cuGraphNodeGetDependentNodes_v2();
 /** @server CUDA */
 void lupineEventQueryBatch();
 /** @server CUDA */

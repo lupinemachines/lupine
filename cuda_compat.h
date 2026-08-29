@@ -329,4 +329,54 @@ static inline CUresult cuStreamUpdateCaptureDependencies_v2(
 #endif
 #endif
 
+// Graph edge-data query ABIs were added in CUDA 12.3. Keep the generated v2
+// RPC surface available to older client builds and adapt server calls to the
+// legacy queries when edge data is not requested.
+#if CUDA_VERSION < 12030
+#ifdef LUPINE_CUDA_COMPAT_TYPES_ONLY
+#ifdef __cplusplus
+extern "C" {
+#endif
+CUresult cuGraphGetEdges_v2(CUgraph, CUgraphNode *, CUgraphNode *,
+                            CUgraphEdgeData *, size_t *);
+CUresult cuGraphNodeGetDependencies_v2(CUgraphNode, CUgraphNode *,
+                                       CUgraphEdgeData *, size_t *);
+CUresult cuGraphNodeGetDependentNodes_v2(CUgraphNode, CUgraphNode *,
+                                         CUgraphEdgeData *, size_t *);
+#ifdef __cplusplus
+}
+#endif
+#else
+static inline CUresult cuGraphGetEdges_v2(CUgraph graph, CUgraphNode *from,
+                                          CUgraphNode *to,
+                                          CUgraphEdgeData *edgeData,
+                                          size_t *numEdges) {
+  if (edgeData != nullptr) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  return cuGraphGetEdges(graph, from, to, numEdges);
+}
+
+static inline CUresult cuGraphNodeGetDependencies_v2(CUgraphNode node,
+                                                     CUgraphNode *dependencies,
+                                                     CUgraphEdgeData *edgeData,
+                                                     size_t *numDependencies) {
+  if (edgeData != nullptr) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  return cuGraphNodeGetDependencies(node, dependencies, numDependencies);
+}
+
+static inline CUresult
+cuGraphNodeGetDependentNodes_v2(CUgraphNode node, CUgraphNode *dependentNodes,
+                                CUgraphEdgeData *edgeData,
+                                size_t *numDependentNodes) {
+  if (edgeData != nullptr) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  return cuGraphNodeGetDependentNodes(node, dependentNodes, numDependentNodes);
+}
+#endif
+#endif
+
 #endif

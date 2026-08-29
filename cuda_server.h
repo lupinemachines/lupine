@@ -5,15 +5,6 @@
 
 #include "rpc.h"
 
-// Which side of a copy is host memory, and therefore which side the handler
-// has to stage locally.
-enum class lupine_copy_direction {
-  host_to_host,
-  host_to_device,
-  device_to_host,
-  device_to_device,
-};
-
 int handle_cuGetErrorName(conn_t *conn);
 int handle_cuGetErrorString(conn_t *conn);
 int handle_cuGetExportTableMetadata(conn_t *conn);
@@ -65,9 +56,6 @@ int handle_cuGraphAddHostNode(conn_t *conn);
 int handle_cuGraphExecKernelNodeSetParams(conn_t *conn);
 int handle_cuGraphConditionalHandleCreate(conn_t *conn);
 int handle_cuGraphAddNode(conn_t *conn);
-int handle_cuGraphGetEdges(conn_t *conn);
-int handle_cuGraphNodeGetDependencies(conn_t *conn);
-int handle_cuGraphNodeGetDependentNodes(conn_t *conn);
 int handle_cuGraphHostNodeGetParams(conn_t *conn);
 int handle_cuGraphHostNodeSetParams(conn_t *conn);
 int handle_cuGraphExecHostNodeSetParams(conn_t *conn);
@@ -84,6 +72,7 @@ int handle_cuStreamGetCaptureInfo(conn_t *conn);
 int handle_cuStreamBeginCapture(conn_t *conn);
 int handle_cuStreamEndCapture(conn_t *conn);
 int handle_cuGraphClone(conn_t *conn);
+int handle_cuGraphInstantiate_v2(conn_t *conn);
 int handle_cuGraphInstantiateWithFlags(conn_t *conn);
 int handle_cuGraphInstantiateWithParams(conn_t *conn);
 int handle_cuGraphExecDestroy(conn_t *conn);
@@ -110,10 +99,6 @@ int handle_cuTensorMapEncodeTiled(conn_t *conn);
 
 bool lupine_server_initialize_connection(conn_t *conn);
 void lupine_server_cleanup_connection(conn_t *conn);
-
-int lupine_server_copy_htod_async(conn_t *conn, int framed,
-                                  CUdeviceptr destination, size_t bytes,
-                                  CUstream stream, CUresult &result);
 
 int handle_cuDevicePrimaryCtxRetain(conn_t *conn);
 int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn);

@@ -949,13 +949,13 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     CUdeviceptr dst = allocation.server_host_ptr + offset;
     memcpy(headers[count].data(), &dst, sizeof(dst));
     memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
-    cursors[count * 2] = rpc_write_cursor::plain(
+    cursors[count * 2] = rpc_write_cursor(
         headers[count].data(), LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES);
     const void *source = reinterpret_cast<void *>(start);
     if (allocation.io_alias != nullptr) {
       source = static_cast<unsigned char *>(allocation.io_alias) + offset;
     }
-    cursors[count * 2 + 1] = rpc_write_cursor::plain(source, bytes);
+    cursors[count * 2 + 1] = rpc_write_cursor(source, bytes);
     ++count;
     if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
       CUresult result = send_batch(count);
@@ -1070,6 +1070,28 @@ static bool lupine_translate_client_host_ptr_to_server(
   return true;
 }
 
+static bool lupine_translate_client_host_range_to_server(
+    CUdeviceptr *translated, const void *host, size_t size, int route_id) {
+  if (host == nullptr || translated == nullptr) {
+    return false;
+  }
+  uintptr_t address = reinterpret_cast<uintptr_t>(host);
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(const_cast<void *>(host));
+  if (it == lupine_mutable_host_allocations_locked().end() ||
+      it->second.server_host_ptr == 0 || it->second.local_cuda ||
+      it->second.route_id != route_id) {
+    return false;
+  }
+  uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
+  size_t offset = address - base;
+  if (offset > it->second.size || size > it->second.size - offset) {
+    return false;
+  }
+  *translated = it->second.server_host_ptr + offset;
+  return true;
+}
+
 static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
   void *host = reinterpret_cast<void *>(ptr);
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -1138,20 +1160,19 @@ extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
   return lupine_is_client_mapped_address(ptr);
 }
 
-static lupine_copy_direction lupine_infer_copy_direction(CUdeviceptr dst,
-                                                         CUdeviceptr src) {
+static uint8_t lupine_infer_copy_direction(CUdeviceptr dst, CUdeviceptr src) {
   const bool dst_is_host = lupine_copy_pointer_is_host(dst);
   const bool src_is_host = lupine_copy_pointer_is_host(src);
   if (dst_is_host && src_is_host) {
-    return lupine_copy_direction::host_to_host;
+    return LUPINE_COPY_DIRECTION_HTOH;
   }
   if (src_is_host) {
-    return lupine_copy_direction::host_to_device;
+    return LUPINE_COPY_DIRECTION_HTOD;
   }
   if (dst_is_host) {
-    return lupine_copy_direction::device_to_host;
+    return LUPINE_COPY_DIRECTION_DTOH;
   }
-  return lupine_copy_direction::device_to_device;
+  return LUPINE_COPY_DIRECTION_DTOD;
 }
 
 extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
@@ -1161,15 +1182,15 @@ extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
   }
 
   switch (lupine_infer_copy_direction(dst, src)) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     memmove(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
             ByteCount);
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device:
+  case LUPINE_COPY_DIRECTION_HTOD:
     return cuMemcpyHtoD_v2(dst, reinterpret_cast<const void *>(src), ByteCount);
-  case lupine_copy_direction::device_to_host:
+  case LUPINE_COPY_DIRECTION_DTOH:
     return cuMemcpyDtoH_v2(reinterpret_cast<void *>(dst), src, ByteCount);
-  case lupine_copy_direction::device_to_device:
+  case LUPINE_COPY_DIRECTION_DTOD:
     return cuMemcpyDtoD_v2(dst, src, ByteCount);
   }
   return CUDA_ERROR_INVALID_VALUE;
@@ -1186,17 +1207,17 @@ extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
 extern "C" CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src,
                                   size_t ByteCount, CUstream hStream) {
   switch (lupine_infer_copy_direction(dst, src)) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     memcpy(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
            ByteCount);
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device:
+  case LUPINE_COPY_DIRECTION_HTOD:
     return cuMemcpyHtoDAsync_v2(dst, reinterpret_cast<const void *>(src),
                                 ByteCount, hStream);
-  case lupine_copy_direction::device_to_host:
+  case LUPINE_COPY_DIRECTION_DTOH:
     return cuMemcpyDtoHAsync_v2(reinterpret_cast<void *>(dst), src, ByteCount,
                                 hStream);
-  case lupine_copy_direction::device_to_device:
+  case LUPINE_COPY_DIRECTION_DTOD:
     return cuMemcpyDtoDAsync_v2(dst, src, ByteCount, hStream);
   }
   return CUDA_ERROR_INVALID_VALUE;
@@ -1249,10 +1270,10 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   size_t read_offset = 0;
   do {
     size_t chunk =
-        std::min(bytes - read_offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+        std::min(bytes - read_offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
     if (rpc_read(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS && chunk != 0 &&
-         rpc_read_payload(conn, dst + read_offset, chunk) < 0)) {
+         rpc_read(conn, dst + read_offset, chunk) < 0)) {
       rpc_read_end(conn);
       return false;
     }
@@ -2870,10 +2891,10 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
   size_t offset = 0;
   do {
     size_t chunk =
-        std::min(ByteCount - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+        std::min(ByteCount - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
     if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS && chunk != 0 &&
-         rpc_read_payload(conn, copy_dst + offset, chunk) < 0)) {
+         rpc_read(conn, copy_dst + offset, chunk) < 0)) {
       rpc_read_end(conn);
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
@@ -2901,6 +2922,54 @@ extern "C" CUresult cuMemcpyDtoH(void *dstHost, CUdeviceptr srcDevice,
   return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
 }
 
+extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
+                                    size_t ByteCount) {
+  lupine_route route = lupine_route_for_deviceptr(dstDevice);
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn("cuMemcpyHtoD_v2", dstDevice,
+                                            srcHost, ByteCount);
+    if (return_value == CUDA_SUCCESS) {
+      return_value = lupine_sync_mapped_device_to_host();
+    }
+    return return_value;
+  }
+  if (ByteCount != 0 && srcHost == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdeviceptr server_source = 0;
+  bool is_server_authoritative = lupine_translate_client_host_range_to_server(
+      &server_source, srcHost, ByteCount, lupine_route_identity(route));
+  const void *wire_source = is_server_authoritative
+                                ? reinterpret_cast<const void *>(server_source)
+                                : srcHost;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
+      rpc_write(conn, &is_server_authoritative,
+                sizeof(is_server_authoritative)) < 0 ||
+      rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
+      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+      rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    return_value = lupine_sync_mapped_device_to_host();
+  }
+  return return_value;
+}
+
+#ifdef cuMemcpyHtoD
+#undef cuMemcpyHtoD
+#endif
+extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
+                                 size_t ByteCount) {
+  return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
+}
+
 extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                          const void *srcHost, size_t ByteCount,
                                          CUstream hStream) {
@@ -2912,17 +2981,28 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   if (ByteCount != 0 && srcHost == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  srcHost = lupine_mapped_host_read_source(srcHost, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
+  CUdeviceptr server_source = 0;
+  bool is_server_authoritative = lupine_translate_client_host_range_to_server(
+      &server_source, srcHost, ByteCount, lupine_route_identity(route));
+  const void *wire_source = is_server_authoritative
+                                ? reinterpret_cast<const void *>(server_source)
+                                : srcHost;
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+      rpc_write(conn, &is_server_authoritative,
+                sizeof(is_server_authoritative)) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_write_payload(conn, srcHost, ByteCount) < 0) {
+      rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return rpc_write_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : CUDA_SUCCESS;
+  return return_value;
 }
 
 #ifdef cuMemcpyHtoDAsync
@@ -2995,7 +3075,7 @@ extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
   size_t offset = 0;
   do {
     size_t chunk =
-        std::min(ByteCount - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+        std::min(ByteCount - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
     if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         (return_value == CUDA_SUCCESS && chunk != 0 &&
          rpc_read(conn, copy_dst + offset, chunk) < 0)) {
@@ -3062,10 +3142,10 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     size_t offset = 0;
     do {
       size_t chunk =
-          std::min(ByteCount - offset, (size_t)LUPINE_COMPRESS_BLOCK_BYTES);
+          std::min(ByteCount - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
       if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
           (return_value == CUDA_SUCCESS && chunk != 0 &&
-           rpc_read_payload(conn, copy_dst + offset, chunk) < 0)) {
+           rpc_read(conn, copy_dst + offset, chunk) < 0)) {
         rpc_read_end(conn);
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
       }
@@ -3133,32 +3213,46 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
   }
   bool src_host = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   bool dst_host = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  lupine_copy_direction direction =
-      src_host ? (dst_host ? lupine_copy_direction::host_to_host
-                           : lupine_copy_direction::host_to_device)
-               : (dst_host ? lupine_copy_direction::device_to_host
-                           : lupine_copy_direction::device_to_device);
+  uint8_t direction = src_host ? (dst_host ? LUPINE_COPY_DIRECTION_HTOH
+                                           : LUPINE_COPY_DIRECTION_HTOD)
+                               : (dst_host ? LUPINE_COPY_DIRECTION_DTOH
+                                           : LUPINE_COPY_DIRECTION_DTOD);
   const char *src_base =
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   switch (direction) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     for (size_t row = 0; row < copy.Height; ++row) {
       memmove(dst_base + row * copy.dstPitch, src_base + row * copy.srcPitch,
               copy.WidthInBytes);
     }
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device: {
+  case LUPINE_COPY_DIRECTION_HTOD: {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    size_t source_span = copy.Height == 0 ? 0
+                                          : (copy.Height - 1) * copy.srcPitch +
+                                                copy.WidthInBytes;
+    CUdeviceptr server_source = 0;
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
+    if (is_server_authoritative) {
+      copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
+      copy.srcDevice = server_source;
+      copy.srcHost = nullptr;
+      copy.srcXInBytes = 0;
+      copy.srcY = 0;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
+        rpc_write(conn, &is_server_authoritative,
+                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                          copy.srcPitch, 1, 0) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {
@@ -3169,12 +3263,13 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_host: {
+  case LUPINE_COPY_DIRECTION_DTOH: {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3186,7 +3281,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_device: {
+  case LUPINE_COPY_DIRECTION_DTOD: {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
@@ -3214,6 +3309,7 @@ extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2D_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3260,32 +3356,46 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
   }
   bool src_host = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   bool dst_host = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  lupine_copy_direction direction =
-      src_host ? (dst_host ? lupine_copy_direction::host_to_host
-                           : lupine_copy_direction::host_to_device)
-               : (dst_host ? lupine_copy_direction::device_to_host
-                           : lupine_copy_direction::device_to_device);
+  uint8_t direction = src_host ? (dst_host ? LUPINE_COPY_DIRECTION_HTOH
+                                           : LUPINE_COPY_DIRECTION_HTOD)
+                               : (dst_host ? LUPINE_COPY_DIRECTION_DTOH
+                                           : LUPINE_COPY_DIRECTION_DTOD);
   const char *src_base =
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   switch (direction) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     for (size_t row = 0; row < copy.Height; ++row) {
       memmove(dst_base + row * copy.dstPitch, src_base + row * copy.srcPitch,
               copy.WidthInBytes);
     }
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device: {
+  case LUPINE_COPY_DIRECTION_HTOD: {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    size_t source_span = copy.Height == 0 ? 0
+                                          : (copy.Height - 1) * copy.srcPitch +
+                                                copy.WidthInBytes;
+    CUdeviceptr server_source = 0;
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
+    if (is_server_authoritative) {
+      copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
+      copy.srcDevice = server_source;
+      copy.srcHost = nullptr;
+      copy.srcXInBytes = 0;
+      copy.srcY = 0;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
+        rpc_write(conn, &is_server_authoritative,
+                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                          copy.srcPitch, 1, 0) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {
@@ -3296,12 +3406,13 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_host: {
+  case LUPINE_COPY_DIRECTION_DTOH: {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3313,7 +3424,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_device: {
+  case LUPINE_COPY_DIRECTION_DTOD: {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
@@ -3341,6 +3452,7 @@ extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DUnaligned_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3388,32 +3500,46 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
   }
   bool src_host = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   bool dst_host = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  lupine_copy_direction direction =
-      src_host ? (dst_host ? lupine_copy_direction::host_to_host
-                           : lupine_copy_direction::host_to_device)
-               : (dst_host ? lupine_copy_direction::device_to_host
-                           : lupine_copy_direction::device_to_device);
+  uint8_t direction = src_host ? (dst_host ? LUPINE_COPY_DIRECTION_HTOH
+                                           : LUPINE_COPY_DIRECTION_HTOD)
+                               : (dst_host ? LUPINE_COPY_DIRECTION_DTOH
+                                           : LUPINE_COPY_DIRECTION_DTOD);
   const char *src_base =
       (const char *)copy.srcHost + copy.srcY * copy.srcPitch + copy.srcXInBytes;
   char *dst_base =
       (char *)copy.dstHost + copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   switch (direction) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     for (size_t row = 0; row < copy.Height; ++row) {
       memmove(dst_base + row * copy.dstPitch, src_base + row * copy.srcPitch,
               copy.WidthInBytes);
     }
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device: {
+  case LUPINE_COPY_DIRECTION_HTOD: {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_stream(hStream)
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    size_t source_span = copy.Height == 0 ? 0
+                                          : (copy.Height - 1) * copy.srcPitch +
+                                                copy.WidthInBytes;
+    CUdeviceptr server_source = 0;
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
+    if (is_server_authoritative) {
+      copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
+      copy.srcDevice = server_source;
+      copy.srcHost = nullptr;
+      copy.srcXInBytes = 0;
+      copy.srcY = 0;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
+        rpc_write(conn, &is_server_authoritative,
+                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                          copy.srcPitch, 1, 0) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3425,12 +3551,13 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_host: {
+  case LUPINE_COPY_DIRECTION_DTOH: {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_stream(hStream)
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3443,7 +3570,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_device: {
+  case LUPINE_COPY_DIRECTION_DTOD: {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
@@ -3471,6 +3598,7 @@ extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy2DAsync_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3527,11 +3655,10 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
   }
   bool src_host = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   bool dst_host = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  lupine_copy_direction direction =
-      src_host ? (dst_host ? lupine_copy_direction::host_to_host
-                           : lupine_copy_direction::host_to_device)
-               : (dst_host ? lupine_copy_direction::device_to_host
-                           : lupine_copy_direction::device_to_device);
+  uint8_t direction = src_host ? (dst_host ? LUPINE_COPY_DIRECTION_HTOH
+                                           : LUPINE_COPY_DIRECTION_HTOD)
+                               : (dst_host ? LUPINE_COPY_DIRECTION_DTOH
+                                           : LUPINE_COPY_DIRECTION_DTOD);
   size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
   size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
   const char *src_base = (const char *)copy.srcHost +
@@ -3541,7 +3668,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   switch (direction) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     for (size_t z = 0; z < copy.Depth; ++z) {
       for (size_t row = 0; row < copy.Height; ++row) {
         memmove(dst_base + z * dst_slice_pitch + row * copy.dstPitch,
@@ -3550,15 +3677,33 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
       }
     }
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device: {
+  case LUPINE_COPY_DIRECTION_HTOD: {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    size_t source_span = copy.Depth == 0 || copy.Height == 0
+                             ? 0
+                             : (copy.Depth - 1) * src_slice_pitch +
+                                   (copy.Height - 1) * copy.srcPitch +
+                                   copy.WidthInBytes;
+    CUdeviceptr server_source = 0;
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
+    if (is_server_authoritative) {
+      copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
+      copy.srcDevice = server_source;
+      copy.srcHost = nullptr;
+      copy.srcXInBytes = 0;
+      copy.srcY = 0;
+      copy.srcZ = 0;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
+        rpc_write(conn, &is_server_authoritative,
+                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                          copy.srcPitch, copy.Depth, src_slice_pitch) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {
@@ -3569,12 +3714,13 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_host: {
+  case LUPINE_COPY_DIRECTION_DTOH: {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_current_context()
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3586,7 +3732,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_device: {
+  case LUPINE_COPY_DIRECTION_DTOD: {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
@@ -3616,6 +3762,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3656,11 +3803,10 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
   }
   bool src_host = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   bool dst_host = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  lupine_copy_direction direction =
-      src_host ? (dst_host ? lupine_copy_direction::host_to_host
-                           : lupine_copy_direction::host_to_device)
-               : (dst_host ? lupine_copy_direction::device_to_host
-                           : lupine_copy_direction::device_to_device);
+  uint8_t direction = src_host ? (dst_host ? LUPINE_COPY_DIRECTION_HTOH
+                                           : LUPINE_COPY_DIRECTION_HTOD)
+                               : (dst_host ? LUPINE_COPY_DIRECTION_DTOH
+                                           : LUPINE_COPY_DIRECTION_DTOD);
   size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
   size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
   const char *src_base = (const char *)copy.srcHost +
@@ -3670,7 +3816,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   switch (direction) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     for (size_t z = 0; z < copy.Depth; ++z) {
       for (size_t row = 0; row < copy.Height; ++row) {
         memmove(dst_base + z * dst_slice_pitch + row * copy.dstPitch,
@@ -3679,15 +3825,33 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
       }
     }
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device: {
+  case LUPINE_COPY_DIRECTION_HTOD: {
     conn_t *conn = copy.dstMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_stream(hStream)
                        : lupine_rpc_conn_for_deviceptr(copy.dstDevice);
+    size_t source_span = copy.Depth == 0 || copy.Height == 0
+                             ? 0
+                             : (copy.Depth - 1) * src_slice_pitch +
+                                   (copy.Height - 1) * copy.srcPitch +
+                                   copy.WidthInBytes;
+    CUdeviceptr server_source = 0;
+    bool is_server_authoritative = lupine_translate_client_host_range_to_server(
+        &server_source, src_base, source_span,
+        lupine_route_identity(lupine_remote_route_for_conn(conn)));
+    if (is_server_authoritative) {
+      copy.srcMemoryType = CU_MEMORYTYPE_UNIFIED;
+      copy.srcDevice = server_source;
+      copy.srcHost = nullptr;
+      copy.srcXInBytes = 0;
+      copy.srcY = 0;
+      copy.srcZ = 0;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
+        rpc_write(conn, &is_server_authoritative,
+                  sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_write_pitched(conn, src_base, copy.WidthInBytes, copy.Height,
-                          copy.srcPitch, copy.Depth, src_slice_pitch) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -3699,12 +3863,13 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_host: {
+  case LUPINE_COPY_DIRECTION_DTOH: {
     conn_t *conn = copy.srcMemoryType == CU_MEMORYTYPE_ARRAY
                        ? lupine_rpc_conn_for_stream(hStream)
                        : lupine_rpc_conn_for_deviceptr(copy.srcDevice);
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3717,7 +3882,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_device: {
+  case LUPINE_COPY_DIRECTION_DTOD: {
     if (copy.srcMemoryType != CU_MEMORYTYPE_ARRAY &&
         copy.dstMemoryType != CU_MEMORYTYPE_ARRAY &&
         !lupine_deviceptrs_share_route(copy.dstDevice, copy.srcDevice)) {
@@ -3747,6 +3912,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
     }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DAsync_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
@@ -3797,11 +3963,10 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
   }
   bool src_host = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   bool dst_host = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  lupine_copy_direction direction =
-      src_host ? (dst_host ? lupine_copy_direction::host_to_host
-                           : lupine_copy_direction::host_to_device)
-               : (dst_host ? lupine_copy_direction::device_to_host
-                           : lupine_copy_direction::device_to_device);
+  uint8_t direction = src_host ? (dst_host ? LUPINE_COPY_DIRECTION_HTOH
+                                           : LUPINE_COPY_DIRECTION_HTOD)
+                               : (dst_host ? LUPINE_COPY_DIRECTION_DTOH
+                                           : LUPINE_COPY_DIRECTION_DTOD);
   size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
   size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
   const char *src_base = (const char *)copy.srcHost +
@@ -3811,7 +3976,7 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   switch (direction) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     for (size_t z = 0; z < copy.Depth; ++z) {
       for (size_t row = 0; row < copy.Height; ++row) {
         memmove(dst_base + z * dst_slice_pitch + row * copy.dstPitch,
@@ -3820,7 +3985,7 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
       }
     }
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device: {
+  case LUPINE_COPY_DIRECTION_HTOD: {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeer) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
@@ -3836,7 +4001,7 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_host: {
+  case LUPINE_COPY_DIRECTION_DTOH: {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeer) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
@@ -3850,7 +4015,7 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_device: {
+  case LUPINE_COPY_DIRECTION_DTOD: {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeer) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
@@ -3903,11 +4068,10 @@ extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
   }
   bool src_host = copy.srcMemoryType == CU_MEMORYTYPE_HOST;
   bool dst_host = copy.dstMemoryType == CU_MEMORYTYPE_HOST;
-  lupine_copy_direction direction =
-      src_host ? (dst_host ? lupine_copy_direction::host_to_host
-                           : lupine_copy_direction::host_to_device)
-               : (dst_host ? lupine_copy_direction::device_to_host
-                           : lupine_copy_direction::device_to_device);
+  uint8_t direction = src_host ? (dst_host ? LUPINE_COPY_DIRECTION_HTOH
+                                           : LUPINE_COPY_DIRECTION_HTOD)
+                               : (dst_host ? LUPINE_COPY_DIRECTION_DTOH
+                                           : LUPINE_COPY_DIRECTION_DTOD);
   size_t src_slice_pitch = copy.srcHeight * copy.srcPitch;
   size_t dst_slice_pitch = copy.dstHeight * copy.dstPitch;
   const char *src_base = (const char *)copy.srcHost +
@@ -3917,7 +4081,7 @@ extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   switch (direction) {
-  case lupine_copy_direction::host_to_host:
+  case LUPINE_COPY_DIRECTION_HTOH:
     for (size_t z = 0; z < copy.Depth; ++z) {
       for (size_t row = 0; row < copy.Height; ++row) {
         memmove(dst_base + z * dst_slice_pitch + row * copy.dstPitch,
@@ -3926,7 +4090,7 @@ extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
       }
     }
     return CUDA_SUCCESS;
-  case lupine_copy_direction::host_to_device: {
+  case LUPINE_COPY_DIRECTION_HTOD: {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeerAsync) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
@@ -3943,7 +4107,7 @@ extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_host: {
+  case LUPINE_COPY_DIRECTION_DTOH: {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeerAsync) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
@@ -3958,7 +4122,7 @@ extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
     }
     return return_value;
   }
-  case lupine_copy_direction::device_to_device: {
+  case LUPINE_COPY_DIRECTION_DTOD: {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemcpy3DPeerAsync) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
