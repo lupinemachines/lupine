@@ -6639,7 +6639,7 @@ cudaError_t cudaGraphCreate(cudaGraph_t *pGraph, unsigned int flags);
  * @param numDependencies SEND_ONLY
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param pNodeParams SEND_ONLY NULLABLE
  */
 cudaError_t
@@ -6691,7 +6691,7 @@ cudaGraphKernelNodeSetAttribute(cudaGraphNode_t hNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param pCopyParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddMemcpyNode(cudaGraphNode_t *pGraphNode,
@@ -6703,7 +6703,7 @@ cudaError_t cudaGraphAddMemcpyNode(cudaGraphNode_t *pGraphNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param symbol SEND_RECV
  * @param src SEND_RECV
  * @param count SEND_ONLY
@@ -6721,7 +6721,7 @@ cudaError_t cudaGraphAddMemcpyNodeToSymbol(cudaGraphNode_t *pGraphNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param dst SEND_RECV
  * @param symbol SEND_RECV
  * @param count SEND_ONLY
@@ -6736,7 +6736,7 @@ cudaError_t cudaGraphAddMemcpyNodeFromSymbol(
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param dst SEND_RECV
  * @param src SEND_RECV
  * @param count SEND_ONLY
@@ -6802,7 +6802,7 @@ cudaError_t cudaGraphMemcpyNodeSetParams1D(cudaGraphNode_t node, void *dst,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param pMemsetParams SEND_ONLY NULLABLE
  */
 cudaError_t
@@ -6828,7 +6828,7 @@ cudaGraphMemsetNodeSetParams(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_RECV ITER:numDependencies
+ * @param pDependencies SEND_RECV LENGTH:numDependencies
  * @param pNodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddHostNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
@@ -6852,7 +6852,7 @@ cudaGraphHostNodeSetParams(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param childGraph SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddChildGraphNode(cudaGraphNode_t *pGraphNode,
@@ -6870,7 +6870,7 @@ cudaError_t cudaGraphChildGraphNodeGetGraph(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  */
 cudaError_t cudaGraphAddEmptyNode(cudaGraphNode_t *pGraphNode,
                                   cudaGraph_t graph,
@@ -6880,7 +6880,7 @@ cudaError_t cudaGraphAddEmptyNode(cudaGraphNode_t *pGraphNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param event SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddEventRecordNode(cudaGraphNode_t *pGraphNode,
@@ -6904,7 +6904,7 @@ cudaError_t cudaGraphEventRecordNodeSetEvent(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param event SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddEventWaitNode(cudaGraphNode_t *pGraphNode,
@@ -6928,7 +6928,7 @@ cudaError_t cudaGraphEventWaitNodeSetEvent(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param nodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddExternalSemaphoresSignalNode(
@@ -6953,7 +6953,7 @@ cudaError_t cudaGraphExternalSemaphoresSignalNodeSetParams(
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param nodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddExternalSemaphoresWaitNode(
@@ -6979,7 +6979,7 @@ cudaError_t cudaGraphExternalSemaphoresWaitNodeSetParams(
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param nodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddMemAllocNode(cudaGraphNode_t *pGraphNode,
@@ -6999,7 +6999,7 @@ cudaGraphMemAllocNodeGetParams(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param dptr SEND_ONLY
  */
 cudaError_t cudaGraphAddMemFreeNode(cudaGraphNode_t *pGraphNode,
