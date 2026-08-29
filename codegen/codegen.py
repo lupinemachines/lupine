@@ -14,7 +14,9 @@ import os
 import glob
 import re
 import subprocess
+import textwrap
 import zlib
+from client_templates import collect_client_call_templates
 from ops import (
     NullableOperation,
     ArrayOperation,
@@ -30,6 +32,7 @@ from ops import (
     ReleaseAnnotation,
     ParentAnnotation,
     CrossServerCopyAnnotation,
+    ClientCallTemplate,
     FunctionAnnotationMetadata,
     GraphExecNodeAnnotation,
     RoutingFallbackAnnotation,
@@ -131,11 +134,6 @@ FUNCTION_MAP_ALIASES = [
         "CUDA_VERSION >= 12030",
     ),
 ]
-
-KERNEL_PARAM_LAYOUT_INVALIDATORS = {
-    "cuLibraryUnload",
-    "cuModuleUnload",
-}
 
 NVML_RPC_FUNCTIONS = [
     "nvmlInit_v2",
@@ -1018,13 +1016,12 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
     )
 
 
-def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMetadata):
-    if function.name.format() == "cuDriverGetVersion":
-        f.write("    if (driverVersion != nullptr) {\n")
-        f.write("        const char *override_version = getenv(\"LUPINE_DRIVER_VERSION_OVERRIDE\");\n")
-        f.write("        if (override_version != nullptr) *driverVersion = atoi(override_version);\n")
-        f.write("    }\n")
+def write_client_template_section(f, section: str):
+    if section:
+        f.write(textwrap.indent(section, "    "))
 
+
+def write_client_post_call(f, metadata: FunctionAnnotationMetadata):
     for owner in metadata.record_owners:
         f.write(client_record_owner_stmt(owner))
     for parent in metadata.parents:
@@ -1052,53 +1049,11 @@ def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMe
             f"{release_fn}({release.parameter.name});\n"
         )
 
-    if function.name.format() == "cuMemAlloc_v2":
-        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);\n")
-    if function.name.format() == "cuMemAllocPitch_v2":
-        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) {\n")
-        f.write("        size_t allocation_size = 0;\n")
-        f.write("        if (pPitch != nullptr) allocation_size = (*pPitch) * Height;\n")
-        f.write("        else allocation_size = WidthInBytes * Height;\n")
-        f.write("        lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);\n")
-        f.write("    }\n")
-    if function.name.format() in {"cuMemAllocAsync", "cuMemAllocFromPoolAsync"}:
-        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr) lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);\n")
-    if function.name.format() == "cuMemFreeAsync":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_deviceptr_owner(dptr);\n")
-    if function.name.format() == "cuStreamDestroy_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_stream_owner(hStream);\n")
-    # Record the global's size so offset pointers into it route by range.
-    if function.name.format() in {"cuModuleGetGlobal_v2", "cuLibraryGetGlobal", "cuLibraryGetManaged"}:
-        f.write("    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr) lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);\n")
+    if metadata.client_call_template is not None:
+        write_client_template_section(f, metadata.client_call_template.after_call)
+
     if metadata.synchronize:
         f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
-
-    if function.name.format() == "cuCtxDestroy_v2":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(ctx);\n")
-    if function.name.format() == "cuCtxFromGreenCtx":
-        f.write("    if (return_value == CUDA_SUCCESS && pContext != nullptr) lupine_mark_context_green(*pContext);\n")
-    if function.name.format() == "cuGreenCtxDestroy":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_forget_destroyed_context(reinterpret_cast<CUcontext>(hCtx));\n")
-    if function.name.format() in {
-        "cuCtxDestroy_v2",
-        "cuCtxDetach",
-        "cuDevicePrimaryCtxRelease_v2",
-        "cuDevicePrimaryCtxReset_v2",
-    }:
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_current_context_cache();\n")
-    if function.name.format() in KERNEL_PARAM_LAYOUT_INVALIDATORS:
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_invalidate_function_caches();\n")
-    if function.name.format() == "cuKernelSetAttribute":
-        f.write("    if (return_value == CUDA_SUCCESS) lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel, (int)attrib, (int)dev);\n")
-    if function.name.format() == "cuFuncSetAttribute":
-        f.write("    if (return_value == CUDA_SUCCESS) {\n")
-        f.write("        lupine_invalidate_kernel_attribute_cache();\n")
-        f.write("        lupine_invalidate_function_attribute_cache();\n")
-        f.write("    }\n")
-    if function.name.format() == "cuModuleGetFunction":
-        f.write("    if (return_value == CUDA_SUCCESS && hfunc != nullptr) return_value = lupine_record_module_function(*hfunc, hmod, name, route);\n")
-    if function.name.format() == "cuLibraryGetKernel":
-        f.write("    if (return_value == CUDA_SUCCESS && pKernel != nullptr) return_value = lupine_record_library_kernel(*pKernel, library, name, route);\n")
 
 
 def error_const(return_type: str) -> str:
@@ -1584,6 +1539,29 @@ def validate_async_annotation(
             )
 
 
+def attach_client_call_template(
+    function: Function,
+    metadata: FunctionAnnotationMetadata,
+    client_call_templates: dict[str, ClientCallTemplate],
+) -> None:
+    name = function.name.format()
+    template = client_call_templates.get(name)
+    if template is None:
+        return
+    if metadata.disabled_client:
+        raise RuntimeError(
+            f"{name}: client call template cannot disable "
+            "client generation"
+        )
+    return_type = function.return_type.format()
+    if template.return_type != return_type:
+        raise RuntimeError(
+            f"{name}: client call template returns "
+            f"{template.return_type}, but the API returns {return_type}"
+        )
+    metadata.client_call_template = template
+
+
 def main():
     cuda_header = find_header_file("cuda.h")
     hip_header = find_header_file("hip_runtime_api.h")
@@ -1601,6 +1579,14 @@ def main():
     # Parse the files
     cuda_ast: ParsedData = parse_file(cuda_header, options=options)
     annotations: ParsedData = parse_file(annotations_header, options=options)
+    definition_return_types = {
+        function.name.format(): function.return_type.format()
+        for function in annotations.namespace.functions
+        if function.has_body
+    }
+    client_call_templates = collect_client_call_templates(
+        annotations_header, definition_return_types
+    )
     server_bindings = collect_server_bindings(annotations_header)
     functions = [
         function
@@ -1634,6 +1620,7 @@ def main():
         except Exception as e:
             print(f"Error parsing annotation for {function.name}: {e}")
             continue
+        attach_client_call_template(function, metadata, client_call_templates)
         validate_async_annotation(function, metadata)
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
@@ -1673,6 +1660,7 @@ def main():
         ):
             continue
         metadata = parse_annotation(annotation.doxygen, annotation.parameters)
+        attach_client_call_template(annotation, metadata, client_call_templates)
         validate_async_annotation(annotation, metadata)
         annotated_function = (
             annotation,
@@ -1691,6 +1679,20 @@ def main():
         if not legacy_abi:
             annotation_only_server_functions.append(annotated_function)
         server_function_names.add(name)
+
+    attached_client_call_templates = {
+        function.name.format()
+        for function, _, _, metadata in functions_with_annotations
+        if metadata.client_call_template is not None
+    }
+    unused_client_call_templates = (
+        set(client_call_templates) - attached_client_call_templates
+    )
+    if unused_client_call_templates:
+        raise RuntimeError(
+            "client call templates do not match generated CUDA functions: "
+            + ", ".join(sorted(unused_client_call_templates))
+        )
 
     found_legacy_abi_functions = {
         function.name.format() for function, _, _, _ in legacy_abi_functions
@@ -1999,27 +2001,22 @@ def main():
                     )
                 )
                 f.write("    }\n")
+            if metadata.client_call_template is not None:
+                write_client_template_section(
+                    f, metadata.client_call_template.before_call
+                )
             f.write(
                 "    {return_type} return_value;\n".format(
                     return_type=function.return_type.format()
                 )
             )
-            if function.name.format() == "cuCtxDestroy_v2":
-                # Destroying the current context implicitly pops it; mirror
-                # that in the client's virtual context state before the call.
-                f.write("    CUcontext lupine_current_before_destroy = nullptr;\n")
-                f.write("    if (cuCtxGetCurrent(&lupine_current_before_destroy) ==\n")
-                f.write("            CUDA_SUCCESS &&\n")
-                f.write("        lupine_current_before_destroy == ctx) {\n")
-                f.write("        cuCtxSetCurrent(nullptr);\n")
-                f.write("    }\n")
             call_args = ", ".join(client_call_args(function, metadata))
             helper_args = f", {call_args}" if call_args else ""
             local_call = 'lupine_call_real_cuda_fn("{name}"{args})'.format(
                 name=function.name.format(), args=helper_args
             )
             local_post_call = io.StringIO()
-            write_client_post_call(local_post_call, function, metadata)
+            write_client_post_call(local_post_call, metadata)
             if local_post_call.getvalue():
                 f.write("    if (lupine_route_is_local(route)) {\n")
                 f.write(f"        return_value = {local_call};\n")
@@ -2092,7 +2089,7 @@ def main():
                 f.write("        return {r};\n".format(r=error_return))
                 f.write("    }\n")
                 post_call = io.StringIO()
-                write_client_post_call(post_call, function, metadata)
+                write_client_post_call(post_call, metadata)
                 if post_call.getvalue():
                     f.write("    return_value = CUDA_SUCCESS;\n")
                     f.write(post_call.getvalue())
@@ -2157,7 +2154,7 @@ def main():
                         retain.handle.name,
                     )
 
-            write_client_post_call(f, function, metadata)
+            write_client_post_call(f, metadata)
             f.write("    return return_value;\n")
             if metadata.routing_kind == "ALL":
                 f.write("        });\n")

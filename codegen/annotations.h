@@ -2216,7 +2216,19 @@ CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
  * @param ctx SEND_ONLY
  * @server CUDA
  */
-CUresult cuCtxDestroy_v2(CUcontext ctx);
+CUresult cuCtxDestroy_v2(CUcontext ctx) {
+  CUcontext lupine_current_before_destroy = nullptr;
+  if (cuCtxGetCurrent(&lupine_current_before_destroy) == CUDA_SUCCESS &&
+      lupine_current_before_destroy == ctx) {
+    cuCtxSetCurrent(nullptr);
+  }
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_destroyed_context(ctx);
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_current_context_cache();
+  return return_value;
+}
 /**
  * @disabled client - manual client maintains the virtual context stack
  * @param ctx SEND_ONLY
@@ -2345,7 +2357,12 @@ CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
  * @param ctx SEND_ONLY
  * @server CUDA
  */
-CUresult cuCtxDetach(CUcontext ctx);
+CUresult cuCtxDetach(CUcontext ctx) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_current_context_cache();
+  return return_value;
+}
 /**
  * @disabled - manual client sends mapped file bytes to server
  * @param module RECV_ONLY
@@ -2383,7 +2400,12 @@ CUresult cuModuleLoadFatBinary(CUmodule *module, const void *fatCubin);
  * @release MODULE hmod
  * @param hmod SEND_ONLY
  */
-CUresult cuModuleUnload(CUmodule hmod);
+CUresult cuModuleUnload(CUmodule hmod) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_function_caches();
+  return return_value;
+}
 /**
  * @param mode SEND_RECV
  */
@@ -2408,7 +2430,12 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
  * @server CUDA
  */
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
-                              const char *name);
+                              const char *name) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+  return return_value;
+}
 /**
  * @disabled client - manual client handles JIT option values
  * @param numOptions SEND_ONLY
@@ -2519,7 +2546,12 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
  * @param library SEND_ONLY
  * @server CUDA
  */
-CUresult cuLibraryUnload(CUlibrary library);
+CUresult cuLibraryUnload(CUlibrary library) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_function_caches();
+  return return_value;
+}
 /**
  * @disabled client - manual client serves the library kernel table
  * @routingkey LIBRARY library
@@ -2579,7 +2611,12 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
-                            const char *name);
+                            const char *name) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+  return return_value;
+}
 /**
  * @routingkey LIBRARY library
  * @recordowner DEVICEPTR dptr
@@ -2589,7 +2626,12 @@ CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
-                             CUlibrary library, const char *name);
+                             CUlibrary library, const char *name) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+  return return_value;
+}
 /**
  * @routingkey LIBRARY library
  * @param fptr RECV_ONLY
@@ -2615,7 +2657,13 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
  * @param dev SEND_ONLY
  */
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
-                              CUkernel kernel, CUdevice dev);
+                              CUkernel kernel, CUdevice dev) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
+                                        (int)attrib, (int)dev);
+  return return_value;
+}
 /**
  * @param kernel SEND_ONLY
  * @param config SEND_ONLY
@@ -2643,7 +2691,12 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  */
-CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize);
+CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return return_value;
+}
 /**
  * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
@@ -2655,7 +2708,18 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize);
  */
 CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
                             size_t WidthInBytes, size_t Height,
-                            unsigned int ElementSizeBytes);
+                            unsigned int ElementSizeBytes) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
+    size_t allocation_size = 0;
+    if (pPitch != nullptr)
+      allocation_size = (*pPitch) * Height;
+    else
+      allocation_size = WidthInBytes * Height;
+    lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);
+  }
+  return return_value;
+}
 /**
  * @disabled client - manual client handles managed host alias
  * @disabled server - manual server releases identity-mapped allocations
@@ -3308,7 +3372,12 @@ CUresult cuMemRetainAllocationHandle(CUmemGenericAllocationHandle *handle,
  * @param dptr SEND_ONLY
  * @param hStream SEND_ONLY
  */
-CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream);
+CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_deviceptr_owner(dptr);
+  return return_value;
+}
 /**
  * @routingkey STREAM hStream
  * @recordowner DEVICEPTR dptr
@@ -3316,7 +3385,12 @@ CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream);
  * @param bytesize SEND_ONLY
  * @param hStream SEND_ONLY
  */
-CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream);
+CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return return_value;
+}
 /**
  * @param pool SEND_ONLY
  * @param minBytesToKeep SEND_ONLY
@@ -3371,7 +3445,12 @@ CUresult cuMemPoolDestroy(CUmemoryPool pool);
  * @param hStream SEND_ONLY
  */
 CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
-                                 CUmemoryPool pool, CUstream hStream);
+                                 CUmemoryPool pool, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return return_value;
+}
 /**
  * @disabled both - POSIX fds cross the wire via the IPC fd broker
  * @server CUDA
@@ -3636,13 +3715,23 @@ CUresult cuGreenCtxCreate(CUgreenCtx *phCtx, CUdevResourceDesc desc,
  * @param pContext RECV_ONLY
  * @param hCtx SEND_ONLY
  */
-CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx);
+CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && pContext != nullptr)
+    lupine_mark_context_green(*pContext);
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
  */
-CUresult cuGreenCtxDestroy(CUgreenCtx hCtx);
+CUresult cuGreenCtxDestroy(CUgreenCtx hCtx) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_destroyed_context(reinterpret_cast<CUcontext>(hCtx));
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12050
  * @routingkey CURRENT_CONTEXT
@@ -3777,7 +3866,12 @@ CUresult cuStreamSynchronize(CUstream hStream);
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
-CUresult cuStreamDestroy_v2(CUstream hStream);
+CUresult cuStreamDestroy_v2(CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_stream_owner(hStream);
+  return return_value;
+}
 /**
  * @routingkey STREAM dst
  * @param dst SEND_ONLY
@@ -3972,7 +4066,14 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
  * @param value SEND_ONLY
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
-                            int value);
+                            int value) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS) {
+    lupine_invalidate_kernel_attribute_cache();
+    lupine_invalidate_function_attribute_cache();
+  }
+  return return_value;
+}
 /**
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY

@@ -110,16 +110,8 @@ extern "C" CUresult CUDAAPI cuGraphExecUpdate(
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value =
-        lupine_call_real_cuda_fn("cuDriverGetVersion", driverVersion);
-    if (driverVersion != nullptr) {
-      const char *override_version = getenv("LUPINE_DRIVER_VERSION_OVERRIDE");
-      if (override_version != nullptr)
-        *driverVersion = atoi(override_version);
-    }
-    return return_value;
-  }
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuDriverGetVersion", driverVersion);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuDriverGetVersion) < 0 ||
@@ -128,11 +120,6 @@ CUresult cuDriverGetVersion(int *driverVersion) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (driverVersion != nullptr) {
-    const char *override_version = getenv("LUPINE_DRIVER_VERSION_OVERRIDE");
-    if (override_version != nullptr)
-      *driverVersion = atoi(override_version);
-  }
   return return_value;
 }
 
@@ -341,12 +328,12 @@ CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev) {
 
 CUresult cuCtxDestroy_v2(CUcontext ctx) {
   lupine_route route = lupine_route_for_context(ctx);
-  CUresult return_value;
   CUcontext lupine_current_before_destroy = nullptr;
   if (cuCtxGetCurrent(&lupine_current_before_destroy) == CUDA_SUCCESS &&
       lupine_current_before_destroy == ctx) {
     cuCtxSetCurrent(nullptr);
   }
+  CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn("cuCtxDestroy_v2", ctx);
     if (return_value == CUDA_SUCCESS)

@@ -1146,6 +1146,13 @@ class GraphExecNodeAnnotation:
     node: Parameter
 
 
+@dataclass(frozen=True)
+class ClientCallTemplate:
+    return_type: str
+    before_call: str
+    after_call: str
+
+
 @dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
@@ -1166,6 +1173,7 @@ class FunctionAnnotationMetadata:
     parents: list[ParentAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     graph_exec_node: Optional[GraphExecNodeAnnotation] = None
+    client_call_template: Optional[ClientCallTemplate] = None
 
     def __post_init__(self):
         if self.record_owners is None:
