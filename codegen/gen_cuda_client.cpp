@@ -100,6 +100,13 @@ extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
                                                   char *logBuffer,
                                                   size_t bufferSize);
 
+#ifdef cuGraphExecUpdate
+#undef cuGraphExecUpdate
+#endif
+extern "C" CUresult CUDAAPI cuGraphExecUpdate(
+    CUgraphExec hGraphExec, CUgraph hGraph, CUgraphNode *hErrorNode_out,
+    CUgraphExecUpdateResult *updateResult_out);
+
 CUresult cuDriverGetVersion(int *driverVersion) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
@@ -6842,6 +6849,38 @@ CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
   return return_value;
 }
 
+CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
+                           CUgraphNode *hErrorNode_out,
+                           CUgraphExecUpdateResult *updateResult_out) {
+  lupine_route route = lupine_route_for_graph_exec(hGraphExec);
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuGraphExecUpdate", hGraphExec, hGraph,
+                                    hErrorNode_out, updateResult_out);
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUgraphNode *hErrorNode_out_null_check;
+  CUgraphExecUpdateResult *updateResult_out_null_check;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphExecUpdate) < 0 ||
+      rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_write(conn, &hErrorNode_out, sizeof(CUgraphNode *)) < 0 ||
+      rpc_write(conn, &updateResult_out, sizeof(CUgraphExecUpdateResult *)) <
+          0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &hErrorNode_out_null_check, sizeof(CUgraphNode *)) < 0 ||
+      (hErrorNode_out_null_check &&
+       rpc_read(conn, hErrorNode_out, sizeof(CUgraphNode)) < 0) ||
+      rpc_read(conn, &updateResult_out_null_check,
+               sizeof(CUgraphExecUpdateResult *)) < 0 ||
+      (updateResult_out_null_check &&
+       rpc_read(conn, updateResult_out, sizeof(CUgraphExecUpdateResult)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
 #ifdef cuCtxDestroy
 #undef cuCtxDestroy
 #endif
@@ -6932,17 +6971,6 @@ extern "C" CUresult cuIpcOpenMemHandle(CUdeviceptr *pdptr,
                                        unsigned int Flags) {
   return cuIpcOpenMemHandle_v2(pdptr, handle, Flags);
 }
-
-#if CUDA_VERSION >= 12000
-#ifdef cuGraphExecUpdate
-#undef cuGraphExecUpdate
-#endif
-extern "C" CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
-                                      CUgraphExecUpdateResultInfo *resultInfo) {
-  return cuGraphExecUpdate_v2(hGraphExec, hGraph, resultInfo);
-}
-
-#endif
 
 #ifdef cuMemcpyPeer_ptds
 #undef cuMemcpyPeer_ptds
@@ -7630,6 +7658,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetDevResource", (void *)cuStreamGetDevResource},
 #endif
     {"cuGraphInstantiate_v2", (void *)cuGraphInstantiate_v2},
+    {"cuGraphExecUpdate", (void *)cuGraphExecUpdate},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
@@ -7641,7 +7670,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemsetD2D16", (void *)cuMemsetD2D16_v2},
     {"cuMemsetD2D32", (void *)cuMemsetD2D32_v2},
     {"cuIpcOpenMemHandle", (void *)cuIpcOpenMemHandle_v2},
-    {"cuGraphExecUpdate", (void *)cuGraphExecUpdate_v2},
     {"cuMemcpyPeer_ptds", (void *)cuMemcpyPeer},
     {"cuMemcpyPeerAsync_ptsz", (void *)cuMemcpyPeerAsync},
     {"cuMemsetD8Async_ptsz", (void *)cuMemsetD8Async},

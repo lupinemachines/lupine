@@ -4759,6 +4759,18 @@ CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
  * @server CUDA
  */
 CUresult cuGraphDestroy(CUgraph hGraph);
+#ifdef cuGraphExecUpdate
+#undef cuGraphExecUpdate
+#endif
+/**
+ * @param hGraphExec SEND_ONLY
+ * @param hGraph SEND_ONLY
+ * @param hErrorNode_out RECV_ONLY NULLABLE
+ * @param updateResult_out RECV_ONLY NULLABLE
+ */
+CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
+                           CUgraphNode *hErrorNode_out,
+                           CUgraphExecUpdateResult *updateResult_out);
 /**
  * @param hGraphExec SEND_ONLY
  * @param hGraph SEND_ONLY

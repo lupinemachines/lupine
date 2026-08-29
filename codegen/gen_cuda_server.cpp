@@ -22,6 +22,13 @@ extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
                                                   char *logBuffer,
                                                   size_t bufferSize);
 
+#ifdef cuGraphExecUpdate
+#undef cuGraphExecUpdate
+#endif
+extern "C" CUresult CUDAAPI cuGraphExecUpdate(
+    CUgraphExec hGraphExec, CUgraph hGraph, CUgraphNode *hErrorNode_out,
+    CUgraphExecUpdateResult *updateResult_out);
+
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
 #endif
@@ -8995,6 +9002,48 @@ int handle_cuMemAdvise(conn_t *conn) {
   lupine_intercept_result = cuMemAdvise(devPtr, count, advice, device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuGraphExecUpdate(conn_t *conn) {
+  CUgraphExec hGraphExec;
+  CUgraph hGraph;
+  CUgraphNode *hErrorNode_out_null_check;
+  CUgraphNode hErrorNode_out;
+  CUgraphExecUpdateResult *updateResult_out_null_check;
+  CUgraphExecUpdateResult updateResult_out;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &hErrorNode_out_null_check, sizeof(CUgraphNode *)) < 0 ||
+      rpc_read(conn, &updateResult_out_null_check,
+               sizeof(CUgraphExecUpdateResult *)) < 0 ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuGraphExecUpdate(
+      hGraphExec, hGraph, hErrorNode_out_null_check ? &hErrorNode_out : nullptr,
+      updateResult_out_null_check ? &updateResult_out : nullptr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &hErrorNode_out_null_check, sizeof(CUgraphNode *)) < 0 ||
+      (hErrorNode_out_null_check &&
+       rpc_write(conn, &hErrorNode_out, sizeof(CUgraphNode)) < 0) ||
+      rpc_write(conn, &updateResult_out_null_check,
+                sizeof(CUgraphExecUpdateResult *)) < 0 ||
+      (updateResult_out_null_check &&
+       rpc_write(conn, &updateResult_out, sizeof(CUgraphExecUpdateResult)) <
+           0) ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

@@ -8357,6 +8357,15 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
 
+  if (symbol != nullptr && strcmp(symbol, "cuGraphExecUpdate") == 0) {
+    *pfn = get_function_pointer(cudaVersion < 12000 ? "cuGraphExecUpdate"
+                                                    : "cuGraphExecUpdate_v2");
+    if (symbolStatus != nullptr) {
+      *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
+    }
+    return CUDA_SUCCESS;
+  }
+
   if (strcmp(symbol, "cuFuncGetAttribute") == 0) {
     *pfn = reinterpret_cast<void *>(&lupine_cuFuncGetAttribute_safe);
     if (symbolStatus != nullptr) {
