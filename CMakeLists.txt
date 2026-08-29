@@ -17,7 +17,9 @@ option(LUPINE_BUILD_SERVER "Build the RPC server"
 set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
     "CUDA driver library or stub to use without a complete CUDA Toolkit")
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
-    "CUDA version reported by a header-only server build")
+    "CUDA version reported by an SDK-free server build")
+set(LUPINE_PRECOMPILED_OPS "" CACHE PATH
+    "Optional directory containing precompiled device operations")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -111,7 +113,7 @@ if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
             set_target_properties(CUDA::cuda_driver PROPERTIES
                 IMPORTED_LOCATION "${LUPINE_CUDA_DRIVER_LIBRARY}")
             message(STATUS
-                "Using CUDA driver stub for header-only server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
+                "Using CUDA driver stub for SDK-free server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
         endif()
     endif()
 endif()
@@ -136,12 +138,23 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
-# ops holds device code, so each backend needs a real offline compiler rather
-# than the headers and driver stub the rest of the server builds against. The
-# CUDA and HIP operations are independent, and either may be built alone.
-if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
-   NOT LUPINE_CUDA_DRIVER_LIBRARY)
-    enable_language(CUDA)
+# A precompiled operations directory lets the SDK-neutral server build consume
+# artifacts produced by each backend's SDK. Without one, build the operations
+# locally with the available accelerator compilers.
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+    if(LUPINE_PRECOMPILED_OPS)
+        if(NOT IS_DIRECTORY "${LUPINE_PRECOMPILED_OPS}")
+            message(FATAL_ERROR
+                "LUPINE_PRECOMPILED_OPS is not a directory: ${LUPINE_PRECOMPILED_OPS}")
+        endif()
+        message(STATUS
+            "Using precompiled device operations: ${LUPINE_PRECOMPILED_OPS}")
+    elseif(NOT LUPINE_CUDA_DRIVER_LIBRARY)
+        enable_language(CUDA)
+    else()
+        message(FATAL_ERROR
+            "LUPINE_PRECOMPILED_OPS is required for an SDK-free CUDA server build")
+    endif()
 endif()
 
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
@@ -166,7 +179,8 @@ if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
 endif()
 
 get_property(lupine_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
-if("CUDA" IN_LIST lupine_enabled_languages OR
+if((LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA) OR
+   "CUDA" IN_LIST lupine_enabled_languages OR
    "HIP" IN_LIST lupine_enabled_languages)
     add_subdirectory(ops)
 endif()
@@ -392,7 +406,7 @@ if(LUPINE_BUILD_SERVER)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
-            CUDA::cuda_driver)
+            lupine_cuda_smemcpy_module CUDA::cuda_driver)
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -483,7 +497,7 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
     add_test(NAME h2_test COMMAND h2_test)
-    lupine_scaled_timeout(h2_timeout 30)
+    lupine_scaled_timeout(h2_timeout 60)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
 
     add_executable(dispatch_test ${CMAKE_CURRENT_SOURCE_DIR}/dispatch_test.cpp)

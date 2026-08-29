@@ -62,6 +62,9 @@ Currently, `@crossservercopy <dst> <src> <bytes> [STREAM:<param>] [ASYNC]` adds
 a generated client fallback for device-to-device copies whose source and
 destination pointers are owned by different server connections. The fallback
 routes through the client-side cross-server copy helper.
+`@graphexecnode <graph-exec> <node>` translates an original graph node to the
+private graph clone associated with an executable before the generated server
+handler calls CUDA.
 
 `CUdeviceptr` values go on the wire unchanged: identity VA arenas place every
 client-visible alias at its server address, so no per-parameter translation is

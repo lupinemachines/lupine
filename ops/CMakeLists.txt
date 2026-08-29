@@ -1,8 +1,12 @@
 get_property(enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
 
 if("CUDA" IN_LIST enabled_languages)
-    add_library(lupine_cuda_smemcpy STATIC smemcpy.cu)
-    target_include_directories(lupine_cuda_smemcpy PUBLIC ${PROJECT_SOURCE_DIR})
+    add_library(lupine_cuda_smemcpy STATIC
+        smemcpy.cu
+        smemcpy_dispatch.cpp)
+    target_include_directories(lupine_cuda_smemcpy PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${CUDAToolkit_INCLUDE_DIRS})
     set_target_properties(lupine_cuda_smemcpy PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON
@@ -19,6 +23,43 @@ if("CUDA" IN_LIST enabled_languages)
             SKIP_RETURN_CODE 77
             TIMEOUT 120)
     endif()
+endif()
+
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+    if(LUPINE_PRECOMPILED_OPS)
+        set(lupine_smemcpy_source
+            "${LUPINE_PRECOMPILED_OPS}/cuda/smemcpy.cpp")
+        if(NOT EXISTS "${lupine_smemcpy_source}")
+            message(FATAL_ERROR
+                "Missing precompiled CUDA operation: ${lupine_smemcpy_source}")
+        endif()
+    else()
+        set(lupine_built_ops "${CMAKE_CURRENT_BINARY_DIR}/precompiled-ops")
+        set(lupine_smemcpy_source
+            "${lupine_built_ops}/cuda/smemcpy.cpp")
+        add_custom_command(
+            OUTPUT "${lupine_smemcpy_source}"
+            COMMAND ${CMAKE_COMMAND}
+                "-DLUPINE_PRECOMPILED_OPS=${lupine_built_ops}"
+                "-DLUPINE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
+                "-DLUPINE_CUDA_FLAGS=${CMAKE_CUDA_FLAGS}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/precompile.cmake"
+            DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/precompile.cmake"
+                smemcpy.cu
+                smemcpy.h
+                smemcpy_dispatch.h
+            VERBATIM)
+    endif()
+    add_library(lupine_cuda_smemcpy_module STATIC
+        smemcpy_dispatch.cpp
+        smemcpy_module.cpp
+        "${lupine_smemcpy_source}")
+    target_include_directories(lupine_cuda_smemcpy_module PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${CUDAToolkit_INCLUDE_DIRS})
+    set_target_properties(lupine_cuda_smemcpy_module PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if("HIP" IN_LIST enabled_languages)
