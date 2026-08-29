@@ -343,7 +343,7 @@ static int check_exec_node_set_params(CUdeviceptr destination, CUstream stream,
 }
 
 int main() {
-  // Five 8 MiB chunks force the two-slot server ring to wrap twice.
+  // Five 8 MiB fragments exercise repeated callback/copy staging reuse.
   constexpr size_t bytes = 40 * 1024 * 1024;
   CHECK(cuInit(0));
   CUdevice device = 0;
@@ -386,8 +386,9 @@ int main() {
     return 1;
   }
 
-  // Two streams contend for the fixed ring. GPU slot-release writes must keep
-  // either callback from overwriting a slot whose previous DMA is in flight.
+  // Two streams contend for the bounded staging buffer. The private transfer
+  // stream must keep each fragment callback ordered before its corresponding
+  // copy without corrupting the other operation.
   CHECK(cuMemcpyHtoDAsync(destination, source.data(), bytes, stream));
   CHECK(cuMemcpyHtoDAsync(second_destination, second_source.data(), bytes,
                           second_stream));
