@@ -206,12 +206,6 @@ extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
-// Writes a response from caller-owned cursors without occupying the
-// connection's request builder. Refillable response bodies can therefore
-// issue requests on other connections while they are being produced.
-extern int rpc_write_response_cursors(conn_t *conn, int read_id,
-                                      const rpc_write_cursor *cursors,
-                                      size_t count);
 extern int rpc_write_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
