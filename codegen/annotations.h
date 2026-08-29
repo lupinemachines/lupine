@@ -2367,6 +2367,7 @@ CUresult cuModuleLoadData(CUmodule *module, const void *image);
  * @param numOptions SEND_ONLY
  * @param options SEND_ONLY LENGTH:numOptions
  * @param optionValues SEND_RECV
+ * @server CUDA
  */
 CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
                             unsigned int numOptions, CUjit_option *options,

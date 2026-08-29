@@ -11,6 +11,7 @@ int handle_cuGetExportTableMetadata(conn_t *conn);
 int handle_cuPrivateGetModuleNode(conn_t *conn);
 int handle_cuModuleLoad(conn_t *conn);
 int handle_cuModuleLoadData(conn_t *conn);
+int handle_cuModuleLoadDataEx(conn_t *conn);
 int handle_lupineFunctionParamLayoutSnapshot(conn_t *conn);
 int handle_lupineFunctionAttributeSnapshot(conn_t *conn);
 int handle_cuLibraryLoadData(conn_t *conn);
