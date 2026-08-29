@@ -54,8 +54,10 @@ bool lupine_graph_install_capture_scratch(lupine_graph_resources *resources,
                                           void *scratch, size_t size);
 std::vector<lupine_graph_host_copy>
 lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources);
+// Reports the host copies a graph launched on this stream still owes the
+// client, exactly once per launch.
 std::vector<lupine_graph_host_copy>
-lupine_stream_dtoh_copy_snapshot(CUstream stream);
+lupine_take_stream_dtoh_copies(CUstream stream);
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;

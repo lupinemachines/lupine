@@ -166,6 +166,12 @@ struct lupine_graph_resources {
     }
   }
 
+  // A launch marks its host copies undelivered; the next stream sync that
+  // reports them clears the mark. Without it every later sync on that stream
+  // would replay the same staging buffers over host memory a plain
+  // cuMemcpyDtoH has since overwritten.
+  std::atomic<bool> dtoh_undelivered{false};
+
   std::vector<lupine_graph_host_copy> dtoh_copy_snapshot() const {
     std::vector<lupine_graph_host_copy> copies;
     for (auto *node = dtoh_copies.load(std::memory_order_acquire);
@@ -402,6 +408,7 @@ void lupine_note_graph_launch(CUgraphExec exec, CUstream stream,
   lupine_graph_resources *resources = nullptr;
   (void)lupine_graph_exec_resource_map().find(exec, resources);
   if (result == CUDA_SUCCESS && resources != nullptr) {
+    resources->dtoh_undelivered.store(true, std::memory_order_release);
     lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   }
 }
@@ -423,10 +430,14 @@ lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources) {
 }
 
 std::vector<lupine_graph_host_copy>
-lupine_stream_dtoh_copy_snapshot(CUstream stream) {
+lupine_take_stream_dtoh_copies(CUstream stream) {
   lupine_graph_resources *resources = nullptr;
   (void)lupine_stream_capture_resource_map().find(stream, resources);
-  return lupine_graph_dtoh_copy_snapshot(resources);
+  if (resources == nullptr ||
+      !resources->dtoh_undelivered.exchange(false, std::memory_order_acq_rel)) {
+    return {};
+  }
+  return resources->dtoh_copy_snapshot();
 }
 
 void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,

@@ -4118,7 +4118,7 @@ int handle_cuStreamSynchronize(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   std::vector<lupine_graph_host_copy> graph_copies =
-      lupine_stream_dtoh_copy_snapshot(stream);
+      lupine_take_stream_dtoh_copies(stream);
   uint32_t graph_copy_count = static_cast<uint32_t>(graph_copies.size());
   bool all_pending_streams = stream == nullptr;
   auto pending =
