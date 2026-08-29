@@ -109,7 +109,7 @@ struct lupine_mapped_host_snapshot {
   size_t data_bytes = 0;
   CUdeviceptr device_ptr = 0;
   CUdeviceptr server_host_ptr = 0;
-  bool host_allocation = false;
+  bool managed = false;
   bool device_pointer_exposed = false;
 };
 
@@ -725,11 +725,54 @@ static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
         !entry.second.client_to_server_only) {
       snapshots.push_back({entry.first, entry.second.data_offset,
                            entry.second.user_size, entry.second.device_ptr,
-                           entry.second.server_host_ptr, entry.second.owned,
+                           entry.second.server_host_ptr, entry.second.managed,
                            entry.second.device_pointer_exposed});
     }
   }
   return snapshots;
+}
+
+extern "C" void lupine_mark_mapped_host_kernel_params(
+    void *const *kernel_params, const size_t *sizes, uint32_t count) {
+  if (kernel_params == nullptr || sizes == nullptr || count == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  for (uint32_t i = 0; i < count; ++i) {
+    if (sizes[i] != sizeof(CUdeviceptr) || kernel_params[i] == nullptr) {
+      continue;
+    }
+    CUdeviceptr argument = 0;
+    memcpy(&argument, kernel_params[i], sizeof(argument));
+    if (argument == 0) {
+      continue;
+    }
+
+    for (auto &entry : lupine_mutable_host_allocations_locked()) {
+      auto &allocation = entry.second;
+      if (allocation.device_ptr == 0 || allocation.local_cuda ||
+          allocation.device_pointer_exposed) {
+        continue;
+      }
+      uintptr_t host = reinterpret_cast<uintptr_t>(entry.first);
+      bool matches_host =
+          argument >= host && argument < host + allocation.size;
+      bool matches_device =
+          argument >= allocation.device_ptr &&
+          argument < allocation.device_ptr + allocation.size;
+      bool matches_server =
+          allocation.server_host_ptr != 0 &&
+          argument >= allocation.server_host_ptr &&
+          argument < allocation.server_host_ptr + allocation.size;
+      if (!matches_host && !matches_device && !matches_server) {
+        continue;
+      }
+      allocation.device_pointer_exposed = true;
+      __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
+      break;
+    }
+  }
 }
 
 static CUresult lupine_collect_host_allocation_writes(conn_t *conn) {
@@ -1522,11 +1565,11 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
   }
 
   for (const auto &mapping : lupine_mapped_host_snapshots()) {
-    // A host allocation is identity mapped and reachable through the pointer
-    // the caller already holds; a registration's device address is unrelated,
-    // so nothing reaches it until cuMemHostGetDevicePointer hands one out.
+    // Managed memory can be reached through nested pointers, so synchronize it
+    // conservatively. Pinned host memory remains host-authoritative until its
+    // device mapping is exposed through a launch or an explicit pointer query.
     if (mapping.data_bytes == 0 ||
-        (!mapping.host_allocation && !mapping.device_pointer_exposed)) {
+        (!mapping.managed && !mapping.device_pointer_exposed)) {
       continue;
     }
     bool invalidated = false;
