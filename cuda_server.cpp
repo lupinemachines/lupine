@@ -3606,7 +3606,8 @@ int handle_cuGraphDestroy(conn_t *conn) {
 }
 
 #if defined(_WIN32)
-static bool lupine_server_managed_range(const void *pointer, size_t size);
+static int lupine_windows_read_managed_flush(conn_t *conn, void *pointer,
+                                             size_t size);
 #endif
 
 int handle_lupineManagedHostFlush(conn_t *conn) {
@@ -3626,21 +3627,12 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
 #if defined(_WIN32)
     // A Windows arena holds device memory, so these bytes cannot be written
     // straight into it the way a CPU-accessible mapping takes them.
-    if (lupine_server_managed_range(server_host_ptr, bytes)) {
-      void *staging = nullptr;
-      if (cuMemAllocHost(&staging, bytes) != CUDA_SUCCESS) {
-        return -1;
-      }
-      int read_result = rpc_read(conn, staging, bytes);
-      CUresult copy_result = CUDA_ERROR_UNKNOWN;
-      if (read_result >= 0) {
-        copy_result = cuMemcpyHtoD_v2(
-            reinterpret_cast<CUdeviceptr>(server_host_ptr), staging, bytes);
-      }
-      cuMemFreeHost(staging);
-      if (read_result < 0 || copy_result != CUDA_SUCCESS) {
-        return -1;
-      }
+    int managed_flush =
+        lupine_windows_read_managed_flush(conn, server_host_ptr, bytes);
+    if (managed_flush < 0) {
+      return -1;
+    }
+    if (managed_flush > 0) {
       continue;
     }
 #endif
@@ -3942,14 +3934,113 @@ size_t lupine_windows_vmm_granularity() {
   return granularity;
 }
 
+// Created before a managed range is exposed so flushing that range never has
+// to allocate CUDA resources while another stream is being captured.
+class lupine_windows_flush_resources {
+public:
+  explicit lupine_windows_flush_resources(CUcontext context)
+      : context_(context) {}
+
+  ~lupine_windows_flush_resources() {
+    if (context_ != nullptr && cuCtxPushCurrent_v2(context_) == CUDA_SUCCESS) {
+      if (stream_ != nullptr) {
+        (void)cuStreamDestroy_v2(stream_);
+      }
+      CUcontext popped = nullptr;
+      (void)cuCtxPopCurrent_v2(&popped);
+    }
+    if (staging_ != nullptr) {
+      (void)cuMemFreeHost(staging_);
+    }
+  }
+
+  CUresult prepare() {
+    CUresult result = cuMemAllocHost(&staging_, staging_bytes);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    result = cuStreamCreate(&stream_, CU_STREAM_NON_BLOCKING);
+    if (result != CUDA_SUCCESS) {
+      (void)cuMemFreeHost(staging_);
+      staging_ = nullptr;
+    }
+    return result;
+  }
+
+  bool read_and_copy(conn_t *conn, CUdeviceptr destination, size_t bytes) {
+    CUcontext current = nullptr;
+    if (cuCtxGetCurrent(&current) != CUDA_SUCCESS || current != context_) {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (size_t offset = 0; offset < bytes;) {
+      const size_t chunk = std::min(bytes - offset, staging_bytes);
+      if (rpc_read(conn, staging_, chunk) < 0 ||
+          cuMemcpyHtoDAsync_v2(destination + offset, staging_, chunk,
+                               stream_) != CUDA_SUCCESS ||
+          cuStreamSynchronize(stream_) != CUDA_SUCCESS) {
+        return false;
+      }
+      offset += chunk;
+    }
+    return true;
+  }
+
+private:
+  static constexpr size_t staging_bytes = LUPINE_RPC_TRANSFER_CHUNK_BYTES;
+
+  CUcontext context_ = nullptr;
+  void *staging_ = nullptr;
+  CUstream stream_ = nullptr;
+  std::mutex mutex_;
+};
+
 // Physical memory mapped at an address the arena picked. Kept per allocation so
 // a free can unmap and release exactly what it created.
 struct lupine_windows_vmm_mapping {
-  CUmemGenericAllocationHandle handle;
-  size_t size;
+  CUmemGenericAllocationHandle handle = 0;
+  size_t mapped_size = 0;
+  size_t allocation_size = 0;
+  std::shared_ptr<lupine_windows_flush_resources> flush_resources;
 };
 std::mutex lupine_windows_vmm_mutex;
 std::unordered_map<uintptr_t, lupine_windows_vmm_mapping> lupine_windows_vmm;
+std::unordered_map<CUcontext, std::weak_ptr<lupine_windows_flush_resources>>
+    lupine_windows_flush_resources_by_context;
+
+std::shared_ptr<lupine_windows_flush_resources>
+lupine_windows_prepare_flush_resources(CUcontext context, CUresult *result) {
+  std::lock_guard<std::mutex> lock(lupine_windows_vmm_mutex);
+  auto existing = lupine_windows_flush_resources_by_context.find(context);
+  if (existing != lupine_windows_flush_resources_by_context.end()) {
+    auto resources = existing->second.lock();
+    if (resources != nullptr) {
+      *result = CUDA_SUCCESS;
+      return resources;
+    }
+    lupine_windows_flush_resources_by_context.erase(existing);
+  }
+
+  std::shared_ptr<lupine_windows_flush_resources> resources;
+  try {
+    resources = std::make_shared<lupine_windows_flush_resources>(context);
+  } catch (const std::bad_alloc &) {
+    *result = CUDA_ERROR_OUT_OF_MEMORY;
+    return nullptr;
+  }
+  *result = resources->prepare();
+  if (*result != CUDA_SUCCESS) {
+    return nullptr;
+  }
+  try {
+    lupine_windows_flush_resources_by_context.emplace(context, resources);
+  } catch (const std::bad_alloc &) {
+    *result = CUDA_ERROR_OUT_OF_MEMORY;
+    return nullptr;
+  }
+  return resources;
+}
 
 CUresult lupine_windows_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
                                       size_t bytes) {
@@ -3959,6 +4050,16 @@ CUresult lupine_windows_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
   int device = 0;
   if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
     device = 0;
+  }
+  CUcontext context = nullptr;
+  CUresult result = cuCtxGetCurrent(&context);
+  if (result != CUDA_SUCCESS || context == nullptr) {
+    return result == CUDA_SUCCESS ? CUDA_ERROR_INVALID_CONTEXT : result;
+  }
+  auto flush_resources =
+      lupine_windows_prepare_flush_resources(context, &result);
+  if (flush_resources == nullptr) {
+    return result;
   }
   size_t granularity = lupine_windows_vmm_granularity();
   if (bytes > SIZE_MAX - (granularity - 1)) {
@@ -3975,7 +4076,7 @@ CUresult lupine_windows_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   prop.location.id = device;
   CUmemGenericAllocationHandle handle = 0;
-  CUresult result = cuMemCreate(&handle, mapped, &prop, 0);
+  result = cuMemCreate(&handle, mapped, &prop, 0);
   if (result != CUDA_SUCCESS) {
     return result;
   }
@@ -3997,8 +4098,9 @@ CUresult lupine_windows_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
   {
     std::lock_guard<std::mutex> lock(lupine_windows_vmm_mutex);
     try {
-      lupine_windows_vmm.emplace(claimed,
-                                 lupine_windows_vmm_mapping{handle, mapped});
+      lupine_windows_vmm.emplace(
+          claimed, lupine_windows_vmm_mapping{handle, mapped, bytes,
+                                              std::move(flush_resources)});
     } catch (const std::bad_alloc &) {
       cuMemUnmap(static_cast<CUdeviceptr>(claimed), mapped);
       cuMemRelease(handle);
@@ -4020,7 +4122,8 @@ CUresult lupine_windows_managed_free(uintptr_t address) {
     mapping = it->second;
     lupine_windows_vmm.erase(it);
   }
-  CUresult unmap = cuMemUnmap(static_cast<CUdeviceptr>(address), mapping.size);
+  CUresult unmap =
+      cuMemUnmap(static_cast<CUdeviceptr>(address), mapping.mapped_size);
   CUresult release = cuMemRelease(mapping.handle);
   return unmap != CUDA_SUCCESS ? unmap : release;
 }
@@ -4197,20 +4300,36 @@ mmap64(void *address, size_t size, int protection, int flags, int fd,
 #endif
 
 #if defined(_WIN32)
-// Consulted only by the Windows flush path, to tell an arena range that needs a
-// copy from a host mapping that can take the bytes directly.
-static bool lupine_server_managed_range(const void *pointer, size_t size) {
+// Returns one when the payload was consumed for a Windows device-backed arena
+// range, zero for a CPU-accessible host mapping, and minus one on failure.
+static int lupine_windows_read_managed_flush(conn_t *conn, void *pointer,
+                                             size_t size) {
   uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
-  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
-  for (const auto &entry : lupine_server_state.allocations) {
-    if (entry.second.kind != lupine_server_allocation_kind::managed ||
-        size > entry.second.size || address < entry.first ||
-        address - entry.first > entry.second.size - size) {
-      continue;
+  std::shared_ptr<lupine_windows_flush_resources> resources;
+  {
+    std::lock_guard<std::mutex> lock(lupine_windows_vmm_mutex);
+    for (const auto &entry : lupine_windows_vmm) {
+      if (size > entry.second.allocation_size || address < entry.first ||
+          address - entry.first > entry.second.allocation_size - size) {
+        continue;
+      }
+      resources = entry.second.flush_resources;
+      break;
     }
-    return true;
   }
-  return false;
+  if (resources == nullptr) {
+    return 0;
+  }
+
+  // This stream and its pinned staging block were created with the managed
+  // allocation, before capture could observe the range. A nonblocking stream
+  // has no legacy-stream dependency, and synchronizing only this private
+  // stream cannot wait for the captured stream or its eventual EndCapture.
+  if (!resources->read_and_copy(conn, static_cast<CUdeviceptr>(address),
+                                size)) {
+    return -1;
+  }
+  return 1;
 }
 #endif
 
