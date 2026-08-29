@@ -66,6 +66,25 @@ routes through the client-side cross-server copy helper.
 private graph clone associated with an executable before the generated server
 handler calls CUDA.
 
+Functions that need custom client-side code around the generated call may be
+written as definitions instead of declarations. The body must contain one
+explicitly typed generated-call placeholder and end by returning its result:
+
+```cpp
+CUresult cuExample(CUdeviceptr ptr) {
+  prepare(ptr);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    update_bookkeeping(ptr);
+  return return_value;
+}
+```
+
+The generator emits code before the placeholder once before route dispatch and
+code after it on both the local and remote paths. It validates the result type,
+placeholder count, and final return. Functions without custom client code stay
+as ordinary declarations.
+
 `CUdeviceptr` values go on the wire unchanged: identity VA arenas place every
 client-visible alias at its server address, so no per-parameter translation is
 generated (connections that cannot reserve the identity arena fail at connect).
