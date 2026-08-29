@@ -19,6 +19,7 @@
   HANDLER(RPC_cuCtxDetach, handle_cuCtxDetach, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleLoad, handle_cuModuleLoad, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleLoadData, handle_cuModuleLoadData, rpc_backend::cuda) \
+  HANDLER(RPC_cuModuleLoadDataEx, handle_cuModuleLoadDataEx, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleGetGlobal_v2, handle_cuModuleGetGlobal_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuLinkCreate_v2, handle_cuLinkCreate_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuLinkAddData_v2, handle_cuLinkAddData_v2, rpc_backend::cuda) \
