@@ -9,7 +9,6 @@
 #include <cstring>
 #include <map>
 #include <mutex>
-#include <thread>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sched.h>
@@ -2961,109 +2960,32 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
 
 // A destination server's ordinary HtoD callback treats its source address as
 // opaque. When that address belongs to another route, fill the unchanged
-// callback response with ordinary DtoH copies while the destination consumes
-// the other slot.
-struct lupine_cross_route_device_source {
-  static constexpr uint32_t slot_free = 0;
-  static constexpr uint32_t slot_ready = 1;
-
-  struct slot {
-    std::vector<unsigned char> storage;
-    size_t size = 0;
-    std::atomic<uint32_t> state{slot_free};
-  };
-
-  static_assert(std::atomic<uint32_t>::is_always_lock_free);
-  static_assert(std::atomic<CUresult>::is_always_lock_free);
-  static_assert(std::atomic<bool>::is_always_lock_free);
-
-  ~lupine_cross_route_device_source() {
-    stopping.store(true, std::memory_order_release);
-    if (worker.joinable()) {
-      worker.join();
-    }
-  }
-
-  CUdeviceptr source = 0;
-  lupine_route source_route;
-  CUcontext source_context = nullptr;
-  size_t bytes = 0;
-  std::array<slot, 2> slots;
-  std::thread worker;
-  size_t consumed_slots = 0;
-  size_t consumed_bytes = 0;
-  std::atomic<CUresult> error{CUDA_SUCCESS};
-  std::atomic<bool> stopping{false};
-
-  void produce() {
-    CUresult context_result =
-        lupine_set_current_context_on_route(source_route, source_context);
-    if (context_result != CUDA_SUCCESS) {
-      error.store(context_result, std::memory_order_release);
-      return;
-    }
-    size_t offset = 0;
-    for (size_t slot_index = 0; offset < bytes; ++slot_index) {
-      slot &entry = slots[slot_index % slots.size()];
-      while (entry.state.load(std::memory_order_acquire) != slot_free) {
-        if (stopping.load(std::memory_order_acquire)) {
-          return;
-        }
-        std::this_thread::yield();
-      }
-      if (stopping.load(std::memory_order_acquire)) {
-        return;
-      }
-      entry.size = std::min(entry.storage.size(), bytes - offset);
-
-      CUresult result =
-          cuMemcpyDtoH_v2(entry.storage.data(), source + offset, entry.size);
-      if (result != CUDA_SUCCESS) {
-        error.store(result, std::memory_order_release);
-        return;
-      }
-      entry.state.store(slot_ready, std::memory_order_release);
-      offset += entry.size;
-    }
-  }
-
-  bool start() {
-    try {
-      worker = std::thread(&lupine_cross_route_device_source::produce, this);
-    } catch (...) {
-      return false;
-    }
-    return true;
-  }
+// callback response with ordinary DtoH copies.
+struct lupine_cross_route_source_cursor {
+  CUdeviceptr address = 0;
+  size_t remaining = 0;
+  std::vector<unsigned char> storage;
 
   int refill(rpc_write_cursor *cursor) {
-    if (consumed_slots != 0) {
-      slots[(consumed_slots - 1) % slots.size()].state.store(
-          slot_free, std::memory_order_release);
-    }
-    if (consumed_bytes == bytes) {
+    if (remaining == 0) {
       return 0;
     }
 
-    slot &entry = slots[consumed_slots % slots.size()];
-    while (entry.state.load(std::memory_order_acquire) != slot_ready) {
-      CUresult source_error = error.load(std::memory_order_acquire);
-      if (source_error != CUDA_SUCCESS) {
-        LUPINE_LOG_ERROR(
-            "Cross-route DtoD source read failed: " << source_error);
-        return -1;
-      }
-      std::this_thread::yield();
+    size_t chunk = std::min(remaining, storage.size());
+    CUresult result = cuMemcpyDtoH_v2(storage.data(), address, chunk);
+    if (result != CUDA_SUCCESS) {
+      LUPINE_LOG_ERROR("Cross-route DtoD source read failed: " << result);
+      return -1;
     }
-    cursor->data = entry.storage.data();
-    cursor->size = entry.size;
-    ++consumed_slots;
-    consumed_bytes += entry.size;
+    cursor->data = storage.data();
+    cursor->size = chunk;
+    address += chunk;
+    remaining -= chunk;
     return 1;
   }
 
   static int refill_cursor(void *opaque, rpc_write_cursor *cursor) {
-    auto *source = static_cast<lupine_cross_route_device_source *>(opaque);
+    auto *source = static_cast<lupine_cross_route_source_cursor *>(opaque);
     return source == nullptr || cursor == nullptr ? -1 : source->refill(cursor);
   }
 };
@@ -3091,28 +3013,22 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
     return -1;
   }
 
-  lupine_cross_route_device_source producer;
-  producer.source = source;
-  producer.source_route = source_route;
-  producer.source_context = source_context;
-  producer.bytes = bytes;
+  lupine_cross_route_source_cursor source_cursor;
+  source_cursor.address = source;
+  source_cursor.remaining = bytes;
   try {
-    constexpr size_t source_chunk_bytes = LUPINE_RPC_TRANSFER_CHUNK_BYTES;
-    size_t remaining = producer.bytes;
-    for (auto &slot : producer.slots) {
-      size_t capacity = std::min(remaining, source_chunk_bytes);
-      slot.storage.resize(capacity);
-      remaining -= capacity;
-    }
+    source_cursor.storage.resize(
+        std::min(bytes, static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES)));
   } catch (...) {
     return -1;
   }
-  if (!producer.start()) {
+  if (lupine_set_current_context_on_route(source_route, source_context) !=
+      CUDA_SUCCESS) {
     return -1;
   }
 
-  rpc_write_cursor cursor(lupine_cross_route_device_source::refill_cursor,
-                          &producer);
+  rpc_write_cursor cursor(lupine_cross_route_source_cursor::refill_cursor,
+                          &source_cursor);
   if (rpc_write_start_response(destination_conn, request_id) < 0 ||
       rpc_write_cursors(destination_conn, &cursor, 1) < 0 ||
       rpc_write_end(destination_conn) < 0) {
