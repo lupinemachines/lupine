@@ -8078,6 +8078,8 @@ void *rpc_client_dispatch_thread(void *arg) {
         size_t row_stride = 0;
         size_t slices = 0;
         size_t slice_stride = 0;
+        size_t logical_offset = 0;
+        size_t bytes = 0;
       };
       host_read read;
       const void *data = nullptr;
@@ -8086,7 +8088,10 @@ void *rpc_client_dispatch_thread(void *arg) {
           rpc_read(conn, &read.rows, sizeof(read.rows)) < 0 ||
           rpc_read(conn, &read.row_stride, sizeof(read.row_stride)) < 0 ||
           rpc_read(conn, &read.slices, sizeof(read.slices)) < 0 ||
-          rpc_read(conn, &read.slice_stride, sizeof(read.slice_stride)) < 0) {
+          rpc_read(conn, &read.slice_stride, sizeof(read.slice_stride)) < 0 ||
+          rpc_read(conn, &read.logical_offset, sizeof(read.logical_offset)) <
+              0 ||
+          rpc_read(conn, &read.bytes, sizeof(read.bytes)) < 0) {
         LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
         goto close_connection;
       }
@@ -8104,15 +8109,22 @@ void *rpc_client_dispatch_thread(void *arg) {
         LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
         break;
       }
-      for (size_t slice = 0; slice < read.slices; ++slice) {
-        for (size_t row = 0; row < read.rows; ++row) {
-          const void *source =
-              read.source + slice * read.slice_stride + row * read.row_stride;
-          if (rpc_write(conn, source, read.width) < 0) {
-            LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
-            goto close_connection;
-          }
+      size_t offset = read.logical_offset;
+      size_t remaining = read.bytes;
+      while (remaining != 0) {
+        size_t row_index = offset / read.width;
+        size_t x = offset - row_index * read.width;
+        size_t slice = row_index / read.rows;
+        size_t row = row_index - slice * read.rows;
+        size_t chunk = std::min(remaining, read.width - x);
+        const void *source =
+            read.source + slice * read.slice_stride + row * read.row_stride + x;
+        if (rpc_write(conn, source, chunk) < 0) {
+          LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
+          goto close_connection;
         }
+        offset += chunk;
+        remaining -= chunk;
       }
       if (rpc_write_end(conn) < 0) {
         LUPINE_LOG_ERROR("Failed to return host-memory side effect.");
