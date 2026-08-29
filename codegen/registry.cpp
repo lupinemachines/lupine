@@ -18,8 +18,6 @@
   HANDLER(RPC_cuCtxAttach, handle_cuCtxAttach, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxDetach, handle_cuCtxDetach, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleLoad, handle_cuModuleLoad, rpc_backend::cuda) \
-  HANDLER(RPC_cuModuleLoadData, handle_cuModuleLoadData, rpc_backend::cuda) \
-  HANDLER(RPC_cuModuleLoadDataEx, handle_cuModuleLoadDataEx, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleGetGlobal_v2, handle_cuModuleGetGlobal_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuLinkCreate_v2, handle_cuLinkCreate_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuLinkAddData_v2, handle_cuLinkAddData_v2, rpc_backend::cuda) \
@@ -141,6 +139,9 @@
   HANDLER(RPC_cuCtxGetExecAffinity, handle_cuCtxGetExecAffinity, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxGetSharedMemConfig, handle_cuCtxGetSharedMemConfig, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxSetSharedMemConfig, handle_cuCtxSetSharedMemConfig, rpc_backend::cuda) \
+  HANDLER(RPC_cuModuleLoadData, handle_cuModuleLoadData, rpc_backend::cuda) \
+  HANDLER(RPC_cuModuleLoadDataEx, handle_cuModuleLoadDataEx, rpc_backend::cuda) \
+  HANDLER(RPC_cuModuleLoadFatBinary, handle_cuModuleLoadFatBinary, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleUnload, handle_cuModuleUnload, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleGetLoadingMode, handle_cuModuleGetLoadingMode, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleGetFunction, handle_cuModuleGetFunction, rpc_backend::cuda) \

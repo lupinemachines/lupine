@@ -1134,8 +1134,205 @@ class DereferenceOperation:
         )
 
 
+@dataclass
+class ModuleImageOperation:
+    """
+    A module image parameter, declared in the function doxygen with:
+
+        @moduleimage <image_param> <module_param>
+
+    The image argument carries no length: a fat binary container hides its
+    payload behind a pointer, an ELF cubin is sized by its headers, and PTX is
+    text. lupine_pack_module_image() resolves all three into a tagged byte
+    range on the client, which is what crosses the wire; the server hands that
+    range to the driver. The packed bytes are also what the client keeps for
+    the module, so a later reload onto another server can replay the image.
+    """
+
+    parameter: Parameter
+    module: Parameter
+
+    @property
+    def kind_name(self) -> str:
+        return f"{self.parameter.name}_kind"
+
+    @property
+    def bytes_name(self) -> str:
+        return f"{self.parameter.name}_bytes"
+
+    @property
+    def size_name(self) -> str:
+        return f"{self.parameter.name}_size"
+
+    def client_pack(self, f):
+        # Packing precedes the routing branch: the local path records the same
+        # bytes as the remote one.
+        f.write(f"    uint32_t {self.kind_name} = 0;\n")
+        f.write(f"    std::vector<unsigned char> {self.bytes_name};\n")
+        f.write(
+            f"    if (!lupine_pack_module_image({self.parameter.name}, "
+            f"&{self.kind_name}, &{self.bytes_name}))\n"
+            f"        return CUDA_ERROR_INVALID_IMAGE;\n"
+        )
+        f.write(
+            f"    size_t {self.size_name} = {self.bytes_name}.size();\n"
+        )
+
+    def client_rpc_write(self, f):
+        f.write(
+            f"        rpc_write(conn, &{self.kind_name}, "
+            f"sizeof({self.kind_name})) < 0 ||\n"
+        )
+        f.write(
+            f"        rpc_write(conn, &{self.size_name}, "
+            f"sizeof({self.size_name})) < 0 ||\n"
+        )
+        f.write(
+            f"        rpc_write(conn, {self.bytes_name}.data(), "
+            f"{self.size_name}) < 0 ||\n"
+        )
+
+    def client_rpc_read(self, f):
+        return
+
+    def client_post_call(self, f):
+        module = self.module.name
+        f.write(
+            f"    if (return_value == CUDA_SUCCESS && {module} != nullptr) {{\n"
+            f"        lupine_remember_loaded_module(*{module});\n"
+            f"        lupine_record_module_image(*{module}, route, "
+            f"{self.kind_name}, {self.bytes_name}.data(), "
+            f"{self.bytes_name}.size(), {self.parameter.name});\n"
+            "    }\n"
+        )
+
+    @property
+    def server_declaration(self) -> str:
+        return (
+            f"    uint32_t {self.kind_name};\n"
+            f"    size_t {self.size_name};\n"
+            f"    std::vector<unsigned char> {self.parameter.name};\n"
+        )
+
+    def server_rpc_read(self, f) -> Optional[str]:
+        name = self.parameter.name
+        f.write(
+            f"        rpc_read(conn, &{self.kind_name}, "
+            f"sizeof({self.kind_name})) < 0 ||\n"
+        )
+        f.write(
+            f"        rpc_read(conn, &{self.size_name}, "
+            f"sizeof({self.size_name})) < 0 ||\n"
+        )
+        f.write(f"        (({name}.resize({self.size_name}), false)) ||\n")
+        f.write(
+            f"        ({self.size_name} != 0 && "
+            f"rpc_read(conn, {name}.data(), {self.size_name}) < 0) ||\n"
+        )
+        return None
+
+    @property
+    def server_reference(self) -> str:
+        return f"{self.parameter.name}.data()"
+
+    def server_post_call(self, f):
+        name = self.parameter.name
+        f.write(
+            "    if (lupine_intercept_result == CUDA_SUCCESS)\n"
+            f"        lupine_note_device_stdout_image({name}.data(), "
+            f"{name}.size());\n"
+        )
+
+    def server_rpc_write(self, f):
+        return
+
+
+@dataclass
+class JitOptionsOperation:
+    """
+    The JIT option table three CUDA loaders take, declared in the function
+    doxygen with:
+
+        @jitoptions <count_param> <options_param> <values_param>
+
+    One object is built per parameter; the one holding the values array does
+    the marshalling and the other two only name their slice of the server-side
+    state. The values array cannot be copied as a flat array of words: an entry
+    tagged CU_JIT_INFO_LOG_BUFFER is a pointer to caller memory the driver
+    writes into, while the rest are values the driver rewrites in place, and
+    the log buffer sizes live in other entries of the same array.
+    """
+
+    parameter: Parameter
+    role: str  # "count", "options", or "values"
+    state: str
+    count: str
+    options: str
+    values: str
+
+    @property
+    def is_primary(self) -> bool:
+        return self.role == "values"
+
+    def client_rpc_write(self, f):
+        if not self.is_primary:
+            return
+        f.write(
+            f"        rpc_write(conn, &{self.count}, "
+            f"sizeof({self.count})) < 0 ||\n"
+        )
+        f.write(
+            f"        rpc_write(conn, {self.options}, "
+            f"{self.count} * sizeof(*{self.options})) < 0 ||\n"
+        )
+        f.write(
+            f"        rpc_write(conn, {self.values}, "
+            f"{self.count} * sizeof(*{self.values})) < 0 ||\n"
+        )
+
+    def client_rpc_read(self, f):
+        if not self.is_primary:
+            return
+        f.write(
+            f"        lupine_read_jit_outputs(conn, {self.count}, "
+            f"{self.options}, {self.values}) < 0 ||\n"
+        )
+
+    @property
+    def server_declaration(self) -> str:
+        if not self.is_primary:
+            return ""
+        return f"    lupine_jit_options {self.state};\n"
+
+    def server_rpc_read(self, f) -> Optional[str]:
+        if not self.is_primary:
+            return None
+        f.write(
+            f"        lupine_read_jit_options(conn, &{self.state}.state) < 0 ||\n"
+        )
+        return None
+
+    @property
+    def server_reference(self) -> str:
+        member = {
+            "count": "num_options",
+            "options": "options",
+            "values": "option_values",
+        }[self.role]
+        return f"{self.state}.state.{member}"
+
+    def server_rpc_write(self, f):
+        if not self.is_primary:
+            return
+        f.write(
+            f"        lupine_write_jit_outputs(conn, &{self.state}.state) < 0 ||\n"
+        )
+
+
 Operation = Union[
     NullableOperation,
+    ModuleImageOperation,
+    JitOptionsOperation,
     ArrayOperation,
     NullTerminatedOperation,
     OpaqueTypeOperation,

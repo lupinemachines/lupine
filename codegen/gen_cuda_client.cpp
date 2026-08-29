@@ -59,6 +59,17 @@ extern "C" const char *lupine_retain_returned_string(const void *handle,
 extern "C" void lupine_release_module_retained_strings(CUmodule module);
 extern "C" void lupine_release_library_retained_strings(CUlibrary library);
 
+bool lupine_pack_module_image(const void *image, uint32_t *kind,
+                              std::vector<unsigned char> *bytes);
+int lupine_read_jit_outputs(conn_t *conn, unsigned int numOptions,
+                            const CUjit_option *options, void **optionValues);
+extern "C" void lupine_remember_loaded_module(CUmodule module);
+extern "C" void lupine_record_module_image(CUmodule module, lupine_route route,
+                                           uint32_t kind,
+                                           const unsigned char *image,
+                                           size_t image_size,
+                                           const void *image_ptr);
+
 extern "C" void lupine_record_library_module(CUmodule module,
                                              CUlibrary library);
 
@@ -671,6 +682,145 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult cuModuleLoadData(CUmodule *module, const void *image) {
+  lupine_route route = lupine_route_for_current_context();
+  uint32_t image_kind = 0;
+  std::vector<unsigned char> image_bytes;
+  if (!lupine_pack_module_image(image, &image_kind, &image_bytes))
+    return CUDA_ERROR_INVALID_IMAGE;
+  size_t image_size = image_bytes.size();
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn("cuModuleLoadData", module, image);
+    if (return_value == CUDA_SUCCESS && module != nullptr) {
+      lupine_remember_loaded_module(*module);
+      lupine_record_module_image(*module, route, image_kind, image_bytes.data(),
+                                 image_bytes.size(), image);
+    }
+    if (return_value == CUDA_SUCCESS && module != nullptr) {
+      lupine_note_module_owner_route(*module, route);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
+      rpc_write(conn, module, sizeof(CUmodule)) < 0 ||
+      rpc_write(conn, &image_kind, sizeof(image_kind)) < 0 ||
+      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
+      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && module != nullptr) {
+    lupine_remember_loaded_module(*module);
+    lupine_record_module_image(*module, route, image_kind, image_bytes.data(),
+                               image_bytes.size(), image);
+  }
+  if (return_value == CUDA_SUCCESS && module != nullptr) {
+    lupine_note_module_owner_route(*module, route);
+  }
+  return return_value;
+}
+
+CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
+                            unsigned int numOptions, CUjit_option *options,
+                            void **optionValues) {
+  lupine_route route = lupine_route_for_current_context();
+  uint32_t image_kind = 0;
+  std::vector<unsigned char> image_bytes;
+  if (!lupine_pack_module_image(image, &image_kind, &image_bytes))
+    return CUDA_ERROR_INVALID_IMAGE;
+  size_t image_size = image_bytes.size();
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn("cuModuleLoadDataEx", module, image,
+                                            numOptions, options, optionValues);
+    if (return_value == CUDA_SUCCESS && module != nullptr) {
+      lupine_remember_loaded_module(*module);
+      lupine_record_module_image(*module, route, image_kind, image_bytes.data(),
+                                 image_bytes.size(), image);
+    }
+    if (return_value == CUDA_SUCCESS && module != nullptr) {
+      lupine_note_module_owner_route(*module, route);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuModuleLoadDataEx) < 0 ||
+      rpc_write(conn, module, sizeof(CUmodule)) < 0 ||
+      rpc_write(conn, &image_kind, sizeof(image_kind)) < 0 ||
+      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
+      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
+      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
+      lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && module != nullptr) {
+    lupine_remember_loaded_module(*module);
+    lupine_record_module_image(*module, route, image_kind, image_bytes.data(),
+                               image_bytes.size(), image);
+  }
+  if (return_value == CUDA_SUCCESS && module != nullptr) {
+    lupine_note_module_owner_route(*module, route);
+  }
+  return return_value;
+}
+
+CUresult cuModuleLoadFatBinary(CUmodule *module, const void *fatCubin) {
+  lupine_route route = lupine_route_for_current_context();
+  uint32_t fatCubin_kind = 0;
+  std::vector<unsigned char> fatCubin_bytes;
+  if (!lupine_pack_module_image(fatCubin, &fatCubin_kind, &fatCubin_bytes))
+    return CUDA_ERROR_INVALID_IMAGE;
+  size_t fatCubin_size = fatCubin_bytes.size();
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value =
+        lupine_call_real_cuda_fn("cuModuleLoadFatBinary", module, fatCubin);
+    if (return_value == CUDA_SUCCESS && module != nullptr) {
+      lupine_remember_loaded_module(*module);
+      lupine_record_module_image(*module, route, fatCubin_kind,
+                                 fatCubin_bytes.data(), fatCubin_bytes.size(),
+                                 fatCubin);
+    }
+    if (return_value == CUDA_SUCCESS && module != nullptr) {
+      lupine_note_module_owner_route(*module, route);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuModuleLoadFatBinary) < 0 ||
+      rpc_write(conn, module, sizeof(CUmodule)) < 0 ||
+      rpc_write(conn, &fatCubin_kind, sizeof(fatCubin_kind)) < 0 ||
+      rpc_write(conn, &fatCubin_size, sizeof(fatCubin_size)) < 0 ||
+      rpc_write(conn, fatCubin_bytes.data(), fatCubin_size) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && module != nullptr) {
+    lupine_remember_loaded_module(*module);
+    lupine_record_module_image(*module, route, fatCubin_kind,
+                               fatCubin_bytes.data(), fatCubin_bytes.size(),
+                               fatCubin);
+  }
+  if (return_value == CUDA_SUCCESS && module != nullptr) {
+    lupine_note_module_owner_route(*module, route);
+  }
   return return_value;
 }
 
@@ -7254,6 +7404,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuCtxDetach", (void *)cuCtxDetach},
     {"cuCtxGetSharedMemConfig", (void *)cuCtxGetSharedMemConfig},
     {"cuCtxSetSharedMemConfig", (void *)cuCtxSetSharedMemConfig},
+    {"cuModuleLoadData", (void *)cuModuleLoadData},
+    {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
+    {"cuModuleLoadFatBinary", (void *)cuModuleLoadFatBinary},
     {"cuModuleUnload", (void *)cuModuleUnload},
     {"cuModuleGetLoadingMode", (void *)cuModuleGetLoadingMode},
     {"cuModuleGetFunction", (void *)cuModuleGetFunction},

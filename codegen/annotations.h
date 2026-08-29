@@ -2354,28 +2354,27 @@ CUresult cuCtxDetach(CUcontext ctx);
  */
 CUresult cuModuleLoad(CUmodule *module, const char *fname);
 /**
- * @disabled
- * @param module RECV_ONLY
- * @param image SEND_ONLY
- * @server CUDA
+ * @routingkey CURRENT_CONTEXT
+ * @recordowner MODULE module
+ * @param module SEND_RECV
+ * @moduleimage image module
  */
 CUresult cuModuleLoadData(CUmodule *module, const void *image);
 /**
- * @disabled
- * @param module RECV_ONLY
- * @param image SEND_ONLY NULL_TERMINATED
- * @param numOptions SEND_ONLY
- * @param options SEND_ONLY LENGTH:numOptions
- * @param optionValues SEND_RECV
- * @server CUDA
+ * @routingkey CURRENT_CONTEXT
+ * @recordowner MODULE module
+ * @param module SEND_RECV
+ * @moduleimage image module
+ * @jitoptions numOptions options optionValues
  */
 CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
                             unsigned int numOptions, CUjit_option *options,
                             void **optionValues);
 /**
- * @disabled
+ * @routingkey CURRENT_CONTEXT
+ * @recordowner MODULE module
  * @param module SEND_RECV
- * @param fatCubin SEND_RECV
+ * @moduleimage fatCubin module
  */
 CUresult cuModuleLoadFatBinary(CUmodule *module, const void *fatCubin);
 /**

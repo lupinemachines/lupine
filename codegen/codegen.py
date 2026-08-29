@@ -18,6 +18,8 @@ import zlib
 from ops import (
     NullableOperation,
     ArrayOperation,
+    ModuleImageOperation,
+    JitOptionsOperation,
     InOutCountOperation,
     NullableArrayOperation,
     DeepStructOperation,
@@ -594,6 +596,44 @@ def parse_annotation(
                 node=annotation_param(params, parts[2]),
             )
             continue
+        if line.startswith("@moduleimage"):
+            # @moduleimage <image_param> <module_param>
+            parts = line.split()
+            if len(parts) != 3:
+                raise RuntimeError(
+                    "@moduleimage requires an image and a module parameter"
+                )
+            operations.append(
+                ModuleImageOperation(
+                    parameter=annotation_param(params, parts[1]),
+                    module=annotation_param(params, parts[2]),
+                )
+            )
+            continue
+        if line.startswith("@jitoptions"):
+            # @jitoptions <count_param> <options_param> <values_param>
+            parts = line.split()
+            if len(parts) != 4:
+                raise RuntimeError(
+                    "@jitoptions requires count, options, and values parameters"
+                )
+            count, options_name, values = parts[1], parts[2], parts[3]
+            for role, name in (
+                ("count", count),
+                ("options", options_name),
+                ("values", values),
+            ):
+                operations.append(
+                    JitOptionsOperation(
+                        parameter=annotation_param(params, name),
+                        role=role,
+                        state=f"{values}_jit",
+                        count=count,
+                        options=options_name,
+                        values=values,
+                    )
+                )
+            continue
         if line.startswith("@deeparray"):
             # @deeparray <param> <array_member> <count_member>
             parts = line.split()
@@ -1041,6 +1081,11 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
 
 
 def write_client_post_call(f, function: Function, metadata: FunctionAnnotationMetadata):
+    for operation in metadata.operations:
+        post_call = getattr(operation, "client_post_call", None)
+        if post_call is not None:
+            post_call(f)
+
     if function.name.format() == "cuDriverGetVersion":
         f.write("    if (driverVersion != nullptr) {\n")
         f.write("        const char *override_version = getenv(\"LUPINE_DRIVER_VERSION_OVERRIDE\");\n")
@@ -1893,6 +1938,20 @@ def main():
             'extern "C" const char *lupine_retain_returned_string(const void *handle, const char *data, size_t size);\n\n'
             'extern "C" void lupine_release_module_retained_strings(CUmodule module);\n'
             'extern "C" void lupine_release_library_retained_strings(CUlibrary library);\n\n'
+            # Module image packing and JIT option write-back live in
+            # cuda_client.cpp; see ModuleImageOperation and JitOptionsOperation.
+            "bool lupine_pack_module_image(const void *image, uint32_t *kind,\n"
+            "                              std::vector<unsigned char> *bytes);\n"
+            "int lupine_read_jit_outputs(conn_t *conn, unsigned int numOptions,\n"
+            "                            const CUjit_option *options,\n"
+            "                            void **optionValues);\n"
+            'extern "C" void lupine_remember_loaded_module(CUmodule module);\n'
+            'extern "C" void lupine_record_module_image(CUmodule module,\n'
+            "                                           lupine_route route,\n"
+            "                                           uint32_t kind,\n"
+            "                                           const unsigned char *image,\n"
+            "                                           size_t image_size,\n"
+            "                                           const void *image_ptr);\n\n"
             'extern "C" void lupine_record_library_module(CUmodule module, CUlibrary library);\n\n'
             'extern "C" CUresult lupine_record_library_kernel(CUkernel kernel, CUlibrary library, const char *name, lupine_route route);\n\n'
             'extern "C" CUresult lupine_record_module_function(CUfunction function, CUmodule module, const char *name, lupine_route route);\n\n'
@@ -1997,6 +2056,12 @@ def main():
                             )
                         )
                     )
+            # The image is packed before the routing branch: the local path
+            # records the same bytes the remote one ships.
+            for operation in operations:
+                if isinstance(operation, ModuleImageOperation):
+                    operation.client_pack(f)
+
             if metadata.cross_server_copy is not None:
                 copy = metadata.cross_server_copy
                 stream_arg = (
@@ -2285,7 +2350,12 @@ def main():
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "cuda_server_memcpy.h"\n'
+            '#include "lupine_jit.h"\n'
             '#include "rpc.h"\n\n'
+        )
+        f.write(
+            "void lupine_note_device_stdout_image(const unsigned char *image,\n"
+            "                                     size_t image_size);\n\n"
         )
         annotation_only_functions = (
             legacy_abi_functions + annotation_only_server_functions
@@ -2394,6 +2464,11 @@ def main():
                 if metadata.guard is not None:
                     f.write("#endif\n\n")
                 continue
+
+            for operation in operations:
+                post_call = getattr(operation, "server_post_call", None)
+                if post_call is not None:
+                    post_call(f)
 
             f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
 

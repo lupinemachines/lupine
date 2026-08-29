@@ -740,7 +740,7 @@ lupine_graph_kernel_node_params_cache() {
   return *cache;
 }
 
-static void lupine_remember_loaded_module(CUmodule module) {
+extern "C" void lupine_remember_loaded_module(CUmodule module) {
   if (module == nullptr) {
     return;
   }
@@ -4067,9 +4067,8 @@ lupine_jit_client_states() {
 // value is rewritten in place by the driver (CU_JIT_WALL_TIME and the log
 // sizes report through the option array itself), so its word replaces the one
 // that was sent.
-static int lupine_read_jit_outputs(conn_t *conn, unsigned int numOptions,
-                                   const CUjit_option *options,
-                                   void **optionValues) {
+int lupine_read_jit_outputs(conn_t *conn, unsigned int numOptions,
+                            const CUjit_option *options, void **optionValues) {
   size_t log_sizes[2] = {0, 0};
   for (unsigned int i = 0; i < numOptions; ++i) {
     if (options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
@@ -4661,8 +4660,8 @@ static bool lupine_image_looks_like_text(const char *image) {
   return true;
 }
 
-static bool lupine_pack_module_image(const void *image, uint32_t *kind,
-                                     std::vector<unsigned char> *bytes) {
+bool lupine_pack_module_image(const void *image, uint32_t *kind,
+                              std::vector<unsigned char> *bytes) {
   if (image == nullptr || kind == nullptr || bytes == nullptr) {
     return false;
   }
@@ -4735,107 +4734,6 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
   const auto *raw = static_cast<const unsigned char *>(fatbin);
   bytes->assign(raw, raw + image_size);
   return true;
-}
-
-extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
-  if (module == nullptr || image == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  uint32_t kind = 0;
-  std::vector<unsigned char> image_bytes;
-  if (!lupine_pack_module_image(image, &kind, &image_bytes)) {
-    return CUDA_ERROR_INVALID_IMAGE;
-  }
-
-  lupine_route route = lupine_route_for_current_context();
-  if (lupine_route_is_local(route)) {
-    CUresult result =
-        lupine_call_real_cuda_fn("cuModuleLoadData", module, image);
-    if (result == CUDA_SUCCESS) {
-      lupine_remember_loaded_module(*module);
-      lupine_note_module_owner_route(*module, route);
-      lupine_record_module_image(*module, route, kind, image_bytes.data(),
-                                 image_bytes.size(), image);
-    }
-    return result;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  size_t image_size = image_bytes.size();
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
-    lupine_remember_loaded_module(*module);
-    lupine_note_module_owner(*module, conn);
-    lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
-                               kind, image_bytes.data(), image_bytes.size(),
-                               image);
-  }
-  return return_value;
-}
-
-extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
-                                       unsigned int numOptions,
-                                       CUjit_option *options,
-                                       void **optionValues) {
-  if (module == nullptr || image == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  uint32_t kind = 0;
-  std::vector<unsigned char> image_bytes;
-  if (!lupine_pack_module_image(image, &kind, &image_bytes)) {
-    return CUDA_ERROR_INVALID_IMAGE;
-  }
-
-  lupine_route route = lupine_route_for_current_context();
-  if (lupine_route_is_local(route)) {
-    CUresult result = lupine_call_real_cuda_fn(
-        "cuModuleLoadDataEx", module, image, numOptions, options, optionValues);
-    if (result == CUDA_SUCCESS) {
-      lupine_remember_loaded_module(*module);
-      lupine_note_module_owner_route(*module, route);
-      lupine_record_module_image(*module, route, kind, image_bytes.data(),
-                                 image_bytes.size(), image);
-    }
-    return result;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  size_t image_size = image_bytes.size();
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuModuleLoadDataEx) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
-      rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
-      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
-      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0 ||
-      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
-    lupine_remember_loaded_module(*module);
-    lupine_note_module_owner(*module, conn);
-    lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
-                               kind, image_bytes.data(), image_bytes.size(),
-                               image);
-  }
-  return return_value;
 }
 
 struct lupine_wire_library_kernel_record {
@@ -7878,7 +7776,6 @@ static void *lupine_make_missing_stub(const char *symbol) {
 
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadData)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadFatBinary)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryLoadData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryGetKernelCount)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryEnumerateKernels)
@@ -7982,7 +7879,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
   { #name, (void *)&lupine_unsupported_##name }
       LUPINE_STUB_ENTRY(cuCtxCreate),
       LUPINE_STUB_ENTRY(cuModuleLoadData),
-      LUPINE_STUB_ENTRY(cuModuleLoadFatBinary),
       LUPINE_STUB_ENTRY(cuLibraryLoadData),
       LUPINE_STUB_ENTRY(cuLibraryGetKernelCount),
       LUPINE_STUB_ENTRY(cuLibraryEnumerateKernels),

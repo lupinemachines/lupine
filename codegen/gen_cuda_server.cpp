@@ -11,7 +11,11 @@
 #include <cstdio>
 
 #include "cuda_server_memcpy.h"
+#include "lupine_jit.h"
 #include "rpc.h"
+
+void lupine_note_device_stdout_image(const unsigned char *image,
+                                     size_t image_size);
 
 #ifdef cuGraphInstantiate_v2
 #undef cuGraphInstantiate_v2
@@ -988,6 +992,110 @@ int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
   lupine_intercept_result = cuCtxSetSharedMemConfig(config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuModuleLoadData(conn_t *conn) {
+  CUmodule module;
+  uint32_t image_kind;
+  size_t image_size;
+  std::vector<unsigned char> image;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &module, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &image_kind, sizeof(image_kind)) < 0 ||
+      rpc_read(conn, &image_size, sizeof(image_size)) < 0 ||
+      ((image.resize(image_size), false)) ||
+      (image_size != 0 && rpc_read(conn, image.data(), image_size) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuModuleLoadData(&module, image.data());
+
+  if (lupine_intercept_result == CUDA_SUCCESS)
+    lupine_note_device_stdout_image(image.data(), image.size());
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &module, sizeof(CUmodule)) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuModuleLoadDataEx(conn_t *conn) {
+  CUmodule module;
+  uint32_t image_kind;
+  size_t image_size;
+  std::vector<unsigned char> image;
+  lupine_jit_options optionValues_jit;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &module, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &image_kind, sizeof(image_kind)) < 0 ||
+      rpc_read(conn, &image_size, sizeof(image_size)) < 0 ||
+      ((image.resize(image_size), false)) ||
+      (image_size != 0 && rpc_read(conn, image.data(), image_size) < 0) ||
+      lupine_read_jit_options(conn, &optionValues_jit.state) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuModuleLoadDataEx(
+      &module, image.data(), optionValues_jit.state.num_options,
+      optionValues_jit.state.options, optionValues_jit.state.option_values);
+
+  if (lupine_intercept_result == CUDA_SUCCESS)
+    lupine_note_device_stdout_image(image.data(), image.size());
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &module, sizeof(CUmodule)) < 0 ||
+      lupine_write_jit_outputs(conn, &optionValues_jit.state) < 0 ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuModuleLoadFatBinary(conn_t *conn) {
+  CUmodule module;
+  uint32_t fatCubin_kind;
+  size_t fatCubin_size;
+  std::vector<unsigned char> fatCubin;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &module, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &fatCubin_kind, sizeof(fatCubin_kind)) < 0 ||
+      rpc_read(conn, &fatCubin_size, sizeof(fatCubin_size)) < 0 ||
+      ((fatCubin.resize(fatCubin_size), false)) ||
+      (fatCubin_size != 0 &&
+       rpc_read(conn, fatCubin.data(), fatCubin_size) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuModuleLoadFatBinary(&module, fatCubin.data());
+
+  if (lupine_intercept_result == CUDA_SUCCESS)
+    lupine_note_device_stdout_image(fatCubin.data(), fatCubin.size());
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &module, sizeof(CUmodule)) < 0 ||
       rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
