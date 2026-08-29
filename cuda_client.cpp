@@ -7988,8 +7988,6 @@ void *rpc_client_dispatch_thread(void *arg) {
     op = rpc_dispatch(conn, 1);
 
     if (op == LUPINE_SIDE_EFFECT_HOST_FUNCTION) {
-      std::cout << "Transferring memory..." << std::endl;
-
       int found = 0;
 
       if (rpc_read(conn, &found, sizeof(found)) < 0) {
