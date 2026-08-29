@@ -163,11 +163,15 @@ struct lupine_dirty_host_range_queue {
 
 static lupine_dirty_host_range_queue
     lupine_dirty_host_range_queues[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
-// Keep dirty state visible until a flush completes. A single exchanged boolean
-// would let another request start while the first request is still flushing.
+// Dirty publications receive globally ordered tickets, but only the publishing
+// thread waits for its latest ticket. Another thread may flush that ticket; the
+// acknowledged global watermark then satisfies the publisher without making
+// unrelated RPC callers join the flush.
 static uint64_t lupine_dirty_host_epoch = 0;
+static thread_local uint64_t lupine_required_host_epoch = 0;
 static volatile sig_atomic_t lupine_device_work_pending = 0;
 static std::atomic<uint64_t> lupine_flushed_host_epoch{0};
+static std::mutex lupine_host_flush_mutex;
 
 struct lupine_fault_entry {
   uintptr_t base = 0;
@@ -427,6 +431,13 @@ lupine_reserve_dirty_host_range(lupine_dirty_host_range_queue &queue,
   return true;
 }
 
+static void lupine_require_dirty_host_flush() {
+  uint64_t required_epoch =
+      __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_ACQ_REL);
+  __atomic_store_n(&lupine_required_host_epoch, required_epoch,
+                   __ATOMIC_RELEASE);
+}
+
 static void lupine_queue_dirty_host_range(lupine_host_allocation *allocation,
                                           uintptr_t start, uintptr_t end) {
   int route_id = allocation->route_id;
@@ -441,14 +452,14 @@ static void lupine_queue_dirty_host_range(lupine_host_allocation *allocation,
   if (lupine_reserve_dirty_host_range(queue, &slot)) {
     queue.ranges[slot] = {allocation, start, end};
     __atomic_store_n(&queue.ready[slot], 1, __ATOMIC_RELEASE);
-    __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
+    lupine_require_dirty_host_flush();
     return;
   }
 
   __atomic_sub_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_RELEASE);
   __atomic_store_n(&allocation->full_dirty, 1, __ATOMIC_RELEASE);
   __atomic_store_n(&queue.full_dirty_pending, 1, __ATOMIC_RELEASE);
-  __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
+  lupine_require_dirty_host_flush();
 }
 
 static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
@@ -769,7 +780,7 @@ extern "C" void lupine_mark_mapped_host_kernel_params(
         continue;
       }
       allocation.device_pointer_exposed = true;
-      __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
+      lupine_require_dirty_host_flush();
       break;
     }
   }
@@ -843,8 +854,14 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
 
   uint32_t reserved = __atomic_load_n(&queue.next, __ATOMIC_ACQUIRE);
   uint32_t end = queue.start;
-  while (end < reserved &&
-         __atomic_load_n(&queue.ready[end], __ATOMIC_ACQUIRE) != 0) {
+  while (end < reserved) {
+    // A signal handler reserves its lock-free slot before publishing it. A
+    // later slot can therefore carry an epoch included in our completion
+    // watermark while this earlier producer is still filling its range. Do
+    // not advance the watermark past that hole.
+    while (__atomic_load_n(&queue.ready[end], __ATOMIC_ACQUIRE) == 0) {
+      sched_yield();
+    }
     ++end;
   }
   bool has_full_dirty =
@@ -968,11 +985,14 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
       return CUDA_SUCCESS;
     }
     // This is the flush performed by lupine_prepare_rpc(), so it must use
-    // the raw transport primitive.
+    // the raw transport primitives. Wait for the server acknowledgement:
+    // requests from different client threads use different HTTP/2 lanes, and
+    // publishing the flushed epoch before this lane is applied would let a
+    // server-authoritative HtoD on another lane observe stale host data.
     if (rpc_write_start_request(conn, LUPINE_RPC_lupineManagedHostFlush) < 0 ||
         rpc_write(conn, &count, sizeof(count)) < 0 ||
         rpc_write_cursors(conn, cursors.data(), count * 2) < 0 ||
-        rpc_write_end(conn) < 0) {
+        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     return CUDA_SUCCESS;
@@ -1019,6 +1039,9 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
 }
 
 static CUresult lupine_flush_dirty_host_pages_to_server() {
+  std::lock_guard<std::mutex> flush_lock(lupine_host_flush_mutex);
+  uint64_t flush_epoch =
+      __atomic_load_n(&lupine_dirty_host_epoch, __ATOMIC_ACQUIRE);
   for (int route_id = 0; route_id < rpc_size(); ++route_id) {
     CUresult result =
         lupine_flush_dirty_host_pages_to_route(static_cast<size_t>(route_id));
@@ -1026,6 +1049,7 @@ static CUresult lupine_flush_dirty_host_pages_to_server() {
       return result;
     }
   }
+  lupine_flushed_host_epoch.store(flush_epoch, std::memory_order_release);
   return CUDA_SUCCESS;
 }
 
@@ -1040,14 +1064,27 @@ extern "C" int lupine_prepare_rpc(conn_t *conn) {
     return -1;
   }
 
-  uint64_t dirty_epoch =
-      __atomic_load_n(&lupine_dirty_host_epoch, __ATOMIC_ACQUIRE);
-  if (dirty_epoch !=
-      lupine_flushed_host_epoch.load(std::memory_order_acquire)) {
-    if (lupine_flush_dirty_host_pages_to_server() != CUDA_SUCCESS) {
-      return -1;
+  uint64_t required_epoch =
+      __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
+  if (lupine_flushed_host_epoch.load(std::memory_order_acquire) <
+      required_epoch) {
+    std::lock_guard<std::mutex> flush_lock(lupine_host_flush_mutex);
+    required_epoch =
+        __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
+    while (lupine_flushed_host_epoch.load(std::memory_order_acquire) <
+           required_epoch) {
+      uint64_t flush_epoch =
+          __atomic_load_n(&lupine_dirty_host_epoch, __ATOMIC_ACQUIRE);
+      for (int route_id = 0; route_id < rpc_size(); ++route_id) {
+        if (lupine_flush_dirty_host_pages_to_route(
+                static_cast<size_t>(route_id)) != CUDA_SUCCESS) {
+          return -1;
+        }
+      }
+      lupine_flushed_host_epoch.store(flush_epoch, std::memory_order_release);
+      required_epoch =
+          __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
     }
-    lupine_flushed_host_epoch.store(dirty_epoch, std::memory_order_release);
   }
   return 0;
 }
@@ -1061,6 +1098,7 @@ lupine_drain_retiring_dirty_ranges(lupine_host_allocation *allocation) {
   if (allocation->route_id >= 0 &&
       allocation->route_id <
           static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
+    std::lock_guard<std::mutex> flush_lock(lupine_host_flush_mutex);
     result = lupine_flush_dirty_host_pages_to_route(
         static_cast<size_t>(allocation->route_id));
     while (result == CUDA_SUCCESS &&
@@ -2081,7 +2119,7 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
       if (it->second.device_ptr != 0) {
         if (!it->second.device_pointer_exposed) {
           it->second.device_pointer_exposed = true;
-          __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_RELEASE);
+          lupine_require_dirty_host_flush();
         }
         uintptr_t base = reinterpret_cast<uintptr_t>(it->first);
         uintptr_t addr = reinterpret_cast<uintptr_t>(p);
