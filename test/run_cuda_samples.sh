@@ -75,6 +75,10 @@ CORE_SAMPLES=(
   HSOpticalFlow
   MC_EstimatePiP MC_EstimatePiQ MC_EstimatePiInlineP MC_EstimatePiInlineQ
   MC_SingleAsianOptionP MonteCarloMultiGPU
+  # graphMemoryFootprint's simultaneous-streams section only asserts by eye: its
+  # ~5us delay kernel is shorter than an RPC round trip, so each graph retires
+  # before the next launch and the footprint never grows. test_graph_memory_footprint
+  # covers that behavior with an overlap window that survives the round trip.
   cudaGraphsPerfScaling graphConditionalNodes graphMemoryNodes graphMemoryFootprint jacobiCudaGraphs
   dct8x8 lineOfSight nbody recursiveGaussian stereoDisparity
   Mandelbrot SobelFilter bicubicTexture bilateralFilter bindlessTexture boxFilter
