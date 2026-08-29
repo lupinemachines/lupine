@@ -228,6 +228,25 @@ lupine_private_export_hashes() {
   return hashes;
 }
 
+struct lupine_private_jit_cache_object {
+  uint32_t type = 0;
+  std::vector<unsigned char> data;
+};
+
+using lupine_private_jit_cache =
+    std::unordered_map<void *,
+                       std::unique_ptr<lupine_private_jit_cache_object>>;
+
+static std::mutex &lupine_private_jit_cache_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static lupine_private_jit_cache &lupine_private_jit_cache_objects() {
+  static auto *objects = new lupine_private_jit_cache();
+  return *objects;
+}
+
 static std::unordered_map<CUfunction, lupine_private_node_mapping> &
 lupine_private_node_map() {
   static std::unordered_map<CUfunction, lupine_private_node_mapping> mappings;
@@ -660,14 +679,35 @@ static std::mutex &lupine_library_kernel_mutex() {
   return *mutex;
 }
 
-static unsigned char (&lupine_private_6e16_node_pool())[16][0x500] {
-  static unsigned char nodes[16][0x500] = {};
-  return nodes;
+static std::vector<std::unique_ptr<unsigned char[]>> &
+lupine_private_6e16_nodes() {
+  // cuFFT keeps these opaque nodes for the lifetime of its plans. Keep every
+  // client-side proxy at a stable address until process exit as well; a small
+  // ring aliases live nodes once a sufficiently large or multi-GPU plan asks
+  // the driver to enumerate more functions.
+  static auto *nodes = new std::vector<std::unique_ptr<unsigned char[]>>();
+  return *nodes;
 }
 
-static std::atomic<unsigned int> &lupine_private_6e16_next_node() {
-  static std::atomic<unsigned int> next{0};
-  return next;
+static std::mutex &lupine_private_6e16_node_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static unsigned char *lupine_allocate_private_6e16_node() {
+  auto node = std::unique_ptr<unsigned char[]>(
+      new (std::nothrow) unsigned char[0x500]());
+  if (node == nullptr) {
+    return nullptr;
+  }
+  unsigned char *address = node.get();
+  std::lock_guard<std::mutex> lock(lupine_private_6e16_node_mutex());
+  try {
+    lupine_private_6e16_nodes().push_back(std::move(node));
+  } catch (const std::bad_alloc &) {
+    return nullptr;
+  }
+  return address;
 }
 
 static std::mutex &lupine_private_node_mutex() {
@@ -2635,6 +2675,117 @@ lupine_private_export_slot_called(int slot, const char *table_name,
                    << std::noshowbase);
 
   if (table_name != nullptr &&
+      strcmp(table_name, "da9151d33ae6cc41a5c04f26d533e328") == 0) {
+#if !defined(_WIN32)
+    // This process-local emulation is based on the cuFFT JIT-callback
+    // consumer. cuSPARSE/nvJitLink consumers use the same UUID with a
+    // different object contract; preserve the generic NOT_SUPPORTED fallback
+    // unless the cuFFT JIT-callback API is loaded in this process.
+    if (lupine_real_dlsym(RTLD_DEFAULT, "cufftXtSetJITCallback") == nullptr) {
+      return CUDA_ERROR_NOT_SUPPORTED;
+    }
+#endif
+    if (slot == 1) {
+      if (arg0 == 0 || arg2 == 0 || arg3 == 0) {
+        return CUDA_ERROR_INVALID_VALUE;
+      }
+      auto object = std::unique_ptr<lupine_private_jit_cache_object>(
+          new (std::nothrow) lupine_private_jit_cache_object());
+      if (object == nullptr) {
+        return CUDA_ERROR_OUT_OF_MEMORY;
+      }
+      object->type = static_cast<uint32_t>(arg1);
+      try {
+        const auto *data = reinterpret_cast<const unsigned char *>(arg2);
+        object->data.assign(data, data + static_cast<uint32_t>(arg3));
+      } catch (const std::bad_alloc &) {
+        return CUDA_ERROR_OUT_OF_MEMORY;
+      }
+      if (object->type == 1) {
+        static constexpr unsigned char elf_magic[] = {0x7f, 'E', 'L', 'F'};
+        auto cubin = std::search(object->data.begin(), object->data.end(),
+                                 std::begin(elf_magic), std::end(elf_magic));
+        if (cubin == object->data.end()) {
+          return CUDA_ERROR_INVALID_IMAGE;
+        }
+        object->data.erase(object->data.begin(), cubin);
+      }
+      void *handle = object.get();
+      try {
+        std::lock_guard<std::mutex> lock(lupine_private_jit_cache_mutex());
+        lupine_private_jit_cache_objects().emplace(handle, std::move(object));
+      } catch (const std::bad_alloc &) {
+        return CUDA_ERROR_OUT_OF_MEMORY;
+      }
+      *reinterpret_cast<void **>(arg0) = handle;
+      return CUDA_SUCCESS;
+    }
+
+    if (slot == 3) {
+      if (arg0 == 0 || arg2 == 0 || arg3 == 0) {
+        return CUDA_ERROR_INVALID_VALUE;
+      }
+      std::lock_guard<std::mutex> lock(lupine_private_jit_cache_mutex());
+      auto it = lupine_private_jit_cache_objects().find(
+          reinterpret_cast<void *>(arg0));
+      if (it == lupine_private_jit_cache_objects().end()) {
+        return CUDA_ERROR_INVALID_HANDLE;
+      }
+      // Type 2 is a lookup by LTO input. An in-process implementation has no
+      // persistent driver cache, so report a miss and let cuFFT run nvJitLink
+      // locally. It then stores the linked cubin as a type-1 object.
+      if (it->second->type != 1) {
+        return CUDA_ERROR_NOT_FOUND;
+      }
+      uint32_t cubin_size = static_cast<uint32_t>(it->second->data.size());
+      void *cubin = malloc(cubin_size);
+      if (cubin == nullptr) {
+        return CUDA_ERROR_OUT_OF_MEMORY;
+      }
+      memcpy(cubin, it->second->data.data(), cubin_size);
+      *reinterpret_cast<void **>(arg2) = cubin;
+      *reinterpret_cast<uint32_t *>(arg3) = cubin_size;
+      return CUDA_SUCCESS;
+    }
+
+    if (slot == 2) {
+      std::lock_guard<std::mutex> lock(lupine_private_jit_cache_mutex());
+      size_t erased = lupine_private_jit_cache_objects().erase(
+          reinterpret_cast<void *>(arg0));
+      return erased == 0 ? CUDA_ERROR_INVALID_HANDLE : CUDA_SUCCESS;
+    }
+
+    if (slot == 4) {
+      if (arg0 == 0 || arg2 == 0 || arg3 == 0) {
+        return CUDA_ERROR_INVALID_VALUE;
+      }
+      std::lock_guard<std::mutex> lock(lupine_private_jit_cache_mutex());
+      auto it = lupine_private_jit_cache_objects().find(
+          reinterpret_cast<void *>(arg0));
+      if (it == lupine_private_jit_cache_objects().end()) {
+        return CUDA_ERROR_INVALID_HANDLE;
+      }
+      if (it->second->type != 1) {
+        return CUDA_ERROR_NOT_FOUND;
+      }
+      if (arg3 < it->second->data.size()) {
+        return CUDA_ERROR_INVALID_VALUE;
+      }
+      memcpy(reinterpret_cast<void *>(arg2), it->second->data.data(),
+             it->second->data.size());
+      return CUDA_SUCCESS;
+    }
+
+    if (slot == 6) {
+      if (arg0 == 0) {
+        return CUDA_ERROR_INVALID_VALUE;
+      }
+      free(reinterpret_cast<void *>(arg0));
+      return CUDA_SUCCESS;
+    }
+  }
+
+  if (table_name != nullptr &&
       strcmp(table_name, "21318c60971432488ca641ff7324c8f2") == 0 &&
       slot == 4) {
     if (arg1 == 0) {
@@ -2685,12 +2836,10 @@ lupine_private_export_slot_called(int slot, const char *table_name,
       return node_result == CUDA_SUCCESS ? CUDA_ERROR_NOT_FOUND : node_result;
     }
 
-    auto &node_pool = lupine_private_6e16_node_pool();
-    unsigned int node_index = lupine_private_6e16_next_node().fetch_add(
-                                  1, std::memory_order_relaxed) %
-                              (sizeof(node_pool) / sizeof(*node_pool));
-    unsigned char *client_node = node_pool[node_index];
-    memset(client_node, 0, sizeof(node_pool[node_index]));
+    unsigned char *client_node = lupine_allocate_private_6e16_node();
+    if (client_node == nullptr) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
     *reinterpret_cast<uint64_t *>(client_node + 0x0) = 0x100000001ULL;
     *reinterpret_cast<uint64_t *>(client_node + 0x8) = server_owner;
     *reinterpret_cast<uint64_t *>(client_node + 0x10) = 0xc;
@@ -2718,8 +2867,8 @@ lupine_private_export_slot_called(int slot, const char *table_name,
         mapping.functions_by_route[route_id] = server_node;
       }
     }
-    LUPINE_TRACE_LOG("LUPINE private 6e16[7] mapped client_node["
-                     << node_index << "]=" << static_cast<void *>(client_node)
+    LUPINE_TRACE_LOG("LUPINE private 6e16[7] mapped client_node="
+                     << static_cast<void *>(client_node)
                      << " server_node=" << server_node << " server_owner="
                      << reinterpret_cast<void *>(server_owner));
     if (arg2 != 0) {
