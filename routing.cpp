@@ -20,6 +20,7 @@ struct lupine_deviceptr_allocation_record {
   CUdeviceptr base = 0;
   size_t size = 0;
   int route_id = -2;
+  CUcontext context = nullptr;
 };
 
 struct lupine_device_entry {
@@ -32,6 +33,7 @@ struct lupine_device_entry {
 struct lupine_owner_record {
   int route_id = -2;
   bool is_green_context = false;
+  CUcontext pointer_context = nullptr;
 };
 
 static std::mutex &lupine_routing_mutex() {
@@ -395,7 +397,11 @@ static void lupine_note_owner(Handle handle, conn_t *conn) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<Handle>()[handle].route_id = index;
+  auto &owner = lupine_owners<Handle>()[handle];
+  owner.route_id = index;
+  if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
+    owner.pointer_context = lupine_current_context_hint();
+  }
 }
 
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn) {
@@ -444,14 +450,17 @@ extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn) {
 
 static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
                                                           size_t size,
-                                                          int route_id) {
-  lupine_owners<CUdeviceptr>()[ptr].route_id = route_id;
+                                                          int route_id,
+                                                          CUcontext context) {
+  auto &owner = lupine_owners<CUdeviceptr>()[ptr];
+  owner.route_id = route_id;
+  owner.pointer_context = context;
   if (size == 0) {
     lupine_deviceptr_allocations().erase(ptr);
     return;
   }
   lupine_deviceptr_allocations()[ptr] =
-      lupine_deviceptr_allocation_record{ptr, size, route_id};
+      lupine_deviceptr_allocation_record{ptr, size, route_id, context};
 }
 
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
@@ -461,7 +470,8 @@ extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_note_deviceptr_allocation_owner_locked(ptr, size, index);
+  lupine_note_deviceptr_allocation_owner_locked(ptr, size, index,
+                                                lupine_current_context_hint());
 }
 
 template <typename Handle>
@@ -471,7 +481,11 @@ static void lupine_note_owner_route(Handle handle, lupine_route route) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<Handle>()[handle].route_id = route_id;
+  auto &owner = lupine_owners<Handle>()[handle];
+  owner.route_id = route_id;
+  if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
+    owner.pointer_context = lupine_current_context_hint();
+  }
 }
 
 extern "C" void lupine_note_context_owner_route(CUcontext ctx,
@@ -540,7 +554,8 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_note_deviceptr_allocation_owner_locked(ptr, size, -1);
+  lupine_note_deviceptr_allocation_owner_locked(ptr, size, -1,
+                                                lupine_current_context_hint());
 }
 
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
@@ -689,6 +704,24 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
     }
   }
   return lupine_route_for_default();
+}
+
+extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  auto owner = lupine_owners<CUdeviceptr>().find(ptr);
+  if (owner != lupine_owners<CUdeviceptr>().end() &&
+      owner->second.pointer_context != nullptr) {
+    return owner->second.pointer_context;
+  }
+  for (const auto &entry : lupine_deviceptr_allocations()) {
+    const auto &allocation = entry.second;
+    if (allocation.base != 0 && allocation.size != 0 &&
+        ptr >= allocation.base &&
+        static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
+      return allocation.context;
+    }
+  }
+  return nullptr;
 }
 
 CUresult lupine_set_current_context_on_route(lupine_route route,

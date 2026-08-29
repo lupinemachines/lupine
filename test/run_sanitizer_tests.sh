@@ -18,7 +18,23 @@ targets=(h2_test checkpoint_test ipc_test server_checkpoint_test
          test_lupinecr_provider)
 test_regex='^(h2_test|checkpoint_test|ipc_test|server_checkpoint_test|server_checkpoint_missing_provider_test)$'
 
-cmake -S "$repo_root" -B "$build_dir" -DLUPINE_SANITIZE="$sanitizer" >/dev/null
+cmake_args=(-DLUPINE_SANITIZE="$sanitizer")
+
+# The Docker builder is configured from copied CUDA headers, the driver stub,
+# and precompiled operations, without nvcc. Carry those settings into this
+# separate sanitizer build so it configures the same backends.
+builder_cache="$repo_root/build/CMakeCache.txt"
+if [[ -f "$builder_cache" ]]; then
+  for setting in LUPINE_CUDA_DRIVER_LIBRARY LUPINE_CUDA_VERSION_OVERRIDE \
+                 LUPINE_PRECOMPILED_OPS; do
+    value="$(sed -n "s/^${setting}:[^=]*=//p" "$builder_cache")"
+    if [[ -n "$value" ]]; then
+      cmake_args+=("-D${setting}=${value}")
+    fi
+  done
+fi
+
+cmake -S "$repo_root" -B "$build_dir" "${cmake_args[@]}" >/dev/null
 cmake --build "$build_dir" --parallel "$jobs" --target "${targets[@]}"
 
 # Symbolized, fail-fast output; a leak or race aborts the test.

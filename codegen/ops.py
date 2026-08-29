@@ -133,14 +133,10 @@ class ArrayOperation:
 
     send: bool
     recv: bool
-    iter: bool
     parameter: Parameter
     ptr: Pointer
     # if int, it's a constant length, if Parameter, it's a variable length.
     length: Union[int, Parameter]
-    # compressible payloads use the rpc_*_payload helpers which optionally
-    # apply LZ4 framing for large transfers (see compress.cpp).
-    compressible: bool = False
 
     @property
     def is_void_bytes(self) -> bool:
@@ -194,8 +190,7 @@ class ArrayOperation:
         rpc_write_start_request().
         """
         if (
-            self.iter
-            or not self.send
+            not self.send
             or isinstance(self.length, int)
             or isinstance(self.ptr, Array)
         ):
@@ -208,37 +203,7 @@ class ArrayOperation:
                 error_return=error_return,
             )
         )
-        if self.compressible:
-            # Refresh stale mapped mirrors and select their permanent R/W
-            # source before the connection is held.
-            f.write(
-                "    {param_name} = lupine_mapped_host_read_source({param_name}, {size});\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
     def client_rpc_write(self, f):
-        if self.iter:
-            loop_template = """
-                [=]() -> bool {{
-                    for (size_t i = 0; i < {length}; ++i) {{
-                        if (rpc_write(0, &{param_name}[i], sizeof({param_type})) < 0) {{
-                            printf("Failed to write Dependency[%zu]\\n", i);
-                            return false;
-                        }}
-                    }}
-                    return true;
-                }}() == false ||
-                """.strip()
-
-            f.write(loop_template.format(
-                length=self.length.name,
-                param_type=self.ptr.ptr_to.format(),
-                param_name=self.parameter.name,
-            ))
-            return
-
         if not self.send:
             return
         if isinstance(self.length, int):
@@ -258,8 +223,7 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        {write_fn}(conn, {param_name}, {size}) < 0 ||\n".format(
-                    write_fn="rpc_write_payload" if self.compressible else "rpc_write",
+                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
@@ -335,11 +299,6 @@ class ArrayOperation:
             self.ptr.array_of.const = False
             s = f"    {self.ptr.array_of.format()}* {self.parameter.name} = nullptr;\n"
             self.ptr.array_of.const = c
-        elif self.iter:
-            c = self.ptr.ptr_to.const
-            self.ptr.ptr_to.const = False
-            s = f"    std::vector<{self.ptr.ptr_to.format()}> {self.parameter.name};\n"
-            self.ptr.ptr_to.const = c
         else:
             c = self.ptr.ptr_to.const
             self.ptr.ptr_to.const = False
@@ -350,26 +309,6 @@ class ArrayOperation:
         return s
 
     def server_rpc_read(self, f) -> Optional[str]:
-        if self.iter:
-            lambda_template = """
-            [=, &{param_name}]() -> bool {{
-                {param_name}.resize({length});  // Resize the dependencies vector
-                for (size_t i = 0; i < {length}; ++i) {{
-                    if (rpc_read(conn, &{param_name}[i], sizeof({param_type})) < 0) {{
-                        return false;
-                    }}
-                }}
-                return true;
-            }}() == false ||
-            """.strip()
-
-            f.write(lambda_template.format(
-                param_name=self.parameter.name,
-                length=self.length.name,
-                param_type=self.ptr.ptr_to.format(),
-            ))
-            return
-
         if not self.send:
             # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
             if isinstance(self.ptr, Pointer):
@@ -414,8 +353,7 @@ class ArrayOperation:
             f.write("        goto ERROR_0;\n")
             f.write("    if(\n")
             f.write(
-                "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
-                    read_fn="rpc_read_payload" if self.compressible else "rpc_read",
+                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
                     param_name=self.parameter.name,
                     size=f"{self.parameter.name}_size",
                 )
@@ -447,8 +385,6 @@ class ArrayOperation:
 
     @property
     def server_reference(self) -> str:
-        if self.iter:
-            return f"{self.parameter.name}.data()"
         if isinstance(self.length, int):
             return f"{self.parameter.name}"
         return (
@@ -468,8 +404,7 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        {write_fn}(conn, {param_name}, {size}) < 0 ||\n".format(
-                    write_fn="rpc_write_payload" if self.compressible else "rpc_write",
+                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
                     param_name=self.parameter.name,
                     size=self.server_transfer_size_expr(),
                 )
@@ -487,8 +422,7 @@ class ArrayOperation:
             )
         else:
             f.write(
-                "        ({size} != 0 && {read_fn}(conn, {param_name}, {size}) < 0) ||\n".format(
-                    read_fn="rpc_read_payload" if self.compressible else "rpc_read",
+                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
                     param_name=self.parameter.name,
                     size=self.transfer_size_expr(),
                 )
@@ -575,6 +509,7 @@ class NullableArrayOperation:
     parameter: Parameter
     ptr: Pointer
     count: Parameter
+    recv_on_error: bool = False
 
     def element_type(self) -> str:
         c = self.ptr.ptr_to.const
@@ -619,9 +554,16 @@ class NullableArrayOperation:
         # null selects count-query semantics, which can report a count larger
         # than the zero-length storage the response would then be read from.
         f.write(f"    if (!{name}_null) {{\n")
+        if self.recv_on_error:
+            allocation = (
+                f"calloc(({requested} != 0 ? {requested} : 1), sizeof({elem}))"
+            )
+        else:
+            allocation = (
+                f"malloc(({requested} != 0 ? {requested} : 1) * sizeof({elem}))"
+            )
         f.write(
-            f"        {name} = ({elem} *)malloc(\n"
-            f"            ({requested} != 0 ? {requested} : 1) * sizeof({elem}));\n"
+            f"        {name} = ({elem} *){allocation};\n"
         )
         f.write(f"        if ({name} == nullptr)\n")
         f.write("            goto ERROR_0;\n")
@@ -642,6 +584,19 @@ class NullableArrayOperation:
         name = self.parameter.name
         requested = self.requested_count_expr()
         returned = self.count.name
+        if self.recv_on_error:
+            f.write(
+                f"        ([&]() {{\n"
+                f"          uint8_t {name}_has_data =\n"
+                f"              !{name}_null &&\n"
+                f"              lupine_intercept_result != CUDA_SUCCESS;\n"
+                f"          return rpc_write(conn, &{name}_has_data, sizeof(uint8_t)) < 0 ||\n"
+                f"                 ({name}_has_data != 0 && {requested} != 0 &&\n"
+                f"                  rpc_write(conn, {name},\n"
+                f"                            {requested} * sizeof({elem})) < 0);\n"
+                f"        }}()) ||\n"
+            )
+            return
         if not isinstance(self.count.type, Pointer):
             f.write(
                 f"        (!{name}_null && "
@@ -664,6 +619,18 @@ class NullableArrayOperation:
             if isinstance(self.count.type, Pointer)
             else self.count.name
         )
+        if self.recv_on_error:
+            f.write(
+                f"        ([&]() {{\n"
+                f"          uint8_t {name}_has_data = 0;\n"
+                f"          if (rpc_read(conn, &{name}_has_data, sizeof(uint8_t)) < 0)\n"
+                f"            return true;\n"
+                f"          return {name}_has_data != 0 && {requested} != 0 &&\n"
+                f"                 rpc_read(conn, {name},\n"
+                f"                          {requested} * sizeof({elem})) < 0;\n"
+                f"        }}()) ||\n"
+            )
+            return
         if not isinstance(self.count.type, Pointer):
             f.write(
                 f"        ({name} != nullptr && {requested} != 0 && "
@@ -1174,6 +1141,19 @@ class SynchronizeAnnotation:
 
 
 @dataclass
+class GraphExecNodeAnnotation:
+    graph_exec: Parameter
+    node: Parameter
+
+
+@dataclass(frozen=True)
+class ClientCallTemplate:
+    return_type: str
+    before_call: str
+    after_call: str
+
+
+@dataclass
 class FunctionAnnotationMetadata:
     operations: list[Operation]
     guard: Optional[str] = None
@@ -1192,6 +1172,8 @@ class FunctionAnnotationMetadata:
     releases: list[ReleaseAnnotation] = None
     parents: list[ParentAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
+    graph_exec_node: Optional[GraphExecNodeAnnotation] = None
+    client_call_template: Optional[ClientCallTemplate] = None
 
     def __post_init__(self):
         if self.record_owners is None:

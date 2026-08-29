@@ -5,30 +5,47 @@
 #include <stdint.h>
 #include <vector>
 
-// Uncompressed block size for the optional LZ4 payload framing. The framed
-// bytes are produced lazily, one block at a time, by the HTTP/2 transport
-// (h2.cpp) and decoded by the rpc_read_payload helpers (compress.cpp).
-#define LUPINE_COMPRESS_BLOCK_BYTES (4 * 1024 * 1024)
+// Chunk size shared by the client and server for transfers split across
+// multiple RPC responses. This bounds staging independently of HTTP content
+// encoding, which is transparent to the RPC layer.
+#define LUPINE_RPC_TRANSFER_CHUNK_BYTES (4 * 1024 * 1024)
 
-// References caller-owned bytes while an RPC is being serialized. Plain
-// cursors use data/size directly. Framed cursors keep uncompressed bytes in
-// source/source_size while HTTP/2 materializes one framed block at a time into
-// data/size.
+// Server-originated operations run on the client's dispatch thread. CUDA host
+// functions use these requests for side effects that occur when stream work
+// executes rather than when an API call is captured.
+static constexpr int LUPINE_SIDE_EFFECT_HOST_FUNCTION = 1;
+static constexpr int LUPINE_SIDE_EFFECT_STREAM_CALLBACK = 2;
+static constexpr int LUPINE_SIDE_EFFECT_READ_HOST_MEMORY = 3;
+
+static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOH = 0;
+static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;
+static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOH = 2;
+static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOD = 3;
+
+// References caller-owned bytes while an RPC is being serialized. Cursors are
+// consumed directly by the HTTP/2 transport.
+struct rpc_write_cursor;
+// A refill supplies a non-empty cursor and returns positive, returns zero at
+// end of input, or returns negative on failure.
+using rpc_write_cursor_refill = int (*)(void *context,
+                                        rpc_write_cursor *cursor);
+
 struct rpc_write_cursor {
   const unsigned char *data = nullptr;
   size_t size = 0;
-  const unsigned char *source = nullptr;
-  size_t source_size = 0;
+  rpc_write_cursor_refill refill = nullptr;
+  void *refill_context = nullptr;
 
-  static rpc_write_cursor plain(const void *data, size_t size) {
-    return {static_cast<const unsigned char *>(data), size, nullptr, 0};
-  }
+  rpc_write_cursor() = default;
 
-  static rpc_write_cursor framed(const void *data, size_t size) {
-    return {nullptr, 0, static_cast<const unsigned char *>(data), size};
-  }
+  rpc_write_cursor(const void *bytes, size_t byte_count)
+      : data(static_cast<const unsigned char *>(bytes)), size(byte_count) {}
 
-  size_t remaining() const { return size + source_size; }
+  rpc_write_cursor(rpc_write_cursor_refill refill_fn, void *context)
+      : refill(refill_fn), refill_context(context) {}
+
+  size_t remaining() const { return size; }
+  bool pending() const { return size != 0 || refill != nullptr; }
 };
 
 struct rpc_http2_read_stats {
@@ -200,7 +217,6 @@ extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
-extern int rpc_write_framed(conn_t *conn, const void *data, const size_t size);
 extern int rpc_write_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
@@ -274,7 +290,6 @@ extern int rpc_http2_server_init(conn_t *conn);
 extern int
 rpc_http2_server_init_with_metadata(conn_t *conn,
                                     const rpc_http2_server_metadata *metadata);
-extern int rpc_http2_compress_lz4(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.
 extern const char *rpc_http2_session_id(conn_t *conn);
@@ -301,13 +316,5 @@ extern void rpc_http2_window_hold_begin(conn_t *conn);
 extern rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn);
 extern void rpc_http2_window_release(conn_t *conn,
                                      rpc_http2_window_credit credit);
-
-// Optional LZ4 framing for large memory transfer payloads (see compress.cpp).
-extern int lupine_payload_framed(conn_t *conn, size_t total_size);
-extern int rpc_write_payload(conn_t *conn, const void *data, size_t size);
-extern int rpc_read_payload(conn_t *conn, void *data, size_t size);
-extern int rpc_read_payload_part(conn_t *conn, int framed, void *data,
-                                 size_t size);
-extern int rpc_drain_payload(conn_t *conn, int framed, size_t size);
 
 #endif

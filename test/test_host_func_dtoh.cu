@@ -6,12 +6,8 @@
 // cuLaunchHostFunc on the same stream: the server records the copy into the
 // stream's capture resources and replays it when the host func fires.
 //
-// This test issues such a copy large enough (>= LUPINE_COMPRESS_MIN_BYTES,
-// 64 KiB) that the server frames it with rpc_write_payload. If the client
-// reads it with plain rpc_read (the bug), it ingests the LZ4 framing bytes as
-// raw data and the host buffer ends up garbage -> the host func sees a
-// mismatch. With the matching rpc_read_payload on the client, the buffer is
-// correct.
+// This test issues a 1 MiB copy to exercise the complete callback transfer and
+// verifies that the client receives it before invoking the host function.
 //
 // Built/run like the other local.sh samples (nvcc -cudart=shared, LD_PRELOAD
 // the lupine client shim against a running server).
@@ -22,8 +18,8 @@
 #include <string.h>
 #include <vector>
 
-// 1 MiB of floats -> comfortably above the 64 KiB compression threshold and
-// within a single 4 MiB LZ4 block.
+// 1 MiB of floats keeps the callback transfer large enough to exercise
+// transport streaming.
 static const size_t kFloats = (1u << 20) / sizeof(float);
 
 static float *g_host = nullptr;

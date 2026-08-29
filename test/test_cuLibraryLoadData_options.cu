@@ -6,7 +6,9 @@
 // loads PTX text (so the server must JIT it) with a mix of option kinds and
 // verifies:
 //   * the call returns CUDA_SUCCESS (options forwarded, not rejected);
-//   * CU_JIT_WALL_TIME is populated (output options are written back);
+//   * CU_JIT_WALL_TIME is populated (output options are written back), which
+//     the driver reports in the option value word rather than through the
+//     pointer stored there;
 //   * the loaded library is usable (launch the kernel, check the result).
 // Auto-discovered by test/run_custom_tests.sh via the test_*.cu glob.
 #include <cuda.h>
@@ -62,7 +64,8 @@ int main() {
   opts[2] = CU_JIT_INFO_LOG_BUFFER;
   vals[2] = (void *)info_log;
   opts[3] = CU_JIT_WALL_TIME;
-  vals[3] = &wall_time_ms;
+  vals[3] = nullptr;
+  memcpy(&vals[3], &wall_time_ms, sizeof(wall_time_ms));
   CUlibraryOption lopts[1] = {CU_LIBRARY_BINARY_IS_PRESERVED};
   void *lvals[1] = {(void *)1};
 
@@ -85,6 +88,7 @@ int main() {
 
   // Output option must be written back. The info log may legitimately be empty
   // on some drivers, so use wall time as the stable writeback signal.
+  memcpy(&wall_time_ms, &vals[3], sizeof(wall_time_ms));
   size_t log_len = strlen(info_log);
 
   // The loaded library must be usable: resolve the kernel and run it.

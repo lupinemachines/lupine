@@ -627,17 +627,8 @@ static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
                        : rpc_http2_read_stream(conn, stream_id, data, size);
 }
 
-static int rpc_read_framed_payload(conn_t *conn, void *data, size_t size) {
-  return rpc_read_payload_part(conn, lupine_payload_framed(conn, size), data,
-                               size);
-}
-
 int rpc_read(conn_t *conn, void *data, size_t size) {
   return rpc_read_into_context(conn, data, size, rpc_read_http2);
-}
-
-int rpc_read_payload(conn_t *conn, void *data, size_t size) {
-  return rpc_read_into_context(conn, data, size, rpc_read_framed_payload);
 }
 
 int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
@@ -838,7 +829,7 @@ int rpc_write(conn_t *conn, const void *data, const size_t size) {
   if (size == 0) {
     return 0;
   }
-  return rpc_write_queue_push(conn, rpc_write_cursor::plain(data, size));
+  return rpc_write_queue_push(conn, rpc_write_cursor(data, size));
 }
 
 // Rows are queued, not copied, so the caller's buffer must stay valid until
@@ -910,22 +901,12 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
     return -1;
   }
   for (size_t i = 0; i < count; ++i) {
-    if ((cursors[i].data == nullptr && cursors[i].size != 0) ||
-        (cursors[i].source == nullptr && cursors[i].source_size != 0) ||
-        (cursors[i].size != 0 && cursors[i].source_size != 0)) {
+    if (cursors[i].data == nullptr && cursors[i].size != 0) {
       return -1;
     }
     conn->write_queue.push_back(cursors[i]);
   }
   return 0;
-}
-
-// rpc_write_framed queues a payload that the transport LZ4-frames lazily,
-// one block at a time, as the bytes are streamed to the socket. The caller's
-// buffer must stay valid until rpc_write_end() returns, exactly like
-// rpc_write(). See compress.cpp for the framing format.
-int rpc_write_framed(conn_t *conn, const void *data, const size_t size) {
-  return rpc_write_queue_push(conn, rpc_write_cursor::framed(data, size));
 }
 
 // rpc_write_end finalizes the current request builder on the given connection
@@ -948,9 +929,9 @@ int rpc_write_end(conn_t *conn) {
   int result = -1;
   if (conn->write_queue.size() >= 2) {
     conn->write_queue[0] =
-        rpc_write_cursor::plain(&conn->write_id, sizeof(conn->write_id));
+        rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
     conn->write_queue[1] =
-        rpc_write_cursor::plain(&conn->write_op, sizeof(conn->write_op));
+        rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
   }
   rpc_write_buffer_release(conn);
