@@ -4040,8 +4040,13 @@ extern "C" CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
   return return_value;
 }
 
+// The CUDA linker requires the caller's option arrays to stay valid for the
+// lifetime of the CUlinkState, so cuLinkComplete writes its outputs straight
+// back into the arrays cuLinkCreate was given.
 struct lupine_jit_client_state {
-  std::vector<void *> option_values;
+  unsigned int num_options = 0;
+  CUjit_option *options = nullptr;
+  void **option_values = nullptr;
   std::vector<unsigned char> cubin;
 };
 
@@ -4054,6 +4059,43 @@ static std::unordered_map<CUlinkState, lupine_jit_client_state> &
 lupine_jit_client_states() {
   static std::unordered_map<CUlinkState, lupine_jit_client_state> states;
   return states;
+}
+
+// JIT option write-back. Log buffers arrive as the bytes the driver wrote and
+// need their terminator restored here, because the caller's buffer is
+// uninitialized on entry and is read back as a C string. Every other option
+// value is rewritten in place by the driver (CU_JIT_WALL_TIME and the log
+// sizes report through the option array itself), so its word replaces the one
+// that was sent.
+static int lupine_read_jit_outputs(conn_t *conn, unsigned int numOptions,
+                                   const CUjit_option *options,
+                                   void **optionValues) {
+  size_t log_sizes[2] = {0, 0};
+  for (unsigned int i = 0; i < numOptions; ++i) {
+    if (options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
+      log_sizes[0] = reinterpret_cast<uintptr_t>(optionValues[i]);
+    } else if (options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
+      log_sizes[1] = reinterpret_cast<uintptr_t>(optionValues[i]);
+    }
+  }
+  for (unsigned int i = 0; i < numOptions; ++i) {
+    const bool is_info_log = options[i] == CU_JIT_INFO_LOG_BUFFER;
+    const bool is_log = is_info_log || options[i] == CU_JIT_ERROR_LOG_BUFFER;
+    size_t length = 0;
+    if (rpc_read(conn, &length, sizeof(length)) < 0 ||
+        rpc_read(conn, is_log ? optionValues[i] : &optionValues[i], length) <
+            0) {
+      return -1;
+    }
+    if (is_log) {
+      size_t log_size = log_sizes[is_info_log ? 0 : 1];
+      if (log_size != 0) {
+        auto *log = static_cast<char *>(optionValues[i]);
+        log[length < log_size ? length : log_size - 1] = '\0';
+      }
+    }
+  }
+  return 0;
 }
 
 extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
@@ -4083,9 +4125,9 @@ extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
   if (return_value == CUDA_SUCCESS) {
     std::lock_guard<std::mutex> lock(lupine_jit_client_mutex());
     auto &jit_state = lupine_jit_client_states()[*stateOut];
-    if (numOptions != 0) {
-      jit_state.option_values.assign(optionValues, optionValues + numOptions);
-    }
+    jit_state.num_options = numOptions;
+    jit_state.options = options;
+    jit_state.option_values = optionValues;
   }
   return return_value;
 }
@@ -4103,7 +4145,6 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t name_len = name == nullptr ? 0 : strlen(name) + 1;
-  size_t jit_output_length = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuLinkAddData_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
@@ -4118,11 +4159,8 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  for (unsigned int i = 0; i < numOptions; ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, optionValues[i], jit_output_length) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
+  if (lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -4148,7 +4186,6 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
   size_t mapped_file_size = 0;
   uint64_t file_size = 0;
   uint8_t has_file_data = 0;
-  size_t jit_output_length = 0;
   int file_fd = open(path, O_RDONLY | O_BINARY);
   if (file_fd < 0) {
     return CUDA_ERROR_FILE_NOT_FOUND;
@@ -4189,12 +4226,9 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
     munmap(file_mapping, mapped_file_size);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  for (unsigned int i = 0; i < numOptions; ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, optionValues[i], jit_output_length) < 0) {
-      munmap(file_mapping, mapped_file_size);
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
+  if (lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0) {
+    munmap(file_mapping, mapped_file_size);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -4217,8 +4251,9 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t cubin_size = 0;
-  std::vector<void *> option_values;
-  size_t jit_output_length = 0;
+  unsigned int num_options = 0;
+  CUjit_option *options = nullptr;
+  void **option_values = nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuLinkComplete) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
@@ -4238,16 +4273,15 @@ extern "C" CUresult cuLinkComplete(CUlinkState state, void **cubinOut,
         rpc_read(conn, jit_state.cubin.data(), cubin_size) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
+    num_options = jit_state.num_options;
+    options = jit_state.options;
     option_values = jit_state.option_values;
     *cubinOut = jit_state.cubin.empty() ? nullptr : jit_state.cubin.data();
     *sizeOut = jit_state.cubin.size();
   }
 
-  for (size_t i = 0; i < option_values.size(); ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, option_values[i], jit_output_length) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
+  if (lupine_read_jit_outputs(conn, num_options, options, option_values) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -4754,10 +4788,54 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
                                        unsigned int numOptions,
                                        CUjit_option *options,
                                        void **optionValues) {
-  (void)options;
-  (void)optionValues;
-  (void)numOptions;
-  return cuModuleLoadData(module, image);
+  if (module == nullptr || image == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  uint32_t kind = 0;
+  std::vector<unsigned char> image_bytes;
+  if (!lupine_pack_module_image(image, &kind, &image_bytes)) {
+    return CUDA_ERROR_INVALID_IMAGE;
+  }
+
+  lupine_route route = lupine_route_for_current_context();
+  if (lupine_route_is_local(route)) {
+    CUresult result = lupine_call_real_cuda_fn(
+        "cuModuleLoadDataEx", module, image, numOptions, options, optionValues);
+    if (result == CUDA_SUCCESS) {
+      lupine_remember_loaded_module(*module);
+      lupine_note_module_owner_route(*module, route);
+      lupine_record_module_image(*module, route, kind, image_bytes.data(),
+                                 image_bytes.size(), image);
+    }
+    return result;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  size_t image_size = image_bytes.size();
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuModuleLoadDataEx) < 0 ||
+      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
+      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
+      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write(conn, &numOptions, sizeof(numOptions)) < 0 ||
+      rpc_write(conn, options, numOptions * sizeof(*options)) < 0 ||
+      rpc_write(conn, optionValues, numOptions * sizeof(*optionValues)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0 ||
+      rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_remember_loaded_module(*module);
+    lupine_note_module_owner(*module, conn);
+    lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
+                               kind, image_bytes.data(), image_bytes.size(),
+                               image);
+  }
+  return return_value;
 }
 
 struct lupine_wire_library_kernel_record {
@@ -4959,7 +5037,6 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t image_size = image_bytes.size();
-  size_t jit_output_length = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
       rpc_copy_alloc(conn, libraryOptionValues == nullptr
@@ -4993,11 +5070,9 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       rpc_read(conn, library, sizeof(CUlibrary)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  for (unsigned int i = 0; i < numJitOptions; ++i) {
-    if (rpc_read(conn, &jit_output_length, sizeof(jit_output_length)) < 0 ||
-        rpc_read(conn, jitOptionsValues[i], jit_output_length) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
+  if (lupine_read_jit_outputs(conn, numJitOptions, jitOptions,
+                              jitOptionsValues) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -7988,8 +8063,6 @@ void *rpc_client_dispatch_thread(void *arg) {
     op = rpc_dispatch(conn, 1);
 
     if (op == LUPINE_SIDE_EFFECT_HOST_FUNCTION) {
-      std::cout << "Transferring memory..." << std::endl;
-
       int found = 0;
 
       if (rpc_read(conn, &found, sizeof(found)) < 0) {

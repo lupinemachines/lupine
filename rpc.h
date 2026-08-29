@@ -35,7 +35,6 @@ struct rpc_write_cursor {
   size_t size = 0;
   rpc_write_cursor_refill refill = nullptr;
   void *refill_context = nullptr;
-  bool exhausted = false;
 
   rpc_write_cursor() = default;
 
@@ -46,9 +45,7 @@ struct rpc_write_cursor {
       : refill(refill_fn), refill_context(context) {}
 
   size_t remaining() const { return size; }
-  bool pending() const {
-    return size != 0 || (refill != nullptr && !exhausted);
-  }
+  bool pending() const { return size != 0 || refill != nullptr; }
 };
 
 struct rpc_http2_read_stats {

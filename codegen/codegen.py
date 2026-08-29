@@ -619,7 +619,6 @@ def parse_annotation(
                     recv = False
 
                 size_arg = next((arg for arg in args if arg.startswith("SIZE:")), None)
-                iter_arg = next((arg for arg in args if arg.startswith("ITER:")), None)
                 null_terminated = "NULL_TERMINATED" in args
                 nullable = "NULLABLE" in args
                 deref = "DEREF" in args
@@ -680,7 +679,6 @@ def parse_annotation(
                                 parameter=param,
                                 ptr=param.type,
                                 length=length_param,
-                                iter=False,
                             )
                         )
                 elif size_arg:
@@ -692,22 +690,6 @@ def parse_annotation(
                             parameter=param,
                             ptr=param.type,
                             length=int(size_arg.split(":")[1]),
-                            iter=False
-                        )
-                    )
-                elif iter_arg:
-                    print(f"ITER FOUND!! {param}")
-                    length_param = next(
-                        p for p in params if p.name == iter_arg.split(":")[1]
-                    )
-                    operations.append(
-                        ArrayOperation(
-                            send=send,
-                            recv=recv,
-                            parameter=param,
-                            ptr=param.type,
-                            length=length_param,
-                            iter=True
                         )
                     )
                 elif null_terminated:

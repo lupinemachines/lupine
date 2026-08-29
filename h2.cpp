@@ -355,7 +355,7 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
           cursor = &candidate;
           break;
         }
-        if (candidate.refill != nullptr && !candidate.exhausted) {
+        if (candidate.refill != nullptr) {
           write_source->refill_cursor = &candidate;
           return NGHTTP2_ERR_DEFERRED;
         }
@@ -891,7 +891,7 @@ int h2_send_source_locked(h2_transport *transport, int32_t stream_id,
         break;
       }
       if (refill == 0) {
-        cursor->exhausted = true;
+        cursor->refill = nullptr;
       }
       if (nghttp2_session_resume_data(transport->session, stream_id) != 0) {
         result = -1;

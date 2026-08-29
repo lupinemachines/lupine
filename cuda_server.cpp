@@ -136,7 +136,6 @@ struct lupine_jit_state {
   unsigned int num_options = 0;
   CUjit_option *options = nullptr;
   void **option_values = nullptr;
-  float wall_time = 0.0f;
   size_t info_log_size = 0;
   char *info_log = nullptr;
   size_t error_log_size = 0;
@@ -160,11 +159,8 @@ static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
   void **info_log_output = nullptr;
   void **error_log_output = nullptr;
   for (unsigned int i = 0; i < jit->num_options; ++i) {
-    if (jit->options[i] == CU_JIT_WALL_TIME &&
+    if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER &&
         jit->option_values[i] != nullptr) {
-      jit->option_values[i] = &jit->wall_time;
-    } else if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER &&
-               jit->option_values[i] != nullptr) {
       info_log_output = &jit->option_values[i];
     } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER &&
                jit->option_values[i] != nullptr) {
@@ -192,26 +188,27 @@ static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
   return 0;
 }
 
+// Every JIT option value the driver may rewrite is echoed back: the log
+// buffers as the bytes written into them, everything else as the option value
+// word the driver left in the server's array (CU_JIT_WALL_TIME and the log
+// sizes are rewritten there by value, not through the caller's pointer).
 static int lupine_write_jit_outputs(conn_t *conn, lupine_jit_state *jit) {
   if (rpc_copy_alloc(conn, jit->num_options * sizeof(size_t)) < 0) {
     return -1;
   }
   for (unsigned int i = 0; i < jit->num_options; ++i) {
-    const void *output = nullptr;
-    size_t output_length = 0;
-    if (jit->options[i] == CU_JIT_WALL_TIME &&
-        jit->option_values[i] != nullptr) {
-      output = &jit->wall_time;
-      output_length = sizeof(jit->wall_time);
-    } else if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER) {
+    const bool is_log = jit->options[i] == CU_JIT_INFO_LOG_BUFFER ||
+                        jit->options[i] == CU_JIT_ERROR_LOG_BUFFER;
+    const void *output = &jit->option_values[i];
+    size_t output_length = sizeof(jit->option_values[i]);
+    if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER) {
       output = jit->info_log;
       output_length = jit->info_log_size;
     } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER) {
       output = jit->error_log;
       output_length = jit->error_log_size;
     }
-    if (output != nullptr && output_length != 0 &&
-        jit->options[i] != CU_JIT_WALL_TIME) {
+    if (is_log && output != nullptr && output_length != 0) {
       const auto *end =
           static_cast<const char *>(std::memchr(output, '\0', output_length));
       if (end != nullptr) {
@@ -1005,6 +1002,52 @@ int handle_cuModuleLoadData(conn_t *conn) {
     return -1;
   }
   return 0;
+}
+
+int handle_cuModuleLoadDataEx(conn_t *conn) {
+  uint32_t kind = 0;
+  size_t image_size = 0;
+  int request_id;
+  lupine_jit_state jit;
+  CUmodule module = nullptr;
+
+  if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
+      rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
+    return -1;
+  }
+
+  std::vector<unsigned char> image(image_size);
+  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0 ||
+      lupine_read_jit_options(conn, &jit) < 0) {
+    return -1;
+  }
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  // The client always unwraps fat binary containers, and cuModuleLoadDataEx
+  // takes a cubin, fatbin, or PTX image, so the kind tag the request carries
+  // for the options-free entry point makes no difference here.
+  CUresult result = cuModuleLoadDataEx(&module, image.data(), jit.num_options,
+                                       jit.options, jit.option_values);
+  if (result == CUDA_SUCCESS) {
+    lupine_note_device_stdout_image(image.data(), image.size());
+  }
+
+  int status = 0;
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      lupine_write_jit_outputs(conn, &jit) < 0 ||
+      rpc_write(conn, &module, sizeof(module)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    status = -1;
+  }
+  std::free(jit.options);
+  std::free(jit.option_values);
+  std::free(jit.info_log);
+  std::free(jit.error_log);
+  return status;
 }
 
 int handle_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
