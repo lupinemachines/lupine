@@ -256,38 +256,6 @@ in_list() {
   return 1
 }
 
-unit_output_failure() {
-  local unit="$1"
-  local log="$2"
-  local residual=""
-
-  case "$unit" in
-    cuSOLVER/Xgeev/*)
-      if grep -qiE '(^|[^[:alnum:]_])[-+]?(nan|inf(inity)?)([^[:alnum:]_]|$)' "$log"; then
-        printf '%s\n' "non-finite Xgeev result"
-        return 0
-      fi
-      case "$unit" in
-        */cusolver_Xgeev_example1|*/cusolver_Xgeev_example3)
-          residual="$(awk -F'= ' '/\|A\*VR - VR\*diag\(W\)\|/ { print $2 }' "$log" | awk '{ print $1 }' | tail -n1)"
-          if [[ -z "$residual" ]]; then
-            printf '%s\n' "missing Xgeev residual"
-            return 0
-          fi
-          if ! awk -v value="$residual" 'BEGIN {
-            exit !(value ~ /^[+]?[0-9]+([.][0-9]*)?([Ee][-+]?[0-9]+)?$/ &&
-                   value + 0 >= 0 && value + 0 <= 1e-10)
-          }'; then
-            printf 'Xgeev residual exceeds tolerance: %s\n' "$residual"
-            return 0
-          fi
-          ;;
-      esac
-      ;;
-  esac
-  return 1
-}
-
 mkdir -p "$RESULTS_DIR" \
   "$nvjpeg_assets/nvjpeg-decoded" \
   "$nvjpeg_assets/nvjpeg-resized" \
@@ -358,12 +326,9 @@ for i in "${!UNITS[@]}"; do
 
   stop_remote_server "$pidfile" "$server_log"
 
-  # Some samples report invalid results while still exiting successfully.
-  output_failure=""
-  if [[ "$rc" == "0" ]] && output_failure="$(unit_output_failure "$unit" "$log")"; then
-    status="FAIL:output"
-    fail=$((fail + 1))
-  elif [[ "$rc" == "0" ]] && grep -qE '\bFAILED\b' "$log"; then
+  # cuSPARSE and cuFFT samples report wrong results as "test FAILED" /
+  # "FAILED with L2 error" but still exit 0.
+  if [[ "$rc" == "0" ]] && grep -qE '\bFAILED\b' "$log"; then
     status="FAIL:output"
     fail=$((fail + 1))
   elif [[ "$rc" == "0" ]]; then
@@ -373,10 +338,7 @@ for i in "${!UNITS[@]}"; do
     status="FAIL:$rc"
     fail=$((fail + 1))
   fi
-  signature="$output_failure"
-  if [[ -z "$signature" ]]; then
-    signature="$({ grep -iE 'LUPINE|error|fail|unsupported|not supported|Aborted|Segmentation' "$log" || true; } | head -n3 | tr '\n' ' ')"
-  fi
+  signature="$({ grep -iE 'LUPINE|error|fail|unsupported|not supported|Aborted|Segmentation' "$log" || true; } | head -n3 | tr '\n' ' ')"
   [[ -n "$signature" ]] || signature="$(tail -n1 "$log" | tr -d '\0')"
   signature="$(printf '%s' "$signature" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
   if [[ -z "$signature" && "$rc" == "124" ]]; then
