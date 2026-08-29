@@ -2958,6 +2958,78 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   return return_value;
 }
 
+// Returns 1 when the address is not a cross-route device source, 0 after
+// writing its complete response, and -1 on a transport or source-copy error.
+extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
+                                                      int request_id,
+                                                      CUdeviceptr source,
+                                                      size_t bytes) {
+  if (destination_conn == nullptr || source == 0 ||
+      !lupine_deviceptr_is_tracked(source) ||
+      lupine_copy_pointer_is_host(source)) {
+    return 1;
+  }
+  lupine_route source_route = lupine_route_for_deviceptr(source);
+  lupine_route destination_route =
+      lupine_remote_route_for_conn(destination_conn);
+  if (lupine_route_is_local(source_route) ||
+      lupine_routes_share_server(source_route, destination_route)) {
+    return 1;
+  }
+  CUcontext source_context = lupine_context_for_deviceptr(source);
+  if (source_context == nullptr) {
+    return -1;
+  }
+
+  struct source_cursor_state {
+    CUdeviceptr address = 0;
+    size_t remaining = 0;
+    std::vector<unsigned char> storage;
+  } source_cursor;
+  source_cursor.address = source;
+  source_cursor.remaining = bytes;
+  try {
+    source_cursor.storage.resize(
+        std::min(bytes, static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES)));
+  } catch (...) {
+    return -1;
+  }
+  if (lupine_set_current_context_on_route(source_route, source_context) !=
+      CUDA_SUCCESS) {
+    return -1;
+  }
+
+  auto refill_source = [](void *opaque, rpc_write_cursor *cursor) -> int {
+    auto *source = static_cast<source_cursor_state *>(opaque);
+    if (source == nullptr || cursor == nullptr) {
+      return -1;
+    }
+    if (source->remaining == 0) {
+      return 0;
+    }
+
+    size_t chunk = std::min(source->remaining, source->storage.size());
+    CUresult result =
+        cuMemcpyDtoH_v2(source->storage.data(), source->address, chunk);
+    if (result != CUDA_SUCCESS) {
+      LUPINE_LOG_ERROR("Cross-route DtoD source read failed: " << result);
+      return -1;
+    }
+    cursor->data = source->storage.data();
+    cursor->size = chunk;
+    source->address += chunk;
+    source->remaining -= chunk;
+    return 1;
+  };
+  rpc_write_cursor cursor(refill_source, &source_cursor);
+  if (rpc_write_start_response(destination_conn, request_id) < 0 ||
+      rpc_write_cursors(destination_conn, &cursor, 1) < 0 ||
+      rpc_write_end(destination_conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 // The chunks are staged in a bounded pool on the server, so a copy of any size
 // costs the same fixed staging there.
 extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
@@ -3110,6 +3182,19 @@ extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
   return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
 }
 
+static bool lupine_device_copy_uses_remote_callback(CUdeviceptr destination,
+                                                    CUdeviceptr source) {
+  if (!lupine_deviceptr_is_tracked(source) ||
+      lupine_copy_pointer_is_host(source)) {
+    return false;
+  }
+  lupine_route destination_route = lupine_route_for_deviceptr(destination);
+  lupine_route source_route = lupine_route_for_deviceptr(source);
+  return !lupine_route_is_local(destination_route) &&
+         !lupine_route_is_local(source_route) &&
+         !lupine_routes_share_server(destination_route, source_route);
+}
+
 extern "C" CUresult
 lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                                size_t ByteCount, CUstream hStream, bool async) {
@@ -3120,6 +3205,12 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                    << " stream=" << hStream);
   if (ByteCount == 0) {
     return CUDA_SUCCESS;
+  }
+
+  if (lupine_device_copy_uses_remote_callback(dstDevice, srcDevice)) {
+    const void *source = reinterpret_cast<const void *>(srcDevice);
+    return async ? cuMemcpyHtoDAsync_v2(dstDevice, source, ByteCount, hStream)
+                 : cuMemcpyHtoD_v2(dstDevice, source, ByteCount);
   }
 
   constexpr size_t chunk_size = 16 * 1024 * 1024;

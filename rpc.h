@@ -24,16 +24,28 @@ static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOD = 3;
 
 // References caller-owned bytes while an RPC is being serialized. Cursors are
 // consumed directly by the HTTP/2 transport.
+struct rpc_write_cursor;
+// A refill supplies a non-empty cursor and returns positive, returns zero at
+// end of input, or returns negative on failure.
+using rpc_write_cursor_refill = int (*)(void *context,
+                                        rpc_write_cursor *cursor);
+
 struct rpc_write_cursor {
   const unsigned char *data = nullptr;
   size_t size = 0;
+  rpc_write_cursor_refill refill = nullptr;
+  void *refill_context = nullptr;
 
   rpc_write_cursor() = default;
 
   rpc_write_cursor(const void *bytes, size_t byte_count)
       : data(static_cast<const unsigned char *>(bytes)), size(byte_count) {}
 
+  rpc_write_cursor(rpc_write_cursor_refill refill_fn, void *context)
+      : refill(refill_fn), refill_context(context) {}
+
   size_t remaining() const { return size; }
+  bool pending() const { return size != 0 || refill != nullptr; }
 };
 
 struct rpc_http2_read_stats {
