@@ -8104,8 +8104,9 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
 
       int device_source = lupine_write_cross_route_device_source(
-          conn, request_id, reinterpret_cast<CUdeviceptr>(data), read.width,
-          read.rows, read.row_stride, read.slices, read.slice_stride);
+          conn, request_id,
+          reinterpret_cast<CUdeviceptr>(data) + read.logical_offset,
+          read.bytes);
       if (device_source < 0) {
         LUPINE_LOG_ERROR("Failed to proxy cross-route device memory.");
         break;
