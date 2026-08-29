@@ -3605,8 +3605,6 @@ int handle_cuGraphDestroy(conn_t *conn) {
   return 0;
 }
 
-// Fire-and-forget: connection ordering already guarantees the flush is
-// applied before any later request, so no response is sent.
 int handle_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
 
@@ -3619,7 +3617,7 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
     size_t bytes = 0;
     // Host mappings and native identity-VA managed allocations are both CPU
     // accessible. Reading directly avoids a context-dependent pinned
-    // allocation on this fire-and-forget RPC path.
+    // allocation in the flush handler.
     if (rpc_read(conn, &server_host_ptr, sizeof(server_host_ptr)) < 0 ||
         rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
         rpc_read(conn, server_host_ptr, bytes) < 0) {
@@ -3627,7 +3625,12 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
     }
   }
 
-  return rpc_read_end(conn) < 0 ? -1 : 0;
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
 }
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary
@@ -4161,7 +4164,7 @@ int handle_cuStreamSynchronize(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   std::vector<lupine_graph_host_copy> graph_copies =
-      lupine_stream_dtoh_copy_snapshot(stream);
+      lupine_take_stream_dtoh_copies(stream);
   uint32_t graph_copy_count = static_cast<uint32_t>(graph_copies.size());
   bool all_pending_streams = stream == nullptr;
   auto pending =
