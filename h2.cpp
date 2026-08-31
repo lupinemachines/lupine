@@ -1,3 +1,4 @@
+#include "client_bundle.h"
 #include "lupine_log.h"
 #include "rpc.h"
 
@@ -104,7 +105,11 @@ struct h2_transport {
   int response_waiters = 0;
   bool transport_failed = false;
   std::string peer_cuda_version;
-  std::string peer_wire_identity;
+  std::string peer_client_etag;
+  std::string client_etag;
+  std::string client_platform;
+  std::string expected_client_etag;
+  std::string client_bundle_dir;
   std::string server_version;
   std::string session_id;
   std::string peer_va_base;
@@ -569,15 +574,12 @@ constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
 constexpr char kLupineVaSizeHeader[] = "x-lupine-va-size";
-constexpr char kLupineWireIdentityHeader[] = "x-lupine-wire-identity";
+constexpr char kLupineClientEtagHeader[] = "x-lupine-client-etag";
+constexpr char kLupineClientPlatformHeader[] = "x-lupine-client-platform";
 constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
 constexpr char kLupineVaWindowSizeHeader[] = "x-lupine-va-window-size";
 constexpr char kContentEncodingHeader[] = "content-encoding";
 constexpr char kLz4Encoding[] = "lz4";
-
-#ifndef LUPINE_WIRE_IDENTITY
-#define LUPINE_WIRE_IDENTITY ""
-#endif
 
 std::string h2_hex(uintptr_t value) {
   std::ostringstream result;
@@ -600,14 +602,6 @@ bool h2_parse_hex(const std::string &value, uintptr_t *parsed) {
   return true;
 }
 
-// An empty identity on either side means that peer was built without git and
-// cannot state what it is; treat that as unverifiable and let the connection
-// proceed rather than refusing every source-tarball build.
-bool h2_wire_identity_compatible(const std::string &local,
-                                 const std::string &peer) {
-  return local.empty() || peer.empty() || local == peer;
-}
-
 bool lupine_h2_debug_enabled() {
   const char *debug = getenv("LUPINE_DEBUG");
   if (debug != nullptr && debug[0] != '\0' && strcmp(debug, "0") != 0) {
@@ -624,6 +618,8 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
     status_text = "200";
   } else if (status == 409) {
     status_text = "409";
+  } else if (status == 426) {
+    status_text = "426";
   }
   std::vector<nghttp2_nv> headers = {h2_nv(":status", status_text)};
   if (!end_stream) {
@@ -633,8 +629,9 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
     headers.push_back(
         h2_nv(kLupineCudaVersionHeader, transport->server_version.c_str()));
   }
-  if (LUPINE_WIRE_IDENTITY[0] != '\0') {
-    headers.push_back(h2_nv(kLupineWireIdentityHeader, LUPINE_WIRE_IDENTITY));
+  if (!transport->expected_client_etag.empty()) {
+    headers.push_back(h2_nv(kLupineClientEtagHeader,
+                            transport->expected_client_etag.c_str()));
   }
   // State the window on every response, probe included: the client has to know
   // it before it reserves anything, and no single constant fits both platforms.
@@ -694,6 +691,22 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     transport->request_received = true;
     bool probe = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
     int status = stream.lz4_encoded || probe ? 200 : 400;
+    if (!probe && status == 200 &&
+        (!transport->client_etag.empty() ||
+         !transport->client_platform.empty())) {
+      lupine_client_bundle bundle;
+      bool complete = !transport->client_etag.empty() &&
+                      !transport->client_platform.empty();
+      bool found = complete && lupine_client_bundle_lookup(
+                                   transport->client_bundle_dir.c_str(),
+                                   transport->client_platform, &bundle);
+      if (found) {
+        transport->expected_client_etag = bundle.etag;
+      }
+      if (!found || transport->client_etag != bundle.etag) {
+        status = 426;
+      }
+    }
     bool has_va_base = !stream.requested_va_base.empty();
     bool has_va_size = !stream.requested_va_size.empty();
     if (!probe && (has_va_base || has_va_size)) {
@@ -782,6 +795,14 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
           memcmp(name, kLupineSessionHeader, namelen) == 0) {
         transport->session_id.assign(reinterpret_cast<const char *>(value),
                                      valuelen);
+      } else if (namelen == strlen(kLupineClientEtagHeader) &&
+                 memcmp(name, kLupineClientEtagHeader, namelen) == 0) {
+        transport->client_etag.assign(reinterpret_cast<const char *>(value),
+                                      valuelen);
+      } else if (namelen == strlen(kLupineClientPlatformHeader) &&
+                 memcmp(name, kLupineClientPlatformHeader, namelen) == 0) {
+        transport->client_platform.assign(reinterpret_cast<const char *>(value),
+                                          valuelen);
       } else if (namelen == strlen(kLupineVaBaseHeader) &&
                  memcmp(name, kLupineVaBaseHeader, namelen) == 0) {
         stream.requested_va_base.assign(reinterpret_cast<const char *>(value),
@@ -803,10 +824,10 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
                                         valuelen);
     return 0;
   }
-  if (namelen == strlen(kLupineWireIdentityHeader) &&
-      memcmp(name, kLupineWireIdentityHeader, namelen) == 0) {
-    transport->peer_wire_identity.assign(reinterpret_cast<const char *>(value),
-                                         valuelen);
+  if (namelen == strlen(kLupineClientEtagHeader) &&
+      memcmp(name, kLupineClientEtagHeader, namelen) == 0) {
+    transport->peer_client_etag.assign(reinterpret_cast<const char *>(value),
+                                       valuelen);
     return 0;
   }
   if (namelen == strlen(kLupineVaWindowBaseHeader) &&
@@ -1005,6 +1026,9 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   if (metadata != nullptr && metadata->backend_version != nullptr) {
     transport->server_version = metadata->backend_version;
   }
+  if (metadata != nullptr && metadata->client_bundle_dir != nullptr) {
+    transport->client_bundle_dir = metadata->client_bundle_dir;
+  }
 
   nghttp2_session_callbacks *callbacks = nullptr;
   if (nghttp2_session_callbacks_new(&callbacks) != 0) {
@@ -1075,6 +1099,18 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     };
     if (!probe) {
       headers.push_back(h2_nv(kContentEncodingHeader, kLz4Encoding));
+      const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
+      const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
+      if (client_etag != nullptr && client_etag[0] != '\0') {
+        transport->client_etag = client_etag;
+        headers.push_back(
+            h2_nv(kLupineClientEtagHeader, transport->client_etag.c_str()));
+      }
+      if (client_platform != nullptr && client_platform[0] != '\0') {
+        transport->client_platform = client_platform;
+        headers.push_back(h2_nv(kLupineClientPlatformHeader,
+                                transport->client_platform.c_str()));
+      }
       if (session_id != nullptr && session_id[0] != '\0') {
         headers.push_back(h2_nv(kLupineSessionHeader, session_id));
       }
@@ -1115,13 +1151,6 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
 }
 
 } // namespace
-
-const char *lupine_wire_identity(void) { return LUPINE_WIRE_IDENTITY; }
-
-bool lupine_wire_identity_compatible(const char *local, const char *peer) {
-  return h2_wire_identity_compatible(local == nullptr ? "" : local,
-                                     peer == nullptr ? "" : peer);
-}
 
 int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                           size_t size) {
@@ -1451,18 +1480,18 @@ int rpc_http2_client_await_ready(conn_t *conn) {
                        h2_parse_hex(transport->peer_va_base, &peer_base) &&
                        h2_parse_hex(transport->peer_va_size, &peer_size) &&
                        peer_base == conn->va_base && peer_size == conn->va_size;
-  std::string peer_identity = transport->peer_wire_identity;
+  std::string expected_client_etag = transport->peer_client_etag;
   pthread_mutex_unlock(&transport->session_mutex);
 
-  // Check the build before the arena verdict: a mismatch is fatal, so reporting
-  // it as an arena conflict would send the caller off retrying other slots.
-  if (!h2_wire_identity_compatible(LUPINE_WIRE_IDENTITY, peer_identity)) {
-    LUPINE_LOG_ERROR("LUPINE server was built from "
-                     << (peer_identity.empty() ? "an unstated revision"
-                                               : peer_identity.c_str())
-                     << ", this client from " << LUPINE_WIRE_IDENTITY
-                     << "; rebuild both from the same tree");
-    return LUPINE_RPC_HTTP2_IDENTITY_MISMATCH;
+  // The server can move to a new bundle between discovery and connect. Do not
+  // misreport that as an arena conflict; the launcher needs to refetch and
+  // restart the process before any CUDA state exists.
+  if (responded && status == 426) {
+    LUPINE_LOG_ERROR("LUPINE client bundle is no longer current"
+                     << (expected_client_etag.empty()
+                             ? ""
+                             : "; server expects " + expected_client_etag));
+    return LUPINE_RPC_HTTP2_CLIENT_MISMATCH;
   }
   if (conn->va_size == 0) {
     return responded && status == 200 ? 0 : -1;
@@ -1526,19 +1555,6 @@ bool rpc_http2_peer_va_window(conn_t *conn, lupine_va_window *window) {
   window->base = base;
   window->size = static_cast<size_t>(size);
   return true;
-}
-
-// Valid until the transport is destroyed. A server built without git advertises
-// nothing, so an empty result means "unstated", not "mismatched".
-const char *rpc_http2_peer_wire_identity(conn_t *conn) {
-  if (conn == nullptr || conn->http2 == nullptr) {
-    return "";
-  }
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  pthread_mutex_lock(&transport->session_mutex);
-  const char *identity = transport->peer_wire_identity.c_str();
-  pthread_mutex_unlock(&transport->session_mutex);
-  return identity;
 }
 
 int rpc_http2_server_init(conn_t *conn) {

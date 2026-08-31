@@ -265,6 +265,21 @@ jobs:
           python verify_release.py
           uv run --all-extras pytest
 
+      - name: Assemble server-served client bundles
+        working-directory: python
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse --verify HEAD^{commit})"
+          ./build.py bundles client-bundles "$revision"
+
+      - name: Upload server-served client bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-bundles
+          path: python/client-bundles
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Check PyTorch ABI against bundled shims
         working-directory: python
         run: |

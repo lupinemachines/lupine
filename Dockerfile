@@ -245,11 +245,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* /tmp/*.deb
 
 COPY --from=server-build /opt/lupine/build/lupine_driver_server /opt/lupine/bin/lupine_driver_server
+COPY client-bundles/ /opt/lupine/client-bundles/
+
+RUN set -eux; \
+    for platform in \
+      linux/amd64 linux/arm64 \
+      macos/amd64 macos/arm64 \
+      windows/amd64 windows/arm64; do \
+      test -s "/opt/lupine/client-bundles/${platform}/client.zip"; \
+      test -s "/opt/lupine/client-bundles/${platform}/client.zip.etag"; \
+      test -s "/opt/lupine/client-bundles/${platform}/client.zip.digest"; \
+    done
 
 RUN chmod +x /opt/lupine/bin/lupine_driver_server
 
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/compat:/opt/rocm/lib
 ENV LUPINE_PORT=14833
+ENV LUPINE_CLIENT_BUNDLE_DIR=/opt/lupine/client-bundles
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 

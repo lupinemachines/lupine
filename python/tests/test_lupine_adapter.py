@@ -64,7 +64,9 @@ def test_session_requires_host_or_env(monkeypatch):
 def test_session_configures_env_and_restores(monkeypatch):
     monkeypatch.delenv("LUPINE_SERVER", raising=False)
     calls = []
-    monkeypatch.setattr(_native, "load", lambda missing_ok=True: calls.append(missing_ok) or {})
+    monkeypatch.setattr(
+        _native, "load", lambda missing_ok=True: calls.append(missing_ok) or {}
+    )
     with connect(host="gpu.example:14833") as session:
         assert os.environ["LUPINE_SERVER"] == "gpu.example:14833"
         assert calls == [False]
@@ -118,7 +120,7 @@ def test_load_does_not_set_disable_local(monkeypatch, tmp_path):
     assert len(result) == len(_native._LIBS[sys.platform])
     assert seen_env == [None] * len(_native._LIBS[sys.platform])
     assert "LUPINE_DISABLE_LOCAL" not in os.environ
-    if sys.platform == "linux":
+    if sys.platform in ("linux", "darwin"):
         assert os.environ["TRITON_LIBCUDA_PATH"] == str(libdir)
     # Idempotent: second call loads nothing new.
     monkeypatch.setattr(

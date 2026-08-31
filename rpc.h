@@ -230,15 +230,9 @@ extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
 
 constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
 constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
-// Peer was built from a different tree. Retrying another arena slot cannot
-// help, so the dial loop gives up rather than treating this as a VA conflict.
-constexpr int LUPINE_RPC_HTTP2_IDENTITY_MISMATCH = -4;
-// This build's wire identity, and the comparison the connect check applies. An
-// empty side means that peer cannot state what it is, which reads as
-// unverifiable rather than as a match.
-extern const char *lupine_wire_identity(void);
-extern bool lupine_wire_identity_compatible(const char *local,
-                                            const char *peer);
+// The selected native client object no longer matches the server. Retrying an
+// arena slot cannot help; the launcher must fetch the advertised bundle.
+constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
@@ -252,25 +246,23 @@ extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
 // Waits for the peer's response headers on the session's own connection and
-// settles the build check and, when one was requested, the arena verdict.
-// rpc_http2_client_init already does this when an arena was requested; callers
-// that requested none run it themselves, and a caller with no live peer skips
-// it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT, or
-// LUPINE_RPC_HTTP2_IDENTITY_MISMATCH.
+// settles the client-bundle check and, when one was requested, the arena
+// verdict. rpc_http2_client_init already does this when an arena was requested;
+// callers that requested none run it themselves, and a caller with no live peer
+// skips it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT, or
+// LUPINE_RPC_HTTP2_CLIENT_MISMATCH.
 extern int rpc_http2_client_await_ready(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
 struct rpc_http2_server_metadata {
   const char *backend_version;
+  const char *client_bundle_dir;
 };
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or
 // rpc_conn_destroy(); the probe connection must not be reused for RPC.
 extern const char *rpc_http2_client_probe(conn_t *conn);
-// Read after the peer's response headers arrive. Valid until the transport is
-// destroyed.
-extern const char *rpc_http2_peer_wire_identity(conn_t *conn);
 // The arena window the peer stated it can host. False when it stated none.
 extern bool rpc_http2_peer_va_window(conn_t *conn, lupine_va_window *window);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when

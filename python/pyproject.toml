@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "lupine"
 version = "2.0.1"
-description = "CUDA on any host: bundled LUPINE driver/runtime shims plus PyTorch adapter"
+description = "CUDA on any host: server-selected LUPINE shims plus PyTorch adapter"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
