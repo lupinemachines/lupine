@@ -46,6 +46,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Resolve source revision
+        id: source
+        run: echo "revision=$(git rev-parse --verify HEAD^{commit})" >> "$GITHUB_OUTPUT"
 
       - name: Free runner disk space
         run: |
@@ -91,7 +97,7 @@ jobs:
           tags: ${{ steps.image-tags.outputs.server }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
 
   publish:
     name: Publish server manifest CUDA ${{ matrix.cuda.version }} / Ubuntu ${{ matrix.cuda.ubuntu }}

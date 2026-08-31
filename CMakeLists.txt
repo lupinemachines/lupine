@@ -30,23 +30,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Client and server must come from the same build: the RPC opcode numbering and
-# the struct layouts behind it are shared and unversioned. This identity travels
-# with every connection so a mismatched pair is refused at connect instead of
-# failing later as an opaque runtime error. Builds without git leave it empty,
-# which reads as "cannot verify" rather than as a match. Committed builds compare
-# exactly; a dirty tree is only flagged as dirty, not content-hashed, so two
-# different uncommitted trees at the same commit still compare equal.
-find_package(Git QUIET)
+# Keep wire-identity negotiation dormant until the release/versioning contract
+# is settled. Empty identities remain mutually compatible.
 set(LUPINE_WIRE_IDENTITY "")
-if(Git_FOUND)
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --always --dirty --abbrev=12
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        OUTPUT_VARIABLE LUPINE_WIRE_IDENTITY
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET)
-endif()
 
 include(CTest)
 find_package(Threads REQUIRED)
