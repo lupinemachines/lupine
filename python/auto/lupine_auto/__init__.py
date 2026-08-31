@@ -1,4 +1,4 @@
-"""Opt-in startup configuration for LUPINE's hosted cloud GPU."""
+"""Automatic startup configuration for LUPINE."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ _DISABLED_VALUES = {"0", "false", "no", "off"}
 
 
 def enabled() -> bool:
-    """Return whether the autocloud startup hook is enabled."""
+    """Return whether the automatic startup hook is enabled."""
 
-    value = os.environ.get("LUPINE_AUTOCLOUD", "1")
+    value = os.environ.get("LUPINE_AUTO", "1")
     return value.strip().lower() not in _DISABLED_VALUES
 
 

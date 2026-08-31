@@ -151,8 +151,8 @@ version = "2.0.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
-autocloud = [
-    { name = "lupine-autocloud" },
+auto = [
+    { name = "lupine-auto" },
 ]
 torch = [
     { name = "torch" },
@@ -165,18 +165,18 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lupine-autocloud", marker = "extra == 'autocloud'", directory = "autocloud" },
+    { name = "lupine-auto", marker = "extra == 'auto'", directory = "auto" },
     { name = "torch", marker = "extra == 'torch'" },
 ]
-provides-extras = ["torch", "autocloud"]
+provides-extras = ["torch", "auto"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
-name = "lupine-autocloud"
+name = "lupine-auto"
 version = "2.0.0"
-source = { directory = "autocloud" }
+source = { directory = "auto" }
 
 [package.metadata]
 

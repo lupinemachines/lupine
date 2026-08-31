@@ -20,12 +20,12 @@ Python applications can opt into that endpoint without adding LUPINE API
 calls:
 
 ```sh
-pip install "lupine[autocloud]"
+pip install "lupine[auto]"
 python existing_torch_program.py
 ```
 
 The startup hook preserves an explicit `LUPINE_SERVER`; set
-`LUPINE_AUTOCLOUD=0` to disable it for a process. It does not change
+`LUPINE_AUTO=0` to disable it for a process. It does not change
 `LUPINE_DISABLE_LOCAL`.
 
 ## macOS client

@@ -53,13 +53,13 @@ with global visibility before CUDA initializes, so:
 
 The package depends on nothing but the standard library.
 
-## Automatic cloud bootstrap
+## Automatic bootstrap
 
 Install the opt-in extra to make ordinary Python processes default to the
 hosted LUPINE demo without calling the LUPINE API:
 
 ```sh
-pip install "lupine[autocloud]"
+pip install "lupine[auto]"
 python existing_torch_program.py
 ```
 
@@ -67,7 +67,7 @@ The companion package installs a Python startup hook that sets
 `LUPINE_SERVER=demo.lupinemachines.com:14833` only when the application has
 not configured a server, then preloads the bundled native shims before the
 application imports PyTorch. An explicit `LUPINE_SERVER` always wins. Set
-`LUPINE_AUTOCLOUD=0` to disable the hook for one process.
+`LUPINE_AUTO=0` to disable the hook for one process.
 
 The hook does not change `LUPINE_DISABLE_LOCAL`. As with the explicit API,
 PyTorch must have a compiled CUDA backend; a CPU-only PyTorch build cannot
