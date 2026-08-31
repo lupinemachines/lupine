@@ -106,6 +106,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             CUDA_VERSION=${{ matrix.cuda.version }}
+            LUPINE_REQUIRE_CLIENT_BUNDLES=1
             UBUNTU_VERSION=${{ matrix.cuda.ubuntu }}
           tags: ${{ steps.image-tags.outputs.server }}
           labels: |

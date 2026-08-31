@@ -194,6 +194,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG AMDGPU_INSTALL_VERSION=7.2.4.70204-1
 ARG CUDA_KEYRING_VERSION=1.1-1
 ARG CUDA_VERSION
+ARG LUPINE_REQUIRE_CLIENT_BUNDLES=0
 ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
@@ -248,14 +249,16 @@ COPY --from=server-build /opt/lupine/build/lupine_driver_server /opt/lupine/bin/
 COPY client-bundles/ /opt/lupine/client-bundles/
 
 RUN set -eux; \
-    for platform in \
-      linux/amd64 linux/arm64 \
-      macos/amd64 macos/arm64 \
-      windows/amd64 windows/arm64; do \
-      test -s "/opt/lupine/client-bundles/${platform}/client.zip"; \
-      test -s "/opt/lupine/client-bundles/${platform}/client.zip.etag"; \
-      test -s "/opt/lupine/client-bundles/${platform}/client.zip.digest"; \
-    done
+    if [ "${LUPINE_REQUIRE_CLIENT_BUNDLES}" = 1 ]; then \
+      for platform in \
+        linux/amd64 linux/arm64 \
+        macos/amd64 macos/arm64 \
+        windows/amd64 windows/arm64; do \
+        test -s "/opt/lupine/client-bundles/${platform}/client.zip"; \
+        test -s "/opt/lupine/client-bundles/${platform}/client.zip.etag"; \
+        test -s "/opt/lupine/client-bundles/${platform}/client.zip.digest"; \
+      done; \
+    fi
 
 RUN chmod +x /opt/lupine/bin/lupine_driver_server
 
