@@ -5,6 +5,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
+  workflow_call:
   pull_request:
   push:
     branches:
@@ -220,6 +221,10 @@ jobs:
     needs: [native, macos-universal]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Unit tests exercise the hook explicitly. Do not activate it for the
+      # test runner itself.
+      LUPINE_AUTOCLOUD: "0"
     steps:
       - uses: actions/checkout@v6
 
@@ -265,9 +270,11 @@ jobs:
         working-directory: python
         run: uv run --python 3.10 --all-extras pytest
 
-      - name: Build Python package
+      - name: Build Python packages
         working-directory: python
-        run: uv build --wheel
+        run: |
+          uv build --wheel --out-dir dist
+          uv build --wheel autocloud --out-dir dist
 
       - name: Upload Python package artifacts
         uses: actions/upload-artifact@v7

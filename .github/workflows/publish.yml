@@ -6,7 +6,13 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-python:
+    uses: ./.github/workflows/python.yml
+    permissions:
+      contents: read
+
   pypi:
+    needs: build-python
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -14,20 +20,13 @@ jobs:
       name: pypi
       url: https://pypi.org/p/lupine
     steps:
-      - uses: actions/checkout@v6
+      - name: Download tested Python packages
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-python-package
+          path: python-dist
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Run Python tests
-        working-directory: python
-        run: uv run --all-extras pytest
-
-      - name: Build Python package
-        working-directory: python
-        run: uv build
-
-      - name: Publish Python package to PyPI
+      - name: Publish Python packages to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: python/dist
+          packages-dir: python-dist

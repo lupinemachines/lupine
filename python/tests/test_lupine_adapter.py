@@ -98,7 +98,7 @@ def test_load_missing_ok_without_libs(monkeypatch, tmp_path):
         _native.load(missing_ok=False)
 
 
-def test_load_sets_disable_local_during_load(monkeypatch, tmp_path):
+def test_load_does_not_set_disable_local(monkeypatch, tmp_path):
     libdir = tmp_path / "libs"
     libdir.mkdir()
     for name in _native._LIBS[sys.platform]:
@@ -112,12 +112,14 @@ def test_load_sets_disable_local_during_load(monkeypatch, tmp_path):
 
     monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
     monkeypatch.delenv("LUPINE_DISABLE_LOCAL", raising=False)
+    monkeypatch.delenv("TRITON_LIBCUDA_PATH", raising=False)
     monkeypatch.setattr(_native.ctypes, "CDLL", FakeCDLL)
     result = _native.load(missing_ok=False)
     assert len(result) == len(_native._LIBS[sys.platform])
-    assert seen_env == ["1"] * len(_native._LIBS[sys.platform])
-    # Restored afterwards.
+    assert seen_env == [None] * len(_native._LIBS[sys.platform])
     assert "LUPINE_DISABLE_LOCAL" not in os.environ
+    if sys.platform == "linux":
+        assert os.environ["TRITON_LIBCUDA_PATH"] == str(libdir)
     # Idempotent: second call loads nothing new.
     monkeypatch.setattr(
         _native.ctypes,
@@ -142,3 +144,17 @@ def test_load_respects_existing_disable_local(monkeypatch, tmp_path):
     monkeypatch.setattr(_native.ctypes, "CDLL", FakeCDLL)
     _native.load()
     assert os.environ.get("LUPINE_DISABLE_LOCAL") == "0"
+
+
+def test_load_respects_existing_triton_libcuda_path(monkeypatch, tmp_path):
+    libdir = tmp_path / "libs"
+    libdir.mkdir()
+    for name in _native._LIBS[sys.platform]:
+        (libdir / name).write_bytes(b"")
+
+    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
+    monkeypatch.setenv("TRITON_LIBCUDA_PATH", "/caller/libcuda")
+    monkeypatch.setattr(_native.ctypes, "CDLL", lambda path, mode=None: None)
+    _native.load()
+
+    assert os.environ["TRITON_LIBCUDA_PATH"] == "/caller/libcuda"

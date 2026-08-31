@@ -13,9 +13,13 @@ dependencies = []
 
 [project.optional-dependencies]
 torch = ["torch"]
+autocloud = ["lupine-autocloud==2.0.0"]
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+
+[tool.uv.sources]
+lupine-autocloud = { path = "autocloud" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["lupine"]

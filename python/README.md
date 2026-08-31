@@ -46,10 +46,32 @@ with global visibility before CUDA initializes, so:
 - `lupine.load_native()` / `lupine.libdir()` — load/inspect the bundled
   shims without torch.
 - `LUPINE_LIBDIR` — load shims from a custom directory (e.g. a newer build).
+- `TRITON_LIBCUDA_PATH` — defaults to the bundled Linux shim directory so
+  `torch.compile` can link Triton's launcher; an explicit value is preserved.
 - `LUPINE_DISABLE_LOCAL=0` — include local GPUs (when present) in the
   topology ahead of the remote ones.
 
 The package depends on nothing but the standard library.
+
+## Automatic cloud bootstrap
+
+Install the opt-in extra to make ordinary Python processes default to the
+hosted LUPINE demo without calling the LUPINE API:
+
+```sh
+pip install "lupine[autocloud]"
+python existing_torch_program.py
+```
+
+The companion package installs a Python startup hook that sets
+`LUPINE_SERVER=demo.lupinemachines.com:14833` only when the application has
+not configured a server, then preloads the bundled native shims before the
+application imports PyTorch. An explicit `LUPINE_SERVER` always wins. Set
+`LUPINE_AUTOCLOUD=0` to disable the hook for one process.
+
+The hook does not change `LUPINE_DISABLE_LOCAL`. As with the explicit API,
+PyTorch must have a compiled CUDA backend; a CPU-only PyTorch build cannot
+gain one at runtime.
 
 ## Layout
 

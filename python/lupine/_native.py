@@ -123,29 +123,23 @@ def load(*, missing_ok: bool = True) -> dict[str, str]:
         # LoadLibrary search order includes directories added here; CUDA
         # consumers load "nvcuda.dll" by name.
         os.add_dll_directory(str(directory))
+    elif sys.platform == "linux" and (directory / "libcuda.so.1").is_file():
+        # Triton compiles a small launcher against libcuda and therefore needs
+        # a filesystem directory even when the shim is already RTLD_GLOBAL.
+        os.environ.setdefault("TRITON_LIBCUDA_PATH", str(directory))
 
-    previous = os.environ.get("LUPINE_DISABLE_LOCAL")
-    try:
-        # Route every device through the LUPINE server by default; the
-        # bundled shims exist precisely to avoid depending on a local GPU.
-        os.environ.setdefault("LUPINE_DISABLE_LOCAL", "1")
-        for name in names:
-            if name in _loaded:
+    for name in names:
+        if name in _loaded:
+            continue
+        path = directory / name
+        if not path.exists():
+            if missing_ok:
                 continue
-            path = directory / name
-            if not path.exists():
-                if missing_ok:
-                    continue
-                raise LupineError(f"Bundled LUPINE library missing: {path}")
-            # RTLD_GLOBAL so dlopen("libcuda.so.1") from other libraries
-            # (torch's libcudart, cublas, ...) resolves to the shim.
-            ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
-            _loaded[name] = str(path)
-    finally:
-        if previous is None:
-            os.environ.pop("LUPINE_DISABLE_LOCAL", None)
-        else:
-            os.environ["LUPINE_DISABLE_LOCAL"] = previous
+            raise LupineError(f"Bundled LUPINE library missing: {path}")
+        # RTLD_GLOBAL so dlopen("libcuda.so.1") from other libraries
+        # (torch's libcudart, cublas, ...) resolves to the shim.
+        ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+        _loaded[name] = str(path)
     return dict(_loaded)
 
 
