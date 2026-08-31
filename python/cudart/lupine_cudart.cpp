@@ -1,7 +1,7 @@
 // lupine_cudart.cpp — native CUDA runtime API (libcudart) on the LUPINE
 // client shim, for the `lupine` Python package. Implements the surface
-// mapped from CUDA-13 torch (93 symbols: 9 __cuda* registration ABI +
-// 84 cuda*), verified against torch's undefined symbols and the shim's
+// mapped from CUDA-13 torch (101 symbols: 9 __cuda* registration ABI +
+// 92 cuda*), verified against torch's undefined symbols and the shim's
 // exports. Mechanical forwarders go through the lcudart_call* templates;
 // everything with real logic (registration tables, lazy module loading,
 // memcpy kind dispatch, pointer classification, launch translation) stays
@@ -28,6 +28,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+// The redistributable CUDA header wheel does not ship cudaProfiler.h.
+extern "C" CUresult CUDAAPI cuProfilerStart(void);
+extern "C" CUresult CUDAAPI cuProfilerStop(void);
 
 // ---------------------------------------------------------------------------
 // Fatbin container layout shared with the shim (lupine_fatbin.h).
@@ -1326,26 +1330,36 @@ static lcudart_ptr_kind lcudart_classify(const void *ptr) {
   return LCUDART_PTR_UNKNOWN;
 }
 
+static cudaError_t lcudart_normalize_memcpy_kind(void *dst, const void *src,
+                                                 enum cudaMemcpyKind *kind) {
+  if (*kind != cudaMemcpyDefault) {
+    return cudaSuccess;
+  }
+  lcudart_ptr_kind dst_kind = lcudart_classify(dst);
+  lcudart_ptr_kind src_kind = lcudart_classify(src);
+  if (dst_kind == LCUDART_PTR_DEVICE && src_kind == LCUDART_PTR_HOST) {
+    *kind = cudaMemcpyHostToDevice;
+  } else if (dst_kind == LCUDART_PTR_HOST && src_kind == LCUDART_PTR_DEVICE) {
+    *kind = cudaMemcpyDeviceToHost;
+  } else if (dst_kind == LCUDART_PTR_DEVICE && src_kind == LCUDART_PTR_DEVICE) {
+    *kind = cudaMemcpyDeviceToDevice;
+  } else if (dst_kind == LCUDART_PTR_HOST && src_kind == LCUDART_PTR_HOST) {
+    *kind = cudaMemcpyHostToHost;
+  } else {
+    return cudaErrorInvalidValue;
+  }
+  return cudaSuccess;
+}
+
 extern "C" cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
                                   enum cudaMemcpyKind kind) {
   cudaError_t e = lcudart_ready();
   if (e != cudaSuccess) {
     return e;
   }
-  if (kind == cudaMemcpyDefault) {
-    lcudart_ptr_kind d = lcudart_classify(dst);
-    lcudart_ptr_kind s = lcudart_classify(src);
-    if (d == LCUDART_PTR_DEVICE && s == LCUDART_PTR_HOST) {
-      kind = cudaMemcpyHostToDevice;
-    } else if (d == LCUDART_PTR_HOST && s == LCUDART_PTR_DEVICE) {
-      kind = cudaMemcpyDeviceToHost;
-    } else if (d == LCUDART_PTR_DEVICE && s == LCUDART_PTR_DEVICE) {
-      kind = cudaMemcpyDeviceToDevice;
-    } else if (d == LCUDART_PTR_HOST && s == LCUDART_PTR_HOST) {
-      kind = cudaMemcpyHostToHost;
-    } else {
-      return lcudart_fail(cudaErrorInvalidValue);
-    }
+  e = lcudart_normalize_memcpy_kind(dst, src, &kind);
+  if (e != cudaSuccess) {
+    return lcudart_fail(e);
   }
   switch (kind) {
   case cudaMemcpyHostToHost:
@@ -1376,20 +1390,9 @@ extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src,
   if (e != cudaSuccess) {
     return e;
   }
-  if (kind == cudaMemcpyDefault) {
-    lcudart_ptr_kind d = lcudart_classify(dst);
-    lcudart_ptr_kind s = lcudart_classify(src);
-    if (d == LCUDART_PTR_DEVICE && s == LCUDART_PTR_HOST) {
-      kind = cudaMemcpyHostToDevice;
-    } else if (d == LCUDART_PTR_HOST && s == LCUDART_PTR_DEVICE) {
-      kind = cudaMemcpyDeviceToHost;
-    } else if (d == LCUDART_PTR_DEVICE && s == LCUDART_PTR_DEVICE) {
-      kind = cudaMemcpyDeviceToDevice;
-    } else if (d == LCUDART_PTR_HOST && s == LCUDART_PTR_HOST) {
-      kind = cudaMemcpyHostToHost;
-    } else {
-      return lcudart_fail(cudaErrorInvalidValue);
-    }
+  e = lcudart_normalize_memcpy_kind(dst, src, &kind);
+  if (e != cudaSuccess) {
+    return lcudart_fail(e);
   }
   switch (kind) {
   case cudaMemcpyHostToHost:
@@ -1412,6 +1415,56 @@ extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src,
   default:
     return lcudart_fail(cudaErrorInvalidValue);
   }
+}
+
+extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
+                                         const void *src, size_t spitch,
+                                         size_t width, size_t height,
+                                         enum cudaMemcpyKind kind,
+                                         cudaStream_t stream) {
+  cudaError_t e = lcudart_ready();
+  if (e != cudaSuccess) {
+    return e;
+  }
+  e = lcudart_normalize_memcpy_kind(dst, src, &kind);
+  if (e != cudaSuccess) {
+    return lcudart_fail(e);
+  }
+
+  CUDA_MEMCPY2D copy = {};
+  copy.srcPitch = spitch;
+  copy.dstPitch = dpitch;
+  copy.WidthInBytes = width;
+  copy.Height = height;
+  switch (kind) {
+  case cudaMemcpyHostToHost:
+    copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+    copy.srcHost = src;
+    copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+    copy.dstHost = dst;
+    break;
+  case cudaMemcpyHostToDevice:
+    copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+    copy.srcHost = src;
+    copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+    copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
+    break;
+  case cudaMemcpyDeviceToHost:
+    copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+    copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+    copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+    copy.dstHost = dst;
+    break;
+  case cudaMemcpyDeviceToDevice:
+    copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+    copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+    copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+    copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
+    break;
+  default:
+    return lcudart_fail(cudaErrorInvalidValue);
+  }
+  return lcudart_from_cu(cuMemcpy2DAsync_v2(&copy, stream));
 }
 
 extern "C" cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice,
@@ -1601,6 +1654,11 @@ extern "C" cudaError_t cudaMemPoolTrimTo(cudaMemPool_t memPool,
 // Streams & events
 // ---------------------------------------------------------------------------
 
+extern "C" cudaError_t cudaStreamCreate(cudaStream_t *pStream) {
+  return lcudart_call(
+      [&] { return cuStreamCreate(pStream, CU_STREAM_DEFAULT); });
+}
+
 extern "C" cudaError_t cudaStreamCreateWithFlags(cudaStream_t *pStream,
                                                  unsigned int flags) {
   return lcudart_call([&] { return cuStreamCreate(pStream, flags); });
@@ -1611,6 +1669,11 @@ extern "C" cudaError_t cudaStreamCreateWithPriority(cudaStream_t *pStream,
                                                     int priority) {
   return lcudart_call(
       [&] { return cuStreamCreateWithPriority(pStream, flags, priority); });
+}
+
+extern "C" cudaError_t cudaStreamGetPriority(cudaStream_t hStream,
+                                             int *priority) {
+  return lcudart_call([&] { return cuStreamGetPriority(hStream, priority); });
 }
 
 extern "C" cudaError_t cudaStreamDestroy(cudaStream_t stream) {
@@ -1639,6 +1702,13 @@ extern "C" cudaError_t cudaStreamAddCallback(cudaStream_t stream,
   return lcudart_call([&] {
     return cuStreamAddCallback(
         stream, reinterpret_cast<CUstreamCallback>(callback), userData, flags);
+  });
+}
+
+extern "C" cudaError_t cudaLaunchHostFunc(cudaStream_t stream, cudaHostFn_t fn,
+                                          void *userData) {
+  return lcudart_call([&] {
+    return cuLaunchHostFunc(stream, reinterpret_cast<CUhostFn>(fn), userData);
   });
 }
 
@@ -1799,6 +1869,24 @@ extern "C" cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim,
                                         size_t sharedMem,
                                         cudaStream_t stream) {
   return lcudart_launch(func, gridDim, blockDim, args, sharedMem, stream);
+}
+
+extern "C" cudaError_t cudaLaunchCooperativeKernel(const void *func,
+                                                   dim3 gridDim, dim3 blockDim,
+                                                   void **args,
+                                                   size_t sharedMem,
+                                                   cudaStream_t stream) {
+  cudaError_t e = lcudart_ready();
+  if (e != cudaSuccess) {
+    return e;
+  }
+  CUfunction f = lcudart_resolve(func, lcudart_current_device(), &e);
+  if (f == nullptr) {
+    return lcudart_fail(e);
+  }
+  return lcudart_from_cu(cuLaunchCooperativeKernel(
+      f, gridDim.x, gridDim.y, gridDim.z, blockDim.x, blockDim.y, blockDim.z,
+      static_cast<unsigned int>(sharedMem), stream, args));
 }
 
 // CUDA 12.x/13.x launch protocol: the device stub pops its own call
@@ -1979,6 +2067,24 @@ extern "C" cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
   }
   return lcudart_from_cu(cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
       numBlocks, f, blockSize, dynamicSMemSize, flags));
+}
+
+extern "C" cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize) {
+  return cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
+      numBlocks, func, blockSize, dynamicSMemSize, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Profiler control
+// ---------------------------------------------------------------------------
+
+extern "C" cudaError_t CUDARTAPI cudaProfilerStart(void) {
+  return lcudart_call_init([] { return cuProfilerStart(); });
+}
+
+extern "C" cudaError_t CUDARTAPI cudaProfilerStop(void) {
+  return lcudart_call_init([] { return cuProfilerStop(); });
 }
 
 // ---------------------------------------------------------------------------

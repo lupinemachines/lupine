@@ -247,6 +247,20 @@ jobs:
         working-directory: python
         run: uv run --all-extras pytest
 
+      - name: Check PyTorch ABI against bundled shims
+        working-directory: python
+        run: |
+          uv run --all-extras python - <<'PY'
+          import lupine
+
+          # Loading and importing only exercises dynamic linking and does not
+          # require a CUDA device or a running LUPINE server.
+          lupine.load_native(missing_ok=False)
+          import torch
+
+          print(f"torch={torch.__version__} cuda={torch.version.cuda}")
+          PY
+
       - name: Test minimum supported Python
         working-directory: python
         run: uv run --python 3.10 --all-extras pytest
