@@ -50,6 +50,7 @@ jobs:
       checkout_ref: ${{ needs.release-metadata.outputs.revision }}
 
   pypi:
+    name: Publish lupine to PyPI
     needs: [release-metadata, build-python]
     runs-on: ubuntu-latest
     permissions:
@@ -79,6 +80,35 @@ jobs:
         with:
           packages-dir: python-dist/lupine
           skip-existing: true
+
+  pypi-auto:
+    name: Publish lupine-auto to PyPI
+    needs: [release-metadata, build-python]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    # Use a distinct OIDC identity while the pending lupine-auto publisher is
+    # converted into a real PyPI project. Otherwise PyPI can mint a token scoped
+    # only to the existing lupine project before considering the pending one.
+    environment:
+      name: pypi-auto
+      url: https://pypi.org/p/lupine-auto
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-metadata.outputs.revision }}
+
+      - name: Download tested Python packages
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-python-package
+          path: python-dist
+
+      - name: Validate tested Python packages
+        env:
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+        run: python python/verify_release.py --tag "$RELEASE_TAG" --dist python-dist
 
       - name: Publish lupine-auto to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
