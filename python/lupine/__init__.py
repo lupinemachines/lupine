@@ -1,7 +1,7 @@
 """PyTorch adapter for LUPINE-backed CUDA devices.
 
 ``lupine.connect(...)`` points the process at one or more LUPINE GPU
-servers and preloads the bundled native shims (driver API, runtime API,
+servers and preloads the server-selected native shims (driver API, runtime API,
 NVML) so ordinary CUDA consumers — PyTorch included — transparently run on
 the remote GPUs:
 
@@ -98,7 +98,7 @@ def _servers_from_env() -> tuple[str, ...]:
 class Session:
     """A process-local LUPINE connection declaration.
 
-    Entering the session exports ``LUPINE_SERVER`` and loads the bundled
+    Entering the session exports ``LUPINE_SERVER`` and loads the selected
     native shims; both stay in effect for the process after exit (library
     unloading is not possible once CUDA state references the shims).
     """
@@ -222,7 +222,7 @@ def is_configured() -> bool:
 
 
 def load_native(*, missing_ok: bool = True) -> dict[str, str]:
-    """Load the bundled native shims; see :mod:`lupine._native`."""
+    """Load the server-selected native shims; see :mod:`lupine._native`."""
 
     from . import _native
 
@@ -230,7 +230,7 @@ def load_native(*, missing_ok: bool = True) -> dict[str, str]:
 
 
 def libdir() -> Any:
-    """Directory holding the bundled native shims, if any."""
+    """Directory holding the selected native shims, if any."""
 
     from . import _native
 

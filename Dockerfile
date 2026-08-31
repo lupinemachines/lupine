@@ -194,6 +194,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG AMDGPU_INSTALL_VERSION=7.2.4.70204-1
 ARG CUDA_KEYRING_VERSION=1.1-1
 ARG CUDA_VERSION
+ARG LUPINE_REQUIRE_CLIENT_BUNDLES=0
 ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
@@ -245,11 +246,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* /tmp/*.deb
 
 COPY --from=server-build /opt/lupine/build/lupine_driver_server /opt/lupine/bin/lupine_driver_server
+COPY client-bundles/ /opt/lupine/client-bundles/
+
+RUN set -eux; \
+    if [ "${LUPINE_REQUIRE_CLIENT_BUNDLES}" = 1 ]; then \
+      for platform in \
+        linux/amd64 linux/arm64 \
+        macos/amd64 macos/arm64 \
+        windows/amd64 windows/arm64; do \
+        test -s "/opt/lupine/client-bundles/${platform}/client.zip"; \
+        test -s "/opt/lupine/client-bundles/${platform}/client.zip.etag"; \
+        test -s "/opt/lupine/client-bundles/${platform}/client.zip.digest"; \
+      done; \
+    fi
 
 RUN chmod +x /opt/lupine/bin/lupine_driver_server
 
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/compat:/opt/rocm/lib
 ENV LUPINE_PORT=14833
+ENV LUPINE_CLIENT_BUNDLE_DIR=/opt/lupine/client-bundles
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 

@@ -30,10 +30,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Keep wire-identity negotiation dormant until the release/versioning contract
-# is settled. Empty identities remain mutually compatible.
-set(LUPINE_WIRE_IDENTITY "")
-
 include(CTest)
 find_package(Threads REQUIRED)
 find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
@@ -220,6 +216,7 @@ add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_bundle.cpp
 )
 lupine_internal_target(lupine_rpc_core)
 target_include_directories(lupine_rpc_core
@@ -227,8 +224,6 @@ target_include_directories(lupine_rpc_core
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
     Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
-target_compile_definitions(lupine_rpc_core PRIVATE
-    LUPINE_WIRE_IDENTITY="${LUPINE_WIRE_IDENTITY}")
 if(OpenSSL_FOUND)
     target_compile_definitions(lupine_rpc_core PRIVATE LUPINE_TLS_OPENSSL)
     target_link_libraries(lupine_rpc_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)

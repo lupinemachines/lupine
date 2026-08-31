@@ -14,11 +14,16 @@
 
 #include "dispatch.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
+#include "client_bundle.h"
 #include "lupine_log.h"
 
 namespace {
@@ -50,11 +55,14 @@ bool send_all(lupine_socket_t fd, const std::string &data) {
   return true;
 }
 
-std::string http1_response(int status, const char *reason,
-                           const std::string &body, bool include_body,
-                           const rpc_http2_server_metadata *metadata) {
-  std::string response = "HTTP/1.1 " + std::to_string(status) + " " + reason +
-                         "\r\n";
+using http_header = std::pair<std::string, std::string>;
+
+std::string http1_headers(int status, const char *reason,
+                          uint64_t content_length, const char *content_type,
+                          const std::vector<http_header> &headers,
+                          const rpc_http2_server_metadata *metadata) {
+  std::string response =
+      "HTTP/1.1 " + std::to_string(status) + " " + reason + "\r\n";
   if (metadata != nullptr && metadata->backend_version != nullptr &&
       metadata->backend_version[0] != '\0') {
     // Same header the HTTP/2 version probe answers with, so an HTTP/1.1
@@ -63,17 +71,135 @@ std::string http1_response(int status, const char *reason,
     response += metadata->backend_version;
     response += "\r\n";
   }
-  response += "content-type: text/plain\r\n";
-  response += "content-length: " + std::to_string(body.size()) + "\r\n";
+  if (content_type != nullptr) {
+    response += "content-type: ";
+    response += content_type;
+    response += "\r\n";
+  }
+  for (const auto &header : headers) {
+    response += header.first;
+    response += ": ";
+    response += header.second;
+    response += "\r\n";
+  }
+  response += "content-length: " + std::to_string(content_length) + "\r\n";
   response += "connection: close\r\n\r\n";
+  return response;
+}
+
+std::string http1_response(int status, const char *reason,
+                           const std::string &body, bool include_body,
+                           const rpc_http2_server_metadata *metadata,
+                           const std::vector<http_header> &headers = {}) {
+  std::string response = http1_headers(status, reason, body.size(),
+                                       "text/plain", headers, metadata);
   if (include_body) {
     response += body;
   }
   return response;
 }
 
-int serve_http1(lupine_socket_t fd,
-                const rpc_http2_server_metadata *metadata) {
+bool send_file(lupine_socket_t fd, const std::string &path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return false;
+  }
+  char data[64 * 1024];
+  while (input) {
+    input.read(data, sizeof(data));
+    std::streamsize size = input.gcount();
+    if (size > 0 &&
+        !send_all(fd, std::string(data, static_cast<size_t>(size)))) {
+      return false;
+    }
+  }
+  return input.eof();
+}
+
+std::string ascii_lower(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](char c) {
+    return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+  });
+  return value;
+}
+
+std::string request_header(const std::string &request, const char *wanted) {
+  size_t line_start = request.find("\r\n");
+  if (line_start == std::string::npos) {
+    return "";
+  }
+  line_start += 2;
+  while (line_start < request.size()) {
+    size_t line_end = request.find("\r\n", line_start);
+    if (line_end == std::string::npos || line_end == line_start) {
+      break;
+    }
+    size_t colon = request.find(':', line_start);
+    if (colon != std::string::npos && colon < line_end &&
+        ascii_lower(request.substr(line_start, colon - line_start)) == wanted) {
+      size_t value_start = colon + 1;
+      while (value_start < line_end &&
+             (request[value_start] == ' ' || request[value_start] == '\t')) {
+        ++value_start;
+      }
+      size_t value_end = line_end;
+      while (value_end > value_start && (request[value_end - 1] == ' ' ||
+                                         request[value_end - 1] == '\t')) {
+        --value_end;
+      }
+      return request.substr(value_start, value_end - value_start);
+    }
+    line_start = line_end + 2;
+  }
+  return "";
+}
+
+int serve_client_bundle(lupine_socket_t fd, const std::string &method,
+                        const std::string &path, const std::string &request,
+                        const rpc_http2_server_metadata *metadata) {
+  bool head = method == "HEAD";
+  if (!head && method != "GET") {
+    send_all(fd,
+             http1_response(405, "Method Not Allowed", "method not allowed\n",
+                            true, metadata, {{"allow", "GET, HEAD"}}));
+    return 1;
+  }
+
+  std::string platform;
+  if (!lupine_client_bundle_request_platform(path, &platform)) {
+    return 0;
+  }
+  lupine_client_bundle bundle;
+  const char *root =
+      metadata == nullptr ? nullptr : metadata->client_bundle_dir;
+  if (!lupine_client_bundle_lookup(root, platform, &bundle)) {
+    send_all(fd,
+             http1_response(503, "Service Unavailable",
+                            "client bundle unavailable\n", !head, metadata));
+    return 1;
+  }
+
+  std::vector<http_header> headers = {
+      {"etag", bundle.etag},
+      {"content-digest", bundle.content_digest},
+      {"cache-control", "no-cache"},
+  };
+  if (request_header(request, "if-none-match") == bundle.etag) {
+    return send_all(fd, http1_headers(304, "Not Modified", 0, nullptr, headers,
+                                      metadata))
+               ? 1
+               : -1;
+  }
+
+  if (!send_all(fd, http1_headers(200, "OK", bundle.size,
+                                  "application/vnd.lupine.client-bundle.v1+zip",
+                                  headers, metadata))) {
+    return -1;
+  }
+  return head || send_file(fd, bundle.path) ? 1 : -1;
+}
+
+int serve_http1(lupine_socket_t fd, const rpc_http2_server_metadata *metadata) {
   std::string request;
   while (request.find("\r\n\r\n") == std::string::npos) {
     if (request.size() >= kMaxHttp1RequestBytes) {
@@ -92,9 +218,9 @@ int serve_http1(lupine_socket_t fd,
 
   std::string line = request.substr(0, request.find("\r\n"));
   size_t method_end = line.find(' ');
-  size_t path_end =
-      method_end == std::string::npos ? std::string::npos
-                                      : line.find(' ', method_end + 1);
+  size_t path_end = method_end == std::string::npos
+                        ? std::string::npos
+                        : line.find(' ', method_end + 1);
   if (path_end == std::string::npos) {
     send_all(fd, http1_response(400, "Bad Request", "bad request\n", true,
                                 metadata));
@@ -103,6 +229,14 @@ int serve_http1(lupine_socket_t fd,
   std::string method = line.substr(0, method_end);
   std::string path = line.substr(method_end + 1, path_end - method_end - 1);
   LUPINE_LOG_DEBUG("HTTP/1.1 " << method << " " << path);
+
+  if (path.compare(0, strlen("/.well-known/lupine/client/v1/"),
+                   "/.well-known/lupine/client/v1/") == 0) {
+    int result = serve_client_bundle(fd, method, path, request, metadata);
+    if (result != 0) {
+      return result;
+    }
+  }
 
   bool head = method == "HEAD";
   if (path == "/" && (head || method == "GET")) {
@@ -135,8 +269,7 @@ int lupine_connection_dispatch(lupine_socket_t connfd,
     if (received <= 0) {
       return -1;
     }
-    int verdict =
-        lupine_h2_preface_check(data, static_cast<size_t>(received));
+    int verdict = lupine_h2_preface_check(data, static_cast<size_t>(received));
     if (verdict > 0) {
       return 0;
     }

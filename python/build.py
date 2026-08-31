@@ -3,6 +3,7 @@
 
 Usage:
     python build.py stage <platform-tag> <dir-with-libs> [<dir>...]
+    python build.py bundles <output-dir> <source-revision>
     python build.py build [--uv]
 
 ``stage`` copies the shims for one platform into ``lupine/_libs/<tag>/``;
@@ -14,9 +15,14 @@ win-amd64, win-arm64.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
+import json
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -25,12 +31,21 @@ ROOT = Path(__file__).resolve().parent
 def _libs_dir() -> Path:
     return ROOT / "lupine" / "_libs"
 
+
 EXPECTED = {
     "linux-x86_64": ("libcuda.so.1", "libcudart.so.13", "libnvidia-ml.so.1"),
     "linux-aarch64": ("libcuda.so.1", "libcudart.so.13", "libnvidia-ml.so.1"),
     "macosx-universal2": ("libcuda.dylib", "libcudart.dylib", "libnvidia-ml.dylib"),
     "win-amd64": ("nvcuda.dll", "cudart64_13.dll", "nvml.dll"),
     "win-arm64": ("nvcuda.dll", "cudart64_13.dll", "nvml.dll"),
+}
+
+CLIENT_BUNDLES = {
+    ("linux/amd64",): "linux-x86_64",
+    ("linux/arm64",): "linux-aarch64",
+    ("macos/amd64", "macos/arm64"): "macosx-universal2",
+    ("windows/amd64",): "win-amd64",
+    ("windows/arm64",): "win-arm64",
 }
 
 
@@ -49,7 +64,9 @@ def stage(tag: str, sources: list[Path]) -> int:
                 staged.append(name)
     missing = [name for name in EXPECTED[tag] if name not in staged]
     if missing:
-        print(f"warning: {tag}: missing {missing} (searched: {[str(s) for s in sources]})")
+        print(
+            f"warning: {tag}: missing {missing} (searched: {[str(s) for s in sources]})"
+        )
     else:
         print(f"staged {tag}: {sorted(staged)}")
     return 0
@@ -74,6 +91,100 @@ def build(use_uv: bool) -> int:
     return subprocess.call([sys.executable, "-m", "build"], cwd=ROOT)
 
 
+def _zip_entry(
+    name: str, contents: bytes, mode: int = 0o644
+) -> tuple[zipfile.ZipInfo, bytes]:
+    entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    entry.create_system = 3
+    entry.external_attr = mode << 16
+    entry.compress_type = zipfile.ZIP_DEFLATED
+    return entry, contents
+
+
+def _bundle_bytes(tag: str, platforms: tuple[str, ...], revision: str) -> bytes:
+    source = _libs_dir() / tag
+    missing = [name for name in EXPECTED[tag] if not (source / name).is_file()]
+    if missing:
+        raise FileNotFoundError(f"{tag}: missing native libraries: {missing}")
+
+    files = []
+    payloads: list[tuple[zipfile.ZipInfo, bytes]] = []
+    for name in EXPECTED[tag]:
+        contents = (source / name).read_bytes()
+        files.append(
+            {
+                "path": name,
+                "sha256": hashlib.sha256(contents).hexdigest(),
+                "mode": "0755",
+            }
+        )
+        payloads.append(_zip_entry(name, contents, 0o755))
+    manifest = json.dumps(
+        {
+            "schema": 1,
+            "platforms": list(platforms),
+            "source_revision": revision,
+            "files": files,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(
+        output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as archive:
+        entry, contents = _zip_entry("manifest.json", manifest)
+        archive.writestr(entry, contents)
+        for entry, contents in payloads:
+            archive.writestr(entry, contents)
+    return output.getvalue()
+
+
+def bundles(output: Path, revision: str) -> int:
+    """Build the server-served, content-addressed client objects."""
+
+    if not revision:
+        print("source revision must not be empty")
+        return 2
+    output.mkdir(parents=True, exist_ok=True)
+    entries: dict[str, object] = {}
+    index: dict[str, object] = {
+        "schema": 1,
+        "source_revision": revision,
+        "bundles": entries,
+    }
+
+    try:
+        for platforms, tag in CLIENT_BUNDLES.items():
+            contents = _bundle_bytes(tag, platforms, revision)
+            digest = hashlib.sha256(contents).digest()
+            digest_hex = digest.hex()
+            etag = f'"sha256:{digest_hex}"'
+            content_digest = f"sha-256=:{base64.b64encode(digest).decode()}:"
+            for platform_name in platforms:
+                destination = output / platform_name
+                destination.mkdir(parents=True, exist_ok=True)
+                bundle_path = destination / "client.zip"
+                bundle_path.write_bytes(contents)
+                bundle_path.with_suffix(".zip.etag").write_text(etag + "\n")
+                bundle_path.with_suffix(".zip.digest").write_text(content_digest + "\n")
+                entries[platform_name] = {
+                    "etag": etag,
+                    "content_digest": content_digest,
+                    "size": len(contents),
+                }
+    except FileNotFoundError as exc:
+        print(exc)
+        return 1
+
+    (output / "index.json").write_text(
+        json.dumps(index, indent=2, sort_keys=True) + "\n"
+    )
+    print(f"built {len(entries)} client bundle routes in {output}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
@@ -85,6 +196,11 @@ def main(argv: list[str]) -> int:
         return stage(argv[2], [Path(p) for p in argv[3:]])
     if argv[1] == "build":
         return build(use_uv=argv[2:3] != ["--no-uv"])
+    if argv[1] == "bundles":
+        if len(argv) != 4:
+            print("bundles needs: <output-dir> <source-revision>")
+            return 2
+        return bundles(Path(argv[2]), argv[3])
     print(__doc__)
     return 2
 

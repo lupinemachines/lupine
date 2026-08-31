@@ -21,8 +21,15 @@ permissions:
   packages: write
 
 jobs:
+  client-bundles:
+    name: Build all client bundle variants
+    uses: ./.github/workflows/python.yml
+    with:
+      checkout_ref: ${{ github.event.release.tag_name || github.sha }}
+
   build:
     name: Server image CUDA ${{ matrix.cuda.version }} / Ubuntu ${{ matrix.cuda.ubuntu }} / ${{ matrix.platform.arch }}
+    needs: client-bundles
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 45
     strategy:
@@ -52,6 +59,12 @@ jobs:
       - name: Resolve source revision
         id: source
         run: echo "revision=$(git rev-parse --verify HEAD^{commit})" >> "$GITHUB_OUTPUT"
+
+      - name: Download all client bundle variants
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-client-bundles
+          path: client-bundles
 
       - name: Free runner disk space
         run: |
@@ -93,6 +106,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             CUDA_VERSION=${{ matrix.cuda.version }}
+            LUPINE_REQUIRE_CLIENT_BUNDLES=1
             UBUNTU_VERSION=${{ matrix.cuda.ubuntu }}
           tags: ${{ steps.image-tags.outputs.server }}
           labels: |

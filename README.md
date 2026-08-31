@@ -30,8 +30,8 @@ The startup hook preserves an explicit `LUPINE_SERVER`; set
 
 ## macOS client
 
-The `lupine` Python wheel bundles universal2 CUDA driver, runtime, and NVML
-client shims. Native CUDA consumers can load those dylibs and use a remote GPU
+The LUPINE server publishes universal2 CUDA driver, runtime, and NVML client
+shims for the Python client. Native CUDA consumers can load those dylibs and use a remote GPU
 without NVIDIA software on the Mac.
 
 The official macOS PyTorch wheel is CPU-only, however, so loading the shims
@@ -89,6 +89,16 @@ Mon May 18 15:40:46 2026
 Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
 so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
 as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
+
+## Client compatibility
+
+Each production server image carries the matching Linux, macOS, and Windows
+client objects for amd64 and arm64. Python clients fetch the current object
+from `/.well-known/lupine/client/v1/<os>/<arch>`, verify its strong ETag,
+content digest, manifest, and file hashes, and cache it locally. The selected
+ETag is also asserted when the RPC connection opens, closing the race between
+discovery and a server upgrade. `LUPINE_LIBDIR` remains an explicit local
+override for development.
 
 ## Graceful Server Checkpoints
 

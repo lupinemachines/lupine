@@ -1,7 +1,9 @@
 name: Python
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # A reusable invocation inherits github.workflow from its caller. Namespace
+  # this group so it cannot cancel the caller that is waiting on it.
+  group: python-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
@@ -264,6 +266,21 @@ jobs:
         run: |
           python verify_release.py
           uv run --all-extras pytest
+
+      - name: Assemble server-served client bundles
+        working-directory: python
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse --verify HEAD^{commit})"
+          ./build.py bundles client-bundles "$revision"
+
+      - name: Upload server-served client bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-bundles
+          path: python/client-bundles
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Check PyTorch ABI against bundled shims
         working-directory: python

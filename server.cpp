@@ -174,6 +174,7 @@ int client_handler(lupine_socket_t connfd) {
 #else
       nullptr,
 #endif
+      getenv("LUPINE_CLIENT_BUNDLE_DIR"),
   };
 
   // Identify the protocol before any RPC state exists: HTTP/2 preface means

@@ -1,11 +1,12 @@
 # lupine Python package
 
-CUDA on any host. The wheel bundles the LUPINE native client shims —
+CUDA on any host. The configured LUPINE server publishes its compatible native client shims —
 CUDA **driver API** (`libcuda` / `nvcuda.dll`), CUDA **runtime API**
 (`libcudart` / `cudart64_13.dll`), and **NVML** — for Linux (x86_64,
 aarch64), macOS (universal2), and Windows (amd64, arm64), plus a small
 PyTorch adapter. No NVIDIA software, CUDA toolkit, or container runtime
-is needed on the client.
+is needed on the client. Wheels retain a bundled copy during the rollout, but
+server selection is authoritative whenever `LUPINE_SERVER` is configured.
 
 ```python
 import lupine
@@ -21,16 +22,17 @@ with lupine.connect(host="gpu-host:14833") as session:
 ## How it works
 
 ```
-torch / any CUDA binary ─▶ bundled shims ──RPC──▶ lupine server ─▶ GPU
+torch / any CUDA binary ─▶ selected shims ──RPC──▶ lupine server ─▶ GPU
 ```
 
-`lupine.connect()` exports `LUPINE_SERVER` and preloads the bundled shims
-with global visibility before CUDA initializes, so:
+`lupine.connect()` exports `LUPINE_SERVER`, downloads and verifies the exact
+client object selected by that server, and preloads it with global visibility
+before CUDA initializes, so:
 
 - **PyTorch builds with CUDA** keep their normal `torch.device("cuda:N")`
   dispatch; every CUDA call lands on the LUPINE shims.
 - **Natively compiled CUDA code** (nvcc/clang binaries) resolves the
-  bundled shims directly — including on platforms where no NVIDIA
+  selected shims directly — including on platforms where no NVIDIA
   runtime has ever shipped.
 - **CPU-only PyTorch builds** cannot gain a CUDA backend by linking (the
   backend is compiled out); use the shims directly via ctypes, or run such
@@ -43,10 +45,10 @@ with global visibility before CUDA initializes, so:
   is the default. Returns a `Session`; usable with or without `with`.
 - `session.devices()` / `session.device(i=0)` — `torch.device("cuda:N")`
   objects from LUPINE's virtual topology across all servers.
-- `lupine.load_native()` / `lupine.libdir()` — load/inspect the bundled
+- `lupine.load_native()` / `lupine.libdir()` — load/inspect the selected
   shims without torch.
 - `LUPINE_LIBDIR` — load shims from a custom directory (e.g. a newer build).
-- `TRITON_LIBCUDA_PATH` — defaults to the bundled Linux shim directory so
+- `TRITON_LIBCUDA_PATH` — defaults to the selected shim directory so
   `torch.compile` can link Triton's launcher; an explicit value is preserved.
 - `LUPINE_DISABLE_LOCAL=0` — include local GPUs (when present) in the
   topology ahead of the remote ones.
@@ -65,7 +67,7 @@ python existing_torch_program.py
 
 The companion package installs a Python startup hook that sets
 `LUPINE_SERVER=demo.lupinemachines.com:14833` only when the application has
-not configured a server, then preloads the bundled native shims before the
+not configured a server, then resolves and preloads its selected native shims before the
 application imports PyTorch. An explicit `LUPINE_SERVER` always wins. Set
 `LUPINE_AUTO=0` to disable the hook for one process.
 

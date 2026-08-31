@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <nghttp2/nghttp2.h>
 #include <string>
@@ -422,41 +424,75 @@ void test_head_probe_cuda_version_metadata(const char *expected_cuda_version) {
   }
 }
 
-// The preflight refuses a peer only when both sides state an identity and they
-// differ; an unstated identity must stay connectable so builds without git and
-// servers predating the header are not locked out.
-void test_wire_identity_compatibility_rule() {
-  require(lupine_wire_identity_compatible("abc", "abc"),
-          "matching identities were rejected");
-  require(!lupine_wire_identity_compatible("abc", "def"),
-          "mismatched identities were accepted");
-  require(lupine_wire_identity_compatible("", "def"),
-          "unstated local identity was treated as a mismatch");
-  require(lupine_wire_identity_compatible("abc", ""),
-          "unstated peer identity was treated as a mismatch");
-  require(lupine_wire_identity_compatible(nullptr, nullptr),
-          "null identities were treated as a mismatch");
-}
+struct client_bundle_fixture {
+  std::filesystem::path root;
+  std::string etag =
+      "\"sha256:"
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
 
-// The identity rides the response on the session's own connection, so the
-// build check costs a round trip rather than a second dial.
-void test_client_await_ready_reports_wire_identity() {
+  client_bundle_fixture() {
+    char directory[] = "/tmp/lupine-h2-bundle-test-XXXXXX";
+    const char *created = mkdtemp(directory);
+    require(created != nullptr, "create h2 bundle fixture failed");
+    root = created;
+    std::filesystem::path platform = root / "linux" / "amd64";
+    std::filesystem::create_directories(platform);
+    std::ofstream(platform / "client.zip", std::ios::binary) << "bundle";
+    std::ofstream(platform / "client.zip.etag") << etag << '\n';
+    std::ofstream(platform / "client.zip.digest") << "sha-256=:YnVuZGxl:\n";
+  }
+
+  ~client_bundle_fixture() { std::filesystem::remove_all(root); }
+};
+
+// The selected object's ETag rides the session's own connection, so the
+// server can close a discovery/connect race without a second dial.
+void test_client_await_ready_accepts_current_bundle() {
+  client_bundle_fixture fixture;
+  lupine_test_setenv("LUPINE_CLIENT_ETAG", fixture.etag.c_str());
+  lupine_test_setenv("LUPINE_CLIENT_PLATFORM", "linux/amd64");
   h2_pair pair;
   init_pair_sockets(&pair);
 
-  std::string peer;
   int ready = -1;
   std::thread client([&] {
     require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
     ready = rpc_http2_client_await_ready(&pair.client);
-    peer = rpc_http2_peer_wire_identity(&pair.client);
   });
-  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
+  rpc_http2_server_metadata metadata = {nullptr, fixture.root.c_str()};
+  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
+          "server rejected current client bundle");
   client.join();
 
-  require(ready == 0, "matching builds were not accepted");
-  require(peer == lupine_wire_identity(),
-          "response did not carry this build's wire identity");
+  lupine_test_unsetenv("LUPINE_CLIENT_ETAG");
+  lupine_test_unsetenv("LUPINE_CLIENT_PLATFORM");
+  require(ready == 0, "current client bundle was not accepted");
+}
+
+void test_client_await_ready_rejects_stale_bundle() {
+  client_bundle_fixture fixture;
+  lupine_test_setenv(
+      "LUPINE_CLIENT_ETAG",
+      "\"sha256:"
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"");
+  lupine_test_setenv("LUPINE_CLIENT_PLATFORM", "linux/amd64");
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  int ready = 0;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    ready = rpc_http2_client_await_ready(&pair.client);
+  });
+  rpc_http2_server_metadata metadata = {nullptr, fixture.root.c_str()};
+  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 1,
+          "server dispatched a stale client bundle");
+  client.join();
+
+  lupine_test_unsetenv("LUPINE_CLIENT_ETAG");
+  lupine_test_unsetenv("LUPINE_CLIENT_PLATFORM");
+  require(ready == LUPINE_RPC_HTTP2_CLIENT_MISMATCH,
+          "stale client bundle did not report a client mismatch");
 }
 
 // Arena bookkeeping is pure arithmetic over the conn fields, so it is checked
@@ -1630,8 +1666,8 @@ int main() {
   RUN_CASE(test_server_to_client_after_request_headers());
   RUN_CASE(test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION));
   RUN_CASE(test_head_probe_cuda_version_metadata(nullptr));
-  RUN_CASE(test_wire_identity_compatibility_rule());
-  RUN_CASE(test_client_await_ready_reports_wire_identity());
+  RUN_CASE(test_client_await_ready_accepts_current_bundle());
+  RUN_CASE(test_client_await_ready_rejects_stale_bundle());
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());
