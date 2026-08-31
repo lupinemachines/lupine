@@ -1,7 +1,9 @@
 name: Python
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # A reusable invocation inherits github.workflow from its caller. Namespace
+  # this group so it cannot cancel the caller that is waiting on it.
+  group: python-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
