@@ -16,22 +16,28 @@ $ docker run --rm \
 GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
 ```
 
-## Mac Demo
-
-LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to a Linux GPU server.
+Python applications can opt into that endpoint without adding LUPINE API
+calls:
 
 ```sh
-% uname -mors 
-Darwin 25.5.0 arm64
-% uv run https://raw.githubusercontent.com/lupinemachines/lupine/main/python/examples/tensor.py
-LUPINE server host: 100.106.167.98  <-- the ip of a machine with the LUPINE server running
-LUPINE server port [14833]: 
-cuda available: True
-device: lupine:0
-count: 1
-gpu: NVIDIA GeForce RTX 4090
-result: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
+pip install "lupine[auto]"
+python existing_torch_program.py
 ```
+
+The startup hook preserves an explicit `LUPINE_SERVER`; set
+`LUPINE_AUTO=0` to disable it for a process. It does not change
+`LUPINE_DISABLE_LOCAL`.
+
+## macOS client
+
+The `lupine` Python wheel bundles universal2 CUDA driver, runtime, and NVML
+client shims. Native CUDA consumers can load those dylibs and use a remote GPU
+without NVIDIA software on the Mac.
+
+The official macOS PyTorch wheel is CPU-only, however, so loading the shims
+cannot add its compiled-out CUDA backend. Run PyTorch workloads with a
+CUDA-enabled Linux or Windows build; macOS Python can use the native shims
+directly through `ctypes` or another CUDA consumer.
 
 ## Quick Start
 
