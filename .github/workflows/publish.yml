@@ -4,30 +4,84 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish
+        required: true
+        type: string
 
 jobs:
+  release-metadata:
+    name: Validate release tag and source revision
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      revision: ${{ steps.release.outputs.revision }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Validate release metadata
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          python python/verify_release.py --tag "$RELEASE_TAG"
+          revision="$(git rev-parse --verify HEAD^{commit})"
+          tag_revision="$(git rev-list -n 1 "$RELEASE_TAG")"
+          if [ "$revision" != "$tag_revision" ]; then
+            echo "Checked out $revision, but $RELEASE_TAG points to $tag_revision" >&2
+            exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
   build-python:
+    needs: release-metadata
     uses: ./.github/workflows/python.yml
     permissions:
       contents: read
+    with:
+      checkout_ref: ${{ needs.release-metadata.outputs.revision }}
 
   pypi:
-    needs: build-python
+    needs: [release-metadata, build-python]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      contents: read
     environment:
       name: pypi
       url: https://pypi.org/p/lupine
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-metadata.outputs.revision }}
+
       - name: Download tested Python packages
         uses: actions/download-artifact@v8
         with:
           name: lupine-python-package
           path: python-dist
 
-      - name: Publish Python packages to PyPI
+      - name: Validate tested Python packages
+        env:
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+        run: python python/verify_release.py --tag "$RELEASE_TAG" --dist python-dist
+
+      - name: Publish lupine to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: python-dist
+          packages-dir: python-dist/lupine
+          skip-existing: true
+
+      - name: Publish lupine-auto to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python-dist/lupine-auto
           skip-existing: true

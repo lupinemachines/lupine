@@ -6,6 +6,11 @@ concurrency:
 
 on:
   workflow_call:
+    inputs:
+      checkout_ref:
+        description: Exact source revision to build
+        required: false
+        type: string
   pull_request:
   push:
     branches:
@@ -39,6 +44,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Install build dependencies (Linux)
         if: runner.os == 'Linux'
@@ -187,6 +194,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Download thin dylibs
         uses: actions/download-artifact@v8
@@ -227,6 +236,8 @@ jobs:
       LUPINE_AUTO: "0"
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -250,7 +261,9 @@ jobs:
 
       - name: Run Python tests
         working-directory: python
-        run: uv run --all-extras pytest
+        run: |
+          python verify_release.py
+          uv run --all-extras pytest
 
       - name: Check PyTorch ABI against bundled shims
         working-directory: python
@@ -273,11 +286,12 @@ jobs:
       - name: Build Python packages
         working-directory: python
         run: |
-          uv build --wheel --out-dir dist
-          uv build --wheel auto --out-dir dist
+          uv build --wheel --out-dir dist/lupine
+          uv build --wheel auto --out-dir dist/lupine-auto
+          python verify_release.py --dist dist
 
       - name: Upload Python package artifacts
         uses: actions/upload-artifact@v7
         with:
           name: lupine-python-package
-          path: python/dist/*
+          path: python/dist
