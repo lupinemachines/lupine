@@ -17,7 +17,13 @@ def cloud_server(gateway_endpoint="gw-east.lupine.sh:9443"):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else b""
             state["requests"].append(
-                (self.command, self.path, self.headers.get("Authorization"), body)
+                (
+                    self.command,
+                    self.path,
+                    self.headers.get("Authorization"),
+                    body,
+                    self.headers.get("User-Agent"),
+                )
             )
 
         def do_POST(self):
@@ -102,6 +108,7 @@ def test_cloud_session_authenticates_binds_heartbeats_and_releases(
     assert "LUPINE_SERVER" not in os.environ
     assert [request[0] for request in state["requests"]].count("DELETE") == 1
     assert all(request[2] == "Bearer lup_test" for request in state["requests"])
+    assert all(request[4] == "lupine-python/2.0.2" for request in state["requests"])
     create_body = json.loads(state["requests"][0][3])
     assert create_body == {"gpu_type": "RTX_4090", "gpu_count": 1}
 

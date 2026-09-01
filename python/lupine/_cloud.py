@@ -20,6 +20,7 @@ LOGIN_HINT = (
     "Run `uvx lupine login` or `python -m lupine login`, or set LUPINE_API_TOKEN."
 )
 _HEARTBEAT_INTERVAL = 30.0
+_USER_AGENT = "lupine-python/2.0.2"
 
 
 def _api_url(value: str | None = None) -> str:
@@ -63,6 +64,7 @@ def _request(
 ) -> dict[str, Any]:
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(url, data=data, method=method)
+    request.add_header("User-Agent", _USER_AGENT)
     request.add_header("Authorization", "Bearer " + token)
     request.add_header("Accept", "application/json")
     if data is not None:
