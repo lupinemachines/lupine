@@ -159,21 +159,22 @@ jobs:
             "-DLUPINE_CLIENT_DIR=$PWD\build\Release"
           cmake --build build-cudart --config Release
 
-      - name: Stage runtime stub
+      - name: Collect runtime stub
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ matrix.tag }}" == win-* ]]; then
-            ./python/build.py stage-runtime "${{ matrix.tag }}" build-cudart/Release
-          else
-            ./python/build.py stage-runtime "${{ matrix.tag }}" build-cudart
-          fi
+          mkdir -p runtime-stub
+          case "${{ matrix.tag }}" in
+            win-*) cp build-cudart/Release/cudart64_13.dll runtime-stub/ ;;
+            macosx-*) cp build-cudart/libcudart.dylib runtime-stub/ ;;
+            *) cp build-cudart/libcudart.so.13 runtime-stub/ ;;
+          esac
 
       - name: Upload runtime stub
         uses: actions/upload-artifact@v7
         with:
           name: lupine-runtime-${{ matrix.tag }}
-          path: python/lupine/_libs/${{ matrix.tag }}
+          path: runtime-stub
           if-no-files-found: error
           retention-days: 3
 

@@ -114,6 +114,6 @@ lupine/
 ```
 
 `build.py stage-runtime <tag> <dir>` copies exactly one runtime stub into the
-wheel staging tree. The Python workflow never stages complete clients. A
-separate client-bundle workflow passes its driver/runtime/NVML artifacts
-directly to `build.py bundles`; they never enter the Python package tree.
+wheel staging tree. The Python workflow never stages complete clients. The
+server-image workflow passes its driver/runtime/NVML artifacts directly to
+`build.py bundles`; they never enter the Python package tree.
