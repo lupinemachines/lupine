@@ -112,6 +112,10 @@ struct h2_transport {
   std::string client_bundle_dir;
   std::string server_version;
   std::string session_id;
+  std::string redirect_location;
+  std::string request_scheme = "http";
+  std::string request_authority = "lupine";
+  std::string request_path = "/";
   std::string peer_va_base;
   std::string peer_va_size;
   std::string local_va_base;
@@ -579,6 +583,7 @@ constexpr char kLupineClientPlatformHeader[] = "x-lupine-client-platform";
 constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
 constexpr char kLupineVaWindowSizeHeader[] = "x-lupine-va-window-size";
 constexpr char kContentEncodingHeader[] = "content-encoding";
+constexpr char kLocationHeader[] = "location";
 constexpr char kLz4Encoding[] = "lz4";
 
 std::string h2_hex(uintptr_t value) {
@@ -854,6 +859,12 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
                                    valuelen);
     return 0;
   }
+  if (namelen == strlen(kLocationHeader) &&
+      memcmp(name, kLocationHeader, namelen) == 0) {
+    transport->redirect_location.assign(reinterpret_cast<const char *>(value),
+                                        valuelen);
+    return 0;
+  }
   if (namelen != 7 || memcmp(name, ":status", namelen) != 0) {
     return 0;
   }
@@ -1017,12 +1028,24 @@ void *h2_read_main(void *arg) {
 }
 
 int h2_init_direct(conn_t *conn, bool server, bool probe,
-                   const rpc_http2_server_metadata *metadata = nullptr) {
+                   const rpc_http2_server_metadata *metadata = nullptr,
+                   const char *scheme = nullptr,
+                   const char *authority = nullptr,
+                   const char *path = nullptr) {
   auto *transport = new h2_transport();
   transport->netfd = conn->connfd;
   transport->conn = conn;
   transport->tls = conn->tls_session;
   transport->server = server;
+  if (scheme != nullptr && scheme[0] != '\0') {
+    transport->request_scheme = scheme;
+  }
+  if (authority != nullptr && authority[0] != '\0') {
+    transport->request_authority = authority;
+  }
+  if (path != nullptr && path[0] != '\0') {
+    transport->request_path = path;
+  }
   if (metadata != nullptr && metadata->backend_version != nullptr) {
     transport->server_version = metadata->backend_version;
   }
@@ -1093,9 +1116,9 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     const char *session_id = getenv("LUPINE_SESSION");
     std::vector<nghttp2_nv> headers = {
         h2_nv(":method", probe ? "HEAD" : "POST"),
-        h2_nv(":scheme", "http"),
-        h2_nv(":path", "/"),
-        h2_nv(":authority", "lupine"),
+        h2_nv(":scheme", transport->request_scheme.c_str()),
+        h2_nv(":path", transport->request_path.c_str()),
+        h2_nv(":authority", transport->request_authority.c_str()),
     };
     if (!probe) {
       headers.push_back(h2_nv(kContentEncodingHeader, kLz4Encoding));
@@ -1274,9 +1297,9 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
 
   std::array<nghttp2_nv, 5> headers = {
       h2_nv(":method", "POST"),
-      h2_nv(":scheme", "http"),
-      h2_nv(":path", "/"),
-      h2_nv(":authority", "lupine"),
+      h2_nv(":scheme", transport->request_scheme.c_str()),
+      h2_nv(":path", transport->request_path.c_str()),
+      h2_nv(":authority", transport->request_authority.c_str()),
       h2_nv(kContentEncodingHeader, kLz4Encoding),
   };
   int32_t stream_id =
@@ -1448,8 +1471,10 @@ void rpc_http2_window_release(conn_t *conn, rpc_http2_window_credit credit) {
   pthread_mutex_unlock(&transport->session_mutex);
 }
 
-int rpc_http2_client_init(conn_t *conn) {
-  if (h2_init_direct(conn, false, false) < 0) {
+int rpc_http2_client_init(conn_t *conn, const char *scheme,
+                          const char *authority, const char *path) {
+  if (h2_init_direct(conn, false, false, nullptr, scheme, authority, path) <
+      0) {
     return -1;
   }
   if (conn->va_size == 0) {
@@ -1476,6 +1501,7 @@ int rpc_http2_client_await_ready(conn_t *conn) {
   uintptr_t peer_size = 0;
   bool responded = stream.response_received;
   int status = stream.response_status;
+  bool redirected = status == 307 && !transport->redirect_location.empty();
   bool arena_granted = responded && status == 200 &&
                        h2_parse_hex(transport->peer_va_base, &peer_base) &&
                        h2_parse_hex(transport->peer_va_size, &peer_size) &&
@@ -1493,6 +1519,9 @@ int rpc_http2_client_await_ready(conn_t *conn) {
                              : "; server expects " + expected_client_etag));
     return LUPINE_RPC_HTTP2_CLIENT_MISMATCH;
   }
+  if (responded && redirected) {
+    return LUPINE_RPC_HTTP2_REDIRECT;
+  }
   if (conn->va_size == 0) {
     return responded && status == 200 ? 0 : -1;
   }
@@ -1500,6 +1529,16 @@ int rpc_http2_client_await_ready(conn_t *conn) {
     return 0;
   }
   return responded && status == 409 ? LUPINE_RPC_HTTP2_VA_CONFLICT : -1;
+}
+
+const char *rpc_http2_client_redirect(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return nullptr;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  return transport->redirect_location.empty()
+             ? nullptr
+             : transport->redirect_location.c_str();
 }
 
 void rpc_http2_client_start_heartbeat(conn_t *conn) {

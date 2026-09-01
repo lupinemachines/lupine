@@ -233,6 +233,10 @@ constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 // The selected native client object no longer matches the server. Retrying an
 // arena slot cannot help; the launcher must fetch the advertised bundle.
 constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
+// The peer redirected the connection before any RPC payload was sent. The
+// transport reconnects to rpc_http2_client_redirect() and retries the initial
+// request there.
+constexpr int LUPINE_RPC_HTTP2_REDIRECT = -5;
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
@@ -244,14 +248,19 @@ extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
-extern int rpc_http2_client_init(conn_t *conn);
+extern int rpc_http2_client_init(conn_t *conn, const char *scheme = nullptr,
+                                 const char *authority = nullptr,
+                                 const char *path = nullptr);
 // Waits for the peer's response headers on the session's own connection and
 // settles the client-bundle check and, when one was requested, the arena
 // verdict. rpc_http2_client_init already does this when an arena was requested;
 // callers that requested none run it themselves, and a caller with no live peer
-// skips it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT, or
-// LUPINE_RPC_HTTP2_CLIENT_MISMATCH.
+// skips it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT,
+// LUPINE_RPC_HTTP2_CLIENT_MISMATCH, or LUPINE_RPC_HTTP2_REDIRECT.
 extern int rpc_http2_client_await_ready(conn_t *conn);
+// Returns the absolute Location from a 307 response, or nullptr when the peer
+// did not redirect. The pointer remains valid until the connection is reset.
+extern const char *rpc_http2_client_redirect(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
 struct rpc_http2_server_metadata {

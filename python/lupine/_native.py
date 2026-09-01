@@ -95,7 +95,7 @@ def libdir() -> Path | None:
         if names is None:
             raise LupineError(f"Unsupported LUPINE client platform: {sys.platform}")
         try:
-            directory, etag, platform_key, endpoints = _bundles.resolve(servers, names)
+            directory, etag, platform_key = _bundles.resolve(servers, names)
         except Exception as exc:
             raise LupineError(
                 f"Could not resolve the server's LUPINE client: {exc}"
@@ -103,10 +103,6 @@ def libdir() -> Path | None:
         os.environ["LUPINE_LIBDIR"] = str(directory)
         os.environ["LUPINE_CLIENT_ETAG"] = etag
         os.environ["LUPINE_CLIENT_PLATFORM"] = platform_key
-        # Client discovery may start at the stable coordinator origin. Native
-        # HTTP/2 RPC does not follow HTTP redirects, so dial the final regional
-        # gateway selected by the bootstrap response.
-        os.environ["LUPINE_SERVER"] = ",".join(endpoints)
         return directory
     return None
 

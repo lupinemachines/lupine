@@ -186,6 +186,95 @@ nghttp2_nv raw_h2_header(const char *name, const char *value) {
           strlen(value), NGHTTP2_NV_FLAG_NONE};
 }
 
+struct raw_request_target {
+  std::string scheme;
+  std::string authority;
+  std::string path;
+};
+
+struct raw_redirect_peer {
+  lupine_socket_t socket = LUPINE_INVALID_SOCKET;
+  nghttp2_session *session = nullptr;
+  std::string location;
+  raw_request_target request;
+  bool responded = false;
+};
+
+int raw_redirect_on_header(nghttp2_session *, const nghttp2_frame *frame,
+                           const uint8_t *name, size_t namelen,
+                           const uint8_t *value, size_t valuelen, uint8_t,
+                           void *user_data) {
+  if (frame->hd.type != NGHTTP2_HEADERS ||
+      frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
+    return 0;
+  }
+  auto *peer = static_cast<raw_redirect_peer *>(user_data);
+  std::string header_name(reinterpret_cast<const char *>(name), namelen);
+  std::string header_value(reinterpret_cast<const char *>(value), valuelen);
+  if (header_name == ":scheme") {
+    peer->request.scheme = std::move(header_value);
+  } else if (header_name == ":authority") {
+    peer->request.authority = std::move(header_value);
+  } else if (header_name == ":path") {
+    peer->request.path = std::move(header_value);
+  }
+  return 0;
+}
+
+int raw_redirect_on_frame_recv(nghttp2_session *session,
+                               const nghttp2_frame *frame, void *user_data) {
+  auto *peer = static_cast<raw_redirect_peer *>(user_data);
+  if (peer->responded || frame->hd.type != NGHTTP2_HEADERS ||
+      frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
+    return 0;
+  }
+  std::array<nghttp2_nv, 2> headers = {
+      raw_h2_header(":status", "307"),
+      raw_h2_header("location", peer->location.c_str()),
+  };
+  if (nghttp2_submit_headers(session, NGHTTP2_FLAG_END_STREAM,
+                             frame->hd.stream_id, nullptr, headers.data(),
+                             headers.size(), nullptr) != 0) {
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  peer->responded = true;
+  return 0;
+}
+
+raw_request_target serve_raw_redirect(lupine_socket_t socket,
+                                      const char *location) {
+  raw_redirect_peer peer;
+  peer.socket = socket;
+  peer.location = location;
+  nghttp2_session_callbacks *callbacks = nullptr;
+  require(nghttp2_session_callbacks_new(&callbacks) == 0,
+          "redirect server callback allocation failed");
+  nghttp2_session_callbacks_set_send_callback(callbacks, raw_h2_send_callback);
+  nghttp2_session_callbacks_set_on_frame_recv_callback(
+      callbacks, raw_redirect_on_frame_recv);
+  nghttp2_session_callbacks_set_on_header_callback(callbacks,
+                                                   raw_redirect_on_header);
+  require(nghttp2_session_server_new(&peer.session, callbacks, &peer) == 0,
+          "redirect server session allocation failed");
+  nghttp2_session_callbacks_del(callbacks);
+  require(
+      nghttp2_submit_settings(peer.session, NGHTTP2_FLAG_NONE, nullptr, 0) == 0,
+      "redirect server SETTINGS submission failed");
+
+  std::array<unsigned char, 64 * 1024> input = {};
+  while (!peer.responded) {
+    ssize_t size = lupine_socket_recv(socket, input.data(), input.size());
+    require(size > 0, "redirect server request read failed");
+    require(nghttp2_session_mem_recv(peer.session, input.data(),
+                                     static_cast<size_t>(size)) >= 0,
+            "redirect server request parse failed");
+  }
+  require(nghttp2_session_send(peer.session) == 0,
+          "redirect server response send failed");
+  nghttp2_session_del(peer.session);
+  return peer.request;
+}
+
 void test_server_rejects_request_without_lz4_encoding() {
   h2_pair pair;
   init_pair_sockets(&pair);
@@ -493,6 +582,35 @@ void test_client_await_ready_rejects_stale_bundle() {
   lupine_test_unsetenv("LUPINE_CLIENT_PLATFORM");
   require(ready == LUPINE_RPC_HTTP2_CLIENT_MISMATCH,
           "stale client bundle did not report a client mismatch");
+}
+
+void test_client_await_ready_reports_temporary_redirect() {
+  constexpr char location[] = "https://gw-east.lupine.sh:9443/";
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  int ready = 0;
+  std::string redirected;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client, "https", "api.lupine.sh",
+                                  "/session/lease?token=test") == 0,
+            "client h2 init failed");
+    ready = rpc_http2_client_await_ready(&pair.client);
+    const char *value = rpc_http2_client_redirect(&pair.client);
+    if (value != nullptr) {
+      redirected = value;
+    }
+  });
+  raw_request_target request = serve_raw_redirect(pair.server.connfd, location);
+  client.join();
+
+  require(ready == LUPINE_RPC_HTTP2_REDIRECT,
+          "temporary redirect did not return the redirect result");
+  require(redirected == location,
+          "temporary redirect did not preserve the Location header");
+  require(request.scheme == "https" && request.authority == "api.lupine.sh" &&
+              request.path == "/session/lease?token=test",
+          "client request did not preserve its URL target");
 }
 
 // Arena bookkeeping is pure arithmetic over the conn fields, so it is checked
@@ -1668,6 +1786,7 @@ int main() {
   RUN_CASE(test_head_probe_cuda_version_metadata(nullptr));
   RUN_CASE(test_client_await_ready_accepts_current_bundle());
   RUN_CASE(test_client_await_ready_rejects_stale_bundle());
+  RUN_CASE(test_client_await_ready_reports_temporary_redirect());
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());

@@ -27,7 +27,9 @@ torch / any CUDA binary ─▶ selected shims ──RPC──▶ lupine server �
 
 `lupine.connect()` exports `LUPINE_SERVER`, downloads and verifies the exact
 client object selected by that server, and preloads it with global visibility
-before CUDA initializes, so:
+before CUDA initializes. When the configured server is the stable cloud API,
+bundle discovery and the native HTTP/2 connection follow its 307 to the bound
+gateway without changing `LUPINE_SERVER`, so:
 
 - **PyTorch builds with CUDA** keep their normal `torch.device("cuda:N")`
   dispatch; every CUDA call lands on the LUPINE shims.
