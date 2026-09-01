@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Assemble the platform native libraries into the wheel source tree.
+"""Assemble platform native libraries for server bundles and Python releases.
 
 Usage:
     python build.py stage <platform-tag> <dir-with-libs> [<dir>...]
     python build.py bundles <output-dir> <source-revision>
     python build.py build [--uv]
 
-``stage`` copies the shims for one platform into ``lupine/_libs/<tag>/``;
-``build`` verifies every expected platform is present and builds the wheel
+``stage`` copies the shims for one platform into ``lupine/_libs/<tag>/``.
+Server bundle assembly consumes the complete staged client; the wheel build
+configuration includes only each platform's CUDA runtime translation stub.
+``build`` verifies every expected platform is present and builds that wheel
 (with ``uv build`` by default, falling back to ``python -m build``).
 Expected tags: linux-x86_64, linux-aarch64, macosx-universal2,
 win-amd64, win-arm64.

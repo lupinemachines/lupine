@@ -67,6 +67,17 @@ def _bundle_url(server: str, platform_key: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, _ENDPOINT + platform_key, "", ""))
 
 
+def _response_endpoint(response: Any) -> str:
+    """Return the final origin after coordinator and gateway redirects."""
+
+    from urllib.parse import urlsplit, urlunsplit
+
+    parsed = urlsplit(response.geturl())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(f"invalid redirected LUPINE endpoint: {response.geturl()!r}")
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
 def _etag_digest(etag: str) -> str:
     match = _ETAG.fullmatch(etag)
     if match is None:
@@ -218,7 +229,7 @@ def _download(
     expected_names: tuple[str, ...],
     *,
     unconditional: bool = False,
-) -> tuple[Path, str]:
+) -> tuple[Path, str, str]:
     cache = _cache_root()
     selector = _selector_path(cache, server, platform_key)
     previous = None if unconditional else _read_selector(selector)
@@ -240,7 +251,7 @@ def _download(
         if exc.code == 304 and previous:
             candidate = cache / "clients" / _etag_digest(previous)
             if _validate_directory(candidate, previous, platform_key, expected_names):
-                return candidate, previous
+                return candidate, previous, _response_endpoint(exc)
             return _download(
                 server,
                 platform_key,
@@ -250,6 +261,7 @@ def _download(
         raise
 
     with response:
+        endpoint = _response_endpoint(response)
         etag = response.headers.get("ETag", "")
         _etag_digest(etag)
         body = response.read(_MAX_BUNDLE_BYTES + 1)
@@ -263,18 +275,19 @@ def _download(
 
     directory = _install(cache, body, etag, platform_key, expected_names)
     _write_selector(selector, etag)
-    return directory, etag
+    return directory, etag, endpoint
 
 
 def resolve(
     servers: tuple[str, ...], expected_names: tuple[str, ...]
-) -> tuple[Path, str, str]:
+) -> tuple[Path, str, str, tuple[str, ...]]:
     """Resolve every endpoint and require one compatible native object."""
 
     platform_key = platform_name()
     if platform_key is None:
         raise ValueError(f"unsupported LUPINE client platform: {sys.platform}")
-    selected: tuple[Path, str] | None = None
+    selected: tuple[Path, str, str] | None = None
+    endpoints = []
     for server in servers:
         current = _download(server, platform_key, expected_names)
         if selected is not None and current[1] != selected[1]:
@@ -283,6 +296,7 @@ def resolve(
                 f"{selected[1]} != {current[1]}"
             )
         selected = current
+        endpoints.append(current[2])
     if selected is None:
         raise ValueError("no LUPINE server was configured")
-    return selected[0], selected[1], platform_key
+    return selected[0], selected[1], platform_key, tuple(endpoints)

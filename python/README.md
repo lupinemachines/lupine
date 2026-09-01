@@ -1,12 +1,12 @@
 # lupine Python package
 
-CUDA on any host. The configured LUPINE server publishes its compatible native client shims —
-CUDA **driver API** (`libcuda` / `nvcuda.dll`), CUDA **runtime API**
-(`libcudart` / `cudart64_13.dll`), and **NVML** — for Linux (x86_64,
-aarch64), macOS (universal2), and Windows (amd64, arm64), plus a small
-PyTorch adapter. No NVIDIA software, CUDA toolkit, or container runtime
-is needed on the client. Wheels retain a bundled copy during the rollout, but
-server selection is authoritative whenever `LUPINE_SERVER` is configured.
+CUDA on any host. The configured LUPINE server publishes its compatible native
+client — CUDA **driver API** (`libcuda` / `nvcuda.dll`) and **NVML**, plus the
+complete runtime set needed by non-Python clients — for Linux (x86_64,
+aarch64), macOS (universal2), and Windows (amd64, arm64). The Python wheel
+contains only the portable CUDA **runtime API** translation stubs (`libcudart`
+/ `cudart64_13.dll`) and a small PyTorch adapter. No NVIDIA software, CUDA
+toolkit, or container runtime is needed on the client.
 
 ```python
 import lupine
@@ -57,19 +57,19 @@ The package depends on nothing but the standard library.
 
 ## Automatic bootstrap
 
-Install the opt-in extra to make ordinary Python processes default to the
-hosted LUPINE demo without calling the LUPINE API:
+Install the opt-in extra to preload LUPINE before application imports run:
 
 ```sh
 pip install "lupine[auto]"
-python existing_torch_program.py
+lupine run -- python existing_torch_program.py
 ```
 
-The companion package installs a Python startup hook that sets
-`LUPINE_SERVER=demo.lupinemachines.com:14833` only when the application has
-not configured a server, then resolves and preloads its selected native shims before the
-application imports PyTorch. An explicit `LUPINE_SERVER` always wins. Set
-`LUPINE_AUTO=0` to disable the hook for one process.
+The CLI acquires a lease and exports `LUPINE_SESSION` plus its regional
+`LUPINE_SERVER`. The companion package installs a Python startup hook that
+resolves and preloads the selected native client before the application imports
+PyTorch. An explicit `LUPINE_SERVER` always wins; otherwise the hook uses
+`https://api.lupine.sh`, whose bootstrap route redirects the bound session to
+its regional gateway. Set `LUPINE_AUTO=0` to disable the hook for one process.
 
 The hook does not change `LUPINE_DISABLE_LOCAL`. As with the explicit API,
 PyTorch must have a compiled CUDA backend; a CPU-only PyTorch build cannot
@@ -81,10 +81,10 @@ gain one at runtime.
 lupine/
   __init__.py    Session / connect() adapter
   _native.py     platform shim discovery + preloading
-  _libs/         (in wheels) per-platform native shims
+  _libs/         (in wheels) per-platform CUDA runtime stubs
 ```
 
 `build.py stage <tag> <dir>` assembles `lupine/_libs/<tag>/` from
-build outputs (CI does this for every platform); `build.py build`
-builds the wheel. CI builds the native shims from the repository root
-and `python/cudart`.
+build outputs (CI does this for every platform). Server bundles consume the
+complete staged client, while the wheel build includes only the runtime stubs.
+CI builds the native shims from the repository root and `python/cudart`.

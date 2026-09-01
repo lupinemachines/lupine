@@ -147,7 +147,7 @@ wheels = [
 
 [[package]]
 name = "lupine"
-version = "2.0.1"
+version = "2.0.2"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -175,14 +175,14 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "lupine-auto"
-version = "2.0.1"
+version = "2.0.2"
 source = { directory = "auto" }
 dependencies = [
     { name = "lupine" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lupine", specifier = "==2.0.1" }]
+requires-dist = [{ name = "lupine", specifier = "==2.0.2" }]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]

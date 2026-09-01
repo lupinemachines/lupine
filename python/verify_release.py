@@ -6,12 +6,20 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import tomllib
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
 
+import tomllib
+
 ROOT = Path(__file__).resolve().parent
+RUNTIME_STUBS = {
+    "lupine/_libs/linux-x86_64/libcudart.so.13",
+    "lupine/_libs/linux-aarch64/libcudart.so.13",
+    "lupine/_libs/macosx-universal2/libcudart.dylib",
+    "lupine/_libs/win-amd64/cudart64_13.dll",
+    "lupine/_libs/win-arm64/cudart64_13.dll",
+}
 
 
 def _project(path: Path) -> dict:
@@ -53,12 +61,13 @@ def verify_wheels(directory: Path, version: str) -> None:
         "lupine": f"lupine-auto=={version}",
         "lupine-auto": f"lupine=={version}",
     }
-    found: dict[str, tuple[str, list[str]]] = {}
+    found: dict[str, tuple[str, list[str], set[str]]] = {}
 
     for wheel in directory.rglob("*.whl"):
         with zipfile.ZipFile(wheel) as archive:
+            names = set(archive.namelist())
             metadata_paths = [
-                name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+                name for name in names if name.endswith(".dist-info/METADATA")
             ]
             if len(metadata_paths) != 1:
                 raise ValueError(f"{wheel} has {len(metadata_paths)} METADATA files")
@@ -67,7 +76,12 @@ def verify_wheels(directory: Path, version: str) -> None:
         name = _normalized(metadata["Name"])
         if name in found:
             raise ValueError(f"multiple wheels found for {name}")
-        found[name] = (metadata["Version"], metadata.get_all("Requires-Dist", []))
+        native_files = {path for path in names if path.startswith("lupine/_libs/")}
+        found[name] = (
+            metadata["Version"],
+            metadata.get_all("Requires-Dist", []),
+            native_files,
+        )
 
     if set(found) != set(expected):
         raise ValueError(
@@ -75,13 +89,19 @@ def verify_wheels(directory: Path, version: str) -> None:
         )
 
     for name, requirement in expected.items():
-        wheel_version, requirements = found[name]
+        wheel_version, requirements, native_files = found[name]
         if wheel_version != version:
             raise ValueError(
                 f"{name} wheel has version {wheel_version}, expected {version}"
             )
         if not any(req.split(";", 1)[0].strip() == requirement for req in requirements):
             raise ValueError(f"{name} wheel must require {requirement}")
+        expected_native = RUNTIME_STUBS if name == "lupine" else set()
+        if native_files != expected_native:
+            raise ValueError(
+                f"{name} wheel native files differ: "
+                f"found {sorted(native_files)}, expected {sorted(expected_native)}"
+            )
 
 
 def main(argv: list[str] | None = None) -> int:

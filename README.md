@@ -3,29 +3,27 @@
 LUPINE is a GPU over IP bridge allowing GPUs on remote machines to be attached
 to CPU-only machines.
 
-## Hosted Demo
+## Lupine Cloud
 
-Connect to a hosted demo server with a T4 attached for free. This might take a while if there's no GPU
-currently provisioned, but subsequent requests should be faster.
+The Lupine CLI acquires a GPU lease, selects its regional gateway, and exports
+the session environment for the command it launches:
 
-```
-$ docker run --rm \
-  -e LUPINE_SERVER=demo.lupinemachines.com:14833 \
-  ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04 \
-  nvidia-smi -L
-GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
+```sh
+lupine run -- nvidia-smi -L
 ```
 
-Python applications can opt into that endpoint without adding LUPINE API
-calls:
+Python applications can preload the server-selected native client before
+PyTorch imports without adding LUPINE API calls to the application:
 
 ```sh
 pip install "lupine[auto]"
-python existing_torch_program.py
+lupine run -- python existing_torch_program.py
 ```
 
-The startup hook preserves an explicit `LUPINE_SERVER`; set
-`LUPINE_AUTO=0` to disable it for a process. It does not change
+The CLI sets `LUPINE_SESSION` and the regional `LUPINE_SERVER`. The startup hook
+preserves that endpoint; if only the session is present, it uses the stable
+`https://api.lupine.sh` bootstrap route, which redirects to the correct gateway.
+Set `LUPINE_AUTO=0` to disable it for a process. It does not change
 `LUPINE_DISABLE_LOCAL`.
 
 ## macOS client

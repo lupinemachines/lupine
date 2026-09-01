@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_SERVER = "demo.lupinemachines.com:14833"
+DEFAULT_SERVER = "https://api.lupine.sh"
 _DISABLED_VALUES = {"0", "false", "no", "off"}
 
 
@@ -16,7 +16,7 @@ def enabled() -> bool:
 
 
 def activate() -> dict[str, str]:
-    """Select the default cloud endpoint and preload LUPINE's native shims."""
+    """Select the stable cloud endpoint and preload LUPINE's native shims."""
 
     if not enabled():
         return {}

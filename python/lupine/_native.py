@@ -2,8 +2,9 @@
 
 LUPINE servers publish the compatible client shims for every supported
 platform. The loader downloads the exact object selected by ``LUPINE_SERVER``
-before CUDA consumers are imported. Wheels may retain ``lupine/_libs`` as a
-release-transition fallback when no server is configured.
+before CUDA consumers are imported. Wheels carry only LUPINE's portable CUDA
+runtime translation stubs; complete driver and NVML clients always come from a
+bound server or an explicit ``LUPINE_LIBDIR``.
 
 ============ ============================== =========================== =======================
 Platform    driver shim (CUDA)             runtime shim                 NVML shim
@@ -22,9 +23,9 @@ stack exists, in front of) the real libraries:
   soname, so preloading the LUPINE ``libcuda`` routes every later driver
   call to the LUPINE server.
 * Natively compiled CUDA code (nvcc/clang) resolves both shims directly.
-* On platforms without any NVIDIA runtime (macOS, GPU-less Windows hosts)
-  the selected ``libcudart`` is the only runtime available, so CUDA binaries
-  keep working unmodified.
+* On platforms without any NVIDIA runtime (macOS, GPU-less Windows hosts),
+  the wheel's portable ``libcudart`` translation stub supplies the runtime API
+  while the driver and NVML shims remain server-selected.
 
 The loader is dependency-free (stdlib only) and never imports torch.
 """
@@ -38,7 +39,8 @@ from pathlib import Path
 
 from . import _bundles
 
-# Library file names per platform tag shipped in the wheel.
+# Complete client object names. Entry 1 is the runtime translation stub that the
+# Python wheel also carries; entries 0 and 2 are always server-selected.
 _LIBS = {
     "linux": ("libcuda.so.1", "libcudart.so.13", "libnvidia-ml.so.1"),
     "darwin": ("libcuda.dylib", "libcudart.dylib", "libnvidia-ml.dylib"),
@@ -76,7 +78,7 @@ def _platform_dir() -> Path | None:
 
 
 def libdir() -> Path | None:
-    """Directory holding the selected native shims for this platform."""
+    """Directory holding the selected full native client for this platform."""
 
     override = os.environ.get("LUPINE_LIBDIR")
     if override:
@@ -93,7 +95,7 @@ def libdir() -> Path | None:
         if names is None:
             raise LupineError(f"Unsupported LUPINE client platform: {sys.platform}")
         try:
-            directory, etag, platform_key = _bundles.resolve(servers, names)
+            directory, etag, platform_key, endpoints = _bundles.resolve(servers, names)
         except Exception as exc:
             raise LupineError(
                 f"Could not resolve the server's LUPINE client: {exc}"
@@ -101,8 +103,12 @@ def libdir() -> Path | None:
         os.environ["LUPINE_LIBDIR"] = str(directory)
         os.environ["LUPINE_CLIENT_ETAG"] = etag
         os.environ["LUPINE_CLIENT_PLATFORM"] = platform_key
+        # Client discovery may start at the stable coordinator origin. Native
+        # HTTP/2 RPC does not follow HTTP redirects, so dial the final regional
+        # gateway selected by the bootstrap response.
+        os.environ["LUPINE_SERVER"] = ",".join(endpoints)
         return directory
-    return _platform_dir()
+    return None
 
 
 def load(*, missing_ok: bool = True) -> dict[str, str]:
@@ -127,10 +133,16 @@ def load(*, missing_ok: bool = True) -> dict[str, str]:
         if missing_ok:
             return dict(_loaded)
         raise LupineError(
-            "No LUPINE native libraries for this platform "
-            f"({sys.platform}); set LUPINE_LIBDIR or install a wheel with "
-            "lupine._libs."
+            "No full LUPINE native client for this platform "
+            f"({sys.platform}); set LUPINE_SERVER or LUPINE_LIBDIR."
         )
+
+    paths = {name: directory / name for name in names}
+    packaged = _platform_dir()
+    if packaged is not None:
+        runtime = packaged / names[1]
+        if runtime.is_file():
+            paths[names[1]] = runtime
 
     if sys.platform == "win32":
         # LoadLibrary search order includes directories added here; CUDA
@@ -144,11 +156,11 @@ def load(*, missing_ok: bool = True) -> dict[str, str]:
     for name in names:
         if name in _loaded:
             continue
-        path = directory / name
+        path = paths[name]
         if not path.exists():
             if missing_ok:
                 continue
-            raise LupineError(f"Bundled LUPINE library missing: {path}")
+            raise LupineError(f"Selected LUPINE library missing: {path}")
         # RTLD_GLOBAL so dlopen("libcuda.so.1") from other libraries
         # (torch's libcudart, cublas, ...) resolves to the shim.
         ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
