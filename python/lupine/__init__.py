@@ -18,7 +18,8 @@ the remote GPUs:
 The adapter returns ordinary ``torch.device("cuda:N")`` objects; PyTorch
 keeps its built-in CUDA dispatch path while the LUPINE shims handle the
 driver and runtime calls underneath it. No NVIDIA software is required on
-the client — the wheel bundles shims for Linux, macOS, and Windows.
+the client — the wheel supplies the portable runtime stub and the bound
+server supplies its compatible full client.
 """
 
 from __future__ import annotations
@@ -33,6 +34,10 @@ DEFAULT_PORT = 14833
 
 class LupineError(RuntimeError):
     """Raised when the LUPINE adapter cannot select a usable device."""
+
+
+class LupineAuthenticationError(LupineError):
+    """Raised when Lupine Cloud needs a user credential."""
 
 
 def _torch() -> Any:
@@ -107,7 +112,7 @@ class Session:
     _previous_server: str | None = field(default=None, repr=False)
     _loaded: bool = field(default=False, repr=False)
 
-    def __enter__(self) -> "Session":
+    def __enter__(self) -> Session:  # noqa: PYI034
         if not self.servers:
             return self
         if self._loaded:
@@ -201,6 +206,40 @@ def connect(
     return session
 
 
+def cloud(
+    *,
+    api_url: str | None = None,
+    token: str | None = None,
+    gpu_type: str | None = None,
+    gpu_count: int | None = None,
+    region: str | None = None,
+) -> Any:
+    """Acquire and activate an authenticated Lupine Cloud GPU.
+
+    ``token`` defaults to ``LUPINE_API_TOKEN`` and then to the credential
+    stored by ``lupine login``. The lease is released when its context exits
+    or, when called without a context manager, at process shutdown.
+    """
+
+    from ._cloud import connect as connect_cloud
+
+    return connect_cloud(
+        api_url=api_url,
+        token=token,
+        gpu_type=gpu_type,
+        gpu_count=gpu_count,
+        region=region,
+    )
+
+
+def login(**kwargs: Any) -> Any:
+    """Authenticate in a browser and store a Lupine Cloud credential."""
+
+    from ._login import login as browser_login
+
+    return browser_login(**kwargs)
+
+
 def devices() -> list[Any]:
     """Return devices in PyTorch's current LUPINE-backed CUDA topology."""
 
@@ -239,12 +278,15 @@ def libdir() -> Any:
 
 __all__ = [
     "DEFAULT_PORT",
+    "LupineAuthenticationError",
     "LupineError",
     "Session",
+    "cloud",
     "connect",
     "devices",
     "is_configured",
     "libdir",
     "load_native",
+    "login",
     "servers",
 ]

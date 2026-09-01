@@ -15,6 +15,9 @@ dependencies = []
 torch = ["torch"]
 auto = ["lupine-auto==2.0.2"]
 
+[project.scripts]
+lupine = "lupine.__main__:main"
+
 [dependency-groups]
 dev = ["pytest>=8.0"]
 

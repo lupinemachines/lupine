@@ -1,1 +1,1 @@
-import lupine_auto; lupine_auto.activate()
+import lupine_auto; lupine_auto.install()

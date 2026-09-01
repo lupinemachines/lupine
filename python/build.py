@@ -10,7 +10,8 @@ Usage:
 Server bundle assembly consumes the complete staged client; the wheel build
 configuration includes only each platform's CUDA runtime translation stub.
 ``build`` verifies every expected platform is present and builds that wheel
-(with ``uv build`` by default, falling back to ``python -m build``).
+directly from the staged checkout (with ``uv build --wheel`` by default,
+falling back to ``python -m build --wheel``).
 Expected tags: linux-x86_64, linux-aarch64, macosx-universal2,
 win-amd64, win-arm64.
 """
@@ -89,8 +90,8 @@ def build(use_uv: bool) -> int:
             if not (libs / tag / name).is_file():
                 print(f"warning: {tag}/{name} missing")
     if use_uv:
-        return subprocess.call(["uv", "build"], cwd=ROOT)
-    return subprocess.call([sys.executable, "-m", "build"], cwd=ROOT)
+        return subprocess.call(["uv", "build", "--wheel"], cwd=ROOT)
+    return subprocess.call([sys.executable, "-m", "build", "--wheel"], cwd=ROOT)
 
 
 def _zip_entry(

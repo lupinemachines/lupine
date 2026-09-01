@@ -12,19 +12,21 @@ the session environment for the command it launches:
 lupine run -- nvidia-smi -L
 ```
 
-Python applications can preload the server-selected native client before
-PyTorch imports without adding LUPINE API calls to the application:
+Python applications can authenticate and acquire a cloud GPU without the Go
+CLI. Log in once, then install the automatic startup hook:
 
 ```sh
+uvx lupine login
+# Equivalent after installation: python -m lupine login
 pip install "lupine[auto]"
-lupine run -- python existing_torch_program.py
+python existing_torch_program.py
 ```
 
-The CLI sets `LUPINE_SESSION` and the regional `LUPINE_SERVER`. The startup hook
-preserves that endpoint; if only the session is present, it uses the stable
-`https://api.lupine.sh` bootstrap route, which redirects to the correct gateway.
-Set `LUPINE_AUTO=0` to disable it for a process. It does not change
-`LUPINE_DISABLE_LOCAL`.
+The hook waits until the first CUDA consumer is imported, acquires and binds a
+lease with the stored credential, and preloads the server-selected native
+client. For CI, set `LUPINE_API_TOKEN` instead of using browser login. Set
+`LUPINE_AUTO=0` to disable the hook for a process. It does not change
+`LUPINE_DISABLE_LOCAL` or forward the bearer token to the data plane.
 
 ## macOS client
 

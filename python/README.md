@@ -57,23 +57,48 @@ The package depends on nothing but the standard library.
 
 ## Automatic bootstrap
 
-Install the opt-in extra to preload LUPINE before application imports run:
+Authenticate once and install the opt-in extra:
 
 ```sh
+uvx lupine login
+# Or, when lupine is installed: python -m lupine login
 pip install "lupine[auto]"
-lupine run -- python existing_torch_program.py
+python existing_torch_program.py
 ```
 
-The CLI acquires a lease and exports `LUPINE_SESSION` plus its regional
-`LUPINE_SERVER`. The companion package installs a Python startup hook that
-resolves and preloads the selected native client before the application imports
-PyTorch. An explicit `LUPINE_SERVER` always wins; otherwise the hook uses
-`https://api.lupine.sh`, whose bootstrap route redirects the bound session to
-its regional gateway. Set `LUPINE_AUTO=0` to disable the hook for one process.
+The companion package installs a lazy Python startup hook. Immediately before
+the first CUDA consumer is imported, it reads the credential shared with the
+Lupine CLI, acquires and binds a lease, starts its heartbeat, and preloads the
+server-selected native client. If no credential exists it leaves Python running
+and prints a hint to run one of the login commands above. For CI and other
+headless environments, set `LUPINE_API_TOKEN`.
+
+An explicit `LUPINE_SERVER` or existing `LUPINE_SESSION` still wins. Use
+`LUPINE_GPU_TYPE`, `LUPINE_GPU_COUNT`, and `LUPINE_REGION` to constrain automatic
+placement, and `LUPINE_AUTO=0` to disable the hook for one process.
 
 The hook does not change `LUPINE_DISABLE_LOCAL`. As with the explicit API,
 PyTorch must have a compiled CUDA backend; a CPU-only PyTorch build cannot
 gain one at runtime.
+
+## Authenticated cloud API
+
+Applications that want explicit lease lifetime can use the main package without
+the automatic extra:
+
+```python
+import lupine
+
+with lupine.cloud(gpu_type="RTX_4090") as session:
+    import torch
+
+    value = torch.ones(4, device=session.device())
+```
+
+`lupine.cloud()` uses `LUPINE_API_TOKEN` first, then the credential stored by
+`lupine login`, and releases its process-owned lease when the context exits.
+The bearer token is used only for coordinator API calls; bundle and native RPC
+traffic carry the lease ID in `LUPINE_SESSION`.
 
 ## Layout
 
