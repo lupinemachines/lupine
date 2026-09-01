@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Assemble platform native libraries for server bundles and Python releases.
+"""Assemble Python runtime stubs and server-served client bundles.
 
 Usage:
-    python build.py stage <platform-tag> <dir-with-libs> [<dir>...]
-    python build.py bundles <output-dir> <source-revision>
+    python build.py stage-runtime <platform-tag> <dir-with-runtime> [<dir>...]
+    python build.py bundles <complete-client-dir> <output-dir> <source-revision>
     python build.py build [--uv]
 
-``stage`` copies the shims for one platform into ``lupine/_libs/<tag>/``.
-Server bundle assembly consumes the complete staged client; the wheel build
-configuration includes only each platform's CUDA runtime translation stub.
+``stage-runtime`` copies only the CUDA runtime translation stub used by the
+Python wheel. ``bundles`` consumes complete clients from a separate artifact
+tree; driver and NVML libraries never enter the wheel staging tree.
 ``build`` verifies every expected platform is present and builds that wheel
 directly from the staged checkout (with ``uv build --wheel`` by default,
 falling back to ``python -m build --wheel``).
@@ -51,28 +51,24 @@ CLIENT_BUNDLES = {
     ("windows/arm64",): "win-arm64",
 }
 
+RUNTIMES = {tag: names[1] for tag, names in EXPECTED.items()}
 
-def stage(tag: str, sources: list[Path]) -> int:
-    if tag not in EXPECTED:
-        print(f"unknown platform tag {tag!r}; expected one of {sorted(EXPECTED)}")
+
+def stage_runtime(tag: str, sources: list[Path]) -> int:
+    if tag not in RUNTIMES:
+        print(f"unknown platform tag {tag!r}; expected one of {sorted(RUNTIMES)}")
         return 2
-    dest = _libs_dir() / tag
-    dest.mkdir(parents=True, exist_ok=True)
-    staged = []
+    name = RUNTIMES[tag]
+    destination = _libs_dir() / tag
     for source in sources:
-        for name in EXPECTED[tag]:
-            candidate = source / name
-            if candidate.is_file():
-                shutil.copy2(candidate, dest / name)
-                staged.append(name)
-    missing = [name for name in EXPECTED[tag] if name not in staged]
-    if missing:
-        print(
-            f"warning: {tag}: missing {missing} (searched: {[str(s) for s in sources]})"
-        )
-    else:
-        print(f"staged {tag}: {sorted(staged)}")
-    return 0
+        candidate = source / name
+        if candidate.is_file():
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(candidate, destination / name)
+            print(f"staged {tag} runtime: {name}")
+            return 0
+    print(f"{tag}: runtime {name} not found in {[str(source) for source in sources]}")
+    return 1
 
 
 def build(use_uv: bool) -> int:
@@ -86,9 +82,9 @@ def build(use_uv: bool) -> int:
         if tag not in EXPECTED:
             print(f"warning: unexpected _libs entry {tag}")
             continue
-        for name in EXPECTED[tag]:
-            if not (libs / tag / name).is_file():
-                print(f"warning: {tag}/{name} missing")
+        name = RUNTIMES[tag]
+        if not (libs / tag / name).is_file():
+            print(f"warning: {tag}/{name} missing")
     if use_uv:
         return subprocess.call(["uv", "build", "--wheel"], cwd=ROOT)
     return subprocess.call([sys.executable, "-m", "build", "--wheel"], cwd=ROOT)
@@ -104,8 +100,10 @@ def _zip_entry(
     return entry, contents
 
 
-def _bundle_bytes(tag: str, platforms: tuple[str, ...], revision: str) -> bytes:
-    source = _libs_dir() / tag
+def _bundle_bytes(
+    clients: Path, tag: str, platforms: tuple[str, ...], revision: str
+) -> bytes:
+    source = clients / f"lupine-client-{tag}"
     missing = [name for name in EXPECTED[tag] if not (source / name).is_file()]
     if missing:
         raise FileNotFoundError(f"{tag}: missing native libraries: {missing}")
@@ -144,7 +142,7 @@ def _bundle_bytes(tag: str, platforms: tuple[str, ...], revision: str) -> bytes:
     return output.getvalue()
 
 
-def bundles(output: Path, revision: str) -> int:
+def bundles(clients: Path, output: Path, revision: str) -> int:
     """Build the server-served, content-addressed client objects."""
 
     if not revision:
@@ -160,7 +158,7 @@ def bundles(output: Path, revision: str) -> int:
 
     try:
         for platforms, tag in CLIENT_BUNDLES.items():
-            contents = _bundle_bytes(tag, platforms, revision)
+            contents = _bundle_bytes(clients, tag, platforms, revision)
             digest = hashlib.sha256(contents).digest()
             digest_hex = digest.hex()
             etag = f'"sha256:{digest_hex}"'
@@ -192,18 +190,18 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
         return 2
-    if argv[1] == "stage":
+    if argv[1] == "stage-runtime":
         if len(argv) < 4:
-            print("stage needs: <tag> <dir> [<dir>...]")
+            print("stage-runtime needs: <tag> <dir> [<dir>...]")
             return 2
-        return stage(argv[2], [Path(p) for p in argv[3:]])
+        return stage_runtime(argv[2], [Path(p) for p in argv[3:]])
     if argv[1] == "build":
         return build(use_uv=argv[2:3] != ["--no-uv"])
     if argv[1] == "bundles":
-        if len(argv) != 4:
-            print("bundles needs: <output-dir> <source-revision>")
+        if len(argv) != 5:
+            print("bundles needs: <complete-client-dir> <output-dir> <source-revision>")
             return 2
-        return bundles(Path(argv[2]), argv[3])
+        return bundles(Path(argv[2]), Path(argv[3]), argv[4])
     print(__doc__)
     return 2
 

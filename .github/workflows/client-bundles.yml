@@ -1,9 +1,9 @@
-name: Python
+name: Client Bundles
 
 concurrency:
   # A reusable invocation inherits github.workflow from its caller. Namespace
   # this group so it cannot cancel the caller that is waiting on it.
-  group: python-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: client-bundles-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
@@ -13,18 +13,14 @@ on:
         description: Exact source revision to build
         required: false
         type: string
-  pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  runtime:
-    name: Runtime stub / ${{ matrix.tag }}
+  native:
+    name: Complete client / ${{ matrix.tag }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -72,9 +68,11 @@ jobs:
             --python-version 3 \
             --abi none \
             --no-deps \
-            nvidia-cuda-runtime
+            nvidia-cuda-runtime \
+            nvidia-nvml-dev
           mkdir -p cuda-sdk
           for wheel in headers/*.whl; do unzip -q "$wheel" -d cuda-sdk; done
+
 
       - name: Install build dependencies (Windows)
         if: runner.os == 'Windows'
@@ -103,39 +101,40 @@ jobs:
             --python-version 3 `
             --abi none `
             --no-deps `
-            nvidia-cuda-runtime
+            nvidia-cuda-runtime `
+            nvidia-nvml-dev
           $cudaWheel = Get-ChildItem 'cuda-wheel/nvidia_cuda_runtime-*.whl' | Select-Object -First 1
-          if ($null -eq $cudaWheel) {
-            throw 'The CUDA header wheel was not downloaded'
+          $nvmlWheel = Get-ChildItem 'cuda-wheel/nvidia_nvml_dev-*.whl' | Select-Object -First 1
+          if ($null -eq $cudaWheel -or $null -eq $nvmlWheel) {
+            throw 'CUDA or NVML header wheel was not downloaded'
           }
           python -m zipfile -e $cudaWheel.FullName cuda-sdk
+          python -m zipfile -e $nvmlWheel.FullName cuda-sdk
           $cudaHeader = Get-ChildItem 'cuda-sdk/nvidia' -Recurse -Filter cuda.h | Select-Object -First 1
           if ($null -eq $cudaHeader) {
-            throw 'CUDA headers were not found in the downloaded wheel'
+            throw 'CUDA headers were not found in the downloaded wheels'
           }
           New-Item -ItemType Directory -Force -Path cuda-sdk/include | Out-Null
           Copy-Item (Join-Path $cudaHeader.DirectoryName '*') cuda-sdk/include -Recurse -Force
 
-      - name: Configure and build runtime (non-Windows)
+      - name: Configure and build (non-Windows)
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
-          # libcudart links against libcuda, so build the driver as a link-time
-          # dependency. Only the runtime artifact is staged or uploaded.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLUPINE_BUILD_SERVER=OFF \
-            -DLUPINE_BUILD_NVML=OFF \
-            -DLUPINE_BUILD_HIP=OFF \
             -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
-          cmake --build build --parallel --target lupine_cuda_client
+          cmake --build build --parallel --target lupine_cuda_client lupine_nvml
+          # The runtime translation layer is Python-package-specific and
+          # builds standalone against the just-built clients.
           cmake -S python/cudart -B build-cudart -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include" \
             -DLUPINE_CLIENT_DIR="$PWD/build"
           cmake --build build-cudart --parallel
 
-      - name: Configure and build runtime (Windows)
+      - name: Configure and build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -144,14 +143,12 @@ jobs:
           $triplet = '${{ matrix.tag }}' -eq 'win-arm64' ? 'arm64-windows-static' : 'x64-windows-static'
           cmake -S . -B build -G "Visual Studio 18 2026" -A $arch `
             -DLUPINE_BUILD_SERVER=OFF `
-            -DLUPINE_BUILD_NVML=OFF `
-            -DLUPINE_BUILD_HIP=OFF `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_PREFIX_PATH=$PWD\cuda-sdk" `
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=$triplet" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
-          cmake --build build --config Release --target lupine_cuda_client
+          cmake --build build --config Release --target lupine_cuda_client lupine_nvml
           cmake -S python/cudart -B build-cudart -G "Visual Studio 18 2026" -A $arch `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
@@ -159,27 +156,38 @@ jobs:
             "-DLUPINE_CLIENT_DIR=$PWD\build\Release"
           cmake --build build-cudart --config Release
 
-      - name: Stage runtime stub
+      - name: Collect complete client
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ matrix.tag }}" == win-* ]]; then
-            ./python/build.py stage-runtime "${{ matrix.tag }}" build-cudart/Release
-          else
-            ./python/build.py stage-runtime "${{ matrix.tag }}" build-cudart
-          fi
+          mkdir -p complete-client
+          case "${{ matrix.tag }}" in
+            win-*)
+              cp build/Release/nvcuda.dll \
+                build-cudart/Release/cudart64_13.dll \
+                build/Release/nvml.dll complete-client/
+              ;;
+            macosx-*)
+              cp build/libcuda.dylib build-cudart/libcudart.dylib \
+                build/libnvidia-ml.dylib complete-client/
+              ;;
+            *)
+              cp build/libcuda.so.1 build-cudart/libcudart.so.13 \
+                build/libnvidia-ml.so.1 complete-client/
+              ;;
+          esac
 
-      - name: Upload runtime stub
+      - name: Upload complete client
         uses: actions/upload-artifact@v7
         with:
-          name: lupine-runtime-${{ matrix.tag }}
-          path: python/lupine/_libs/${{ matrix.tag }}
+          name: lupine-client-${{ matrix.tag }}
+          path: complete-client
           if-no-files-found: error
           retention-days: 3
 
   macos-universal:
-    name: Assemble macOS universal2 runtime
-    needs: runtime
+    name: Assemble macOS universal2 slices
+    needs: native
     runs-on: macos-26
     timeout-minutes: 10
     steps:
@@ -187,86 +195,59 @@ jobs:
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
-      - name: Download thin runtimes
+      - name: Download thin dylibs
         uses: actions/download-artifact@v8
         with:
-          pattern: lupine-runtime-macosx-*
+          pattern: lupine-client-macosx-*
           path: thin
           merge-multiple: false
 
-      - name: Lipo universal runtime
+      - name: lipo universal dylibs
         run: |
           set -euo pipefail
           mkdir -p universal
-          lipo -create \
-            thin/lupine-runtime-macosx-arm64/libcudart.dylib \
-            thin/lupine-runtime-macosx-x86_64/libcudart.dylib \
-            -output universal/libcudart.dylib
+          for lib in libcuda.dylib libcudart.dylib libnvidia-ml.dylib; do
+            lipo -create "thin/lupine-client-macosx-arm64/$lib" \
+                    "thin/lupine-client-macosx-x86_64/$lib" \
+                    -output "universal/$lib"
+          done
 
-      - name: Stage universal runtime
-        run: ./python/build.py stage-runtime macosx-universal2 universal
-
-      - name: Upload universal runtime
+      - name: Upload universal client
         uses: actions/upload-artifact@v7
         with:
-          name: lupine-runtime-macosx-universal2
-          path: python/lupine/_libs/macosx-universal2
+          name: lupine-client-macosx-universal2
+          path: universal
           if-no-files-found: error
           retention-days: 3
 
   package:
-    name: Assemble and test wheels
-    needs: [runtime, macos-universal]
+    name: Assemble client bundles
+    needs: [native, macos-universal]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      # Unit tests exercise the hook explicitly. Do not activate it for the
-      # test runner itself.
-      LUPINE_AUTO: "0"
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Download runtime stubs
+      - name: Download complete clients
         uses: actions/download-artifact@v8
         with:
-          pattern: lupine-runtime-*
-          path: runtimes
+          pattern: lupine-client-*
+          path: clients
           merge-multiple: false
 
-      - name: Stage runtime stubs
+      - name: Assemble server-served client bundles
+        working-directory: python
         run: |
           set -euo pipefail
-          for dir in runtimes/lupine-runtime-*; do
-            tag="${dir##*/lupine-runtime-}"
-            # Thin macOS slices only feed the lipo job.
-            case "$tag" in macosx-arm64|macosx-x86_64) continue ;; esac
-            ./python/build.py stage-runtime "$tag" "$dir"
-          done
+          revision="$(git rev-parse --verify HEAD^{commit})"
+          ./build.py bundles ../clients client-bundles "$revision"
 
-      - name: Run Python tests
-        working-directory: python
-        run: |
-          python verify_release.py
-          uv run --all-extras pytest
-
-      - name: Test minimum supported Python
-        working-directory: python
-        run: uv run --python 3.10 --all-extras pytest
-
-      - name: Build Python packages
-        working-directory: python
-        run: |
-          uv build --wheel --out-dir dist/lupine
-          uv build --wheel auto --out-dir dist/lupine-auto
-          python verify_release.py --dist dist
-
-      - name: Upload Python package artifacts
+      - name: Upload server-served client bundles
         uses: actions/upload-artifact@v7
         with:
-          name: lupine-python-package
-          path: python/dist
+          name: lupine-client-bundles
+          path: python/client-bundles
+          if-no-files-found: error
+          retention-days: 3

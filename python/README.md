@@ -113,7 +113,7 @@ lupine/
   _libs/         (in wheels) per-platform CUDA runtime stubs
 ```
 
-`build.py stage <tag> <dir>` assembles `lupine/_libs/<tag>/` from
-build outputs (CI does this for every platform). Server bundles consume the
-complete staged client, while the wheel build includes only the runtime stubs.
-CI builds the native shims from the repository root and `python/cudart`.
+`build.py stage-runtime <tag> <dir>` copies exactly one runtime stub into the
+wheel staging tree. The Python workflow never stages complete clients. A
+separate client-bundle workflow passes its driver/runtime/NVML artifacts
+directly to `build.py bundles`; they never enter the Python package tree.

@@ -26,10 +26,10 @@ lupine-auto = { path = "auto" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["lupine"]
-# The Python distribution owns the CUDA runtime translation stubs. Complete
-# driver/NVML clients are selected by the bound server and must not enter the
-# wheel. CI stages both sets together so it can also assemble server bundles;
-# exclude that tree from normal package discovery, then add only the runtimes.
+# The Python workflow stages only CUDA runtime translation stubs. Complete
+# driver/NVML clients are built by the separate client-bundle workflow and must
+# never enter the wheel. Keep native staging excluded from package discovery,
+# then allowlist only the runtime filenames.
 exclude = ["lupine/_libs/**"]
 artifacts = [
   "lupine/_libs/**/libcudart.so.13",

@@ -23,7 +23,7 @@ permissions:
 jobs:
   client-bundles:
     name: Build all client bundle variants
-    uses: ./.github/workflows/python.yml
+    uses: ./.github/workflows/client-bundles.yml
     with:
       checkout_ref: ${{ github.event.release.tag_name || github.sha }}
 
