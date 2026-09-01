@@ -1,15 +1,14 @@
 import os
 from types import SimpleNamespace
 
+import lupine
 import lupine_auto
 import pytest
 
-import lupine
 
-
-def test_activate_defaults_to_cloud_without_changing_local_policy(monkeypatch):
+def test_activate_uses_explicit_gateway_for_existing_session(monkeypatch):
     monkeypatch.delenv("LUPINE_AUTO", raising=False)
-    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+    monkeypatch.setenv("LUPINE_SERVER", "https://gw-east.lupine.sh:9443")
     monkeypatch.delenv("LUPINE_DISABLE_LOCAL", raising=False)
     monkeypatch.setenv("LUPINE_SESSION", "lease-test")
     calls = []
@@ -21,9 +20,18 @@ def test_activate_defaults_to_cloud_without_changing_local_policy(monkeypatch):
 
     assert lupine_auto.activate() == {"libcuda": "/shim"}
     assert lupine_auto.DEFAULT_SERVER == "https://api.lupine.sh"
-    assert os.environ["LUPINE_SERVER"] == lupine_auto.DEFAULT_SERVER
+    assert os.environ["LUPINE_SERVER"] == "https://gw-east.lupine.sh:9443"
     assert "LUPINE_DISABLE_LOCAL" not in os.environ
     assert calls == [False]
+
+
+def test_activate_requires_gateway_for_existing_session(monkeypatch):
+    monkeypatch.delenv("LUPINE_AUTO", raising=False)
+    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+    monkeypatch.setenv("LUPINE_SESSION", "lease-test")
+
+    with pytest.raises(lupine.LupineError, match="bound gateway"):
+        lupine_auto.activate()
 
 
 def test_activate_acquires_cloud_session_when_unbound(monkeypatch):
@@ -35,8 +43,9 @@ def test_activate_acquires_cloud_session_when_unbound(monkeypatch):
     monkeypatch.setattr(
         lupine,
         "cloud",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(loaded={"libcuda": "/cloud/shim"}),
+        lambda **kwargs: (
+            calls.append(kwargs) or SimpleNamespace(loaded={"libcuda": "/cloud/shim"})
+        ),
     )
 
     assert lupine_auto.activate() == {"libcuda": "/cloud/shim"}

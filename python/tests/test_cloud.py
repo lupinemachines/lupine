@@ -4,13 +4,12 @@ import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import pytest
-
 import lupine
+import pytest
 
 
 @contextmanager
-def cloud_server():
+def cloud_server(gateway_endpoint="gw-east.lupine.sh:9443"):
     state = {"requests": [], "heartbeat": threading.Event()}
 
     class Handler(BaseHTTPRequestHandler):
@@ -32,12 +31,13 @@ def cloud_server():
                 body = json.dumps({"lease_id": "lease-python"}).encode()
             elif self.path.endswith("/bind"):
                 self.send_response(200)
+                data_plane = {}
+                if gateway_endpoint is not None:
+                    data_plane["gateway_endpoint"] = gateway_endpoint
                 body = json.dumps(
                     {
                         "gpu": {"gpu_type": "RTX 4090", "gpu_count": 1},
-                        "data_plane": {
-                            "gateway_endpoint": "gw-east.lupine.sh:9443"
-                        },
+                        "data_plane": data_plane,
                     }
                 ).encode()
             elif self.path.endswith("/heartbeat"):
@@ -82,19 +82,20 @@ def test_cloud_session_authenticates_binds_heartbeats_and_releases(
         lambda *, missing_ok: {"libcuda.so.1": str(tmp_path / "libcuda.so.1")},
     )
 
-    with cloud_server() as (api_url, state), lupine.cloud(
-        api_url=api_url,
-        token="lup_test",
-        gpu_type="RTX_4090",
-        gpu_count=1,
-    ) as session:
+    with (
+        cloud_server() as (api_url, state),
+        lupine.cloud(
+            api_url=api_url,
+            token="lup_test",
+            gpu_type="RTX_4090",
+            gpu_count=1,
+        ) as session,
+    ):
         assert session.lease_id == "lease-python"
         assert session.gpu["gpu_type"] == "RTX 4090"
-        assert session.loaded == {
-            "libcuda.so.1": str(tmp_path / "libcuda.so.1")
-        }
+        assert session.loaded == {"libcuda.so.1": str(tmp_path / "libcuda.so.1")}
         assert os.environ["LUPINE_SESSION"] == "lease-python"
-        assert os.environ["LUPINE_SERVER"] == api_url
+        assert os.environ["LUPINE_SERVER"] == "https://gw-east.lupine.sh:9443"
         assert state["heartbeat"].wait(1)
 
     assert "LUPINE_SESSION" not in os.environ
@@ -116,7 +117,23 @@ def test_cloud_session_requires_login(monkeypatch, tmp_path):
 
 
 def test_cloud_session_rejects_invalid_login():
-    with cloud_server() as (api_url, _), pytest.raises(
-        lupine.LupineAuthenticationError, match="uvx lupine login"
+    with (
+        cloud_server() as (api_url, _),
+        pytest.raises(lupine.LupineAuthenticationError, match="uvx lupine login"),
     ):
         lupine.cloud(api_url=api_url, token="lup_invalid")
+
+
+def test_cloud_session_releases_lease_when_bind_omits_gateway(monkeypatch):
+    monkeypatch.delenv("LUPINE_SESSION", raising=False)
+    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+
+    with (
+        cloud_server(gateway_endpoint=None) as (api_url, state),
+        pytest.raises(lupine.LupineError, match="did not include a gateway"),
+    ):
+        lupine.cloud(api_url=api_url, token="lup_test")
+
+    assert [request[0] for request in state["requests"]].count("DELETE") == 1
+    assert "LUPINE_SESSION" not in os.environ
+    assert "LUPINE_SERVER" not in os.environ

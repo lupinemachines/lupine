@@ -19,7 +19,6 @@ enum class lupine_client_dial_policy {
 struct lupine_client_endpoint {
   std::string host;
   std::string port;
-  std::string path = "/";
   std::string label;
   bool tls = false;
 };

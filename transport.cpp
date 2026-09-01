@@ -15,7 +15,6 @@ namespace {
 
 constexpr unsigned int kTransportCapacity = 16;
 constexpr unsigned int kBoundedRetryCount = 5;
-constexpr unsigned int kMaxRedirectCount = 5;
 constexpr const char *kDefaultPort = "14833";
 
 struct client_transport_state {
@@ -38,31 +37,6 @@ bool endpoint_has_invalid_scheme(const std::string &endpoint) {
          endpoint.compare(0, 6, "https:") == 0;
 }
 
-void set_endpoint_label(lupine_client_endpoint *endpoint) {
-  endpoint->label = endpoint->host;
-  if (endpoint->port != kDefaultPort) {
-    endpoint->label += ":" + endpoint->port;
-  }
-}
-
-bool split_authority_and_path(const std::string &value, size_t authority_begin,
-                              std::string *authority, std::string *path) {
-  size_t end = value.find('#', authority_begin);
-  if (end == std::string::npos) {
-    end = value.size();
-  }
-  size_t path_begin = value.find_first_of("/?", authority_begin);
-  if (path_begin == std::string::npos || path_begin > end) {
-    path_begin = end;
-  }
-  *authority = value.substr(authority_begin, path_begin - authority_begin);
-  *path = path_begin == end ? "/" : value.substr(path_begin, end - path_begin);
-  if (!path->empty() && path->front() == '?') {
-    path->insert(path->begin(), '/');
-  }
-  return !authority->empty();
-}
-
 int parse_endpoints(const char *servers, bool strict,
                     std::vector<lupine_client_endpoint> *endpoints) {
   endpoints->clear();
@@ -83,21 +57,12 @@ int parse_endpoints(const char *servers, bool strict,
       endpoint.port = "443";
       token.erase(0, 8);
     } else if (token.compare(0, 7, "http://") == 0) {
-      endpoint.port = "80";
       token.erase(0, 7);
     } else if (strict && endpoint_has_invalid_scheme(token)) {
       LUPINE_LOG_ERROR("Invalid LUPINE_SERVER URL scheme: " << token);
       continue;
     }
 
-    std::string authority;
-    if (!split_authority_and_path(token, 0, &authority, &endpoint.path)) {
-      if (strict) {
-        LUPINE_LOG_ERROR("Invalid LUPINE_SERVER endpoint");
-      }
-      continue;
-    }
-    token = std::move(authority);
     size_t colon = token.find(':');
     endpoint.host = token.substr(0, colon);
     if (colon != std::string::npos) {
@@ -107,62 +72,13 @@ int parse_endpoints(const char *servers, bool strict,
       LUPINE_LOG_ERROR("Invalid LUPINE_SERVER endpoint");
       continue;
     }
-    set_endpoint_label(&endpoint);
+    endpoint.label = endpoint.host;
+    if (endpoint.port != kDefaultPort) {
+      endpoint.label += ":" + endpoint.port;
+    }
     endpoints->push_back(std::move(endpoint));
   }
   return endpoints->empty() ? -1 : 0;
-}
-
-bool parse_redirect_endpoint(const char *location,
-                             const lupine_client_endpoint &source,
-                             lupine_client_endpoint *endpoint) {
-  if (location == nullptr || endpoint == nullptr) {
-    return false;
-  }
-  std::string value(location);
-  size_t scheme_end = value.find("://");
-  if (scheme_end == std::string::npos) {
-    return false;
-  }
-  std::string scheme = value.substr(0, scheme_end);
-  if (scheme != "http" && scheme != "https") {
-    return false;
-  }
-  endpoint->tls = scheme == "https";
-  if (source.tls && !endpoint->tls) {
-    return false;
-  }
-  endpoint->port = endpoint->tls ? "443" : "80";
-
-  std::string authority;
-  if (!split_authority_and_path(value, scheme_end + 3, &authority,
-                                &endpoint->path) ||
-      authority.find('@') != std::string::npos) {
-    return false;
-  }
-  size_t colon = authority.rfind(':');
-  if (colon != std::string::npos) {
-    if (authority.find(':') != colon) {
-      return false;
-    }
-    endpoint->host = authority.substr(0, colon);
-    endpoint->port = authority.substr(colon + 1);
-  } else {
-    endpoint->host = authority;
-  }
-  if (endpoint->host.empty() || endpoint->port.empty()) {
-    return false;
-  }
-  set_endpoint_label(endpoint);
-  return true;
-}
-
-std::string endpoint_authority(const lupine_client_endpoint &endpoint) {
-  if ((endpoint.tls && endpoint.port == "443") ||
-      (!endpoint.tls && endpoint.port == "80")) {
-    return endpoint.host;
-  }
-  return endpoint.host + ":" + endpoint.port;
 }
 
 #ifdef LUPINE_TLS_OPENSSL
@@ -240,8 +156,6 @@ int connect_endpoint(client_transport_state &state,
                      const lupine_client_endpoint &endpoint,
                      unsigned int index) {
   conn_t *conn = &state.connections[index];
-  lupine_client_endpoint selected = endpoint;
-  unsigned int redirects = 0;
   unsigned int min_slot = 0;
   // Start optimistic with this host's window. A peer that hosts a different one
   // says so in its response, and the retry below adopts it, so a matching pair
@@ -253,11 +167,11 @@ int connect_endpoint(client_transport_state &state,
         state.config.dial_policy == lupine_client_dial_policy::bounded_retry
             ? kBoundedRetryCount
             : 0;
-    lupine_socket_t connfd = lupine_tcp_connect(selected.host.c_str(),
-                                                selected.port.c_str(), retries);
+    lupine_socket_t connfd = lupine_tcp_connect(endpoint.host.c_str(),
+                                                endpoint.port.c_str(), retries);
     if (connfd == LUPINE_INVALID_SOCKET) {
-      LUPINE_LOG_ERROR("Connecting to " << selected.host << " port "
-                                        << selected.port << " failed");
+      LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
+                                        << endpoint.port << " failed");
       return -1;
     }
     if (rpc_conn_init(conn, connfd, 0) < 0) {
@@ -276,37 +190,15 @@ int connect_endpoint(client_transport_state &state,
         return -1;
       }
     }
-    if (initialize_tls(conn, selected) < 0) {
+    if (initialize_tls(conn, endpoint) < 0) {
       reset_connection(conn);
       return -1;
     }
-    const char *scheme = selected.tls ? "https" : "http";
-    std::string authority = endpoint_authority(selected);
-    int http2_result = rpc_http2_client_init(conn, scheme, authority.c_str(),
-                                             selected.path.c_str());
+    int http2_result = rpc_http2_client_init(conn);
     // No arena was requested, so client_init returned without waiting. Settle
     // the build check on this same connection rather than spending a dial.
     if (http2_result == 0 && conn->va_size == 0) {
       http2_result = rpc_http2_client_await_ready(conn);
-    }
-    if (http2_result == LUPINE_RPC_HTTP2_REDIRECT) {
-      lupine_client_endpoint redirected;
-      const char *location = rpc_http2_client_redirect(conn);
-      bool valid = redirects < kMaxRedirectCount &&
-                   parse_redirect_endpoint(location, selected, &redirected);
-      if (!valid) {
-        LUPINE_LOG_ERROR("Invalid or excessive LUPINE server redirect");
-        reset_connection(conn);
-        return -1;
-      }
-      LUPINE_LOG_DEBUG("LUPINE server redirected " << selected.label << " to "
-                                                   << redirected.label);
-      ++redirects;
-      selected = std::move(redirected);
-      min_slot = 0;
-      window = lupine_va_local_window();
-      reset_connection(conn);
-      continue;
     }
     if (http2_result == LUPINE_RPC_HTTP2_VA_CONFLICT && conn->va_size != 0) {
       // A refusal means either this slot is taken or the whole window was
@@ -317,8 +209,8 @@ int connect_endpoint(client_transport_state &state,
       bool adopt = rpc_http2_peer_va_window(conn, &stated) &&
                    (stated.base != window.base || stated.size != window.size);
       if (adopt) {
-        LUPINE_LOG_DEBUG("LUPINE server at " << selected.host << " port "
-                                             << selected.port
+        LUPINE_LOG_DEBUG("LUPINE server at " << endpoint.host << " port "
+                                             << endpoint.port
                                              << " hosts arenas elsewhere; "
                                                 "retrying in its window");
         window = stated;
@@ -339,7 +231,7 @@ int connect_endpoint(client_transport_state &state,
     break;
   }
 
-  state.endpoints[index] = selected;
+  state.endpoints[index] = endpoint;
   if (state.config.connection_opened != nullptr) {
     state.config.connection_opened(conn);
   }

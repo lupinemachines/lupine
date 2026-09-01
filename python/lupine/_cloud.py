@@ -17,14 +17,39 @@ from ._credentials import token_for
 from ._login import DEFAULT_API_URL, DEFAULT_CONSOLE_URL
 
 LOGIN_HINT = (
-    "Run `uvx lupine login` or `python -m lupine login`, "
-    "or set LUPINE_API_TOKEN."
+    "Run `uvx lupine login` or `python -m lupine login`, or set LUPINE_API_TOKEN."
 )
 _HEARTBEAT_INTERVAL = 30.0
 
 
 def _api_url(value: str | None = None) -> str:
     return (value or os.environ.get("LUPINE_API_URL") or DEFAULT_API_URL).rstrip("/")
+
+
+def _gateway_url(value: object) -> str:
+    invalid_gateway = "Lupine Cloud bind response included an invalid gateway"
+    if not isinstance(value, str) or not value.strip():
+        raise LupineError("Lupine Cloud bind response did not include a gateway")
+    endpoint = value.strip()
+    if "://" not in endpoint:
+        endpoint = "https://" + endpoint
+    try:
+        parsed = urllib.parse.urlsplit(endpoint)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError as exc:
+        raise LupineError(invalid_gateway) from exc
+    if (
+        parsed.scheme not in ("http", "https")
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise LupineError(invalid_gateway)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def _request(
@@ -55,7 +80,9 @@ def _request(
                 f"{DEFAULT_CONSOLE_URL}/billing."
             ) from exc
         if exc.code == 503:
-            raise LupineError("No Lupine Cloud GPU capacity is currently available.") from exc
+            raise LupineError(
+                "No Lupine Cloud GPU capacity is currently available."
+            ) from exc
         raise LupineError(f"Lupine Cloud request failed: HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise LupineError(f"Could not reach Lupine Cloud: {exc.reason}") from exc
@@ -88,7 +115,9 @@ class CloudSession:
     gpu: dict[str, Any] = field(default_factory=dict, init=False)
     data_plane: dict[str, Any] = field(default_factory=dict, init=False)
     _loaded: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-    _heartbeat_stop: threading.Event | None = field(default=None, init=False, repr=False)
+    _heartbeat_stop: threading.Event | None = field(
+        default=None, init=False, repr=False
+    )
     _heartbeat_thread: threading.Thread | None = field(
         default=None, init=False, repr=False
     )
@@ -144,12 +173,13 @@ class CloudSession:
                 if isinstance(bound.get("data_plane"), dict)
                 else {}
             )
+            gateway_url = _gateway_url(self.data_plane.get("gateway_endpoint"))
             self._previous_env = {
                 name: os.environ.get(name)
                 for name in ("LUPINE_SESSION", "LUPINE_SERVER")
             }
             os.environ["LUPINE_SESSION"] = lease_id
-            os.environ["LUPINE_SERVER"] = self.api_url
+            os.environ["LUPINE_SERVER"] = gateway_url
             self._start_heartbeat()
 
             from . import load_native

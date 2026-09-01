@@ -97,8 +97,8 @@ def test_libdir_override(monkeypatch, tmp_path):
     assert _native.libdir() == tmp_path
 
 
-def test_libdir_keeps_configured_server_after_bundle_redirect(monkeypatch, tmp_path):
-    monkeypatch.setenv("LUPINE_SERVER", "https://api.lupine.sh")
+def test_libdir_keeps_configured_server(monkeypatch, tmp_path):
+    monkeypatch.setenv("LUPINE_SERVER", "https://gw-east.lupine.sh")
     monkeypatch.delenv("LUPINE_LIBDIR", raising=False)
     monkeypatch.setattr(
         _native._bundles,
@@ -111,7 +111,7 @@ def test_libdir_keeps_configured_server_after_bundle_redirect(monkeypatch, tmp_p
     )
 
     assert _native.libdir() == tmp_path
-    assert os.environ["LUPINE_SERVER"] == "https://api.lupine.sh"
+    assert os.environ["LUPINE_SERVER"] == "https://gw-east.lupine.sh"
 
 
 def test_load_missing_ok_without_libs(monkeypatch, tmp_path):

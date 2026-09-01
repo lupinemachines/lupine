@@ -27,9 +27,9 @@ torch / any CUDA binary ─▶ selected shims ──RPC──▶ lupine server �
 
 `lupine.connect()` exports `LUPINE_SERVER`, downloads and verifies the exact
 client object selected by that server, and preloads it with global visibility
-before CUDA initializes. When the configured server is the stable cloud API,
-bundle discovery and the native HTTP/2 connection follow its 307 to the bound
-gateway without changing `LUPINE_SERVER`, so:
+before CUDA initializes. `lupine.cloud()` first binds through the stable cloud
+API, then uses the returned regional gateway for both bundle discovery and the
+native HTTP/2 connection, so:
 
 - **PyTorch builds with CUDA** keep their normal `torch.device("cuda:N")`
   dispatch; every CUDA call lands on the LUPINE shims.
@@ -75,7 +75,8 @@ server-selected native client. If no credential exists it leaves Python running
 and prints a hint to run one of the login commands above. For CI and other
 headless environments, set `LUPINE_API_TOKEN`.
 
-An explicit `LUPINE_SERVER` or existing `LUPINE_SESSION` still wins. Use
+An explicit `LUPINE_SERVER` still wins. An externally managed
+`LUPINE_SESSION` must be accompanied by its bind-selected `LUPINE_SERVER`. Use
 `LUPINE_GPU_TYPE`, `LUPINE_GPU_COUNT`, and `LUPINE_REGION` to constrain automatic
 placement, and `LUPINE_AUTO=0` to disable the hook for one process.
 
@@ -99,8 +100,9 @@ with lupine.cloud(gpu_type="RTX_4090") as session:
 
 `lupine.cloud()` uses `LUPINE_API_TOKEN` first, then the credential stored by
 `lupine login`, and releases its process-owned lease when the context exits.
-The bearer token is used only for coordinator API calls; bundle and native RPC
-traffic carry the lease ID in `LUPINE_SESSION`.
+The bearer token is used only for coordinator API calls. Bind returns the
+regional gateway used for bundle and native RPC traffic, which carry the lease
+ID in `LUPINE_SESSION`.
 
 ## Layout
 

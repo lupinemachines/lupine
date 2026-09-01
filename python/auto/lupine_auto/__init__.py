@@ -42,9 +42,7 @@ def activate() -> dict[str, str]:
             try:
                 parsed_gpu_count = int(gpu_count) if gpu_count else None
             except ValueError as exc:
-                raise lupine.LupineError(
-                    "LUPINE_GPU_COUNT must be an integer"
-                ) from exc
+                raise lupine.LupineError("LUPINE_GPU_COUNT must be an integer") from exc
             _cloud_session = lupine.cloud(
                 api_url=api_url,
                 gpu_type=os.environ.get("LUPINE_GPU_TYPE"),
@@ -53,7 +51,10 @@ def activate() -> dict[str, str]:
             )
         return dict(_cloud_session.loaded)
 
-    os.environ.setdefault("LUPINE_SERVER", api_url)
+    if session and not server:
+        raise lupine.LupineError(
+            "LUPINE_SERVER must name the bound gateway when LUPINE_SESSION is set"
+        )
     return dict(lupine.load_native(missing_ok=False))
 
 
