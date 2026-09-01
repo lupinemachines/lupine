@@ -21,6 +21,7 @@ from ._credentials import save_token
 
 DEFAULT_API_URL = "https://api.lupine.sh"
 DEFAULT_CONSOLE_URL = "https://console.lupine.sh"
+_USER_AGENT = "lupine-python/2.0.2"
 _SUCCESS_HTML = b"""<!doctype html><html><body style="font-family:monospace;background:#0a0a0a;color:#a3a3a3;padding:2rem"><h2 style="color:#a78bfa">Logged in to Lupine Cloud</h2><p>You can close this tab and return to your terminal.</p></body></html>"""
 
 
@@ -36,6 +37,7 @@ def _request_json(
 ) -> tuple[int, dict[str, Any]]:
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(url, data=data, method=method)
+    request.add_header("User-Agent", _USER_AGENT)
     request.add_header("Accept", "application/json")
     if data is not None:
         request.add_header("Content-Type", "application/json")
@@ -90,9 +92,7 @@ def login(
         "/"
     )
     console_url = (
-        console_url
-        or os.environ.get("LUPINE_CONSOLE_URL")
-        or DEFAULT_CONSOLE_URL
+        console_url or os.environ.get("LUPINE_CONSOLE_URL") or DEFAULT_CONSOLE_URL
     ).rstrip("/")
     login_id = secrets.token_hex(24)
     callback_server, callback = _callback_server()
@@ -111,9 +111,7 @@ def login(
 
         port = callback_server.server_address[1]
         query = urllib.parse.urlencode({"callback_port": port})
-        login_url = (
-            f"{console_url}/login/{urllib.parse.quote(login_id)}?{query}"
-        )
+        login_url = f"{console_url}/login/{urllib.parse.quote(login_id)}?{query}"
         output(f"Open this URL to log in:\n  {login_url}")
         try:
             open_browser(login_url)

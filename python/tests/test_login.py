@@ -1,6 +1,35 @@
 from lupine import _credentials, _login
 
 
+def test_login_requests_identify_the_python_client(monkeypatch):
+    seen = {}
+
+    class Response:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def urlopen(request, *, timeout):
+        seen["user_agent"] = request.get_header("User-agent")
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(_login.urllib.request, "urlopen", urlopen)
+
+    assert _login._request_json("POST", "https://api.lupine.sh/test", {}) == (
+        201,
+        {},
+    )
+    assert seen == {"user_agent": "lupine-python/2.0.2", "timeout": 30}
+
+
 def test_login_runs_browser_flow_and_stores_token(monkeypatch, tmp_path):
     monkeypatch.setenv("LUPINE_STATE_DIR", str(tmp_path))
     monkeypatch.delenv("LUPINE_API_TOKEN", raising=False)

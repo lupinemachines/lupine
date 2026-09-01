@@ -14,13 +14,12 @@ from typing import Any
 
 from . import LupineAuthenticationError, LupineError
 from ._credentials import token_for
-from ._login import DEFAULT_API_URL, DEFAULT_CONSOLE_URL
+from ._login import _USER_AGENT, DEFAULT_API_URL, DEFAULT_CONSOLE_URL
 
 LOGIN_HINT = (
     "Run `uvx lupine login` or `python -m lupine login`, or set LUPINE_API_TOKEN."
 )
 _HEARTBEAT_INTERVAL = 30.0
-_USER_AGENT = "lupine-python/2.0.2"
 
 
 def _api_url(value: str | None = None) -> str:
