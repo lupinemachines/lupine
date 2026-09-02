@@ -12,10 +12,10 @@ cmake -DLUPINE_PRECOMPILED_OPS="$PWD/build/precompiled-ops" \
   -P ops/precompile.cmake
 ```
 
-`smemcpy.cu` copies a packed, device-visible source fragment into a pitched 2D
-or 3D destination. It is intended for HtoD ring slots mapped into the GPU
-address space: the network side fills one contiguous slot and this operation
-restores the destination's row and slice discontinuities.
+`cuda_smemcpy.cu` copies a packed, device-visible source fragment into a
+pitched 2D or 3D destination. It is intended for HtoD ring slots mapped into
+the GPU address space: the network side fills one contiguous slot and this
+operation restores the destination's row and slice discontinuities.
 
 `logical_offset` is the fragment's byte offset in the packed logical region.
 The caller owns both extents and must keep the fragment within them. There is
@@ -235,10 +235,10 @@ be accessed once and with coalesced operations:
 # ROCm scatter memcpy
 
 `hip_smemcpy.hip` is the same operation for AMD GPUs. It is a separate kernel,
-not a portability layer over `smemcpy.cu`: the two hardware families reward
-different code, and keeping them apart lets each be tuned without regressing
-the other. The contract is identical — a packed, device-visible source
-fragment scattered into a pitched 2D or 3D destination — and the parameter
+not a portability layer over `cuda_smemcpy.cu`: the two hardware families
+reward different code, and keeping them apart lets each be tuned without
+regressing the other. The contract is identical: a packed, device-visible
+source fragment scattered into a pitched 2D or 3D destination. Its parameter
 struct differs only in that addresses are plain unsigned integers, because
 `hipDeviceptr_t` is `void *` and cannot carry the operation's arithmetic.
 

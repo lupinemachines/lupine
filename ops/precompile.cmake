@@ -72,7 +72,7 @@ execute_process(
         ${lupine_cuda_flags}
         ${lupine_cuda_gencode_args}
         "-I${lupine_source_dir}"
-        "${CMAKE_CURRENT_LIST_DIR}/smemcpy.cu"
+        "${CMAKE_CURRENT_LIST_DIR}/cuda_smemcpy.cu"
         -o "${lupine_smemcpy_fatbin}"
     RESULT_VARIABLE lupine_smemcpy_result
     COMMAND_ECHO STDOUT)
