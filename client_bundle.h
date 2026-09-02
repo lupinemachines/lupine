@@ -1,23 +1,39 @@
 #ifndef LUPINE_CLIENT_BUNDLE_H
 #define LUPINE_CLIENT_BUNDLE_H
 
-#include <stdint.h>
+#include <stddef.h>
+
 #include <string>
 
-struct lupine_client_bundle {
-  std::string path;
-  std::string etag;
-  std::string content_digest;
-  uint64_t size = 0;
+struct lupine_client_bundle_chunk {
+  const char *data;
+  size_t size;
 };
 
-// Looks up one immutable client bundle below root. Platform names are the
-// public protocol values (for example "linux/amd64"), not build-system tags.
-// Returns false for an unsupported platform or an incomplete bundle entry.
-bool lupine_client_bundle_lookup(const char *root, const std::string &platform,
-                                 lupine_client_bundle *bundle);
+struct lupine_client_bundle_payload {
+  const char *etag;
+  const char *content_digest;
+  const lupine_client_bundle_chunk *chunks;
+  size_t chunk_count;
+  size_t size;
+};
 
-// Extracts the platform from the versioned HTTP endpoint.
+struct lupine_client_bundle_entry {
+  const char *platform;
+  const lupine_client_bundle_payload *payload;
+};
+
+struct lupine_client_bundle_registry {
+  const lupine_client_bundle_entry *entries;
+  size_t entry_count;
+};
+
+extern const lupine_client_bundle_registry lupine_embedded_client_bundles;
+
+const lupine_client_bundle_payload *
+lupine_client_bundle_lookup(const lupine_client_bundle_registry *registry,
+                            const std::string &platform);
+
 bool lupine_client_bundle_request_platform(const std::string &path,
                                            std::string *platform);
 

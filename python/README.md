@@ -113,7 +113,5 @@ lupine/
   _libs/         (in wheels) per-platform CUDA runtime stubs
 ```
 
-`build.py stage-runtime <tag> <dir>` copies exactly one runtime stub into the
-wheel staging tree. The Python workflow never stages complete clients. The
-server-image workflow passes its driver/runtime/NVML artifacts directly to
-`build.py bundles`; they never enter the Python package tree.
+The Python workflow stages one runtime stub per platform in the wheel. Server
+workflows publish complete clients separately for CMake to embed.

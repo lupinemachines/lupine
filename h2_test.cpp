@@ -1,3 +1,4 @@
+#include "client_bundle.h"
 #include "lupine_log.h"
 #include "rpc.h"
 #include "test_platform.h"
@@ -10,8 +11,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <nghttp2/nghttp2.h>
 #include <string>
@@ -424,32 +423,25 @@ void test_head_probe_cuda_version_metadata(const char *expected_cuda_version) {
   }
 }
 
-struct client_bundle_fixture {
-  std::filesystem::path root;
-  std::string etag =
-      "\"sha256:"
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
-
-  client_bundle_fixture() {
-    char directory[] = "/tmp/lupine-h2-bundle-test-XXXXXX";
-    const char *created = mkdtemp(directory);
-    require(created != nullptr, "create h2 bundle fixture failed");
-    root = created;
-    std::filesystem::path platform = root / "linux" / "amd64";
-    std::filesystem::create_directories(platform);
-    std::ofstream(platform / "client.zip", std::ios::binary) << "bundle";
-    std::ofstream(platform / "client.zip.etag") << etag << '\n';
-    std::ofstream(platform / "client.zip.digest") << "sha-256=:YnVuZGxl:\n";
-  }
-
-  ~client_bundle_fixture() { std::filesystem::remove_all(root); }
+constexpr char kClientBundleEtag[] =
+    "\"sha256:"
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
+const char kClientBundleData[] = "bundle";
+const lupine_client_bundle_chunk kClientBundleChunks[] = {
+    {kClientBundleData, sizeof(kClientBundleData) - 1},
 };
+const lupine_client_bundle_payload kClientBundle = {
+    kClientBundleEtag, "sha-256=:YnVuZGxl:", kClientBundleChunks, 1,
+    sizeof(kClientBundleData) - 1};
+const lupine_client_bundle_entry kClientBundleEntries[] = {
+    {"linux/amd64", &kClientBundle},
+};
+const lupine_client_bundle_registry kClientBundles = {kClientBundleEntries, 1};
 
 // The selected object's ETag rides the session's own connection, so the
 // server can close a discovery/connect race without a second dial.
 void test_client_await_ready_accepts_current_bundle() {
-  client_bundle_fixture fixture;
-  lupine_test_setenv("LUPINE_CLIENT_ETAG", fixture.etag.c_str());
+  lupine_test_setenv("LUPINE_CLIENT_ETAG", kClientBundleEtag);
   lupine_test_setenv("LUPINE_CLIENT_PLATFORM", "linux/amd64");
   h2_pair pair;
   init_pair_sockets(&pair);
@@ -459,7 +451,7 @@ void test_client_await_ready_accepts_current_bundle() {
     require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
     ready = rpc_http2_client_await_ready(&pair.client);
   });
-  rpc_http2_server_metadata metadata = {nullptr, fixture.root.c_str()};
+  rpc_http2_server_metadata metadata = {nullptr, &kClientBundles};
   require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
           "server rejected current client bundle");
   client.join();
@@ -470,7 +462,6 @@ void test_client_await_ready_accepts_current_bundle() {
 }
 
 void test_client_await_ready_rejects_stale_bundle() {
-  client_bundle_fixture fixture;
   lupine_test_setenv(
       "LUPINE_CLIENT_ETAG",
       "\"sha256:"
@@ -484,7 +475,7 @@ void test_client_await_ready_rejects_stale_bundle() {
     require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
     ready = rpc_http2_client_await_ready(&pair.client);
   });
-  rpc_http2_server_metadata metadata = {nullptr, fixture.root.c_str()};
+  rpc_http2_server_metadata metadata = {nullptr, &kClientBundles};
   require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 1,
           "server dispatched a stale client bundle");
   client.join();

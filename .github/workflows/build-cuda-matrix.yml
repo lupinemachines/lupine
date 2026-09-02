@@ -18,8 +18,13 @@ permissions:
   contents: write
 
 jobs:
+  native-clients:
+    name: Build all native client variants
+    uses: ./.github/workflows/native-clients.yml
+
   build:
     name: ${{ matrix.component }} CUDA ${{ matrix.cuda }} / Ubuntu ${{ matrix.ubuntu }}
+    needs: native-clients
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -49,13 +54,29 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Download all native client variants
+        if: matrix.component == 'server'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lupine-client-*
+          path: client-libs
+          merge-multiple: false
+
       - name: Build ${{ matrix.component }}
         run: |
+          set -euo pipefail
+          bundle_args=()
+          if [ "${{ matrix.component }}" = server ]; then
+            bundle_args+=(
+              --build-arg LUPINE_CLIENT_BUNDLE_INPUT=/opt/lupine/client-libs
+            )
+          fi
           docker build \
             -f Dockerfile \
             --target "${{ matrix.component }}" \
             --build-arg CUDA_VERSION="${{ matrix.cuda }}" \
             --build-arg UBUNTU_VERSION="${{ matrix.ubuntu }}" \
+            "${bundle_args[@]}" \
             -t "lupine-${{ matrix.component }}:cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}" \
             .
 
@@ -77,6 +98,7 @@ jobs:
             docker run --rm --entrypoint bash "$image" -lc '
               set -euo pipefail
               test -x /opt/lupine/bin/lupine_driver_server
+              test ! -e /opt/lupine/client-bundles
               test -e /usr/local/cuda/compat/libcuda.so.1
               test -e /opt/rocm/lib/libamdhip64.so
               ! ldd /opt/lupine/bin/lupine_driver_server | grep -q "not found"

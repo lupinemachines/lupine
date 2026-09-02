@@ -27,7 +27,7 @@ lupine-auto = { path = "auto" }
 [tool.hatch.build.targets.wheel]
 packages = ["lupine"]
 # The Python workflow stages only CUDA runtime translation stubs. Complete
-# driver/NVML clients are built by the server-image workflow and must never
+# driver/NVML clients are published separately and must never
 # enter the wheel. Keep native staging excluded from package discovery, then
 # allowlist only the runtime filenames.
 exclude = ["lupine/_libs/**"]

@@ -9,6 +9,8 @@ FROM nvidia/cuda:${CUDA_VERSION}-${CUDA_IMAGE_FLAVOR}-ubuntu${UBUNTU_VERSION} AS
 
 FROM --platform=${ROCM_SDK_PLATFORM} ${ROCM_SDK_IMAGE} AS rocm-sdk
 
+FROM ghcr.io/astral-sh/uv:0.9.18-python3.12-bookworm-slim@sha256:0b074d1ae15f5c3f1861354917d356e5afbd5a4c53c1190e81ad2f2add46e45b AS uv
+
 FROM cuda-sdk AS cuda-ops
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -29,6 +31,7 @@ FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CMAKE_BUILD_TYPE=Release
+ARG LUPINE_CLIENT_BUNDLE_INPUT
 ARG CUDA_VERSION
 
 # Device operations are precompiled in their own SDK stages. The main builder
@@ -38,6 +41,7 @@ COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
 COPY --from=cuda-ops /opt/lupine-precompiled-ops/ /opt/lupine-precompiled-ops/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
+COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
 
 ENV CUDA_HOME=/usr/local/cuda
 
@@ -49,6 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnghttp2-dev \
     libssl-dev \
     ninja-build \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/lupine
@@ -60,6 +65,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
       -DLUPINE_CUDA_DRIVER_LIBRARY="${CUDA_HOME}/lib64/stubs/libcuda.so" \
       -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}" \
+      -DLUPINE_CLIENT_BUNDLE_INPUT="${LUPINE_CLIENT_BUNDLE_INPUT}" \
       -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops
 
 FROM builder AS client-build
@@ -68,6 +74,10 @@ RUN cmake --build /opt/lupine/build --parallel \
       --target lupine_cuda_client lupine_nvml_client lupine_hip_client
 
 FROM builder AS server-build
+
+ARG LUPINE_CLIENT_BUNDLE_INPUT
+
+RUN test -n "${LUPINE_CLIENT_BUNDLE_INPUT}"
 
 RUN cmake --build /opt/lupine/build --parallel --target lupine_driver_server
 
@@ -145,7 +155,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG AMDGPU_INSTALL_VERSION=7.2.4.70204-1
 ARG CUDA_KEYRING_VERSION=1.1-1
 ARG CUDA_VERSION
-ARG LUPINE_REQUIRE_CLIENT_BUNDLES=0
 ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
@@ -197,23 +206,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* /tmp/*.deb
 
 COPY --from=server-build /opt/lupine/build/lupine_driver_server /opt/lupine/bin/lupine_driver_server
-COPY client-bundles/ /opt/lupine/client-bundles/
-
-RUN set -eux; \
-    if [ "${LUPINE_REQUIRE_CLIENT_BUNDLES}" = 1 ]; then \
-      for platform in \
-        linux/amd64 linux/arm64 \
-        macos/amd64 macos/arm64 \
-        windows/amd64 windows/arm64; do \
-        test -s "/opt/lupine/client-bundles/${platform}/client.zip"; \
-        test -s "/opt/lupine/client-bundles/${platform}/client.zip.etag"; \
-        test -s "/opt/lupine/client-bundles/${platform}/client.zip.digest"; \
-      done; \
-    fi
 
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/compat:/opt/rocm/lib
 ENV LUPINE_PORT=14833
-ENV LUPINE_CLIENT_BUNDLE_DIR=/opt/lupine/client-bundles
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 

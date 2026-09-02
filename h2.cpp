@@ -109,7 +109,7 @@ struct h2_transport {
   std::string client_etag;
   std::string client_platform;
   std::string expected_client_etag;
-  std::string client_bundle_dir;
+  const lupine_client_bundle_registry *client_bundles = nullptr;
   std::string server_version;
   std::string session_id;
   std::string peer_va_base;
@@ -694,16 +694,16 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     if (!probe && status == 200 &&
         (!transport->client_etag.empty() ||
          !transport->client_platform.empty())) {
-      lupine_client_bundle bundle;
       bool complete = !transport->client_etag.empty() &&
                       !transport->client_platform.empty();
-      bool found = complete && lupine_client_bundle_lookup(
-                                   transport->client_bundle_dir.c_str(),
-                                   transport->client_platform, &bundle);
-      if (found) {
-        transport->expected_client_etag = bundle.etag;
+      const lupine_client_bundle_payload *bundle =
+          complete ? lupine_client_bundle_lookup(transport->client_bundles,
+                                                 transport->client_platform)
+                   : nullptr;
+      if (bundle != nullptr) {
+        transport->expected_client_etag = bundle->etag;
       }
-      if (!found || transport->client_etag != bundle.etag) {
+      if (bundle == nullptr || transport->client_etag != bundle->etag) {
         status = 426;
       }
     }
@@ -1026,8 +1026,8 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   if (metadata != nullptr && metadata->backend_version != nullptr) {
     transport->server_version = metadata->backend_version;
   }
-  if (metadata != nullptr && metadata->client_bundle_dir != nullptr) {
-    transport->client_bundle_dir = metadata->client_bundle_dir;
+  if (metadata != nullptr) {
+    transport->client_bundles = metadata->client_bundles;
   }
 
   nghttp2_session_callbacks *callbacks = nullptr;
