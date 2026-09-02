@@ -87,8 +87,9 @@ def redirect_server(target):
             state["requests"].append(
                 {name.lower(): value for name, value in self.headers.items()}
             )
+            safe_path = self.path.replace("\r", "").replace("\n", "")
             self.send_response(307)
-            self.send_header("Location", target + self.path)
+            self.send_header("Location", target + safe_path)
             self.end_headers()
 
         def log_message(self, format, *args):
