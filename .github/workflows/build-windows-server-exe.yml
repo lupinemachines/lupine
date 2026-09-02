@@ -17,8 +17,13 @@ permissions:
   contents: write
 
 jobs:
+  native-clients:
+    name: Build all native client variants
+    uses: ./.github/workflows/native-clients.yml
+
   build:
     name: Windows server executable CUDA ${{ matrix.cuda }}
+    needs: native-clients
     runs-on: windows-2022
     timeout-minutes: 90
     strategy:
@@ -45,6 +50,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Download all native client variants
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lupine-client-*
+          path: client-libs
+          merge-multiple: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.18"
 
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.36
@@ -87,7 +104,8 @@ jobs:
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
             "-DOPENSSL_USE_STATIC_LIBS=ON" `
             "-DCMAKE_CUDA_FLAGS=${{ matrix.cuda_flags }}" `
-            "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+            "-DCUDAToolkit_ROOT=$env:CUDA_PATH" `
+            "-DLUPINE_CLIENT_BUNDLE_INPUT=$PWD\client-libs"
 
       - name: Build
         run: cmake --build build/windows-server --config Release --target lupine_driver_server lupine_cuda_smemcpy --parallel

@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <fstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -41,11 +40,10 @@ ssize_t peek_bytes(lupine_socket_t fd, unsigned char *data, size_t size) {
 #endif
 }
 
-bool send_all(lupine_socket_t fd, const std::string &data) {
+bool send_all(lupine_socket_t fd, const char *data, size_t size) {
   size_t offset = 0;
-  while (offset < data.size()) {
-    struct iovec buffer = {const_cast<char *>(data.data()) + offset,
-                           data.size() - offset};
+  while (offset < size) {
+    struct iovec buffer = {const_cast<char *>(data) + offset, size - offset};
     ssize_t sent = lupine_socket_sendv(fd, &buffer, 1);
     if (sent <= 0) {
       return false;
@@ -53,6 +51,10 @@ bool send_all(lupine_socket_t fd, const std::string &data) {
     offset += static_cast<size_t>(sent);
   }
   return true;
+}
+
+bool send_all(lupine_socket_t fd, const std::string &data) {
+  return send_all(fd, data.data(), data.size());
 }
 
 using http_header = std::pair<std::string, std::string>;
@@ -99,21 +101,17 @@ std::string http1_response(int status, const char *reason,
   return response;
 }
 
-bool send_file(lupine_socket_t fd, const std::string &path) {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    return false;
-  }
-  char data[64 * 1024];
-  while (input) {
-    input.read(data, sizeof(data));
-    std::streamsize size = input.gcount();
-    if (size > 0 &&
-        !send_all(fd, std::string(data, static_cast<size_t>(size)))) {
+bool send_bundle(lupine_socket_t fd,
+                 const lupine_client_bundle_payload &bundle) {
+  size_t sent = 0;
+  for (size_t i = 0; i < bundle.chunk_count; ++i) {
+    const lupine_client_bundle_chunk &chunk = bundle.chunks[i];
+    if (chunk.data == nullptr || !send_all(fd, chunk.data, chunk.size)) {
       return false;
     }
+    sent += chunk.size;
   }
-  return input.eof();
+  return sent == bundle.size;
 }
 
 std::string ascii_lower(std::string value) {
@@ -169,10 +167,11 @@ int serve_client_bundle(lupine_socket_t fd, const std::string &method,
   if (!lupine_client_bundle_request_platform(path, &platform)) {
     return 0;
   }
-  lupine_client_bundle bundle;
-  const char *root =
-      metadata == nullptr ? nullptr : metadata->client_bundle_dir;
-  if (!lupine_client_bundle_lookup(root, platform, &bundle)) {
+  const lupine_client_bundle_registry *registry =
+      metadata == nullptr ? nullptr : metadata->client_bundles;
+  const lupine_client_bundle_payload *bundle =
+      lupine_client_bundle_lookup(registry, platform);
+  if (bundle == nullptr) {
     send_all(fd,
              http1_response(503, "Service Unavailable",
                             "client bundle unavailable\n", !head, metadata));
@@ -180,23 +179,23 @@ int serve_client_bundle(lupine_socket_t fd, const std::string &method,
   }
 
   std::vector<http_header> headers = {
-      {"etag", bundle.etag},
-      {"content-digest", bundle.content_digest},
+      {"etag", bundle->etag},
+      {"content-digest", bundle->content_digest},
       {"cache-control", "no-cache"},
   };
-  if (request_header(request, "if-none-match") == bundle.etag) {
+  if (request_header(request, "if-none-match") == bundle->etag) {
     return send_all(fd, http1_headers(304, "Not Modified", 0, nullptr, headers,
                                       metadata))
                ? 1
                : -1;
   }
 
-  if (!send_all(fd, http1_headers(200, "OK", bundle.size,
+  if (!send_all(fd, http1_headers(200, "OK", bundle->size,
                                   "application/vnd.lupine.client-bundle.v1+zip",
                                   headers, metadata))) {
     return -1;
   }
-  return head || send_file(fd, bundle.path) ? 1 : -1;
+  return head || send_bundle(fd, *bundle) ? 1 : -1;
 }
 
 int serve_http1(lupine_socket_t fd, const rpc_http2_server_metadata *metadata) {

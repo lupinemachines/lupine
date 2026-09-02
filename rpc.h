@@ -254,9 +254,10 @@ extern int rpc_http2_client_init(conn_t *conn);
 extern int rpc_http2_client_await_ready(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
+struct lupine_client_bundle_registry;
 struct rpc_http2_server_metadata {
-  const char *backend_version;
-  const char *client_bundle_dir;
+  const char *backend_version = nullptr;
+  const lupine_client_bundle_registry *client_bundles = nullptr;
 };
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.

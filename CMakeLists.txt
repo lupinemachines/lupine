@@ -20,6 +20,8 @@ set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
     "CUDA version reported by an SDK-free server build")
 set(LUPINE_PRECOMPILED_OPS "" CACHE PATH
     "Optional directory containing precompiled device operations")
+set(LUPINE_CLIENT_BUNDLE_INPUT "" CACHE PATH
+    "Directory containing staged native clients to embed in the server")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -419,6 +421,57 @@ if(LUPINE_BUILD_SERVER)
         ${CUDAToolkit_INCLUDE_DIRS})
     target_link_libraries(lupine_driver_server PRIVATE
         lupine_server_core lupine_ipc ${CMAKE_DL_LIBS})
+    if(LUPINE_CLIENT_BUNDLE_INPUT)
+        if(NOT IS_DIRECTORY "${LUPINE_CLIENT_BUNDLE_INPUT}")
+            message(FATAL_ERROR
+                "LUPINE_CLIENT_BUNDLE_INPUT is not a directory: ${LUPINE_CLIENT_BUNDLE_INPUT}")
+        endif()
+        find_program(UV_EXECUTABLE uv REQUIRED)
+        set(LUPINE_CLIENT_BUNDLE_GENERATED_DIR
+            ${CMAKE_CURRENT_BINARY_DIR}/client-bundles)
+
+        function(lupine_embed_client_bundle tag platforms)
+            set(files ${ARGN})
+            set(input_dir
+                ${LUPINE_CLIENT_BUNDLE_INPUT}/lupine-client-${tag})
+            set(output_dir ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag})
+            set(archive ${output_dir}/client.zip)
+            set(source ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag}.cpp)
+            string(REPLACE "-" "_" symbol ${tag})
+            set(inputs)
+            foreach(file IN LISTS files)
+                list(APPEND inputs ${input_dir}/${file})
+            endforeach()
+            add_custom_command(
+                OUTPUT ${source}
+                BYPRODUCTS ${archive}
+                COMMAND ${UV_EXECUTABLE} run --script
+                        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bundle_codegen.py
+                        ${input_dir} ${archive} "${platforms}"
+                        lupine_embedded_client_bundle_${symbol} ${source} ${files}
+                DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bundle_codegen.py
+                        ${inputs}
+                COMMENT "Embedding ${tag} client bundle"
+                VERBATIM)
+            target_sources(lupine_driver_server PRIVATE ${source})
+        endfunction()
+
+        lupine_embed_client_bundle(linux-x86_64 "linux/amd64"
+            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+        lupine_embed_client_bundle(linux-aarch64 "linux/arm64"
+            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+        lupine_embed_client_bundle(macosx-universal2
+            "macos/amd64;macos/arm64"
+            libcuda.dylib libcudart.dylib libnvidia-ml.dylib)
+        lupine_embed_client_bundle(win-amd64 "windows/amd64"
+            nvcuda.dll cudart64_13.dll nvml.dll)
+        lupine_embed_client_bundle(win-arm64 "windows/arm64"
+            nvcuda.dll cudart64_13.dll nvml.dll)
+        target_compile_definitions(lupine_driver_server PRIVATE
+            LUPINE_EMBED_CLIENT_BUNDLES)
+        message(STATUS
+            "Embedding server client bundles from: ${LUPINE_CLIENT_BUNDLE_INPUT}")
+    endif()
     if(LUPINE_BUILD_CUDA)
         target_compile_definitions(lupine_driver_server PRIVATE
             LUPINE_BUILD_CUDA_BACKEND

@@ -56,11 +56,12 @@ as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
 
 ## Client compatibility
 
-Each production server image carries the matching Linux, macOS, and Windows
-client objects for amd64 and arm64. Python clients fetch the current object
-from `/.well-known/lupine/client/v1/<os>/<arch>`, verify its strong ETag,
-content digest, manifest, and file hashes, and cache it locally. The selected
-ETag is also asserted when the RPC connection opens, closing the race between
+Each production server executable embeds the matching Linux, macOS, and
+Windows client objects for amd64 and arm64; there is no client-bundle directory
+to deploy beside it. Python clients fetch the current object from
+`/.well-known/lupine/client/v1/<os>/<arch>`, verify its strong ETag, content
+digest, manifest, and file hashes, and cache it locally. The selected ETag is
+also asserted when the RPC connection opens, closing the race between
 discovery and a server upgrade. `LUPINE_LIBDIR` remains an explicit local
 override for development.
 
@@ -306,6 +307,12 @@ cmake --build build
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NVML shim at
 `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
 server at `build/lupine_driver_server`.
+
+Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
+native client directories. CMake deterministically assembles all six platform
+routes and links them into `lupine_driver_server`. The Docker `server` target
+requires that generated registry, so a server image cannot be produced without
+the clients.
 
 The Lupine server must be running before initiating client commands.
 
