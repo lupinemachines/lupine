@@ -11,37 +11,19 @@ FROM --platform=${ROCM_SDK_PLATFORM} ${ROCM_SDK_IMAGE} AS rocm-sdk
 
 FROM cuda-sdk AS cuda-ops
 
+ARG DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /opt/lupine
 
-COPY ops/smemcpy.cu ops/smemcpy.h ops/smemcpy_dispatch.h /opt/lupine/ops/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
 
-# Precompile CUDA operations before entering the SDK-neutral builder. Include
-# native code for every architecture accepted by this toolkit and PTX for the
-# oldest one as a forward-compatible fallback.
-RUN set -eux; \
-    set --; \
-    oldest=""; \
-    for code in $(nvcc --list-gpu-code); do \
-      arch="${code#sm_}"; \
-      if [ -z "$oldest" ] || [ "$arch" -lt "$oldest" ]; then \
-        oldest="$arch"; \
-      fi; \
-      set -- "$@" \
-        "--generate-code=arch=compute_${arch},code=sm_${arch}"; \
-    done; \
-    test -n "$oldest"; \
-    set -- "$@" \
-      "--generate-code=arch=compute_${oldest},code=compute_${oldest}"; \
-    mkdir -p /opt/lupine-precompiled-ops/cuda; \
-    nvcc -std=c++17 --fatbin "$@" \
-      -I/opt/lupine /opt/lupine/ops/smemcpy.cu \
-      -o /tmp/lupine_smemcpy.fatbin; \
-    bin2c --const --name lupine_smemcpy_fatbin \
-      /tmp/lupine_smemcpy.fatbin \
-      > /opt/lupine-precompiled-ops/cuda/smemcpy.cpp; \
-    printf '\nextern "C" const void *lupine_cuda_smemcpy_image() {\n  return lupine_smemcpy_fatbin;\n}\n' \
-      >> /opt/lupine-precompiled-ops/cuda/smemcpy.cpp; \
-    rm /tmp/lupine_smemcpy.fatbin
+COPY ops/precompile.cmake ops/smemcpy.cu ops/smemcpy.h ops/smemcpy_dispatch.h /opt/lupine/ops/
+
+RUN cmake \
+      -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops \
+      -P /opt/lupine/ops/precompile.cmake
 
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
@@ -85,64 +67,16 @@ FROM builder AS client-build
 RUN cmake --build /opt/lupine/build --parallel \
       --target lupine_cuda_client lupine_nvml_client lupine_hip_client
 
-RUN test -e /opt/lupine/build/libcuda.so.1 \
-    && test -e /opt/lupine/build/libnvidia-ml.so.1 \
-    && test -e /opt/lupine/build/libamdhip64.so.1 \
-    && ln -sf libcuda.so.1 /opt/lupine/build/libcuda.so \
-    && ln -sf libnvidia-ml.so.1 /opt/lupine/build/libnvidia-ml.so \
-    && ln -sf libamdhip64.so.1 /opt/lupine/build/libamdhip64.so \
-    && ! nm -D --defined-only /opt/lupine/build/libcuda.so.1 \
-      | awk '{print $3}' \
-      | grep -E '^cuda'
-
 FROM builder AS server-build
 
 RUN cmake --build /opt/lupine/build --parallel --target lupine_driver_server
-
-RUN test -x /opt/lupine/build/lupine_driver_server
-
-FROM cuda-sdk AS nvidia-utils
-
-ARG DEBIAN_FRONTEND=noninteractive
-ARG NVIDIA_UTILS_PACKAGE=nvidia-utils-535
-ARG NVIDIA_UTILS_VERSION=
-
-# Ubuntu periodically turns an older nvidia-utils-NNN into an empty
-# transitional package (Depends on a newer NNN, no binaries of its own) as
-# driver branches age out, so the pinned NVIDIA_UTILS_PACKAGE can silently
-# stop shipping nvidia-smi. Try the pin first, then fall back to whichever
-# nvidia-utils-NNN (newest first) actually contains it.
-RUN set -eux; \
-    apt-get update; \
-    mkdir -p /tmp/nvidia-utils; \
-    cd /tmp/nvidia-utils; \
-    try_nvidia_utils() { \
-      rm -f ./*.deb; \
-      rm -rf /tmp/nvidia-utils/root; \
-      apt-get download "$1" >/dev/null 2>&1 || return 1; \
-      dpkg-deb -x ./*.deb /tmp/nvidia-utils/root || return 1; \
-      test -x /tmp/nvidia-utils/root/usr/bin/nvidia-smi; \
-    }; \
-    found=""; \
-    if [ -n "$NVIDIA_UTILS_VERSION" ]; then \
-      try_nvidia_utils "${NVIDIA_UTILS_PACKAGE}=${NVIDIA_UTILS_VERSION}" && found=1; \
-    else \
-      try_nvidia_utils "${NVIDIA_UTILS_PACKAGE}" && found=1; \
-    fi; \
-    if [ -z "$found" ]; then \
-      for pkg in $(apt-cache search --names-only '^nvidia-utils-[0-9]+$' | awk '{print $1}' | sort -t- -k3 -rn); do \
-        if try_nvidia_utils "$pkg"; then found=1; break; fi; \
-      done; \
-    fi; \
-    test -n "$found"; \
-    cp /tmp/nvidia-utils/root/usr/bin/nvidia-smi /nvidia-smi; \
-    chmod +x /nvidia-smi; \
-    rm -rf /var/lib/apt/lists/* /tmp/nvidia-utils
 
 FROM ubuntu:${UBUNTU_VERSION} AS client
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CUDA_VERSION
+ARG NVIDIA_UTILS_PACKAGE=nvidia-utils-535
+ARG NVIDIA_UTILS_VERSION=
 ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
@@ -161,7 +95,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64) \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=nvidia-utils /nvidia-smi /usr/bin/nvidia-smi
+# Ubuntu periodically turns an older nvidia-utils-NNN into an empty
+# transitional package (Depends on a newer NNN, no binaries of its own) as
+# driver branches age out, so the pinned NVIDIA_UTILS_PACKAGE can silently
+# stop shipping nvidia-smi. Try the pin first, then fall back to whichever
+# nvidia-utils-NNN (newest first) actually contains it.
+RUN set -eux; \
+    apt-get update; \
+    mkdir -p /tmp/nvidia-utils; \
+    cd /tmp/nvidia-utils; \
+    try_nvidia_utils() { \
+      rm -f ./*.deb; \
+      rm -rf /tmp/nvidia-utils/root; \
+      apt-get download "$1" >/dev/null 2>&1 || return 1; \
+      dpkg-deb -x ./*.deb /tmp/nvidia-utils/root || return 1; \
+      test -x /tmp/nvidia-utils/root/usr/bin/nvidia-smi; \
+    }; \
+    requested="$NVIDIA_UTILS_PACKAGE"; \
+    if [ -n "$NVIDIA_UTILS_VERSION" ]; then \
+      requested="${NVIDIA_UTILS_PACKAGE}=${NVIDIA_UTILS_VERSION}"; \
+    fi; \
+    if ! try_nvidia_utils "$requested"; then \
+      for pkg in $(apt-cache search --names-only '^nvidia-utils-[0-9]+$' | awk '{print $1}' | sort -t- -k3 -rn); do \
+        if try_nvidia_utils "$pkg"; then break; fi; \
+      done; \
+    fi; \
+    cp /tmp/nvidia-utils/root/usr/bin/nvidia-smi /usr/bin/nvidia-smi; \
+    rm -rf /var/lib/apt/lists/* /tmp/nvidia-utils
 
 COPY --from=client-build /opt/lupine/build/libcuda.so.1 /opt/lupine/lib/libcuda.so.1
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
@@ -178,15 +138,6 @@ ENV LD_LIBRARY_PATH=/opt/lupine/lib
 
 ENTRYPOINT []
 CMD ["bash"]
-
-FROM client AS client-slim
-
-ARG CUDA_VERSION
-ARG ROCM_VERSION
-ARG UBUNTU_VERSION
-
-LABEL org.opencontainers.image.description="LUPINE SDK-free client runtime with CUDA, NVML, and HIP shims"
-LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}-slim"
 
 FROM ubuntu:${UBUNTU_VERSION} AS server
 
@@ -259,8 +210,6 @@ RUN set -eux; \
         test -s "/opt/lupine/client-bundles/${platform}/client.zip.digest"; \
       done; \
     fi
-
-RUN chmod +x /opt/lupine/bin/lupine_driver_server
 
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/compat:/opt/rocm/lib
 ENV LUPINE_PORT=14833

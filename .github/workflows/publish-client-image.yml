@@ -75,12 +75,6 @@ jobs:
               echo 'ghcr.io/${{ github.repository_owner }}/lupine-client:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}-${{ matrix.platform.arch }}'
             fi
             echo 'EOF'
-            echo 'slim<<EOF'
-            echo 'ghcr.io/${{ github.repository_owner }}/lupine-client:cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}-slim-${{ matrix.platform.arch }}'
-            if [ '${{ github.event_name }}' = 'release' ]; then
-              echo 'ghcr.io/${{ github.repository_owner }}/lupine-client:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}-slim-${{ matrix.platform.arch }}'
-            fi
-            echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and publish client image
@@ -95,22 +89,6 @@ jobs:
             CUDA_VERSION=${{ matrix.cuda.version }}
             UBUNTU_VERSION=${{ matrix.cuda.ubuntu }}
           tags: ${{ steps.image-tags.outputs.client }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-
-      - name: Build and publish slim client tag
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile
-          target: client-slim
-          platforms: ${{ matrix.platform.docker_platform }}
-          push: ${{ github.event_name != 'pull_request' }}
-          build-args: |
-            CUDA_VERSION=${{ matrix.cuda.version }}
-            UBUNTU_VERSION=${{ matrix.cuda.ubuntu }}
-          tags: ${{ steps.image-tags.outputs.slim }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -162,18 +140,10 @@ jobs:
             --tag "${image}" \
             "${image}-amd64" \
             "${image}-arm64"
-          docker buildx imagetools create \
-            --tag "${image}-slim" \
-            "${image}-slim-amd64" \
-            "${image}-slim-arm64"
           if [ '${{ github.event_name }}' = 'release' ]; then
             release_image="ghcr.io/${{ github.repository_owner }}/lupine-client:${{ github.event.release.tag_name }}-cuda-${{ matrix.cuda.version }}-ubuntu${{ matrix.cuda.ubuntu }}"
             docker buildx imagetools create \
               --tag "${release_image}" \
               "${release_image}-amd64" \
               "${release_image}-arm64"
-            docker buildx imagetools create \
-              --tag "${release_image}-slim" \
-              "${release_image}-slim-amd64" \
-              "${release_image}-slim-arm64"
           fi
