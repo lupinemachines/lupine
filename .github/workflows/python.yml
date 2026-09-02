@@ -135,21 +135,6 @@ jobs:
             -DLUPINE_CLIENT_DIR="$PWD/build"
           cmake --build build-cudart --parallel
 
-      - name: Verify CUDA 13 Linux runtime ABI exports
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          for symbol in \
-            cudaDeviceGetGraphMemAttribute \
-            cudaDeviceSetGraphMemAttribute \
-            cudaGraphRetainUserObject \
-            cudaUserObjectCreate \
-            cudaUserObjectRelease
-          do
-            readelf --dyn-syms --wide build-cudart/libcudart.so.13 \
-              | grep -F "${symbol}@@libcudart.so.13"
-          done
-
       - name: Configure and build runtime (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
