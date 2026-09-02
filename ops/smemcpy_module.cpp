@@ -1,14 +1,14 @@
 #include "ops/smemcpy_module.h"
 
-#include <cstring>
+#include "smemcpy.inc"
 
-extern "C" const void *lupine_cuda_smemcpy_image();
+#include <cstring>
 
 extern "C" CUresult lupine_smemcpy_module_load(CUmodule *module) {
   if (module == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  return cuModuleLoadData(module, lupine_cuda_smemcpy_image());
+  return cuModuleLoadData(module, lupine_smemcpy_fatbin);
 }
 
 extern "C" CUresult

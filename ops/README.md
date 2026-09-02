@@ -3,7 +3,7 @@
 Server builds compile operations with the available accelerator SDKs by
 default. SDK-neutral builds can instead set `LUPINE_PRECOMPILED_OPS` to a
 directory produced separately by each SDK. Artifacts live below a backend
-directory; the current CUDA artifact is `cuda/smemcpy.cpp`, with HIP and
+directory; the current CUDA artifact is `cuda/smemcpy.inc`, with HIP and
 additional operations able to share the same top-level path. Build a bundle
 with:
 
