@@ -2,7 +2,7 @@ get_property(enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
 
 if("CUDA" IN_LIST enabled_languages)
     add_library(lupine_cuda_smemcpy STATIC
-        smemcpy.cu
+        cuda_smemcpy.cu
         smemcpy_dispatch.cpp)
     target_include_directories(lupine_cuda_smemcpy PUBLIC
         ${PROJECT_SOURCE_DIR}
@@ -46,7 +46,7 @@ if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/precompile.cmake"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/precompile.cmake"
-                smemcpy.cu
+                cuda_smemcpy.cu
                 smemcpy.h
                 smemcpy_dispatch.h
             VERBATIM)

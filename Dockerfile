@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ops/precompile.cmake ops/smemcpy.cu ops/smemcpy.h ops/smemcpy_dispatch.h /opt/lupine/ops/
+COPY ops/precompile.cmake ops/cuda_smemcpy.cu ops/smemcpy.h ops/smemcpy_dispatch.h /opt/lupine/ops/
 
 RUN cmake \
       -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops \
