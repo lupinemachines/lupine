@@ -3,42 +3,6 @@
 LUPINE is a GPU over IP bridge allowing GPUs on remote machines to be attached
 to CPU-only machines.
 
-## Lupine Cloud
-
-The Lupine CLI acquires a GPU lease, selects its regional gateway, and exports
-the session environment for the command it launches:
-
-```sh
-lupine run -- nvidia-smi -L
-```
-
-Python applications can authenticate and acquire a cloud GPU without the Go
-CLI. Log in once, then install the automatic startup hook:
-
-```sh
-uvx lupine login
-# Equivalent after installation: python -m lupine login
-pip install "lupine[auto]"
-python existing_torch_program.py
-```
-
-The hook waits until the first CUDA consumer is imported, acquires and binds a
-lease with the stored credential, and preloads the server-selected native
-client. For CI, set `LUPINE_API_TOKEN` instead of using browser login. Set
-`LUPINE_AUTO=0` to disable the hook for a process. It does not change
-`LUPINE_DISABLE_LOCAL` or forward the bearer token to the data plane.
-
-## macOS client
-
-The LUPINE server publishes universal2 CUDA driver, runtime, and NVML client
-shims for the Python client. Native CUDA consumers can load those dylibs and use a remote GPU
-without NVIDIA software on the Mac.
-
-The official macOS PyTorch wheel is CPU-only, however, so loading the shims
-cannot add its compiled-out CUDA backend. Run PyTorch workloads with a
-CUDA-enabled Linux or Windows build; macOS Python can use the native shims
-directly through `ctypes` or another CUDA consumer.
-
 ## Quick Start
 
 Use the published GHCR images. The examples below pin CUDA 13.3.1 on
