@@ -5,17 +5,30 @@ import zipfile
 import build
 
 
-def test_builds_every_client_route_with_strong_etags(monkeypatch, tmp_path):
-    libs = tmp_path / "libs"
+def test_stage_runtime_copies_only_the_wheel_stub(monkeypatch, tmp_path):
+    source = tmp_path / "complete-client"
+    source.mkdir()
+    for name in build.EXPECTED["linux-x86_64"]:
+        (source / name).write_bytes(name.encode())
+    destination = tmp_path / "wheel-libs"
+    monkeypatch.setattr(build, "_libs_dir", lambda: destination)
+
+    assert build.stage_runtime("linux-x86_64", [source]) == 0
+    assert {path.name for path in (destination / "linux-x86_64").iterdir()} == {
+        "libcudart.so.13"
+    }
+
+
+def test_builds_every_client_route_with_strong_etags(tmp_path):
+    clients = tmp_path / "clients"
     for tag, names in build.EXPECTED.items():
-        directory = libs / tag
+        directory = clients / f"lupine-client-{tag}"
         directory.mkdir(parents=True)
         for name in names:
             (directory / name).write_bytes(f"{tag}/{name}".encode())
-    monkeypatch.setattr(build, "_libs_dir", lambda: libs)
 
     output = tmp_path / "bundles"
-    assert build.bundles(output, "deadbeef") == 0
+    assert build.bundles(clients, output, "deadbeef") == 0
 
     index = json.loads((output / "index.json").read_text())
     assert set(index["bundles"]) == {
@@ -43,7 +56,7 @@ def test_builds_every_client_route_with_strong_etags(monkeypatch, tmp_path):
     ).read_bytes()
 
     repeated = tmp_path / "repeated"
-    assert build.bundles(repeated, "deadbeef") == 0
+    assert build.bundles(clients, repeated, "deadbeef") == 0
     for platform_name in index["bundles"]:
         assert (output / platform_name / "client.zip").read_bytes() == (
             repeated / platform_name / "client.zip"

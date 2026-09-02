@@ -23,8 +23,8 @@ permissions:
   contents: read
 
 jobs:
-  native:
-    name: Native shims / ${{ matrix.tag }}
+  runtime:
+    name: Runtime stub / ${{ matrix.tag }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -72,11 +72,9 @@ jobs:
             --python-version 3 \
             --abi none \
             --no-deps \
-            nvidia-cuda-runtime \
-            nvidia-nvml-dev
+            nvidia-cuda-runtime
           mkdir -p cuda-sdk
           for wheel in headers/*.whl; do unzip -q "$wheel" -d cuda-sdk; done
-
 
       - name: Install build dependencies (Windows)
         if: runner.os == 'Windows'
@@ -105,40 +103,39 @@ jobs:
             --python-version 3 `
             --abi none `
             --no-deps `
-            nvidia-cuda-runtime `
-            nvidia-nvml-dev
+            nvidia-cuda-runtime
           $cudaWheel = Get-ChildItem 'cuda-wheel/nvidia_cuda_runtime-*.whl' | Select-Object -First 1
-          $nvmlWheel = Get-ChildItem 'cuda-wheel/nvidia_nvml_dev-*.whl' | Select-Object -First 1
-          if ($null -eq $cudaWheel -or $null -eq $nvmlWheel) {
-            throw 'CUDA or NVML header wheel was not downloaded'
+          if ($null -eq $cudaWheel) {
+            throw 'The CUDA header wheel was not downloaded'
           }
           python -m zipfile -e $cudaWheel.FullName cuda-sdk
-          python -m zipfile -e $nvmlWheel.FullName cuda-sdk
           $cudaHeader = Get-ChildItem 'cuda-sdk/nvidia' -Recurse -Filter cuda.h | Select-Object -First 1
           if ($null -eq $cudaHeader) {
-            throw 'CUDA headers were not found in the downloaded wheels'
+            throw 'CUDA headers were not found in the downloaded wheel'
           }
           New-Item -ItemType Directory -Force -Path cuda-sdk/include | Out-Null
           Copy-Item (Join-Path $cudaHeader.DirectoryName '*') cuda-sdk/include -Recurse -Force
 
-      - name: Configure and build (non-Windows)
+      - name: Configure and build runtime (non-Windows)
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
+          # libcudart links against libcuda, so build the driver as a link-time
+          # dependency. Only the runtime artifact is staged or uploaded.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLUPINE_BUILD_SERVER=OFF \
+            -DLUPINE_BUILD_NVML=OFF \
+            -DLUPINE_BUILD_HIP=OFF \
             -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
-          cmake --build build --parallel --target lupine_cuda_client lupine_nvml
-          # The runtime translation layer is Python-package-specific and
-          # builds standalone against the just-built clients.
+          cmake --build build --parallel --target lupine_cuda_client
           cmake -S python/cudart -B build-cudart -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include" \
             -DLUPINE_CLIENT_DIR="$PWD/build"
           cmake --build build-cudart --parallel
 
-      - name: Configure and build (Windows)
+      - name: Configure and build runtime (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -147,12 +144,14 @@ jobs:
           $triplet = '${{ matrix.tag }}' -eq 'win-arm64' ? 'arm64-windows-static' : 'x64-windows-static'
           cmake -S . -B build -G "Visual Studio 18 2026" -A $arch `
             -DLUPINE_BUILD_SERVER=OFF `
+            -DLUPINE_BUILD_NVML=OFF `
+            -DLUPINE_BUILD_HIP=OFF `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_PREFIX_PATH=$PWD\cuda-sdk" `
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=$triplet" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
-          cmake --build build --config Release --target lupine_cuda_client lupine_nvml
+          cmake --build build --config Release --target lupine_cuda_client
           cmake -S python/cudart -B build-cudart -G "Visual Studio 18 2026" -A $arch `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
@@ -160,38 +159,28 @@ jobs:
             "-DLUPINE_CLIENT_DIR=$PWD\build\Release"
           cmake --build build-cudart --config Release
 
-      - name: Stage shims
-        if: matrix.tag != 'macosx-arm64' && matrix.tag != 'macosx-x86_64'
+      - name: Collect runtime stub
+        shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ matrix.tag }}" == win-* ]]; then
-            ./python/build.py stage "${{ matrix.tag }}" build/Release build-cudart/Release
-          else
-            ./python/build.py stage "${{ matrix.tag }}" build build-cudart
-          fi
-        shell: bash
+          mkdir -p runtime-stub
+          case "${{ matrix.tag }}" in
+            win-*) cp build-cudart/Release/cudart64_13.dll runtime-stub/ ;;
+            macosx-*) cp build-cudart/libcudart.dylib runtime-stub/ ;;
+            *) cp build-cudart/libcudart.so.13 runtime-stub/ ;;
+          esac
 
-      - name: Stage thin macOS dylibs
-        if: matrix.tag == 'macosx-arm64' || matrix.tag == 'macosx-x86_64'
-        run: |
-          set -euo pipefail
-          mkdir -p python/lupine/_libs/${{ matrix.tag }}
-          cp build/libcuda.dylib build/libnvidia-ml.dylib \
-            python/lupine/_libs/${{ matrix.tag }}/
-          cp build-cudart/libcudart.dylib python/lupine/_libs/${{ matrix.tag }}/
-        shell: bash
-
-      - name: Upload staged shims
+      - name: Upload runtime stub
         uses: actions/upload-artifact@v7
         with:
-          name: lupine-native-${{ matrix.tag }}
-          path: python/lupine/_libs/${{ matrix.tag }}
+          name: lupine-runtime-${{ matrix.tag }}
+          path: runtime-stub
           if-no-files-found: error
           retention-days: 3
 
   macos-universal:
-    name: Assemble macOS universal2 slices
-    needs: native
+    name: Assemble macOS universal2 runtime
+    needs: runtime
     runs-on: macos-26
     timeout-minutes: 10
     steps:
@@ -199,37 +188,36 @@ jobs:
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
-      - name: Download thin dylibs
+      - name: Download thin runtimes
         uses: actions/download-artifact@v8
         with:
-          pattern: lupine-native-macosx-*
+          pattern: lupine-runtime-macosx-*
           path: thin
           merge-multiple: false
 
-      - name: lipo universal dylibs
+      - name: Lipo universal runtime
         run: |
           set -euo pipefail
           mkdir -p universal
-          for lib in libcuda.dylib libcudart.dylib libnvidia-ml.dylib; do
-            lipo -create "thin/lupine-native-macosx-arm64/$lib" \
-                    "thin/lupine-native-macosx-x86_64/$lib" \
-                    -output "universal/$lib"
-          done
+          lipo -create \
+            thin/lupine-runtime-macosx-arm64/libcudart.dylib \
+            thin/lupine-runtime-macosx-x86_64/libcudart.dylib \
+            -output universal/libcudart.dylib
 
-      - name: Stage universal shims
-        run: ./python/build.py stage macosx-universal2 universal
+      - name: Stage universal runtime
+        run: ./python/build.py stage-runtime macosx-universal2 universal
 
-      - name: Upload universal shims
+      - name: Upload universal runtime
         uses: actions/upload-artifact@v7
         with:
-          name: lupine-native-macosx-universal2
+          name: lupine-runtime-macosx-universal2
           path: python/lupine/_libs/macosx-universal2
           if-no-files-found: error
           retention-days: 3
 
   package:
-    name: Assemble and test wheel
-    needs: [native, macos-universal]
+    name: Assemble and test wheels
+    needs: [runtime, macos-universal]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -244,21 +232,21 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Download all native shims
+      - name: Download runtime stubs
         uses: actions/download-artifact@v8
         with:
-          pattern: lupine-native-*
-          path: native
+          pattern: lupine-runtime-*
+          path: runtimes
           merge-multiple: false
 
-      - name: Stage shims into the package
+      - name: Stage runtime stubs
         run: |
           set -euo pipefail
-          for dir in native/lupine-native-*; do
-            tag="${dir##*/lupine-native-}"
+          for dir in runtimes/lupine-runtime-*; do
+            tag="${dir##*/lupine-runtime-}"
             # Thin macOS slices only feed the lipo job.
             case "$tag" in macosx-arm64|macosx-x86_64) continue ;; esac
-            ./python/build.py stage "$tag" "$dir"
+            ./python/build.py stage-runtime "$tag" "$dir"
           done
 
       - name: Run Python tests
@@ -266,35 +254,6 @@ jobs:
         run: |
           python verify_release.py
           uv run --all-extras pytest
-
-      - name: Assemble server-served client bundles
-        working-directory: python
-        run: |
-          set -euo pipefail
-          revision="$(git rev-parse --verify HEAD^{commit})"
-          ./build.py bundles client-bundles "$revision"
-
-      - name: Upload server-served client bundles
-        uses: actions/upload-artifact@v7
-        with:
-          name: lupine-client-bundles
-          path: python/client-bundles
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Check PyTorch ABI against bundled shims
-        working-directory: python
-        run: |
-          uv run --all-extras python - <<'PY'
-          import lupine
-
-          # Loading and importing only exercises dynamic linking and does not
-          # require a CUDA device or a running LUPINE server.
-          lupine.load_native(missing_ok=False)
-          import torch
-
-          print(f"torch={torch.__version__} cuda={torch.version.cuda}")
-          PY
 
       - name: Test minimum supported Python
         working-directory: python

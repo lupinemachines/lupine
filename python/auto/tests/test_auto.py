@@ -1,13 +1,16 @@
 import os
+from types import SimpleNamespace
 
 import lupine
 import lupine_auto
+import pytest
 
 
-def test_activate_defaults_to_cloud_without_changing_local_policy(monkeypatch):
+def test_activate_uses_explicit_gateway_for_existing_session(monkeypatch):
     monkeypatch.delenv("LUPINE_AUTO", raising=False)
-    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+    monkeypatch.setenv("LUPINE_SERVER", "https://gw-east.lupine.sh:9443")
     monkeypatch.delenv("LUPINE_DISABLE_LOCAL", raising=False)
+    monkeypatch.setenv("LUPINE_SESSION", "lease-test")
     calls = []
     monkeypatch.setattr(
         lupine,
@@ -16,9 +19,74 @@ def test_activate_defaults_to_cloud_without_changing_local_policy(monkeypatch):
     )
 
     assert lupine_auto.activate() == {"libcuda": "/shim"}
-    assert os.environ["LUPINE_SERVER"] == lupine_auto.DEFAULT_SERVER
+    assert lupine_auto.DEFAULT_SERVER == "https://api.lupine.sh"
+    assert os.environ["LUPINE_SERVER"] == "https://gw-east.lupine.sh:9443"
     assert "LUPINE_DISABLE_LOCAL" not in os.environ
     assert calls == [False]
+
+
+def test_activate_requires_gateway_for_existing_session(monkeypatch):
+    monkeypatch.delenv("LUPINE_AUTO", raising=False)
+    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+    monkeypatch.setenv("LUPINE_SESSION", "lease-test")
+
+    with pytest.raises(lupine.LupineError, match="bound gateway"):
+        lupine_auto.activate()
+
+
+def test_activate_acquires_cloud_session_when_unbound(monkeypatch):
+    monkeypatch.delenv("LUPINE_AUTO", raising=False)
+    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+    monkeypatch.delenv("LUPINE_SESSION", raising=False)
+    monkeypatch.setattr(lupine_auto, "_cloud_session", None)
+    calls = []
+    monkeypatch.setattr(
+        lupine,
+        "cloud",
+        lambda **kwargs: (
+            calls.append(kwargs) or SimpleNamespace(loaded={"libcuda": "/cloud/shim"})
+        ),
+    )
+
+    assert lupine_auto.activate() == {"libcuda": "/cloud/shim"}
+    assert calls == [
+        {
+            "api_url": "https://api.lupine.sh",
+            "gpu_type": None,
+            "gpu_count": None,
+            "region": None,
+        }
+    ]
+
+
+def test_startup_shows_login_hint_without_aborting(monkeypatch):
+    monkeypatch.setattr(
+        lupine_auto,
+        "activate",
+        lambda: (_ for _ in ()).throw(
+            lupine.LupineAuthenticationError(
+                "Run `uvx lupine login` or `python -m lupine login`."
+            )
+        ),
+    )
+
+    with pytest.warns(RuntimeWarning, match="python -m lupine login"):
+        assert lupine_auto.startup() == {}
+
+
+def test_install_defers_activation_until_cuda_import(monkeypatch):
+    monkeypatch.delenv("LUPINE_AUTO", raising=False)
+    monkeypatch.setattr(lupine_auto, "_finder", None)
+    calls = []
+    monkeypatch.setattr(lupine_auto, "startup", lambda: calls.append(True) or {})
+
+    finder = lupine_auto.install()
+    assert finder is not None
+    assert calls == []
+    assert finder.find_spec("json", None) is None
+    assert calls == []
+    assert finder.find_spec("torch", None) is None
+    assert calls == [True]
 
 
 def test_activate_respects_explicit_server_and_local_policy(monkeypatch):

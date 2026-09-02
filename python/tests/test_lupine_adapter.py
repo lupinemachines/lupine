@@ -6,11 +6,15 @@ import pytest
 from lupine import (
     LupineError,
     _native,
-    _normalize_hosts as normalize_hosts,
-    _normalize_server as normalize_server,
     connect,
     is_configured,
     servers,
+)
+from lupine import (
+    _normalize_hosts as normalize_hosts,
+)
+from lupine import (
+    _normalize_server as normalize_server,
 )
 
 
@@ -93,6 +97,23 @@ def test_libdir_override(monkeypatch, tmp_path):
     assert _native.libdir() == tmp_path
 
 
+def test_libdir_keeps_configured_server(monkeypatch, tmp_path):
+    monkeypatch.setenv("LUPINE_SERVER", "https://gw-east.lupine.sh")
+    monkeypatch.delenv("LUPINE_LIBDIR", raising=False)
+    monkeypatch.setattr(
+        _native._bundles,
+        "resolve",
+        lambda servers, names: (
+            tmp_path,
+            '"sha256:' + "a" * 64 + '"',
+            "linux/amd64",
+        ),
+    )
+
+    assert _native.libdir() == tmp_path
+    assert os.environ["LUPINE_SERVER"] == "https://gw-east.lupine.sh"
+
+
 def test_load_missing_ok_without_libs(monkeypatch, tmp_path):
     monkeypatch.setenv("LUPINE_LIBDIR", str(tmp_path / "does-not-exist"))
     assert _native.load(missing_ok=True) == {}
@@ -160,3 +181,32 @@ def test_load_respects_existing_triton_libcuda_path(monkeypatch, tmp_path):
     _native.load()
 
     assert os.environ["TRITON_LIBCUDA_PATH"] == "/caller/libcuda"
+
+
+def test_load_prefers_packaged_runtime_stub(monkeypatch, tmp_path):
+    client = tmp_path / "client"
+    packaged = tmp_path / "packaged"
+    client.mkdir()
+    packaged.mkdir()
+    names = _native._LIBS[sys.platform]
+    for name in names:
+        (client / name).write_bytes(b"")
+    (packaged / names[1]).write_bytes(b"")
+
+    loaded = []
+    monkeypatch.setattr(_native, "_loaded", {})
+    monkeypatch.setenv("LUPINE_LIBDIR", str(client))
+    monkeypatch.setattr(_native, "_platform_dir", lambda: packaged)
+    monkeypatch.setattr(
+        _native.ctypes,
+        "CDLL",
+        lambda path, mode=None: loaded.append(str(path)),
+    )
+
+    _native.load(missing_ok=False)
+
+    assert loaded == [
+        str(client / names[0]),
+        str(packaged / names[1]),
+        str(client / names[2]),
+    ]

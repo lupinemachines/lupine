@@ -21,11 +21,233 @@ permissions:
   packages: write
 
 jobs:
+  client-native:
+    name: Complete client / ${{ matrix.tag }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            tag: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            tag: linux-aarch64
+          - runner: macos-26
+            tag: macosx-arm64
+          - runner: macos-26-intel
+            tag: macosx-x86_64
+          - runner: windows-2025-vs2026
+            tag: win-amd64
+          - runner: windows-11-vs2026-arm
+            tag: win-arm64
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libnghttp2-dev ninja-build
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libnghttp2 ninja
+
+      - name: Download CUDA headers (non-Windows)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          python3 -m pip download \
+            --dest headers \
+            --only-binary=:all: \
+            --platform manylinux2014_x86_64 \
+            --implementation py \
+            --python-version 3 \
+            --abi none \
+            --no-deps \
+            nvidia-cuda-runtime \
+            nvidia-nvml-dev
+          mkdir -p cuda-sdk
+          for wheel in headers/*.whl; do unzip -q "$wheel" -d cuda-sdk; done
+
+      - name: Install build dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe")) {
+            throw 'The runner vcpkg installation was not found'
+          }
+          $triplet = '${{ matrix.tag }}' -eq 'win-arm64' ? 'arm64-windows-static' : 'x64-windows-static'
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+            "nghttp2:$triplet" `
+            "openssl:$triplet"
+
+      - name: Download CUDA headers (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path cuda-wheel, cuda-sdk | Out-Null
+          python -m pip download `
+            --dest cuda-wheel `
+            --only-binary=:all: `
+            --platform manylinux2014_x86_64 `
+            --implementation py `
+            --python-version 3 `
+            --abi none `
+            --no-deps `
+            nvidia-cuda-runtime `
+            nvidia-nvml-dev
+          $cudaWheel = Get-ChildItem 'cuda-wheel/nvidia_cuda_runtime-*.whl' | Select-Object -First 1
+          $nvmlWheel = Get-ChildItem 'cuda-wheel/nvidia_nvml_dev-*.whl' | Select-Object -First 1
+          if ($null -eq $cudaWheel -or $null -eq $nvmlWheel) {
+            throw 'CUDA or NVML header wheel was not downloaded'
+          }
+          python -m zipfile -e $cudaWheel.FullName cuda-sdk
+          python -m zipfile -e $nvmlWheel.FullName cuda-sdk
+          $cudaHeader = Get-ChildItem 'cuda-sdk/nvidia' -Recurse -Filter cuda.h | Select-Object -First 1
+          if ($null -eq $cudaHeader) {
+            throw 'CUDA headers were not found in the downloaded wheels'
+          }
+          New-Item -ItemType Directory -Force -Path cuda-sdk/include | Out-Null
+          Copy-Item (Join-Path $cudaHeader.DirectoryName '*') cuda-sdk/include -Recurse -Force
+
+      - name: Configure and build (non-Windows)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLUPINE_BUILD_SERVER=OFF \
+            -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
+          cmake --build build --parallel --target lupine_cuda_client lupine_nvml
+          # The runtime translation layer builds standalone against the
+          # complete clients and is included in the server-served bundle.
+          cmake -S python/cudart -B build-cudart -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include" \
+            -DLUPINE_CLIENT_DIR="$PWD/build"
+          cmake --build build-cudart --parallel
+
+      - name: Configure and build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arch = '${{ matrix.tag }}' -eq 'win-arm64' ? 'ARM64' : 'x64'
+          $triplet = '${{ matrix.tag }}' -eq 'win-arm64' ? 'arm64-windows-static' : 'x64-windows-static'
+          cmake -S . -B build -G "Visual Studio 18 2026" -A $arch `
+            -DLUPINE_BUILD_SERVER=OFF `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_PREFIX_PATH=$PWD\cuda-sdk" `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=$triplet" `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+          cmake --build build --config Release --target lupine_cuda_client lupine_nvml
+          cmake -S python/cudart -B build-cudart -G "Visual Studio 18 2026" -A $arch `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
+            "-DLUPINE_CUDA_INCLUDE_DIR=$PWD\cuda-sdk\include" `
+            "-DLUPINE_CLIENT_DIR=$PWD\build\Release"
+          cmake --build build-cudart --config Release
+
+      - name: Collect complete client
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p complete-client
+          case "${{ matrix.tag }}" in
+            win-*)
+              cp build/Release/nvcuda.dll \
+                build-cudart/Release/cudart64_13.dll \
+                build/Release/nvml.dll complete-client/
+              ;;
+            macosx-*)
+              cp build/libcuda.dylib build-cudart/libcudart.dylib \
+                build/libnvidia-ml.dylib complete-client/
+              ;;
+            *)
+              cp build/libcuda.so.1 build-cudart/libcudart.so.13 \
+                build/libnvidia-ml.so.1 complete-client/
+              ;;
+          esac
+
+      - name: Upload complete client
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-${{ matrix.tag }}
+          path: complete-client
+          if-no-files-found: error
+          retention-days: 3
+
+  client-macos-universal:
+    name: Assemble macOS universal2 slices
+    needs: client-native
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Download thin dylibs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lupine-client-macosx-*
+          path: thin
+          merge-multiple: false
+
+      - name: lipo universal dylibs
+        run: |
+          set -euo pipefail
+          mkdir -p universal
+          for lib in libcuda.dylib libcudart.dylib libnvidia-ml.dylib; do
+            lipo -create "thin/lupine-client-macosx-arm64/$lib" \
+                    "thin/lupine-client-macosx-x86_64/$lib" \
+                    -output "universal/$lib"
+          done
+
+      - name: Upload universal client
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-macosx-universal2
+          path: universal
+          if-no-files-found: error
+          retention-days: 3
+
   client-bundles:
-    name: Build all client bundle variants
-    uses: ./.github/workflows/python.yml
-    with:
-      checkout_ref: ${{ github.event.release.tag_name || github.sha }}
+    name: Assemble client bundles
+    needs: [client-native, client-macos-universal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Download complete clients
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lupine-client-*
+          path: clients
+          merge-multiple: false
+
+      - name: Assemble server-served client bundles
+        working-directory: python
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse --verify HEAD^{commit})"
+          ./build.py bundles ../clients client-bundles "$revision"
+
+      - name: Upload server-served client bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-client-bundles
+          path: python/client-bundles
+          if-no-files-found: error
+          retention-days: 3
 
   build:
     name: Server image CUDA ${{ matrix.cuda.version }} / Ubuntu ${{ matrix.cuda.ubuntu }} / ${{ matrix.platform.arch }}
