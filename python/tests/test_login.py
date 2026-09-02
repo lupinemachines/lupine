@@ -27,7 +27,7 @@ def test_login_requests_identify_the_python_client(monkeypatch):
         201,
         {},
     )
-    assert seen == {"user_agent": "lupine-python/2.0.2", "timeout": 30}
+    assert seen == {"user_agent": "lupine-python/2.0.3", "timeout": 30}
 
 
 def test_login_runs_browser_flow_and_stores_token(monkeypatch, tmp_path):
