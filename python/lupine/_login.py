@@ -21,7 +21,7 @@ from ._credentials import save_token
 
 DEFAULT_API_URL = "https://api.lupine.sh"
 DEFAULT_CONSOLE_URL = "https://console.lupine.sh"
-_USER_AGENT = "lupine-python/2.0.2"
+_USER_AGENT = "lupine-python/2.0.3"
 _SUCCESS_HTML = b"""<!doctype html><html><body style="font-family:monospace;background:#0a0a0a;color:#a3a3a3;padding:2rem"><h2 style="color:#a78bfa">Logged in to Lupine Cloud</h2><p>You can close this tab and return to your terminal.</p></body></html>"""
 
 

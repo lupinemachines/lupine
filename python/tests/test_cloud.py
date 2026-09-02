@@ -108,7 +108,7 @@ def test_cloud_session_authenticates_binds_heartbeats_and_releases(
     assert "LUPINE_SERVER" not in os.environ
     assert [request[0] for request in state["requests"]].count("DELETE") == 1
     assert all(request[2] == "Bearer lup_test" for request in state["requests"])
-    assert all(request[4] == "lupine-python/2.0.2" for request in state["requests"])
+    assert all(request[4] == "lupine-python/2.0.3" for request in state["requests"])
     create_body = json.loads(state["requests"][0][3])
     assert create_body == {"gpu_type": "RTX_4090", "gpu_count": 1}
 

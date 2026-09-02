@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lupine"
-version = "2.0.2"
+version = "2.0.3"
 description = "CUDA on any host: server-selected LUPINE shims plus PyTorch adapter"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,7 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 torch = ["torch"]
-auto = ["lupine-auto==2.0.2"]
+auto = ["lupine-auto==2.0.3"]
 
 [project.scripts]
 lupine = "lupine.__main__:main"
