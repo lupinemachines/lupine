@@ -1,11 +1,10 @@
 // lupine_cudart.cpp — native CUDA runtime API (libcudart) on the LUPINE
 // client shim, for the `lupine` Python package. Implements the surface
-// mapped from CUDA-13 torch (101 symbols: 9 __cuda* registration ABI +
-// 92 cuda*), verified against torch's undefined symbols and the shim's
-// exports. Mechanical forwarders go through the lcudart_call* templates;
-// everything with real logic (registration tables, lazy module loading,
-// memcpy kind dispatch, pointer classification, launch translation) stays
-// explicit.
+// mapped from CUDA-13 torch, verified against torch's undefined symbols and
+// the shim's exports. Mechanical forwarders go through the lcudart_call*
+// templates; everything with real logic (registration tables, lazy module
+// loading, memcpy kind dispatch, pointer classification, launch translation)
+// stays explicit.
 //
 // Build (see python/cudart/CMakeLists.txt; clients must already be built):
 //   Linux:   libcudart.so.13   (version node matching torch's references)
@@ -831,6 +830,30 @@ extern "C" cudaError_t cudaGetDeviceCount(int *count) {
   }
   *count = static_cast<int>(lcudart().visible_devices.size());
   return cudaSuccess;
+}
+
+extern "C" cudaError_t
+cudaDeviceGetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
+                               void *value) {
+  if (value == nullptr) {
+    return lcudart_fail(cudaErrorInvalidValue);
+  }
+  return lcudart_call_device(device, [&](CUdevice cu) {
+    return cuDeviceGetGraphMemAttribute(
+        cu, static_cast<CUgraphMem_attribute>(attr), value);
+  });
+}
+
+extern "C" cudaError_t
+cudaDeviceSetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
+                               void *value) {
+  if (value == nullptr) {
+    return lcudart_fail(cudaErrorInvalidValue);
+  }
+  return lcudart_call_device(device, [&](CUdevice cu) {
+    return cuDeviceSetGraphMemAttribute(
+        cu, static_cast<CUgraphMem_attribute>(attr), value);
+  });
 }
 
 extern "C" cudaError_t cudaDeviceGetAttribute(int *value,
@@ -2142,6 +2165,45 @@ extern "C" cudaError_t cudaLibraryUnload(cudaLibrary_t library) {
 // ---------------------------------------------------------------------------
 // Graphs
 // ---------------------------------------------------------------------------
+
+extern "C" cudaError_t cudaUserObjectCreate(cudaUserObject_t *object_out,
+                                            void *ptr, cudaHostFn_t destroy,
+                                            unsigned int initialRefcount,
+                                            unsigned int flags) {
+  // Destructor callbacks cannot cross the RPC boundary. The driver shim
+  // exposes this entry point as unsupported for the same reason.
+  (void)object_out;
+  (void)ptr;
+  (void)destroy;
+  (void)initialRefcount;
+  (void)flags;
+  return lcudart_fail(cudaErrorNotSupported);
+}
+
+extern "C" cudaError_t cudaUserObjectRetain(cudaUserObject_t object,
+                                            unsigned int count) {
+  return lcudart_call([&] { return cuUserObjectRetain(object, count); });
+}
+
+extern "C" cudaError_t cudaUserObjectRelease(cudaUserObject_t object,
+                                             unsigned int count) {
+  return lcudart_call([&] { return cuUserObjectRelease(object, count); });
+}
+
+extern "C" cudaError_t cudaGraphRetainUserObject(cudaGraph_t graph,
+                                                 cudaUserObject_t object,
+                                                 unsigned int count,
+                                                 unsigned int flags) {
+  return lcudart_call(
+      [&] { return cuGraphRetainUserObject(graph, object, count, flags); });
+}
+
+extern "C" cudaError_t cudaGraphReleaseUserObject(cudaGraph_t graph,
+                                                  cudaUserObject_t object,
+                                                  unsigned int count) {
+  return lcudart_call(
+      [&] { return cuGraphReleaseUserObject(graph, object, count); });
+}
 
 extern "C" cudaError_t cudaGraphAddNode(
     cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
