@@ -3,112 +3,92 @@
 
 #include <cstddef>
 #include <cstring>
-#include <mutex>
-#include <unordered_map>
 
-#include "cublas_bridge.h"
 #include "codegen/gen_rpc_ids.h"
+#include "cuda_client_api.h"
 
 namespace {
 
-const lupine_cublas_rpc_api *rpc_api() {
-  const auto *api = lupine_cublas_rpc_api_v1();
-  return api != nullptr && api->version == LUPINE_CUBLAS_RPC_API_VERSION
-             ? api
-             : nullptr;
-}
-
-std::mutex &handle_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-std::unordered_map<cublasHandle_t, int> &handle_routes() {
-  static auto *routes = new std::unordered_map<cublasHandle_t, int>();
-  return *routes;
+const lupine_cuda_client_api *cuda_api() {
+  static const auto *api = [] {
+    const auto *candidate = lupine_cuda_client_api_v1();
+    return candidate != nullptr &&
+                   candidate->version == LUPINE_CUDA_CLIENT_API_VERSION
+               ? candidate
+               : nullptr;
+  }();
+  return api;
 }
 
 } // namespace
 
-static int lupine_cublas_default_route() {
-  const auto *api = rpc_api();
-  return api == nullptr ? -2 : api->default_route();
-}
-
-static int lupine_cublas_route_for_stream(cudaStream_t stream) {
-  const auto *api = rpc_api();
-  return api == nullptr ? -2 : api->stream_route(stream);
-}
-
-static int lupine_cublas_route_for_handle(cublasHandle_t handle) {
-  {
-    std::lock_guard<std::mutex> lock(handle_mutex());
-    const auto found = handle_routes().find(handle);
-    if (found != handle_routes().end()) {
-      return found->second;
-    }
+static cublasStatus_t lupine_cublas_call_begin(int operation,
+                                               const lupine_cuda_owner *owners,
+                                               std::size_t owner_count,
+                                               lupine_cuda_call **call) {
+  const auto *api = cuda_api();
+  if (api == nullptr) {
+    return CUBLAS_STATUS_NOT_INITIALIZED;
   }
-  return lupine_cublas_default_route();
+  const int result = api->call_begin(operation, owners, owner_count, call);
+  if (result == LUPINE_CUDA_CALL_INVALID_OWNER ||
+      result == LUPINE_CUDA_CALL_OWNER_MISMATCH) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  return result == LUPINE_CUDA_CALL_SUCCESS ? CUBLAS_STATUS_SUCCESS
+                                            : CUBLAS_STATUS_NOT_INITIALIZED;
 }
 
-static bool lupine_cublas_stream_matches_route(int route_id,
-                                               cudaStream_t stream) {
-  return route_id == lupine_cublas_route_for_stream(stream);
+static int rpc_write(lupine_cuda_call *call, const void *data,
+                     std::size_t size) {
+  const auto *api = cuda_api();
+  return api == nullptr ? -1 : api->call_write(call, data, size);
 }
 
-static conn_t *lupine_cublas_connection(int route_id) {
-  const auto *api = rpc_api();
-  return api == nullptr ? nullptr : api->connection(route_id);
+static int rpc_wait_for_response(lupine_cuda_call *call) {
+  const auto *api = cuda_api();
+  return api == nullptr ? -1 : api->call_invoke(call);
 }
 
-static void lupine_cublas_note_handle(cublasHandle_t handle, int route_id) {
-  std::lock_guard<std::mutex> lock(handle_mutex());
-  handle_routes()[handle] = route_id;
+static int rpc_read(lupine_cuda_call *call, void *data, std::size_t size) {
+  const auto *api = cuda_api();
+  return api == nullptr ? -1 : api->call_read(call, data, size);
+}
+
+static int rpc_read_end(lupine_cuda_call *call) {
+  const auto *api = cuda_api();
+  return api == nullptr ? -1 : api->call_finish(call);
+}
+
+static int lupine_cublas_note_handle(lupine_cuda_call *call,
+                                     cublasHandle_t handle) {
+  const auto *api = cuda_api();
+  return api == nullptr
+             ? -1
+             : api->record_owner(call, LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+                                 reinterpret_cast<std::uintptr_t>(handle));
 }
 
 static void lupine_cublas_forget_handle(cublasHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handle_mutex());
-  handle_routes().erase(handle);
+  const auto *api = cuda_api();
+  if (api != nullptr) {
+    api->forget_owner(LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+                      reinterpret_cast<std::uintptr_t>(handle));
+  }
 }
 
-static int lupine_prepare_rpc(conn_t *conn) {
-  const auto *api = rpc_api();
-  return api == nullptr ? -1 : api->prepare(conn);
-}
-
-static int rpc_write_start_request(conn_t *conn, int operation) {
-  const auto *api = rpc_api();
-  return api == nullptr ? -1 : api->write_start_request(conn, operation);
-}
-
-static int rpc_write(conn_t *conn, const void *data, std::size_t size) {
-  const auto *api = rpc_api();
-  return api == nullptr ? -1 : api->write(conn, data, size);
-}
-
-static int rpc_wait_for_response(conn_t *conn) {
-  const auto *api = rpc_api();
-  return api == nullptr ? -1 : api->wait_for_response(conn);
-}
-
-static int rpc_read(conn_t *conn, void *data, std::size_t size) {
-  const auto *api = rpc_api();
-  return api == nullptr ? -1 : api->read(conn, data, size);
-}
-
-static int rpc_read_end(conn_t *conn) {
-  const auto *api = rpc_api();
-  return api == nullptr ? -1 : api->read_end(conn);
+static void lupine_cublas_call_destroy(lupine_cuda_call *call) {
+  const auto *api = cuda_api();
+  if (api != nullptr) {
+    api->call_destroy(call);
+  }
 }
 
 #include "codegen/gen_cublas_client.inc"
 
-extern "C" size_t CUBLASWINAPI cublasGetCudartVersion() {
-  return CUDA_VERSION;
-}
+extern "C" size_t CUBLASWINAPI cublasGetCudartVersion() { return CUDA_VERSION; }
 
-extern "C" const char *CUBLASWINAPI
-cublasGetStatusName(cublasStatus_t status) {
+extern "C" const char *CUBLASWINAPI cublasGetStatusName(cublasStatus_t status) {
   switch (status) {
   case CUBLAS_STATUS_SUCCESS:
     return "CUBLAS_STATUS_SUCCESS";

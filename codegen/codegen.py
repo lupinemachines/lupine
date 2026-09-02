@@ -258,7 +258,7 @@ $hip_registry_entries
 LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cuda_guarded_declarations
 #endif
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+#ifdef LUPINE_CUBLAS_BACKEND
 LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cublas_guarded_declarations
 #endif
@@ -283,7 +283,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cuda_guarded_handlers
 #endif
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+#ifdef LUPINE_CUBLAS_BACKEND
       LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cublas_guarded_handlers
 #endif
@@ -1390,20 +1390,31 @@ def write_cublas_client_wrapper(f, function, operations, metadata):
 
     handle = cublas_input_handle(function)
     stream = cublas_stream_parameter(function)
+    owners = []
     if handle is not None:
-        f.write(f"  int route_id = lupine_cublas_route_for_handle({handle.name});\n")
-    elif stream is not None:
-        f.write(f"  int route_id = lupine_cublas_route_for_stream({stream.name});\n")
-    else:
-        f.write("  int route_id = lupine_cublas_default_route();\n")
-    if stream is not None:
-        f.write(
-            f"  if (!lupine_cublas_stream_matches_route(route_id, {stream.name}))\n"
-            "    return CUBLAS_STATUS_INVALID_VALUE;\n"
+        owners.append(
+            "{LUPINE_CUDA_OWNER_CUBLAS_HANDLE, "
+            f"reinterpret_cast<std::uintptr_t>({handle.name})}}"
         )
-    f.write("  conn_t *conn = lupine_cublas_connection(route_id);\n")
-    f.write("  if (conn == nullptr)\n")
-    f.write("    return CUBLAS_STATUS_NOT_INITIALIZED;\n")
+    if stream is not None:
+        owners.append(
+            "{LUPINE_CUDA_OWNER_STREAM, "
+            f"reinterpret_cast<std::uintptr_t>({stream.name})}}"
+        )
+    if not owners:
+        owners.append("{LUPINE_CUDA_OWNER_CURRENT_CONTEXT, 0}")
+    f.write("  const lupine_cuda_owner call_owners[] = {\n")
+    for owner in owners:
+        f.write(f"      {owner},\n")
+    f.write("  };\n")
+    f.write("  lupine_cuda_call *conn = nullptr;\n")
+    f.write(
+        f"  cublasStatus_t call_status = lupine_cublas_call_begin(\n"
+        f"      RPC_{name}, call_owners,\n"
+        "      sizeof(call_owners) / sizeof(call_owners[0]), &conn);\n"
+    )
+    f.write("  if (call_status != CUBLAS_STATUS_SUCCESS)\n")
+    f.write("    return call_status;\n")
 
     for operation in operations:
         if isinstance(operation, OpaqueTypeOperation):
@@ -1428,8 +1439,7 @@ def write_cublas_client_wrapper(f, function, operations, metadata):
             )
 
     f.write("  cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;\n")
-    f.write("  if (lupine_prepare_rpc(conn) < 0 ||\n")
-    f.write(f"      rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
+    f.write("  if (\n")
     for operation in operations:
         operation.client_rpc_write(f)
     f.write("      rpc_wait_for_response(conn) < 0 ||\n")
@@ -1437,7 +1447,10 @@ def write_cublas_client_wrapper(f, function, operations, metadata):
         operation.client_rpc_read(f)
     f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     f.write("      rpc_read_end(conn) < 0)\n")
+    f.write("  {\n")
+    f.write("    lupine_cublas_call_destroy(conn);\n")
     f.write("    return CUBLAS_STATUS_INTERNAL_ERROR;\n")
+    f.write("  }\n")
 
     for owner in metadata.record_owners:
         if owner.kind != "CUBLAS_HANDLE" or not isinstance(
@@ -1446,8 +1459,13 @@ def write_cublas_client_wrapper(f, function, operations, metadata):
             raise RuntimeError(f"{name}: invalid cuBLAS handle owner annotation")
         f.write(
             f"  if (return_value == CUBLAS_STATUS_SUCCESS && "
-            f"{owner.parameter.name} != nullptr)\n"
-            f"    lupine_cublas_note_handle(*{owner.parameter.name}, route_id);\n"
+            f"{owner.parameter.name} != nullptr &&\n"
+            f"      lupine_cublas_note_handle(conn, "
+            f"*{owner.parameter.name}) < 0)\n"
+            "  {\n"
+            "    lupine_cublas_call_destroy(conn);\n"
+            "    return CUBLAS_STATUS_ALLOC_FAILED;\n"
+            "  }\n"
         )
     for release in metadata.releases:
         if release.kind != "CUBLAS_HANDLE":
@@ -1456,6 +1474,7 @@ def write_cublas_client_wrapper(f, function, operations, metadata):
             "  if (return_value == CUBLAS_STATUS_SUCCESS)\n"
             f"    lupine_cublas_forget_handle({release.parameter.name});\n"
         )
+    f.write("  lupine_cublas_call_destroy(conn);\n")
     f.write("  return return_value;\n")
     f.write("}\n\n")
 

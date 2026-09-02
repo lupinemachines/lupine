@@ -35,6 +35,13 @@ owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
 the routing key is not the first matching parameter.
 
+Generated cuBLAS wrappers use the versioned CUDA client call API instead of
+accessing connections directly. They describe their cuBLAS handle and stream
+owners, and the CUDA shim selects the shared route, restores the handle's
+creating context on the calling thread's RPC lane, and owns request lifetime.
+Handle and stream owners from different routes or contexts are rejected before
+the request is sent.
+
 NVML wrappers use the same mechanism. A by-value `nvmlDevice_t` parameter
 infers `NVML_DEVICE` routing: the generated client resolves its owning server
 and substitutes the remote handle before marshalling the request. Device lookup

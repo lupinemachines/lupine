@@ -3,38 +3,54 @@
 extern "C" cublasStatus_t CUBLASWINAPI cublasCreate_v2(cublasHandle_t *handle) {
   if (handle == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_default_route();
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CURRENT_CONTEXT, 0},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCreate_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCreate_v2) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+  if (rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
-  if (return_value == CUBLAS_STATUS_SUCCESS && handle != nullptr)
-    lupine_cublas_note_handle(*handle, route_id);
+  }
+  if (return_value == CUBLAS_STATUS_SUCCESS && handle != nullptr &&
+      lupine_cublas_note_handle(conn, *handle) < 0) {
+    lupine_cublas_call_destroy(conn);
+    return CUBLAS_STATUS_ALLOC_FAILED;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI cublasDestroy_v2(cublasHandle_t handle) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDestroy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDestroy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
   if (return_value == CUBLAS_STATUS_SUCCESS)
     lupine_cublas_forget_handle(handle);
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -42,19 +58,26 @@ extern "C" cublasStatus_t CUBLASWINAPI
 cublasGetVersion_v2(cublasHandle_t handle, int *version) {
   if (version == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetVersion_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetVersion_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, version, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -62,58 +85,77 @@ extern "C" cublasStatus_t CUBLASWINAPI
 cublasGetProperty(libraryPropertyType type, int *value) {
   if (value == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_default_route();
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CURRENT_CONTEXT, 0},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetProperty, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetProperty) < 0 ||
-      rpc_write(conn, &type, sizeof(libraryPropertyType)) < 0 ||
+  if (rpc_write(conn, &type, sizeof(libraryPropertyType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, value, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI cublasSetWorkspace_v2(
     cublasHandle_t handle, void *workspace, size_t workspaceSizeInBytes) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetWorkspace_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetWorkspace_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &workspace, sizeof(void *)) < 0 ||
       rpc_write(conn, &workspaceSizeInBytes, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetStream_v2(cublasHandle_t handle, cudaStream_t streamId) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  if (!lupine_cublas_stream_matches_route(route_id, streamId))
-    return CUBLAS_STATUS_INVALID_VALUE;
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+      {LUPINE_CUDA_OWNER_STREAM, reinterpret_cast<std::uintptr_t>(streamId)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetStream_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetStream_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &streamId, sizeof(cudaStream_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -121,19 +163,26 @@ extern "C" cublasStatus_t CUBLASWINAPI
 cublasGetStream_v2(cublasHandle_t handle, cudaStream_t *streamId) {
   if (streamId == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetStream_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetStream_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, streamId, sizeof(cudaStream_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -141,37 +190,51 @@ extern "C" cublasStatus_t CUBLASWINAPI
 cublasGetPointerMode_v2(cublasHandle_t handle, cublasPointerMode_t *mode) {
   if (mode == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetPointerMode_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetPointerMode_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mode, sizeof(cublasPointerMode_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetPointerMode_v2(cublasHandle_t handle, cublasPointerMode_t mode) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetPointerMode_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetPointerMode_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasPointerMode_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -179,37 +242,51 @@ extern "C" cublasStatus_t CUBLASWINAPI
 cublasGetAtomicsMode(cublasHandle_t handle, cublasAtomicsMode_t *mode) {
   if (mode == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetAtomicsMode, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetAtomicsMode) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mode, sizeof(cublasAtomicsMode_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetAtomicsMode(cublasHandle_t handle, cublasAtomicsMode_t mode) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetAtomicsMode, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetAtomicsMode) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasAtomicsMode_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -217,37 +294,51 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasGetMathMode(cublasHandle_t handle,
                                                          cublasMath_t *mode) {
   if (mode == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetMathMode, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetMathMode) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mode, sizeof(cublasMath_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI cublasSetMathMode(cublasHandle_t handle,
                                                          cublasMath_t mode) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetMathMode, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetMathMode) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasMath_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -255,37 +346,51 @@ extern "C" cublasStatus_t CUBLASWINAPI
 cublasGetSmCountTarget(cublasHandle_t handle, int *smCountTarget) {
   if (smCountTarget == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetSmCountTarget, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetSmCountTarget) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, smCountTarget, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetSmCountTarget(cublasHandle_t handle, int smCountTarget) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetSmCountTarget, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetSmCountTarget) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &smCountTarget, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -294,20 +399,27 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasGetEmulationStrategy(
     cublasHandle_t handle, cublasEmulationStrategy_t *emulationStrategy) {
   if (emulationStrategy == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetEmulationStrategy, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetEmulationStrategy) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, emulationStrategy, sizeof(cublasEmulationStrategy_t)) <
           0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -316,20 +428,27 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasGetEmulationStrategy(
 #if CUDA_VERSION >= 13030
 extern "C" cublasStatus_t CUBLASWINAPI cublasSetEmulationStrategy(
     cublasHandle_t handle, cublasEmulationStrategy_t emulationStrategy) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetEmulationStrategy, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetEmulationStrategy) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &emulationStrategy, sizeof(cublasEmulationStrategy_t)) <
           0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -340,20 +459,26 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasGetEmulationSpecialValuesSupport(
     cublasHandle_t handle, cudaEmulationSpecialValuesSupport *mask) {
   if (mask == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetEmulationSpecialValuesSupport, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn,
-                              RPC_cublasGetEmulationSpecialValuesSupport) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mask, sizeof(cudaEmulationSpecialValuesSupport)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -362,20 +487,26 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasGetEmulationSpecialValuesSupport(
 #if CUDA_VERSION >= 13030
 extern "C" cublasStatus_t CUBLASWINAPI cublasSetEmulationSpecialValuesSupport(
     cublasHandle_t handle, cudaEmulationSpecialValuesSupport mask) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetEmulationSpecialValuesSupport, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn,
-                              RPC_cublasSetEmulationSpecialValuesSupport) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mask, sizeof(cudaEmulationSpecialValuesSupport)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -387,21 +518,27 @@ cublasGetFixedPointEmulationMantissaControl(
     cublasHandle_t handle, cudaEmulationMantissaControl *mantissaControl) {
   if (mantissaControl == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetFixedPointEmulationMantissaControl, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasGetFixedPointEmulationMantissaControl) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mantissaControl, sizeof(cudaEmulationMantissaControl)) <
           0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -411,21 +548,27 @@ cublasGetFixedPointEmulationMantissaControl(
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetFixedPointEmulationMantissaControl(
     cublasHandle_t handle, cudaEmulationMantissaControl mantissaControl) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetFixedPointEmulationMantissaControl, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasSetFixedPointEmulationMantissaControl) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mantissaControl, sizeof(cudaEmulationMantissaControl)) <
           0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -437,20 +580,26 @@ cublasGetFixedPointEmulationMaxMantissaBitCount(cublasHandle_t handle,
                                                 int *maxMantissaBitCount) {
   if (maxMantissaBitCount == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetFixedPointEmulationMaxMantissaBitCount, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasGetFixedPointEmulationMaxMantissaBitCount) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, maxMantissaBitCount, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -460,20 +609,26 @@ cublasGetFixedPointEmulationMaxMantissaBitCount(cublasHandle_t handle,
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetFixedPointEmulationMaxMantissaBitCount(cublasHandle_t handle,
                                                 int maxMantissaBitCount) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetFixedPointEmulationMaxMantissaBitCount, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasSetFixedPointEmulationMaxMantissaBitCount) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &maxMantissaBitCount, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -485,20 +640,26 @@ cublasGetFixedPointEmulationMantissaBitOffset(cublasHandle_t handle,
                                               int *mantissaBitOffset) {
   if (mantissaBitOffset == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetFixedPointEmulationMantissaBitOffset, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasGetFixedPointEmulationMantissaBitOffset) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mantissaBitOffset, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -508,20 +669,26 @@ cublasGetFixedPointEmulationMantissaBitOffset(cublasHandle_t handle,
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetFixedPointEmulationMantissaBitOffset(cublasHandle_t handle,
                                               int mantissaBitOffset) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetFixedPointEmulationMantissaBitOffset, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasSetFixedPointEmulationMantissaBitOffset) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mantissaBitOffset, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -533,20 +700,26 @@ cublasGetFixedPointEmulationMantissaBitCountPointer(cublasHandle_t handle,
                                                     int **mantissaBitCount) {
   if (mantissaBitCount == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetFixedPointEmulationMantissaBitCountPointer, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasGetFixedPointEmulationMantissaBitCountPointer) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, mantissaBitCount, sizeof(int *)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -556,20 +729,26 @@ cublasGetFixedPointEmulationMantissaBitCountPointer(cublasHandle_t handle,
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetFixedPointEmulationMantissaBitCountPointer(cublasHandle_t handle,
                                                     int *mantissaBitCount) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetFixedPointEmulationMantissaBitCountPointer, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cublasSetFixedPointEmulationMantissaBitCountPointer) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mantissaBitCount, sizeof(int *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -577,38 +756,50 @@ cublasSetFixedPointEmulationMantissaBitCountPointer(cublasHandle_t handle,
 
 extern "C" cublasStatus_t CUBLASWINAPI cublasLoggerConfigure(
     int logIsOn, int logToStdOut, int logToStdErr, const char *logFileName) {
-  int route_id = lupine_cublas_default_route();
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CURRENT_CONTEXT, 0},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasLoggerConfigure, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasLoggerConfigure) < 0 ||
-      rpc_write(conn, &logIsOn, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &logIsOn, sizeof(int)) < 0 ||
       rpc_write(conn, &logToStdOut, sizeof(int)) < 0 ||
       rpc_write(conn, &logToStdErr, sizeof(int)) < 0 ||
       rpc_write(conn, &logFileName, sizeof(const char *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSetLoggerCallback(cublasLogCallback userCallback) {
-  int route_id = lupine_cublas_default_route();
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CURRENT_CONTEXT, 0},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSetLoggerCallback, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSetLoggerCallback) < 0 ||
-      rpc_write(conn, &userCallback, sizeof(cublasLogCallback)) < 0 ||
+  if (rpc_write(conn, &userCallback, sizeof(cublasLogCallback)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -616,19 +807,25 @@ extern "C" cublasStatus_t CUBLASWINAPI
 cublasGetLoggerCallback(cublasLogCallback *userCallback) {
   if (userCallback == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_default_route();
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CURRENT_CONTEXT, 0},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGetLoggerCallback, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGetLoggerCallback) < 0 ||
-      rpc_write(conn, userCallback, sizeof(cublasLogCallback)) < 0 ||
+  if (rpc_write(conn, userCallback, sizeof(cublasLogCallback)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, userCallback, sizeof(cublasLogCallback)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -637,14 +834,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSnrm2_v2(cublasHandle_t handle,
                                                       int incx, float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSnrm2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSnrm2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -652,8 +853,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSnrm2_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -664,14 +868,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSnrm2_v2_64(cublasHandle_t handle,
                                                          float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSnrm2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSnrm2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -679,8 +887,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSnrm2_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -690,14 +901,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDnrm2_v2(cublasHandle_t handle,
                                                       double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDnrm2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDnrm2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -705,8 +920,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDnrm2_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -717,14 +935,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDnrm2_v2_64(cublasHandle_t handle,
                                                          double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDnrm2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDnrm2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -732,8 +954,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDnrm2_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -741,14 +966,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScnrm2_v2(
     cublasHandle_t handle, int n, const cuComplex *x, int incx, float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasScnrm2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasScnrm2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -756,8 +985,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScnrm2_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -768,14 +1000,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScnrm2_v2_64(cublasHandle_t handle,
                                                           float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasScnrm2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasScnrm2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -783,8 +1019,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScnrm2_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -795,14 +1034,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDznrm2_v2(cublasHandle_t handle,
                                                        double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDznrm2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDznrm2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -810,8 +1053,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDznrm2_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -820,14 +1066,18 @@ cublasDznrm2_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
                    int64_t incx, double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDznrm2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDznrm2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -835,8 +1085,11 @@ cublasDznrm2_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -846,14 +1099,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSdot_v2(cublasHandle_t handle,
                                                      int incy, float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSdot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSdot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -863,8 +1120,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSdot_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -873,14 +1133,18 @@ cublasSdot_v2_64(cublasHandle_t handle, int64_t n, const float *x, int64_t incx,
                  const float *y, int64_t incy, float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSdot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSdot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -890,8 +1154,11 @@ cublasSdot_v2_64(cublasHandle_t handle, int64_t n, const float *x, int64_t incx,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -901,14 +1168,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDdot_v2(cublasHandle_t handle,
                                                      int incy, double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDdot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDdot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -918,8 +1189,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDdot_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -928,14 +1202,18 @@ cublasDdot_v2_64(cublasHandle_t handle, int64_t n, const double *x,
                  int64_t incx, const double *y, int64_t incy, double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDdot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDdot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -945,8 +1223,11 @@ cublasDdot_v2_64(cublasHandle_t handle, int64_t n, const double *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -955,14 +1236,18 @@ cublasCdotu_v2(cublasHandle_t handle, int n, const cuComplex *x, int incx,
                const cuComplex *y, int incy, cuComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCdotu_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCdotu_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -972,8 +1257,11 @@ cublasCdotu_v2(cublasHandle_t handle, int n, const cuComplex *x, int incx,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -982,14 +1270,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCdotu_v2_64(
     const cuComplex *y, int64_t incy, cuComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCdotu_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCdotu_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -999,8 +1291,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCdotu_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1009,14 +1304,18 @@ cublasCdotc_v2(cublasHandle_t handle, int n, const cuComplex *x, int incx,
                const cuComplex *y, int incy, cuComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCdotc_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCdotc_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1026,8 +1325,11 @@ cublasCdotc_v2(cublasHandle_t handle, int n, const cuComplex *x, int incx,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1036,14 +1338,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCdotc_v2_64(
     const cuComplex *y, int64_t incy, cuComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCdotc_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCdotc_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -1053,8 +1359,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCdotc_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1063,14 +1372,18 @@ cublasZdotu_v2(cublasHandle_t handle, int n, const cuDoubleComplex *x, int incx,
                const cuDoubleComplex *y, int incy, cuDoubleComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdotu_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdotu_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1080,8 +1393,11 @@ cublasZdotu_v2(cublasHandle_t handle, int n, const cuDoubleComplex *x, int incx,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1090,14 +1406,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdotu_v2_64(
     const cuDoubleComplex *y, int64_t incy, cuDoubleComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdotu_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdotu_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -1107,8 +1427,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdotu_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1117,14 +1440,18 @@ cublasZdotc_v2(cublasHandle_t handle, int n, const cuDoubleComplex *x, int incx,
                const cuDoubleComplex *y, int incy, cuDoubleComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdotc_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdotc_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1134,8 +1461,11 @@ cublasZdotc_v2(cublasHandle_t handle, int n, const cuDoubleComplex *x, int incx,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1144,14 +1474,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdotc_v2_64(
     const cuDoubleComplex *y, int64_t incy, cuDoubleComplex *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdotc_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdotc_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -1161,8 +1495,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdotc_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1171,22 +1508,29 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSscal_v2(cublasHandle_t handle,
                                                       float *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSscal_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSscal_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1197,22 +1541,29 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSscal_v2_64(cublasHandle_t handle,
                                                          int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSscal_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSscal_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1222,14 +1573,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDscal_v2(cublasHandle_t handle,
                                                       double *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDscal_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDscal_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
@@ -1237,8 +1592,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDscal_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1249,14 +1607,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDscal_v2_64(cublasHandle_t handle,
                                                          int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDscal_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDscal_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
@@ -1264,8 +1626,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDscal_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1275,14 +1640,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCscal_v2(cublasHandle_t handle,
                                                       cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCscal_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCscal_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
@@ -1290,8 +1659,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCscal_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1302,14 +1674,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCscal_v2_64(cublasHandle_t handle,
                                                          int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCscal_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCscal_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
@@ -1317,8 +1693,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCscal_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1328,14 +1707,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsscal_v2(cublasHandle_t handle,
                                                        cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsscal_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsscal_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
@@ -1343,8 +1726,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsscal_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1355,14 +1741,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsscal_v2_64(cublasHandle_t handle,
                                                           int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsscal_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsscal_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
@@ -1370,8 +1760,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsscal_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1380,14 +1773,18 @@ cublasZscal_v2(cublasHandle_t handle, int n, const cuDoubleComplex *alpha,
                cuDoubleComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZscal_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZscal_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
@@ -1395,8 +1792,11 @@ cublasZscal_v2(cublasHandle_t handle, int n, const cuDoubleComplex *alpha,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1405,14 +1805,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZscal_v2_64(
     cuDoubleComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZscal_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZscal_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
@@ -1420,8 +1824,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZscal_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1432,14 +1839,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdscal_v2(cublasHandle_t handle,
                                                        int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdscal_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdscal_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
@@ -1447,8 +1858,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdscal_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1459,14 +1873,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdscal_v2_64(cublasHandle_t handle,
                                                           int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdscal_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdscal_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
@@ -1474,8 +1892,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdscal_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1485,14 +1906,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSaxpy_v2(cublasHandle_t handle,
                                                       float *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSaxpy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSaxpy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
@@ -1501,8 +1926,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSaxpy_v2(cublasHandle_t handle,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1511,14 +1939,18 @@ cublasSaxpy_v2_64(cublasHandle_t handle, int64_t n, const float *alpha,
                   const float *x, int64_t incx, float *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSaxpy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSaxpy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
@@ -1527,8 +1959,11 @@ cublasSaxpy_v2_64(cublasHandle_t handle, int64_t n, const float *alpha,
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1539,14 +1974,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDaxpy_v2(cublasHandle_t handle,
                                                       double *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDaxpy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDaxpy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
@@ -1556,8 +1995,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDaxpy_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1566,14 +2008,18 @@ cublasDaxpy_v2_64(cublasHandle_t handle, int64_t n, const double *alpha,
                   const double *x, int64_t incx, double *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDaxpy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDaxpy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
@@ -1583,8 +2029,11 @@ cublasDaxpy_v2_64(cublasHandle_t handle, int64_t n, const double *alpha,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1593,14 +2042,18 @@ cublasCaxpy_v2(cublasHandle_t handle, int n, const cuComplex *alpha,
                const cuComplex *x, int incx, cuComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCaxpy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCaxpy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
@@ -1610,8 +2063,11 @@ cublasCaxpy_v2(cublasHandle_t handle, int n, const cuComplex *alpha,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1620,14 +2076,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCaxpy_v2_64(
     const cuComplex *x, int64_t incx, cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCaxpy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCaxpy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
@@ -1637,8 +2097,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCaxpy_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1647,14 +2110,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZaxpy_v2(
     const cuDoubleComplex *x, int incx, cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZaxpy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZaxpy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -1664,8 +2131,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZaxpy_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1674,14 +2144,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZaxpy_v2_64(
     const cuDoubleComplex *x, int64_t incx, cuDoubleComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZaxpy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZaxpy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -1691,22 +2165,29 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZaxpy_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasCopyEx(cublasHandle_t handle, int n, const void *x, cudaDataType xType,
              int incx, void *y, cudaDataType yType, int incy) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCopyEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCopyEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -1716,22 +2197,29 @@ cublasCopyEx(cublasHandle_t handle, int n, const void *x, cudaDataType xType,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI cublasCopyEx_64(
     cublasHandle_t handle, int64_t n, const void *x, cudaDataType xType,
     int64_t incx, void *y, cudaDataType yType, int64_t incy) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCopyEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCopyEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -1741,8 +2229,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCopyEx_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1752,14 +2243,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScopy_v2(cublasHandle_t handle,
                                                       int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasScopy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasScopy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1767,8 +2262,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScopy_v2(cublasHandle_t handle,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1779,14 +2277,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScopy_v2_64(cublasHandle_t handle,
                                                          int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasScopy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasScopy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -1794,8 +2296,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScopy_v2_64(cublasHandle_t handle,
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1805,14 +2310,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDcopy_v2(cublasHandle_t handle,
                                                       int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDcopy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDcopy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1821,8 +2330,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDcopy_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1831,14 +2343,18 @@ cublasDcopy_v2_64(cublasHandle_t handle, int64_t n, const double *x,
                   int64_t incx, double *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDcopy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDcopy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -1847,8 +2363,11 @@ cublasDcopy_v2_64(cublasHandle_t handle, int64_t n, const double *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1858,14 +2377,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCcopy_v2(cublasHandle_t handle,
                                                       int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCcopy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCcopy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1874,8 +2397,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCcopy_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1884,14 +2410,18 @@ cublasCcopy_v2_64(cublasHandle_t handle, int64_t n, const cuComplex *x,
                   int64_t incx, cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCcopy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCcopy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -1900,8 +2430,11 @@ cublasCcopy_v2_64(cublasHandle_t handle, int64_t n, const cuComplex *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1910,14 +2443,18 @@ cublasZcopy_v2(cublasHandle_t handle, int n, const cuDoubleComplex *x, int incx,
                cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZcopy_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZcopy_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1926,8 +2463,11 @@ cublasZcopy_v2(cublasHandle_t handle, int n, const cuDoubleComplex *x, int incx,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1936,14 +2476,18 @@ cublasZcopy_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
                   int64_t incx, cuDoubleComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZcopy_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZcopy_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -1952,8 +2496,11 @@ cublasZcopy_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1962,14 +2509,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSswap_v2(cublasHandle_t handle,
                                                       float *y, int incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSswap_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSswap_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -1978,8 +2529,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSswap_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -1989,14 +2543,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSswap_v2_64(cublasHandle_t handle,
                                                          int64_t incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSswap_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSswap_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2005,8 +2563,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSswap_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2016,14 +2577,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDswap_v2(cublasHandle_t handle,
                                                       int incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDswap_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDswap_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2033,8 +2598,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDswap_v2(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2045,14 +2613,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDswap_v2_64(cublasHandle_t handle,
                                                          int64_t incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDswap_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDswap_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2062,8 +2634,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDswap_v2_64(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2073,14 +2648,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCswap_v2(cublasHandle_t handle,
                                                       int incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCswap_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCswap_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2090,8 +2669,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCswap_v2(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2100,14 +2682,18 @@ cublasCswap_v2_64(cublasHandle_t handle, int64_t n, cuComplex *x, int64_t incx,
                   cuComplex *y, int64_t incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCswap_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCswap_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2117,8 +2703,11 @@ cublasCswap_v2_64(cublasHandle_t handle, int64_t n, cuComplex *x, int64_t incx,
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2129,14 +2718,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZswap_v2(cublasHandle_t handle,
                                                       int incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZswap_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZswap_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2146,8 +2739,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZswap_v2(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2156,14 +2752,18 @@ cublasZswap_v2_64(cublasHandle_t handle, int64_t n, cuDoubleComplex *x,
                   int64_t incx, cuDoubleComplex *y, int64_t incy) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZswap_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZswap_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2173,22 +2773,29 @@ cublasZswap_v2_64(cublasHandle_t handle, int64_t n, cuDoubleComplex *x,
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSwapEx(cublasHandle_t handle, int n, void *x, cudaDataType xType,
              int incx, void *y, cudaDataType yType, int incy) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSwapEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSwapEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -2198,22 +2805,29 @@ cublasSwapEx(cublasHandle_t handle, int n, void *x, cudaDataType xType,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
 extern "C" cublasStatus_t CUBLASWINAPI
 cublasSwapEx_64(cublasHandle_t handle, int64_t n, void *x, cudaDataType xType,
                 int64_t incx, void *y, cudaDataType yType, int64_t incy) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSwapEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSwapEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -2223,8 +2837,11 @@ cublasSwapEx_64(cublasHandle_t handle, int64_t n, void *x, cudaDataType xType,
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2233,14 +2850,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamax_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIsamax_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIsamax_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2248,8 +2869,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamax_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2260,14 +2884,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamax_v2_64(cublasHandle_t handle,
                                                           int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIsamax_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIsamax_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2275,8 +2903,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamax_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2285,14 +2916,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamax_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIdamax_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIdamax_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2300,8 +2935,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamax_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2312,14 +2950,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamax_v2_64(cublasHandle_t handle,
                                                           int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIdamax_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIdamax_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2327,8 +2969,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamax_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2338,14 +2983,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamax_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIcamax_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIcamax_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2353,8 +3002,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamax_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2365,14 +3017,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamax_v2_64(cublasHandle_t handle,
                                                           int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIcamax_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIcamax_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2380,8 +3036,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamax_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2391,14 +3050,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIzamax_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIzamax_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIzamax_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2406,8 +3069,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIzamax_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2416,14 +3082,18 @@ cublasIzamax_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
                    int64_t incx, int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIzamax_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIzamax_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2431,8 +3101,11 @@ cublasIzamax_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2442,14 +3115,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIamaxEx(cublasHandle_t handle,
                                                      int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIamaxEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIamaxEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -2458,8 +3135,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIamaxEx(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2468,14 +3148,18 @@ cublasIamaxEx_64(cublasHandle_t handle, int64_t n, const void *x,
                  cudaDataType xType, int64_t incx, int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIamaxEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIamaxEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -2484,8 +3168,11 @@ cublasIamaxEx_64(cublasHandle_t handle, int64_t n, const void *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2494,14 +3181,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamin_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIsamin_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIsamin_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2509,8 +3200,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamin_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2521,14 +3215,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamin_v2_64(cublasHandle_t handle,
                                                           int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIsamin_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIsamin_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2536,8 +3234,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIsamin_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2546,14 +3247,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamin_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIdamin_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIdamin_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2561,8 +3266,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamin_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2573,14 +3281,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamin_v2_64(cublasHandle_t handle,
                                                           int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIdamin_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIdamin_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2588,8 +3300,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIdamin_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2599,14 +3314,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamin_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIcamin_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIcamin_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2614,8 +3333,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamin_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2626,14 +3348,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamin_v2_64(cublasHandle_t handle,
                                                           int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIcamin_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIcamin_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2641,8 +3367,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIcamin_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2652,14 +3381,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIzamin_v2(cublasHandle_t handle,
                                                        int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIzamin_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIzamin_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2667,8 +3400,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIzamin_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2677,14 +3413,18 @@ cublasIzamin_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
                    int64_t incx, int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIzamin_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIzamin_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2692,8 +3432,11 @@ cublasIzamin_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2703,14 +3446,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIaminEx(cublasHandle_t handle,
                                                      int incx, int *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIaminEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIaminEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -2719,8 +3466,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasIaminEx(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2729,14 +3479,18 @@ cublasIaminEx_64(cublasHandle_t handle, int64_t n, const void *x,
                  cudaDataType xType, int64_t incx, int64_t *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasIaminEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasIaminEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const void *)) < 0 ||
       rpc_write(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -2745,8 +3499,11 @@ cublasIaminEx_64(cublasHandle_t handle, int64_t n, const void *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2755,14 +3512,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSasum_v2(cublasHandle_t handle,
                                                       int incx, float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSasum_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSasum_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2770,8 +3531,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSasum_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2782,14 +3546,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSasum_v2_64(cublasHandle_t handle,
                                                          float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSasum_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSasum_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const float *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2797,8 +3565,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSasum_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2808,14 +3579,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDasum_v2(cublasHandle_t handle,
                                                       double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDasum_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDasum_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2823,8 +3598,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDasum_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2835,14 +3613,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDasum_v2_64(cublasHandle_t handle,
                                                          double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDasum_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDasum_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const double *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2850,8 +3632,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDasum_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2859,14 +3644,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScasum_v2(
     cublasHandle_t handle, int n, const cuComplex *x, int incx, float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasScasum_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasScasum_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2874,8 +3663,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScasum_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2886,14 +3678,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScasum_v2_64(cublasHandle_t handle,
                                                           float *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasScasum_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasScasum_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2901,8 +3697,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasScasum_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2913,14 +3712,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDzasum_v2(cublasHandle_t handle,
                                                        double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDzasum_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDzasum_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2928,8 +3731,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDzasum_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2938,14 +3744,18 @@ cublasDzasum_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
                    int64_t incx, double *result) {
   if (result == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDzasum_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDzasum_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -2953,8 +3763,11 @@ cublasDzasum_v2_64(cublasHandle_t handle, int64_t n, const cuDoubleComplex *x,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2965,14 +3778,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrot_v2(cublasHandle_t handle,
                                                      const float *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSrot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSrot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -2983,8 +3800,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrot_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -2993,14 +3813,18 @@ cublasSrot_v2_64(cublasHandle_t handle, int64_t n, float *x, int64_t incx,
                  float *y, int64_t incy, const float *c, const float *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSrot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSrot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3011,8 +3835,11 @@ cublasSrot_v2_64(cublasHandle_t handle, int64_t n, float *x, int64_t incx,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3023,14 +3850,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrot_v2(cublasHandle_t handle,
                                                      const double *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDrot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDrot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -3042,8 +3873,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrot_v2(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3052,14 +3886,18 @@ cublasDrot_v2_64(cublasHandle_t handle, int64_t n, double *x, int64_t incx,
                  double *y, int64_t incy, const double *c, const double *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDrot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDrot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3071,8 +3909,11 @@ cublasDrot_v2_64(cublasHandle_t handle, int64_t n, double *x, int64_t incx,
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3083,14 +3924,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCrot_v2(cublasHandle_t handle,
                                                      const cuComplex *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCrot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCrot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -3102,8 +3947,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCrot_v2(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3112,14 +3960,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCrot_v2_64(
     int64_t incy, const float *c, const cuComplex *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCrot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCrot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3131,8 +3983,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCrot_v2_64(
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3143,14 +3998,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsrot_v2(cublasHandle_t handle,
                                                       const float *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsrot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsrot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -3162,8 +4021,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsrot_v2(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3172,14 +4034,18 @@ cublasCsrot_v2_64(cublasHandle_t handle, int64_t n, cuComplex *x, int64_t incx,
                   cuComplex *y, int64_t incy, const float *c, const float *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsrot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsrot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3191,8 +4057,11 @@ cublasCsrot_v2_64(cublasHandle_t handle, int64_t n, cuComplex *x, int64_t incx,
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3201,14 +4070,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZrot_v2(
     cuDoubleComplex *y, int incy, const double *c, const cuDoubleComplex *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZrot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZrot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -3220,8 +4093,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZrot_v2(
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3231,14 +4107,18 @@ cublasZrot_v2_64(cublasHandle_t handle, int64_t n, cuDoubleComplex *x,
                  const double *c, const cuDoubleComplex *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZrot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZrot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3250,8 +4130,11 @@ cublasZrot_v2_64(cublasHandle_t handle, int64_t n, cuDoubleComplex *x,
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3260,14 +4143,18 @@ cublasZdrot_v2(cublasHandle_t handle, int n, cuDoubleComplex *x, int incx,
                cuDoubleComplex *y, int incy, const double *c, const double *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdrot_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdrot_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -3279,8 +4166,11 @@ cublasZdrot_v2(cublasHandle_t handle, int n, cuDoubleComplex *x, int incx,
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3289,14 +4179,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdrot_v2_64(
     cuDoubleComplex *y, int64_t incy, const double *c, const double *s) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdrot_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdrot_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3308,8 +4202,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdrot_v2_64(
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3318,14 +4215,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotg_v2(cublasHandle_t handle,
                                                       float *c, float *s) {
   if (a == nullptr || b == nullptr || c == nullptr || s == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSrotg_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSrotg_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, a, sizeof(float)) < 0 ||
       rpc_write(conn, b, sizeof(float)) < 0 ||
       rpc_write(conn, c, sizeof(float)) < 0 ||
@@ -3335,8 +4236,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotg_v2(cublasHandle_t handle,
       rpc_read(conn, c, sizeof(float)) < 0 ||
       rpc_read(conn, s, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3345,14 +4249,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrotg_v2(cublasHandle_t handle,
                                                       double *c, double *s) {
   if (a == nullptr || b == nullptr || c == nullptr || s == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDrotg_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDrotg_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, a, sizeof(double)) < 0 ||
       rpc_write(conn, b, sizeof(double)) < 0 ||
       rpc_write(conn, c, sizeof(double)) < 0 ||
@@ -3363,8 +4271,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrotg_v2(cublasHandle_t handle,
       rpc_read(conn, c, sizeof(double)) < 0 ||
       rpc_read(conn, s, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3374,14 +4285,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCrotg_v2(cublasHandle_t handle,
                                                       cuComplex *s) {
   if (a == nullptr || b == nullptr || c == nullptr || s == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCrotg_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCrotg_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, a, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, b, sizeof(cuComplex)) < 0 ||
       rpc_write(conn, c, sizeof(float)) < 0 ||
@@ -3392,8 +4307,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCrotg_v2(cublasHandle_t handle,
       rpc_read(conn, c, sizeof(float)) < 0 ||
       rpc_read(conn, s, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3404,14 +4322,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZrotg_v2(cublasHandle_t handle,
                                                       cuDoubleComplex *s) {
   if (a == nullptr || b == nullptr || c == nullptr || s == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZrotg_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZrotg_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, a, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, b, sizeof(cuDoubleComplex)) < 0 ||
       rpc_write(conn, c, sizeof(double)) < 0 ||
@@ -3422,8 +4344,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZrotg_v2(cublasHandle_t handle,
       rpc_read(conn, c, sizeof(double)) < 0 ||
       rpc_read(conn, s, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3433,14 +4358,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotm_v2(cublasHandle_t handle,
                                                       const float *param) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSrotm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSrotm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -3450,8 +4379,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotm_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3462,14 +4394,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotm_v2_64(cublasHandle_t handle,
                                                          const float *param) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSrotm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSrotm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(float)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3479,8 +4415,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotm_v2_64(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3491,14 +4430,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrotm_v2(cublasHandle_t handle,
                                                       const double *param) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDrotm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDrotm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
@@ -3509,8 +4452,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrotm_v2(cublasHandle_t handle,
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3519,14 +4465,18 @@ cublasDrotm_v2_64(cublasHandle_t handle, int64_t n, double *x, int64_t incx,
                   double *y, int64_t incy, const double *param) {
   if (x == nullptr || y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDrotm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDrotm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, x, sizeof(double)) < 0 ||
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
@@ -3537,8 +4487,11 @@ cublasDrotm_v2_64(cublasHandle_t handle, int64_t n, double *x, int64_t incx,
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3549,14 +4502,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotmg_v2(cublasHandle_t handle,
                                                        float *param) {
   if (d1 == nullptr || d2 == nullptr || x1 == nullptr || param == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSrotmg_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSrotmg_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, d1, sizeof(float)) < 0 ||
       rpc_write(conn, d2, sizeof(float)) < 0 ||
       rpc_write(conn, x1, sizeof(float)) < 0 ||
@@ -3568,8 +4525,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSrotmg_v2(cublasHandle_t handle,
       rpc_read(conn, x1, sizeof(float)) < 0 ||
       rpc_read(conn, param, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3580,14 +4540,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrotmg_v2(cublasHandle_t handle,
                                                        double *param) {
   if (d1 == nullptr || d2 == nullptr || x1 == nullptr || param == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDrotmg_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDrotmg_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, d1, sizeof(double)) < 0 ||
       rpc_write(conn, d2, sizeof(double)) < 0 ||
       rpc_write(conn, x1, sizeof(double)) < 0 ||
@@ -3599,8 +4563,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDrotmg_v2(cublasHandle_t handle,
       rpc_read(conn, x1, sizeof(double)) < 0 ||
       rpc_read(conn, param, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3610,14 +4577,18 @@ cublasSgemv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
                int incx, const float *beta, float *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -3631,8 +4602,11 @@ cublasSgemv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3642,14 +4616,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemv_v2_64(
     int64_t incx, const float *beta, float *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -3663,8 +4641,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemv_v2_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3674,14 +4655,18 @@ cublasDgemv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
                int incx, const double *beta, double *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -3696,8 +4681,11 @@ cublasDgemv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3707,14 +4695,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemv_v2_64(
     int64_t incx, const double *beta, double *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -3729,8 +4721,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3740,14 +4735,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemv_v2(
     int incx, const cuComplex *beta, cuComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -3762,8 +4761,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3773,14 +4775,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemv_v2_64(
     int64_t incx, const cuComplex *beta, cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -3795,8 +4801,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3807,14 +4816,18 @@ cublasZgemv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
                cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -3829,8 +4842,11 @@ cublasZgemv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3841,14 +4857,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemv_v2_64(
     cuDoubleComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -3863,8 +4883,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3874,14 +4897,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgbmv_v2(
     int incx, const float *beta, float *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -3897,8 +4924,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgbmv_v2(
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3908,14 +4938,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgbmv_v2_64(
     const float *x, int64_t incx, const float *beta, float *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -3931,8 +4965,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgbmv_v2_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3942,14 +4979,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgbmv_v2(
     int incx, const double *beta, double *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -3966,8 +5007,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgbmv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -3978,14 +5022,18 @@ cublasDgbmv_v2_64(cublasHandle_t handle, cublasOperation_t trans, int64_t m,
                   const double *beta, double *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -4002,8 +5050,11 @@ cublasDgbmv_v2_64(cublasHandle_t handle, cublasOperation_t trans, int64_t m,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4014,14 +5065,18 @@ cublasCgbmv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
                cuComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -4038,8 +5093,11 @@ cublasCgbmv_v2(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4050,14 +5108,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgbmv_v2_64(
     cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -4074,8 +5136,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4086,14 +5151,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgbmv_v2(
     cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -4110,8 +5179,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgbmv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4123,14 +5195,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgbmv_v2_64(
     int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -4147,8 +5223,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4157,14 +5236,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrmv_v2(
     cublasDiagType_t diag, int n, const float *A, int lda, float *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4175,8 +5258,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrmv_v2(
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4186,14 +5272,18 @@ cublasStrmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const float *A, int64_t lda, float *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4204,8 +5294,11 @@ cublasStrmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4215,14 +5308,18 @@ cublasDtrmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const double *A, int lda, double *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4234,8 +5331,11 @@ cublasDtrmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4245,14 +5345,18 @@ cublasDtrmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const double *A, int64_t lda, double *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4264,8 +5368,11 @@ cublasDtrmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4275,14 +5382,18 @@ cublasCtrmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const cuComplex *A, int lda, cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4294,8 +5405,11 @@ cublasCtrmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4305,14 +5419,18 @@ cublasCtrmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const cuComplex *A, int64_t lda, cuComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4324,8 +5442,11 @@ cublasCtrmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4335,14 +5456,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmv_v2(
     cuDoubleComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4354,8 +5479,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4365,14 +5493,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmv_v2_64(
     cuDoubleComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4384,8 +5516,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4395,14 +5530,18 @@ cublasStbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const float *A, int lda, float *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4414,8 +5553,11 @@ cublasStbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4425,14 +5567,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStbmv_v2_64(
     float *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4444,8 +5590,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStbmv_v2_64(
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4455,14 +5604,18 @@ cublasDtbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const double *A, int lda, double *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4475,8 +5628,11 @@ cublasDtbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4486,14 +5642,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtbmv_v2_64(
     double *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4506,8 +5666,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4517,14 +5680,18 @@ cublasCtbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const cuComplex *A, int lda, cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4537,8 +5704,11 @@ cublasCtbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4548,14 +5718,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtbmv_v2_64(
     int64_t lda, cuComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4568,8 +5742,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4579,14 +5756,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbmv_v2(
     cuDoubleComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4599,8 +5780,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbmv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4610,14 +5794,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbmv_v2_64(
     int64_t lda, cuDoubleComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4630,8 +5818,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4640,14 +5831,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpmv_v2(
     cublasDiagType_t diag, int n, const float *AP, float *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStpmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStpmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4657,8 +5852,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpmv_v2(
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4667,14 +5865,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpmv_v2_64(
     cublasDiagType_t diag, int64_t n, const float *AP, float *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStpmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStpmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4684,8 +5886,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpmv_v2_64(
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4694,14 +5899,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtpmv_v2(
     cublasDiagType_t diag, int n, const double *AP, double *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtpmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtpmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4712,8 +5921,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtpmv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4723,14 +5935,18 @@ cublasDtpmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const double *AP, double *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtpmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtpmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4741,8 +5957,11 @@ cublasDtpmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4751,14 +5970,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtpmv_v2(
     cublasDiagType_t diag, int n, const cuComplex *AP, cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtpmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtpmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4769,8 +5992,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtpmv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4780,14 +6006,18 @@ cublasCtpmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const cuComplex *AP, cuComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtpmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtpmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4798,8 +6028,11 @@ cublasCtpmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4809,14 +6042,18 @@ cublasZtpmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const cuDoubleComplex *AP, cuDoubleComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtpmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtpmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4827,8 +6064,11 @@ cublasZtpmv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4838,14 +6078,18 @@ cublasZtpmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const cuDoubleComplex *AP, cuDoubleComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtpmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtpmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4856,8 +6100,11 @@ cublasZtpmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4866,14 +6113,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsv_v2(
     cublasDiagType_t diag, int n, const float *A, int lda, float *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4884,8 +6135,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsv_v2(
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4895,14 +6149,18 @@ cublasStrsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const float *A, int64_t lda, float *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4913,8 +6171,11 @@ cublasStrsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4924,14 +6185,18 @@ cublasDtrsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const double *A, int lda, double *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4943,8 +6208,11 @@ cublasDtrsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4954,14 +6222,18 @@ cublasDtrsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const double *A, int64_t lda, double *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -4973,8 +6245,11 @@ cublasDtrsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -4984,14 +6259,18 @@ cublasCtrsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const cuComplex *A, int lda, cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5003,8 +6282,11 @@ cublasCtrsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5014,14 +6296,18 @@ cublasCtrsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const cuComplex *A, int64_t lda, cuComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5033,8 +6319,11 @@ cublasCtrsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5044,14 +6333,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsv_v2(
     cuDoubleComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5063,8 +6356,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5074,14 +6370,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsv_v2_64(
     cuDoubleComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5093,8 +6393,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5103,14 +6406,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpsv_v2(
     cublasDiagType_t diag, int n, const float *AP, float *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStpsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStpsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5120,8 +6427,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpsv_v2(
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5130,14 +6440,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpsv_v2_64(
     cublasDiagType_t diag, int64_t n, const float *AP, float *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStpsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStpsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5147,8 +6461,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpsv_v2_64(
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5157,14 +6474,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtpsv_v2(
     cublasDiagType_t diag, int n, const double *AP, double *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtpsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtpsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5175,8 +6496,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtpsv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5186,14 +6510,18 @@ cublasDtpsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const double *AP, double *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtpsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtpsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5204,8 +6532,11 @@ cublasDtpsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5214,14 +6545,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtpsv_v2(
     cublasDiagType_t diag, int n, const cuComplex *AP, cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtpsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtpsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5232,8 +6567,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtpsv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5243,14 +6581,18 @@ cublasCtpsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const cuComplex *AP, cuComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtpsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtpsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5261,8 +6603,11 @@ cublasCtpsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5272,14 +6617,18 @@ cublasZtpsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const cuDoubleComplex *AP, cuDoubleComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtpsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtpsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5290,8 +6639,11 @@ cublasZtpsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5301,14 +6653,18 @@ cublasZtpsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
                   const cuDoubleComplex *AP, cuDoubleComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtpsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtpsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5319,8 +6675,11 @@ cublasZtpsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5330,14 +6689,18 @@ cublasStbsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const float *A, int lda, float *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStbsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStbsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5349,8 +6712,11 @@ cublasStbsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_write(conn, &incx, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5360,14 +6726,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStbsv_v2_64(
     float *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStbsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStbsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5379,8 +6749,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStbsv_v2_64(
       rpc_write(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, x, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5390,14 +6763,18 @@ cublasDtbsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const double *A, int lda, double *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtbsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtbsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5410,8 +6787,11 @@ cublasDtbsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5421,14 +6801,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtbsv_v2_64(
     double *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtbsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtbsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5441,8 +6825,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtbsv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5452,14 +6839,18 @@ cublasCtbsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const cuComplex *A, int lda, cuComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtbsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtbsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5472,8 +6863,11 @@ cublasCtbsv_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5483,14 +6877,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtbsv_v2_64(
     int64_t lda, cuComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtbsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtbsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5503,8 +6901,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtbsv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5514,14 +6915,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbsv_v2(
     cuDoubleComplex *x, int incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtbsv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtbsv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5534,8 +6939,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbsv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5545,14 +6953,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbsv_v2_64(
     int64_t lda, cuDoubleComplex *x, int64_t incx) {
   if (x == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtbsv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtbsv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
@@ -5565,8 +6977,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtbsv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, x, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5576,14 +6991,18 @@ cublasSsymv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                int incx, const float *beta, float *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsymv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsymv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -5596,8 +7015,11 @@ cublasSsymv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5607,14 +7029,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsymv_v2_64(
     const float *beta, float *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsymv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsymv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -5627,8 +7053,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsymv_v2_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5638,14 +7067,18 @@ cublasDsymv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                int incx, const double *beta, double *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsymv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsymv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -5659,8 +7092,11 @@ cublasDsymv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5670,14 +7106,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsymv_v2_64(
     int64_t incx, const double *beta, double *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsymv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsymv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -5691,8 +7131,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsymv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5702,14 +7145,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymv_v2(
     const cuComplex *beta, cuComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsymv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsymv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -5723,8 +7170,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5734,14 +7184,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymv_v2_64(
     int64_t incx, const cuComplex *beta, cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsymv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsymv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -5755,8 +7209,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5767,14 +7224,18 @@ cublasZsymv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsymv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsymv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -5788,8 +7249,11 @@ cublasZsymv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5800,14 +7264,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsymv_v2_64(
     cuDoubleComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsymv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsymv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -5821,8 +7289,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsymv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5832,14 +7303,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemv_v2(
     const cuComplex *beta, cuComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChemv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChemv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -5853,8 +7328,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5864,14 +7342,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemv_v2_64(
     int64_t incx, const cuComplex *beta, cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChemv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChemv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -5885,8 +7367,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5897,14 +7382,18 @@ cublasZhemv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhemv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhemv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -5918,8 +7407,11 @@ cublasZhemv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5930,14 +7422,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhemv_v2_64(
     cuDoubleComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhemv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhemv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -5951,8 +7447,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhemv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5962,14 +7461,18 @@ cublasSsbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n, int k,
                int incx, const float *beta, float *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &k, sizeof(int)) < 0 ||
@@ -5983,8 +7486,11 @@ cublasSsbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n, int k,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -5994,14 +7500,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsbmv_v2_64(
     int64_t incx, const float *beta, float *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &k, sizeof(int64_t)) < 0 ||
@@ -6015,8 +7525,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsbmv_v2_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6026,14 +7539,18 @@ cublasDsbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n, int k,
                int incx, const double *beta, double *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &k, sizeof(int)) < 0 ||
@@ -6048,8 +7565,11 @@ cublasDsbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n, int k,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6059,14 +7579,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsbmv_v2_64(
     int64_t incx, const double *beta, double *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &k, sizeof(int64_t)) < 0 ||
@@ -6081,8 +7605,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6092,14 +7619,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChbmv_v2(
     int incx, const cuComplex *beta, cuComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &k, sizeof(int)) < 0 ||
@@ -6114,8 +7645,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChbmv_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6125,14 +7659,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChbmv_v2_64(
     int64_t incx, const cuComplex *beta, cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &k, sizeof(int64_t)) < 0 ||
@@ -6147,8 +7685,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6159,14 +7700,18 @@ cublasZhbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n, int k,
                cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhbmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhbmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &k, sizeof(int)) < 0 ||
@@ -6181,8 +7726,11 @@ cublasZhbmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n, int k,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6193,14 +7741,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhbmv_v2_64(
     cuDoubleComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhbmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhbmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &k, sizeof(int64_t)) < 0 ||
@@ -6215,8 +7767,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhbmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6226,14 +7781,18 @@ cublasSspmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                const float *beta, float *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSspmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSspmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -6245,8 +7804,11 @@ cublasSspmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6256,14 +7818,18 @@ cublasSspmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   int64_t incx, const float *beta, float *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSspmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSspmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -6275,8 +7841,11 @@ cublasSspmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6286,14 +7855,18 @@ cublasDspmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                const double *beta, double *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDspmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDspmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -6306,8 +7879,11 @@ cublasDspmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6317,14 +7893,18 @@ cublasDspmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   int64_t incx, const double *beta, double *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDspmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDspmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -6337,8 +7917,11 @@ cublasDspmv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6348,14 +7931,18 @@ cublasChpmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                int incx, const cuComplex *beta, cuComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChpmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChpmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -6368,8 +7955,11 @@ cublasChpmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6379,14 +7969,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpmv_v2_64(
     int64_t incx, const cuComplex *beta, cuComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChpmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChpmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -6399,8 +7993,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6411,14 +8008,18 @@ cublasZhpmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                cuDoubleComplex *y, int incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhpmv_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhpmv_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -6431,8 +8032,11 @@ cublasZhpmv_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6443,14 +8047,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhpmv_v2_64(
     cuDoubleComplex *y, int64_t incy) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhpmv_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhpmv_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -6463,8 +8071,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhpmv_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6473,14 +8084,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSger_v2(
     int incx, const float *y, int incy, float *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSger_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSger_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -6492,8 +8107,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSger_v2(
       rpc_write(conn, &lda, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, A, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6503,14 +8121,18 @@ cublasSger_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
                  const float *y, int64_t incy, float *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSger_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSger_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -6522,8 +8144,11 @@ cublasSger_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
       rpc_write(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, A, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6532,14 +8157,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDger_v2(
     int incx, const double *y, int incy, double *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDger_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDger_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -6552,8 +8181,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDger_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6563,14 +8195,18 @@ cublasDger_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
                  const double *y, int64_t incy, double *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDger_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDger_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -6583,8 +8219,11 @@ cublasDger_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6594,14 +8233,18 @@ cublasCgeru_v2(cublasHandle_t handle, int m, int n, const cuComplex *alpha,
                cuComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgeru_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgeru_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -6614,8 +8257,11 @@ cublasCgeru_v2(cublasHandle_t handle, int m, int n, const cuComplex *alpha,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6625,14 +8271,18 @@ cublasCgeru_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
                   const cuComplex *y, int64_t incy, cuComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgeru_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgeru_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -6645,8 +8295,11 @@ cublasCgeru_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6656,14 +8309,18 @@ cublasCgerc_v2(cublasHandle_t handle, int m, int n, const cuComplex *alpha,
                cuComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgerc_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgerc_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -6676,8 +8333,11 @@ cublasCgerc_v2(cublasHandle_t handle, int m, int n, const cuComplex *alpha,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6687,14 +8347,18 @@ cublasCgerc_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
                   const cuComplex *y, int64_t incy, cuComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgerc_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgerc_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -6707,8 +8371,11 @@ cublasCgerc_v2_64(cublasHandle_t handle, int64_t m, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6718,14 +8385,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeru_v2(
     cuDoubleComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgeru_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgeru_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -6738,8 +8409,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeru_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6749,14 +8423,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeru_v2_64(
     int64_t incy, cuDoubleComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgeru_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgeru_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -6769,8 +8447,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeru_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6780,14 +8461,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgerc_v2(
     cuDoubleComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgerc_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgerc_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -6800,8 +8485,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgerc_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6811,14 +8499,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgerc_v2_64(
     int64_t incy, cuDoubleComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgerc_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgerc_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -6831,8 +8523,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgerc_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6843,14 +8538,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr_v2(cublasHandle_t handle,
                                                      float *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -6860,8 +8559,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr_v2(cublasHandle_t handle,
       rpc_write(conn, &lda, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, A, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6870,14 +8572,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr_v2_64(
     const float *x, int64_t incx, float *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -6887,8 +8593,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr_v2_64(
       rpc_write(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, A, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6899,14 +8608,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr_v2(cublasHandle_t handle,
                                                      double *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -6917,8 +8630,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6928,14 +8644,18 @@ cublasDsyr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                  int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -6946,8 +8666,11 @@ cublasDsyr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6956,14 +8679,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyr_v2(
     const cuComplex *x, int incx, cuComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -6974,8 +8701,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyr_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -6985,14 +8715,18 @@ cublasCsyr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                  cuComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -7003,8 +8737,11 @@ cublasCsyr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7014,14 +8751,18 @@ cublasZsyr_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
               cuDoubleComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -7032,8 +8773,11 @@ cublasZsyr_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7043,14 +8787,18 @@ cublasZsyr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                  int64_t incx, cuDoubleComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -7061,8 +8809,11 @@ cublasZsyr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7071,14 +8822,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher_v2(
     const cuComplex *x, int incx, cuComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCher_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCher_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7089,8 +8844,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7099,14 +8857,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher_v2_64(
     const cuComplex *x, int64_t incx, cuComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCher_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCher_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7117,8 +8879,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7127,14 +8892,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher_v2(
     const cuDoubleComplex *x, int incx, cuDoubleComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZher_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZher_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7145,8 +8914,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7156,14 +8928,18 @@ cublasZher_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                  cuDoubleComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZher_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZher_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7174,8 +8950,11 @@ cublasZher_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7186,14 +8965,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSspr_v2(cublasHandle_t handle,
                                                      float *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSspr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSspr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7203,8 +8986,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSspr_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7213,14 +8999,18 @@ cublasSspr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                  const float *alpha, const float *x, int64_t incx, float *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSspr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSspr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7230,8 +9020,11 @@ cublasSspr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7242,14 +9035,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDspr_v2(cublasHandle_t handle,
                                                      double *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDspr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDspr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7259,8 +9056,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDspr_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7269,14 +9069,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDspr_v2_64(
     const double *alpha, const double *x, int64_t incx, double *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDspr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDspr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7286,8 +9090,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDspr_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7298,14 +9105,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpr_v2(cublasHandle_t handle,
                                                      int incx, cuComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChpr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChpr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7315,8 +9126,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpr_v2(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7325,14 +9139,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpr_v2_64(
     const cuComplex *x, int64_t incx, cuComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChpr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChpr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7342,8 +9160,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpr_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7352,14 +9173,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhpr_v2(
     const cuDoubleComplex *x, int incx, cuDoubleComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhpr_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhpr_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7369,8 +9194,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhpr_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7380,14 +9208,18 @@ cublasZhpr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                  cuDoubleComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhpr_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhpr_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7397,8 +9229,11 @@ cublasZhpr_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7407,14 +9242,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr2_v2(
     const float *x, int incx, const float *y, int incy, float *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7426,8 +9265,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr2_v2(
       rpc_write(conn, &lda, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, A, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7437,14 +9279,18 @@ cublasSsyr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   const float *y, int64_t incy, float *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7456,8 +9302,11 @@ cublasSsyr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_write(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, A, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7466,14 +9315,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr2_v2(
     const double *x, int incx, const double *y, int incy, double *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7486,8 +9339,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr2_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7497,14 +9353,18 @@ cublasDsyr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   const double *y, int64_t incy, double *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7517,8 +9377,11 @@ cublasDsyr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7528,14 +9391,18 @@ cublasCsyr2_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                const cuComplex *y, int incy, cuComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -7548,8 +9415,11 @@ cublasCsyr2_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7559,14 +9429,18 @@ cublasCsyr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   const cuComplex *y, int64_t incy, cuComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -7579,8 +9453,11 @@ cublasCsyr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7590,14 +9467,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2_v2(
     const cuDoubleComplex *y, int incy, cuDoubleComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -7610,8 +9491,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7621,14 +9505,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2_v2_64(
     const cuDoubleComplex *y, int64_t incy, cuDoubleComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -7641,8 +9529,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7652,14 +9543,18 @@ cublasCher2_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                const cuComplex *y, int incy, cuComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCher2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCher2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -7672,8 +9567,11 @@ cublasCher2_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7683,14 +9581,18 @@ cublasCher2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   const cuComplex *y, int64_t incy, cuComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCher2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCher2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -7703,8 +9605,11 @@ cublasCher2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7714,14 +9619,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2_v2(
     const cuDoubleComplex *y, int incy, cuDoubleComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZher2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZher2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -7734,8 +9643,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7745,14 +9657,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2_v2_64(
     const cuDoubleComplex *y, int64_t incy, cuDoubleComplex *A, int64_t lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZher2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZher2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -7765,8 +9681,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7775,14 +9694,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSspr2_v2(
     const float *x, int incx, const float *y, int incy, float *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSspr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSspr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7794,8 +9717,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSspr2_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7804,14 +9730,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSspr2_v2_64(
     const float *x, int64_t incx, const float *y, int64_t incy, float *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSspr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSspr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const float *)) < 0 ||
@@ -7823,8 +9753,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSspr2_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7833,14 +9766,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDspr2_v2(
     const double *x, int incx, const double *y, int incy, double *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDspr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDspr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7852,8 +9789,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDspr2_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7863,14 +9803,18 @@ cublasDspr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   const double *y, int64_t incy, double *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDspr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDspr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const double *)) < 0 ||
@@ -7882,8 +9826,11 @@ cublasDspr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7892,14 +9839,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpr2_v2(
     const cuComplex *x, int incx, const cuComplex *y, int incy, cuComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChpr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChpr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -7911,8 +9862,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChpr2_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7922,14 +9876,18 @@ cublasChpr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
                   const cuComplex *y, int64_t incy, cuComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChpr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChpr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuComplex *)) < 0 ||
@@ -7941,8 +9899,11 @@ cublasChpr2_v2_64(cublasHandle_t handle, cublasFillMode_t uplo, int64_t n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7952,14 +9913,18 @@ cublasZhpr2_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                const cuDoubleComplex *y, int incy, cuDoubleComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhpr2_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhpr2_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -7971,8 +9936,11 @@ cublasZhpr2_v2(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -7982,14 +9950,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhpr2_v2_64(
     const cuDoubleComplex *y, int64_t incy, cuDoubleComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhpr2_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhpr2_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &alpha, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -8001,8 +9973,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhpr2_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8017,14 +9992,18 @@ cublasSgemvBatched(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemvBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -8039,8 +10018,11 @@ cublasSgemvBatched(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8055,14 +10037,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8077,8 +10063,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8093,14 +10082,18 @@ cublasDgemvBatched(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(double *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemvBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8115,8 +10108,11 @@ cublasDgemvBatched(cublasHandle_t handle, cublasOperation_t trans, int m, int n,
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8131,14 +10127,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(double *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8153,8 +10153,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8169,14 +10172,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemvBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8193,8 +10200,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvBatched(
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8209,14 +10219,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8233,8 +10247,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8252,14 +10269,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuDoubleComplex *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemvBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8277,8 +10298,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvBatched(
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8296,14 +10320,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuDoubleComplex *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8321,8 +10349,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8337,14 +10368,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(__half *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSHgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSHgemvBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8359,8 +10394,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvBatched(
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8375,14 +10413,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(__half *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSHgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSHgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8397,8 +10439,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8413,14 +10458,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSSgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSSgemvBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8435,8 +10484,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvBatched(
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8451,14 +10503,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSSgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSSgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8473,8 +10529,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8489,14 +10548,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(__nv_bfloat16 *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSTgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSTgemvBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -8513,8 +10576,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvBatched(
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8529,14 +10595,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(__nv_bfloat16 *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSTgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSTgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8553,8 +10623,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8569,14 +10642,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSSgemvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSSgemvBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8593,8 +10670,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvBatched(
       rpc_write(conn, &incy, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8609,14 +10689,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && yarray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSSgemvBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSSgemvBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8633,8 +10717,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvBatched_64(
       rpc_write(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8645,14 +10732,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemvStridedBatched(
     float *y, int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8670,8 +10761,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemvStridedBatched(
       rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8682,14 +10776,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemvStridedBatched_64(
     float *y, int64_t incy, long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8707,8 +10805,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemvStridedBatched_64(
       rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8719,14 +10820,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemvStridedBatched(
     double *y, int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8745,8 +10850,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemvStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8757,14 +10865,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemvStridedBatched_64(
     double *y, int64_t incy, long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8783,8 +10895,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemvStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8795,14 +10910,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvStridedBatched(
     cuComplex *y, int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8821,8 +10940,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8834,14 +10956,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvStridedBatched_64(
     long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8860,8 +10986,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemvStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8873,14 +11002,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvStridedBatched(
     int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8899,8 +11032,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8912,14 +11048,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvStridedBatched_64(
     int64_t incy, long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -8938,8 +11078,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemvStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8950,14 +11093,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvStridedBatched(
     __half *y, int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSHgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSHgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -8976,8 +11123,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(__half)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -8988,14 +11138,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvStridedBatched_64(
     __half *y, int64_t incy, long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSHgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSHgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -9014,8 +11168,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSHgemvStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(__half)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9026,14 +11183,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvStridedBatched(
     float *y, int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSSgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSSgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -9051,8 +11212,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvStridedBatched(
       rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9063,14 +11227,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvStridedBatched_64(
     float *y, int64_t incy, long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHSSgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHSSgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -9088,8 +11256,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHSSgemvStridedBatched_64(
       rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9100,14 +11271,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvStridedBatched(
     __nv_bfloat16 *y, int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSTgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSTgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -9126,8 +11301,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(__nv_bfloat16)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9139,14 +11317,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvStridedBatched_64(
     long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSTgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSTgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -9165,8 +11347,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSTgemvStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, y, sizeof(__nv_bfloat16)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9177,14 +11362,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvStridedBatched(
     float *y, int incy, long long int stridey, int batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSSgemvStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSSgemvStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -9202,8 +11391,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvStridedBatched(
       rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9215,14 +11407,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvStridedBatched_64(
     long long int stridey, int64_t batchCount) {
   if (y == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasTSSgemvStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasTSSgemvStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -9240,8 +11436,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasTSSgemvStridedBatched_64(
       rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, y, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9249,14 +11448,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemm_v2(
     cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb,
     int m, int n, int k, const float *alpha, const float *A, int lda,
     const float *B, int ldb, const float *beta, float *C, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9274,8 +11477,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemm_v2(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9286,14 +11492,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemm_v2_64(
     int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9309,8 +11519,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemm_v2_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9320,14 +11533,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemm_v2(
     const double *B, int ldb, const double *beta, double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9344,8 +11561,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9356,14 +11576,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemm_v2_64(
     int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9380,8 +11604,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9391,14 +11618,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm_v2(
     const cuComplex *B, int ldb, const cuComplex *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9415,8 +11646,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9427,14 +11661,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm_v2_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9451,8 +11689,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9462,14 +11703,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3m(
     const cuComplex *B, int ldb, const cuComplex *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3m, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3m) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9486,8 +11731,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3m(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9498,14 +11746,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3m_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3m_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3m_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9522,8 +11774,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3m_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9532,14 +11787,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mEx(
     int m, int n, int k, const cuComplex *alpha, const void *A,
     cudaDataType Atype, int lda, const void *B, cudaDataType Btype, int ldb,
     const cuComplex *beta, void *C, cudaDataType Ctype, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3mEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3mEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9558,8 +11817,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mEx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9569,14 +11831,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mEx_64(
     cudaDataType Atype, int64_t lda, const void *B, cudaDataType Btype,
     int64_t ldb, const cuComplex *beta, void *C, cudaDataType Ctype,
     int64_t ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3mEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3mEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9595,8 +11861,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mEx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9607,14 +11876,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm_v2(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9631,8 +11904,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9643,14 +11919,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm_v2_64(
     int64_t ldb, const cuDoubleComplex *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9667,8 +11947,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9679,14 +11962,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm3m(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemm3m, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemm3m) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9703,8 +11990,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm3m(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9715,14 +12005,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm3m_64(
     int64_t ldb, const cuDoubleComplex *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemm3m_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemm3m_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9739,8 +12033,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemm3m_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9750,14 +12047,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemm(
     const __half *B, int ldb, const __half *beta, __half *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHgemm, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHgemm) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9774,8 +12075,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemm(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(__half)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9786,14 +12090,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemm_64(
     int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHgemm_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHgemm_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9810,8 +12118,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemm_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(__half)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9820,14 +12131,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmEx(
     int m, int n, int k, const float *alpha, const void *A, cudaDataType Atype,
     int lda, const void *B, cudaDataType Btype, int ldb, const float *beta,
     void *C, cudaDataType Ctype, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemmEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemmEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9846,8 +12161,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmEx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9856,14 +12174,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmEx_64(
     int64_t m, int64_t n, int64_t k, const float *alpha, const void *A,
     cudaDataType Atype, int64_t lda, const void *B, cudaDataType Btype,
     int64_t ldb, const float *beta, void *C, cudaDataType Ctype, int64_t ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemmEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemmEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9882,8 +12204,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmEx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9892,14 +12217,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmEx(
     int m, int n, int k, const cuComplex *alpha, const void *A,
     cudaDataType Atype, int lda, const void *B, cudaDataType Btype, int ldb,
     const cuComplex *beta, void *C, cudaDataType Ctype, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemmEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemmEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -9918,8 +12247,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmEx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9929,14 +12261,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmEx_64(
     cudaDataType Atype, int64_t lda, const void *B, cudaDataType Btype,
     int64_t ldb, const cuComplex *beta, void *C, cudaDataType Ctype,
     int64_t ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemmEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemmEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -9955,8 +12291,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmEx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9966,14 +12305,18 @@ cublasSsyrk_v2(cublasHandle_t handle, cublasFillMode_t uplo,
                const float *A, int lda, const float *beta, float *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyrk_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyrk_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -9986,8 +12329,11 @@ cublasSsyrk_v2(cublasHandle_t handle, cublasFillMode_t uplo,
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -9997,14 +12343,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyrk_v2_64(
     const float *beta, float *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyrk_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyrk_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10017,8 +12367,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyrk_v2_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10028,14 +12381,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrk_v2(
     const double *beta, double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyrk_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyrk_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10049,8 +12406,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrk_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10060,14 +12420,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrk_v2_64(
     const double *beta, double *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyrk_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyrk_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10081,8 +12445,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrk_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10092,14 +12459,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk_v2(
     const cuComplex *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrk_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrk_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10113,8 +12484,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10124,14 +12498,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk_v2_64(
     int64_t lda, const cuComplex *beta, cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrk_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrk_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10145,8 +12523,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10156,14 +12537,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrk_v2(
     int lda, const cuDoubleComplex *beta, cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyrk_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyrk_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10177,8 +12562,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrk_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10189,14 +12577,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrk_v2_64(
     cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyrk_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyrk_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10210,8 +12602,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrk_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10219,14 +12614,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkEx(
     cublasHandle_t handle, cublasFillMode_t uplo, cublasOperation_t trans,
     int n, int k, const cuComplex *alpha, const void *A, cudaDataType Atype,
     int lda, const cuComplex *beta, void *C, cudaDataType Ctype, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrkEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrkEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10241,8 +12640,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkEx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10251,14 +12653,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkEx_64(
     int64_t n, int64_t k, const cuComplex *alpha, const void *A,
     cudaDataType Atype, int64_t lda, const cuComplex *beta, void *C,
     cudaDataType Ctype, int64_t ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrkEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrkEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10273,8 +12679,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkEx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10282,14 +12691,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk3mEx(
     cublasHandle_t handle, cublasFillMode_t uplo, cublasOperation_t trans,
     int n, int k, const cuComplex *alpha, const void *A, cudaDataType Atype,
     int lda, const cuComplex *beta, void *C, cudaDataType Ctype, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrk3mEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrk3mEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10304,8 +12717,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk3mEx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10314,14 +12730,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk3mEx_64(
     int64_t n, int64_t k, const cuComplex *alpha, const void *A,
     cudaDataType Atype, int64_t lda, const cuComplex *beta, void *C,
     cudaDataType Ctype, int64_t ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrk3mEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrk3mEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10336,8 +12756,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrk3mEx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10347,14 +12770,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk_v2(
     const float *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherk_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherk_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10368,8 +12795,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10379,14 +12809,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk_v2_64(
     const float *beta, cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherk_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherk_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10400,8 +12834,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10411,14 +12848,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherk_v2(
     const double *beta, cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZherk_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZherk_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10432,8 +12873,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherk_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10443,14 +12887,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherk_v2_64(
     int64_t lda, const double *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZherk_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZherk_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10464,8 +12912,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherk_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10473,14 +12924,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkEx(
     cublasHandle_t handle, cublasFillMode_t uplo, cublasOperation_t trans,
     int n, int k, const float *alpha, const void *A, cudaDataType Atype,
     int lda, const float *beta, void *C, cudaDataType Ctype, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherkEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherkEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10495,8 +12950,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkEx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10504,14 +12962,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkEx_64(
     cublasHandle_t handle, cublasFillMode_t uplo, cublasOperation_t trans,
     int64_t n, int64_t k, const float *alpha, const void *A, cudaDataType Atype,
     int64_t lda, const float *beta, void *C, cudaDataType Ctype, int64_t ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherkEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherkEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10526,8 +12988,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkEx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10535,14 +13000,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk3mEx(
     cublasHandle_t handle, cublasFillMode_t uplo, cublasOperation_t trans,
     int n, int k, const float *alpha, const void *A, cudaDataType Atype,
     int lda, const float *beta, void *C, cudaDataType Ctype, int ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherk3mEx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherk3mEx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10557,8 +13026,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk3mEx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10566,14 +13038,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk3mEx_64(
     cublasHandle_t handle, cublasFillMode_t uplo, cublasOperation_t trans,
     int64_t n, int64_t k, const float *alpha, const void *A, cudaDataType Atype,
     int64_t lda, const float *beta, void *C, cudaDataType Ctype, int64_t ldc) {
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherk3mEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherk3mEx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10588,8 +13064,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherk3mEx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10599,14 +13078,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr2k_v2(
     int ldb, const float *beta, float *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyr2k_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyr2k_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10621,8 +13104,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr2k_v2(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10632,14 +13118,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr2k_v2_64(
     const float *B, int64_t ldb, const float *beta, float *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyr2k_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyr2k_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10654,8 +13144,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyr2k_v2_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10665,14 +13158,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr2k_v2(
     const double *B, int ldb, const double *beta, double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyr2k_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyr2k_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10688,8 +13185,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr2k_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10699,14 +13199,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr2k_v2_64(
     const double *B, int64_t ldb, const double *beta, double *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyr2k_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyr2k_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10722,8 +13226,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyr2k_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10733,14 +13240,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyr2k_v2(
     const cuComplex *B, int ldb, const cuComplex *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyr2k_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyr2k_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10756,8 +13267,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyr2k_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10768,14 +13282,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyr2k_v2_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyr2k_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyr2k_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10791,8 +13309,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyr2k_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10803,14 +13324,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2k_v2(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyr2k_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyr2k_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10826,8 +13351,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2k_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10838,14 +13366,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2k_v2_64(
     int64_t ldb, const cuDoubleComplex *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyr2k_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyr2k_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10861,8 +13393,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyr2k_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10872,14 +13407,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher2k_v2(
     const cuComplex *B, int ldb, const float *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCher2k_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCher2k_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10895,8 +13434,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher2k_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10907,14 +13449,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher2k_v2_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCher2k_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCher2k_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -10930,8 +13476,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCher2k_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10942,14 +13491,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2k_v2(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZher2k_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZher2k_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -10965,8 +13518,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2k_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -10977,14 +13533,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2k_v2_64(
     int64_t ldb, const double *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZher2k_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZher2k_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -11000,8 +13560,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZher2k_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11011,14 +13574,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyrkx(
     int ldb, const float *beta, float *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyrkx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyrkx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -11033,8 +13600,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyrkx(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11044,14 +13614,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyrkx_64(
     const float *B, int64_t ldb, const float *beta, float *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsyrkx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsyrkx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -11066,8 +13640,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsyrkx_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11077,14 +13654,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrkx(
     const double *B, int ldb, const double *beta, double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyrkx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyrkx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -11100,8 +13681,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrkx(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11111,14 +13695,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrkx_64(
     const double *B, int64_t ldb, const double *beta, double *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsyrkx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsyrkx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -11134,8 +13722,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsyrkx_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11145,14 +13736,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkx(
     const cuComplex *B, int ldb, const cuComplex *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrkx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrkx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -11168,8 +13763,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkx(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11180,14 +13778,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkx_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsyrkx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsyrkx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -11203,8 +13805,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsyrkx_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11215,14 +13820,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrkx(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyrkx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyrkx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -11238,8 +13847,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrkx(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11250,14 +13862,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrkx_64(
     int64_t ldb, const cuDoubleComplex *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsyrkx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsyrkx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -11273,8 +13889,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsyrkx_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11284,14 +13903,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkx(
     const cuComplex *B, int ldb, const float *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherkx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherkx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -11307,8 +13930,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkx(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11319,14 +13945,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkx_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCherkx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCherkx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -11342,8 +13972,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCherkx_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11354,14 +13987,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherkx(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZherkx, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZherkx) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -11377,8 +14014,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherkx(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11389,14 +14029,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherkx_64(
     int64_t ldb, const double *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZherkx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZherkx_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -11412,8 +14056,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZherkx_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11423,14 +14070,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsymm_v2(
     const float *beta, float *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsymm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsymm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -11445,8 +14096,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsymm_v2(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11456,14 +14110,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsymm_v2_64(
     const float *B, int64_t ldb, const float *beta, float *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSsymm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSsymm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -11478,8 +14136,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSsymm_v2_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11489,14 +14150,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsymm_v2(
     int ldb, const double *beta, double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsymm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsymm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -11512,8 +14177,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsymm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11523,14 +14191,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsymm_v2_64(
     const double *B, int64_t ldb, const double *beta, double *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDsymm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDsymm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -11546,8 +14218,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDsymm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11557,14 +14232,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymm_v2(
     const cuComplex *B, int ldb, const cuComplex *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsymm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsymm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -11580,8 +14259,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11592,14 +14274,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymm_v2_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCsymm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCsymm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -11615,8 +14301,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCsymm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11627,14 +14316,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsymm_v2(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsymm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsymm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -11650,8 +14343,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsymm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11662,14 +14358,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsymm_v2_64(
     int64_t ldb, const cuDoubleComplex *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZsymm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZsymm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -11685,8 +14385,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZsymm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11696,14 +14399,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemm_v2(
     const cuComplex *B, int ldb, const cuComplex *beta, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChemm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChemm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -11719,8 +14426,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11731,14 +14441,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemm_v2_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasChemm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasChemm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -11754,8 +14468,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasChemm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11766,14 +14483,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhemm_v2(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhemm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhemm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -11789,8 +14510,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhemm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11801,14 +14525,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhemm_v2_64(
     int64_t ldb, const cuDoubleComplex *beta, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZhemm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZhemm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -11824,8 +14552,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZhemm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11835,14 +14566,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsm_v2(
     const float *alpha, const float *A, int lda, float *B, int ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrsm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrsm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -11856,8 +14591,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsm_v2(
       rpc_write(conn, &ldb, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, B, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11867,14 +14605,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsm_v2_64(
     const float *alpha, const float *A, int64_t lda, float *B, int64_t ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrsm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrsm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -11888,8 +14630,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsm_v2_64(
       rpc_write(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, B, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11899,14 +14644,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsm_v2(
     const double *alpha, const double *A, int lda, double *B, int ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrsm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrsm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -11921,8 +14670,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, B, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11932,14 +14684,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsm_v2_64(
     const double *alpha, const double *A, int64_t lda, double *B, int64_t ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrsm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrsm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -11954,8 +14710,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, B, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -11966,14 +14725,18 @@ cublasCtrsm_v2(cublasHandle_t handle, cublasSideMode_t side,
                const cuComplex *A, int lda, cuComplex *B, int ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrsm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrsm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -11988,8 +14751,11 @@ cublasCtrsm_v2(cublasHandle_t handle, cublasSideMode_t side,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, B, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12000,14 +14766,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrsm_v2_64(
     int64_t ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrsm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrsm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12022,8 +14792,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrsm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, B, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12034,14 +14807,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsm_v2(
     cuDoubleComplex *B, int ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrsm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrsm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12056,8 +14833,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, B, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12068,14 +14848,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsm_v2_64(
     cuDoubleComplex *B, int64_t ldb) {
   if (B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrsm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrsm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12090,8 +14874,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, B, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12102,14 +14889,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrmm_v2(
     float *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrmm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrmm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12125,8 +14916,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrmm_v2(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12137,14 +14931,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrmm_v2_64(
     int64_t ldb, float *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrmm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrmm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12160,8 +14958,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrmm_v2_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12172,14 +14973,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrmm_v2(
     double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrmm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrmm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12196,8 +15001,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrmm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12208,14 +15016,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrmm_v2_64(
     int64_t ldb, double *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrmm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrmm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12232,8 +15044,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrmm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12244,14 +15059,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrmm_v2(
     int ldb, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrmm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrmm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12268,8 +15087,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrmm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12280,14 +15102,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrmm_v2_64(
     int64_t ldb, cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrmm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrmm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12304,8 +15130,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrmm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12316,14 +15145,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmm_v2(
     const cuDoubleComplex *B, int ldb, cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrmm_v2, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrmm_v2) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12340,8 +15173,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmm_v2(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12352,14 +15188,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmm_v2_64(
     const cuDoubleComplex *B, int64_t ldb, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrmm_v2_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrmm_v2_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
@@ -12376,8 +15216,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrmm_v2_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12392,14 +15235,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(__half *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHgemmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHgemmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12416,8 +15263,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmBatched(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12433,14 +15283,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(__half *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHgemmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHgemmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12457,8 +15311,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmBatched_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12473,14 +15330,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12497,8 +15358,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmBatched(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12514,14 +15378,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12538,8 +15406,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmBatched_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12554,14 +15425,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(double *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12580,8 +15455,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmBatched(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12597,14 +15475,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(double *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12623,8 +15505,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmBatched_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12640,14 +15525,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12669,8 +15558,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmBatched(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12686,14 +15578,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12715,8 +15611,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmBatched_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12732,14 +15631,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3mBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3mBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12761,8 +15664,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mBatched(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12778,14 +15684,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3mBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3mBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12807,8 +15717,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mBatched_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12826,14 +15739,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuDoubleComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12857,8 +15774,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmBatched(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12877,14 +15797,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuDoubleComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -12908,8 +15832,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmBatched_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12921,14 +15848,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmStridedBatched(
     int batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHgemmStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHgemmStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -12951,8 +15882,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(__half)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -12964,14 +15898,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmStridedBatched_64(
     long long int strideC, int64_t batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasHgemmStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasHgemmStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -12994,8 +15932,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasHgemmStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(__half)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13007,14 +15948,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmStridedBatched(
     int batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemmStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemmStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13036,8 +15981,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmStridedBatched(
       rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13049,14 +15997,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmStridedBatched_64(
     long long int strideC, int64_t batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgemmStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgemmStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13078,8 +16030,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgemmStridedBatched_64(
       rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13091,14 +16046,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmStridedBatched(
     int batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemmStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemmStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13121,8 +16080,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13134,14 +16096,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmStridedBatched_64(
     long long int strideC, int64_t batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgemmStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgemmStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13164,8 +16130,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgemmStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13177,14 +16146,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmStridedBatched(
     int batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemmStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemmStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13208,8 +16181,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13221,14 +16197,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmStridedBatched_64(
     long long int strideC, int64_t batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemmStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemmStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13252,8 +16232,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemmStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13265,14 +16248,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mStridedBatched(
     int batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3mStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3mStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13296,8 +16283,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13309,14 +16299,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mStridedBatched_64(
     long long int strideC, int64_t batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgemm3mStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgemm3mStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13340,8 +16334,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgemm3mStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13353,14 +16350,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmStridedBatched(
     int ldc, long long int strideC, int batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemmStridedBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemmStridedBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13385,8 +16386,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmStridedBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13399,14 +16403,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmStridedBatched_64(
     long long int strideC, int64_t batchCount) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgemmStridedBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgemmStridedBatched_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13431,8 +16439,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgemmStridedBatched_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13450,14 +16461,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasGemmBatchedEx_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(void *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasGemmBatchedEx_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasGemmBatchedEx_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
@@ -13481,8 +16496,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasGemmBatchedEx_64(
       rpc_write(conn, &algo, sizeof(cublasGemmAlgo_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13492,14 +16510,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgeam(
     const float *beta, const float *B, int ldb, float *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgeam, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgeam) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13516,8 +16538,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgeam(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13527,14 +16552,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgeam_64(
     const float *beta, const float *B, int64_t ldb, float *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgeam_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgeam_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13551,8 +16580,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgeam_64(
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13562,14 +16594,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgeam(
     const double *beta, const double *B, int ldb, double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgeam, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgeam) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13587,8 +16623,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgeam(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13598,14 +16637,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgeam_64(
     const double *beta, const double *B, int64_t ldb, double *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgeam_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgeam_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13623,8 +16666,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgeam_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13634,14 +16680,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgeam(
     const cuComplex *beta, const cuComplex *B, int ldb, cuComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgeam, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgeam) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13660,8 +16710,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgeam(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13672,14 +16725,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgeam_64(
     cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgeam_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgeam_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13698,8 +16755,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgeam_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13710,14 +16770,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeam(
     cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgeam, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgeam) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -13737,8 +16801,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeam(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13749,14 +16816,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeam_64(
     const cuDoubleComplex *B, int64_t ldb, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgeam_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgeam_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
@@ -13776,8 +16847,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeam_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13790,14 +16864,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrsmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrsmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -13813,8 +16891,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsmBatched(
       rpc_write(conn, &ldb, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13827,14 +16908,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(float *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrsmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrsmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -13850,8 +16935,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrsmBatched_64(
       rpc_write(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13864,14 +16952,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(double *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrsmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrsmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -13887,8 +16979,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsmBatched(
       rpc_write(conn, &ldb, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13901,14 +16996,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(double *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrsmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrsmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -13924,8 +17023,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrsmBatched_64(
       rpc_write(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13938,14 +17040,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrsmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrsmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrsmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -13962,8 +17068,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrsmBatched(
       rpc_write(conn, &ldb, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -13976,14 +17085,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrsmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuComplex *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrsmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrsmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -14000,8 +17113,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrsmBatched_64(
       rpc_write(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14014,14 +17130,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsmBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuDoubleComplex *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrsmBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrsmBatched) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -14039,8 +17159,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsmBatched(
       rpc_write(conn, &ldb, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14053,14 +17176,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsmBatched_64(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchCount * sizeof(cuDoubleComplex *const) != 0 && B == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrsmBatched_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrsmBatched_64) < 0 ||
-      rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
+  if (rpc_write(conn, &batchCount, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
@@ -14078,8 +17205,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZtrsmBatched_64(
       rpc_write(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14088,14 +17218,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSdgmm(
     int lda, const float *x, int incx, float *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSdgmm, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSdgmm) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14108,8 +17242,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSdgmm(
       rpc_write(conn, &ldc, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14119,14 +17256,18 @@ cublasSdgmm_64(cublasHandle_t handle, cublasSideMode_t mode, int64_t m,
                int64_t incx, float *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSdgmm_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSdgmm_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -14139,8 +17280,11 @@ cublasSdgmm_64(cublasHandle_t handle, cublasSideMode_t mode, int64_t m,
       rpc_write(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, C, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14149,14 +17293,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDdgmm(
     int lda, const double *x, int incx, double *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDdgmm, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDdgmm) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14170,8 +17318,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDdgmm(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14181,14 +17332,18 @@ cublasDdgmm_64(cublasHandle_t handle, cublasSideMode_t mode, int64_t m,
                int64_t incx, double *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDdgmm_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDdgmm_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -14202,8 +17357,11 @@ cublasDdgmm_64(cublasHandle_t handle, cublasSideMode_t mode, int64_t m,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14215,14 +17373,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCdgmm(cublasHandle_t handle,
                                                    int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCdgmm, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCdgmm) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14236,8 +17398,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCdgmm(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14247,14 +17412,18 @@ cublasCdgmm_64(cublasHandle_t handle, cublasSideMode_t mode, int64_t m,
                int64_t incx, cuComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCdgmm_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCdgmm_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -14268,8 +17437,11 @@ cublasCdgmm_64(cublasHandle_t handle, cublasSideMode_t mode, int64_t m,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14279,14 +17451,18 @@ cublasZdgmm(cublasHandle_t handle, cublasSideMode_t mode, int m, int n,
             int incx, cuDoubleComplex *C, int ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdgmm, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdgmm) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14300,8 +17476,11 @@ cublasZdgmm(cublasHandle_t handle, cublasSideMode_t mode, int m, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14311,14 +17490,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdgmm_64(
     int64_t incx, cuDoubleComplex *C, int64_t ldc) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZdgmm_64, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZdgmm_64) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasSideMode_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int64_t)) < 0 ||
@@ -14332,8 +17515,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZdgmm_64(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14346,14 +17532,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSmatinvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(float *const) != 0 && Ainv == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSmatinvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSmatinvBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const float *const)) < 0 ||
@@ -14364,8 +17554,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSmatinvBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14378,14 +17571,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDmatinvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(double *const) != 0 && Ainv == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDmatinvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDmatinvBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const double *const)) < 0 ||
@@ -14396,8 +17593,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDmatinvBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14410,14 +17610,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCmatinvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuComplex *const) != 0 && Ainv == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCmatinvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCmatinvBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const cuComplex *const)) < 0 ||
@@ -14428,8 +17632,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCmatinvBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14442,14 +17649,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZmatinvBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuDoubleComplex *const) != 0 && Ainv == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZmatinvBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZmatinvBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const cuDoubleComplex *const)) <
@@ -14461,8 +17672,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZmatinvBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14475,14 +17689,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgeqrfBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(float *const) != 0 && TauArray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgeqrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgeqrfBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14493,8 +17711,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgeqrfBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14507,14 +17728,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgeqrfBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(double *const) != 0 && TauArray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgeqrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgeqrfBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14525,8 +17750,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgeqrfBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14539,14 +17767,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgeqrfBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuComplex *const) != 0 && TauArray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgeqrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgeqrfBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14557,8 +17789,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgeqrfBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14571,14 +17806,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeqrfBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuDoubleComplex *const) != 0 && TauArray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgeqrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgeqrfBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -14590,8 +17829,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgeqrfBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14605,14 +17847,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgelsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(float *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgelsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgelsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -14628,8 +17874,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgelsBatched(
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, devInfoArray, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14643,14 +17892,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgelsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(double *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgelsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgelsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -14666,8 +17919,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgelsBatched(
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, devInfoArray, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14681,14 +17937,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgelsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgelsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgelsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -14704,8 +17964,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgelsBatched(
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, devInfoArray, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14719,14 +17982,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgelsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuDoubleComplex *const) != 0 && Carray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgelsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgelsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &m, sizeof(int)) < 0 ||
@@ -14742,8 +18009,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgelsBatched(
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, devInfoArray, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14753,14 +18023,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpttr(cublasHandle_t handle,
                                                     float *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStpttr, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStpttr) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &AP, sizeof(const float *)) < 0 ||
@@ -14769,8 +18043,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStpttr(cublasHandle_t handle,
       rpc_write(conn, &lda, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, A, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14780,14 +18057,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtpttr(cublasHandle_t handle,
                                                     double *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtpttr, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtpttr) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &AP, sizeof(const double *)) < 0 ||
@@ -14797,8 +18078,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtpttr(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14808,14 +18092,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtpttr(cublasHandle_t handle,
                                                     cuComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtpttr, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtpttr) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &AP, sizeof(const cuComplex *)) < 0 ||
@@ -14825,8 +18113,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtpttr(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14835,14 +18126,18 @@ cublasZtpttr(cublasHandle_t handle, cublasFillMode_t uplo, int n,
              const cuDoubleComplex *AP, cuDoubleComplex *A, int lda) {
   if (A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtpttr, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtpttr) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &AP, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -14853,8 +18148,11 @@ cublasZtpttr(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, A, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14864,14 +18162,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrttp(cublasHandle_t handle,
                                                     int lda, float *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasStrttp, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasStrttp) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &A, sizeof(const float *)) < 0 ||
@@ -14881,8 +18183,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasStrttp(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14892,14 +18197,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrttp(cublasHandle_t handle,
                                                     int lda, double *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDtrttp, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDtrttp) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &A, sizeof(const double *)) < 0 ||
@@ -14909,8 +18218,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDtrttp(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(double)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14920,14 +18232,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrttp(cublasHandle_t handle,
                                                     int lda, cuComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCtrttp, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCtrttp) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &A, sizeof(const cuComplex *)) < 0 ||
@@ -14937,8 +18253,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCtrttp(cublasHandle_t handle,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14947,14 +18266,18 @@ cublasZtrttp(cublasHandle_t handle, cublasFillMode_t uplo, int n,
              const cuDoubleComplex *A, int lda, cuDoubleComplex *AP) {
   if (AP == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZtrttp, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZtrttp) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -14964,8 +18287,11 @@ cublasZtrttp(cublasHandle_t handle, cublasFillMode_t uplo, int n,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, AP, sizeof(cuDoubleComplex)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -14976,14 +18302,18 @@ cublasSgetrfBatched(cublasHandle_t handle, int n, float *const A[], int lda,
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(float *const) != 0 && A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgetrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgetrfBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(float *const)) < 0 ||
@@ -14993,8 +18323,11 @@ cublasSgetrfBatched(cublasHandle_t handle, int n, float *const A[], int lda,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, P, sizeof(int)) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15005,14 +18338,18 @@ cublasDgetrfBatched(cublasHandle_t handle, int n, double *const A[], int lda,
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(double *const) != 0 && A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgetrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgetrfBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(double *const)) < 0 ||
@@ -15022,8 +18359,11 @@ cublasDgetrfBatched(cublasHandle_t handle, int n, double *const A[], int lda,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, P, sizeof(int)) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15034,14 +18374,18 @@ cublasCgetrfBatched(cublasHandle_t handle, int n, cuComplex *const A[], int lda,
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuComplex *const) != 0 && A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgetrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgetrfBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(cuComplex *const)) < 0 ||
@@ -15051,8 +18395,11 @@ cublasCgetrfBatched(cublasHandle_t handle, int n, cuComplex *const A[], int lda,
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, P, sizeof(int)) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15063,14 +18410,18 @@ cublasZgetrfBatched(cublasHandle_t handle, int n, cuDoubleComplex *const A[],
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuDoubleComplex *const) != 0 && A == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgetrfBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgetrfBatched) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(cuDoubleComplex *const)) < 0 ||
@@ -15080,8 +18431,11 @@ cublasZgetrfBatched(cublasHandle_t handle, int n, cuDoubleComplex *const A[],
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, P, sizeof(int)) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15094,14 +18448,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgetriBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(float *const) != 0 && C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgetriBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgetriBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const float *const)) < 0 ||
@@ -15114,8 +18472,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgetriBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15128,14 +18489,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgetriBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(double *const) != 0 && C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgetriBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgetriBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const double *const)) < 0 ||
@@ -15148,8 +18513,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgetriBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15162,14 +18530,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgetriBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuComplex *const) != 0 && C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgetriBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgetriBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const cuComplex *const)) < 0 ||
@@ -15182,8 +18554,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgetriBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15197,14 +18572,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgetriBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuDoubleComplex *const) != 0 && C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgetriBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgetriBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
       rpc_write(conn, A, batchSize * sizeof(const cuDoubleComplex *const)) <
@@ -15218,8 +18597,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgetriBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15233,14 +18615,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgetrsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(float *const) != 0 && Barray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasSgetrsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasSgetrsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -15255,8 +18641,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasSgetrsBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15270,14 +18659,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgetrsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(double *const) != 0 && Barray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasDgetrsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasDgetrsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -15292,8 +18685,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasDgetrsBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15307,14 +18703,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgetrsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuComplex *const) != 0 && Barray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasCgetrsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasCgetrsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -15328,8 +18728,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasCgetrsBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15344,14 +18747,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgetrsBatched(
     return CUBLAS_STATUS_INVALID_VALUE;
   if (batchSize * sizeof(cuDoubleComplex *const) != 0 && Barray == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasZgetrsBatched, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasZgetrsBatched) < 0 ||
-      rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
+  if (rpc_write(conn, &batchSize, sizeof(int)) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &n, sizeof(int)) < 0 ||
@@ -15367,8 +18774,11 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasZgetrsBatched(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, info, sizeof(int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }
 
@@ -15379,14 +18789,18 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasUint8gemmBias(
     unsigned char *C, int C_bias, int ldc, int C_mult, int C_shift) {
   if (C == nullptr)
     return CUBLAS_STATUS_INVALID_VALUE;
-  int route_id = lupine_cublas_route_for_handle(handle);
-  conn_t *conn = lupine_cublas_connection(route_id);
-  if (conn == nullptr)
-    return CUBLAS_STATUS_NOT_INITIALIZED;
+  const lupine_cuda_owner call_owners[] = {
+      {LUPINE_CUDA_OWNER_CUBLAS_HANDLE,
+       reinterpret_cast<std::uintptr_t>(handle)},
+  };
+  lupine_cuda_call *conn = nullptr;
+  cublasStatus_t call_status = lupine_cublas_call_begin(
+      RPC_cublasUint8gemmBias, call_owners,
+      sizeof(call_owners) / sizeof(call_owners[0]), &conn);
+  if (call_status != CUBLAS_STATUS_SUCCESS)
+    return call_status;
   cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cublasUint8gemmBias) < 0 ||
-      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+  if (rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
       rpc_write(conn, &transc, sizeof(cublasOperation_t)) < 0 ||
@@ -15407,7 +18821,10 @@ extern "C" cublasStatus_t CUBLASWINAPI cublasUint8gemmBias(
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, C, sizeof(unsigned char)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_read_end(conn) < 0) {
+    lupine_cublas_call_destroy(conn);
     return CUBLAS_STATUS_INTERNAL_ERROR;
+  }
+  lupine_cublas_call_destroy(conn);
   return return_value;
 }

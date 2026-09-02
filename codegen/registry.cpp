@@ -1074,7 +1074,7 @@ LUPINE_DECLARE_HANDLER(RPC_cuStreamGetDevResource,
                        handle_cuStreamGetDevResource, rpc_backend::cuda)
 #endif
 #endif
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+#ifdef LUPINE_CUBLAS_BACKEND
 LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 #if CUDA_VERSION >= 13030
 LUPINE_DECLARE_HANDLER(RPC_cublasGetEmulationStrategy,
@@ -1256,7 +1256,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cuStreamGetDevResource, handle_cuStreamGetDevResource, rpc_backend::cuda)
 #endif
 #endif
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+#ifdef LUPINE_CUBLAS_BACKEND
       LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 #if CUDA_VERSION >= 13030
       LUPINE_REGISTER_HANDLER(RPC_cublasGetEmulationStrategy, handle_cublasGetEmulationStrategy, rpc_backend::cuda)

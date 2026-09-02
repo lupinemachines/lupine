@@ -33,7 +33,7 @@ struct lupine_device_entry {
 struct lupine_owner_record {
   int route_id = -2;
   bool is_green_context = false;
-  CUcontext pointer_context = nullptr;
+  CUcontext context = nullptr;
 };
 
 static std::mutex &lupine_routing_mutex() {
@@ -53,8 +53,7 @@ static bool &lupine_device_table_ready() {
 
 template <typename Handle>
 static std::unordered_map<Handle, lupine_owner_record> &lupine_owners() {
-  static auto *owners =
-      new std::unordered_map<Handle, lupine_owner_record>();
+  static auto *owners = new std::unordered_map<Handle, lupine_owner_record>();
   return *owners;
 }
 
@@ -399,9 +398,7 @@ static void lupine_note_owner(Handle handle, conn_t *conn) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto &owner = lupine_owners<Handle>()[handle];
   owner.route_id = index;
-  if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
-    owner.pointer_context = lupine_current_context_hint();
-  }
+  owner.context = lupine_current_context_hint();
 }
 
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn) {
@@ -454,7 +451,7 @@ static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
                                                           CUcontext context) {
   auto &owner = lupine_owners<CUdeviceptr>()[ptr];
   owner.route_id = route_id;
-  owner.pointer_context = context;
+  owner.context = context;
   if (size == 0) {
     lupine_deviceptr_allocations().erase(ptr);
     return;
@@ -483,9 +480,7 @@ static void lupine_note_owner_route(Handle handle, lupine_route route) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto &owner = lupine_owners<Handle>()[handle];
   owner.route_id = route_id;
-  if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
-    owner.pointer_context = lupine_current_context_hint();
-  }
+  owner.context = lupine_current_context_hint();
 }
 
 extern "C" void lupine_note_context_owner_route(CUcontext ctx,
@@ -608,9 +603,9 @@ static lupine_route lupine_route_for_known_owner(Handle handle) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto &owners = lupine_owners<Handle>();
   auto owner = owners.find(handle);
-  return owner == owners.end() ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
-                               : lupine_route_from_identity(
-                                     owner->second.route_id);
+  return owner == owners.end()
+             ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
+             : lupine_route_from_identity(owner->second.route_id);
 }
 
 template <typename Handle>
@@ -706,12 +701,19 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
   return lupine_route_for_default();
 }
 
+extern "C" CUcontext lupine_context_for_stream(CUstream stream) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  auto owner = lupine_owners<CUstream>().find(stream);
+  return owner == lupine_owners<CUstream>().end() ? nullptr
+                                                  : owner->second.context;
+}
+
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto owner = lupine_owners<CUdeviceptr>().find(ptr);
   if (owner != lupine_owners<CUdeviceptr>().end() &&
-      owner->second.pointer_context != nullptr) {
-    return owner->second.pointer_context;
+      owner->second.context != nullptr) {
+    return owner->second.context;
   }
   for (const auto &entry : lupine_deviceptr_allocations()) {
     const auto &allocation = entry.second;

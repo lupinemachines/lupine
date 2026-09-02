@@ -2,7 +2,7 @@
   global:
     cu*;
     dlsym;
-    lupine_cublas_rpc_api_v1;
+    lupine_cuda_client_api_v1;
     lupine_checkpoint_*;
   local:
     *;
