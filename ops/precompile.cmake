@@ -62,9 +62,9 @@ get_filename_component(lupine_source_dir
     "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 set(lupine_cuda_ops_dir "${LUPINE_PRECOMPILED_OPS}/cuda")
 set(lupine_smemcpy_fatbin "${lupine_cuda_ops_dir}/smemcpy.fatbin")
-set(lupine_smemcpy_include "${lupine_cuda_ops_dir}/smemcpy.inc")
+set(lupine_smemcpy_source "${lupine_cuda_ops_dir}/smemcpy.cpp")
 file(MAKE_DIRECTORY "${lupine_cuda_ops_dir}")
-file(REMOVE "${lupine_smemcpy_fatbin}" "${lupine_smemcpy_include}")
+file(REMOVE "${lupine_smemcpy_fatbin}" "${lupine_smemcpy_source}")
 execute_process(
     COMMAND "${LUPINE_CUDA_COMPILER}"
         --fatbin
@@ -86,13 +86,17 @@ execute_process(
         --const
         --name lupine_smemcpy_fatbin
         "${lupine_smemcpy_fatbin}"
-    OUTPUT_FILE "${lupine_smemcpy_include}"
+    OUTPUT_FILE "${lupine_smemcpy_source}"
     RESULT_VARIABLE lupine_bin2c_result
     COMMAND_ECHO STDOUT)
 if(NOT lupine_bin2c_result EQUAL 0)
-    file(REMOVE "${lupine_smemcpy_fatbin}" "${lupine_smemcpy_include}")
-    message(FATAL_ERROR "Failed to generate ${lupine_smemcpy_include}")
+    file(REMOVE "${lupine_smemcpy_fatbin}" "${lupine_smemcpy_source}")
+    message(FATAL_ERROR "Failed to generate ${lupine_smemcpy_source}")
 endif()
+file(APPEND "${lupine_smemcpy_source}"
+    "\nextern \"C\" const void *lupine_cuda_smemcpy_image() {\n"
+    "  return lupine_smemcpy_fatbin;\n"
+    "}\n")
 file(REMOVE "${lupine_smemcpy_fatbin}")
 
 message(STATUS "Precompiled operations: ${LUPINE_PRECOMPILED_OPS}")

@@ -27,18 +27,18 @@ endif()
 
 if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
     if(LUPINE_PRECOMPILED_OPS)
-        set(lupine_cuda_ops_dir "${LUPINE_PRECOMPILED_OPS}/cuda")
-        set(lupine_smemcpy_include "${lupine_cuda_ops_dir}/smemcpy.inc")
-        if(NOT EXISTS "${lupine_smemcpy_include}")
+        set(lupine_smemcpy_source
+            "${LUPINE_PRECOMPILED_OPS}/cuda/smemcpy.cpp")
+        if(NOT EXISTS "${lupine_smemcpy_source}")
             message(FATAL_ERROR
-                "Missing precompiled CUDA operation: ${lupine_smemcpy_include}")
+                "Missing precompiled CUDA operation: ${lupine_smemcpy_source}")
         endif()
     else()
         set(lupine_built_ops "${CMAKE_CURRENT_BINARY_DIR}/precompiled-ops")
-        set(lupine_cuda_ops_dir "${lupine_built_ops}/cuda")
-        set(lupine_smemcpy_include "${lupine_cuda_ops_dir}/smemcpy.inc")
+        set(lupine_smemcpy_source
+            "${lupine_built_ops}/cuda/smemcpy.cpp")
         add_custom_command(
-            OUTPUT "${lupine_smemcpy_include}"
+            OUTPUT "${lupine_smemcpy_source}"
             COMMAND ${CMAKE_COMMAND}
                 "-DLUPINE_PRECOMPILED_OPS=${lupine_built_ops}"
                 "-DLUPINE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
@@ -54,13 +54,10 @@ if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
     add_library(lupine_cuda_smemcpy_module STATIC
         smemcpy_dispatch.cpp
         smemcpy_module.cpp
-        "${lupine_smemcpy_include}")
-    set_source_files_properties("${lupine_smemcpy_include}" PROPERTIES
-        HEADER_FILE_ONLY TRUE)
+        "${lupine_smemcpy_source}")
     target_include_directories(lupine_cuda_smemcpy_module PUBLIC
         ${PROJECT_SOURCE_DIR}
-        ${CUDAToolkit_INCLUDE_DIRS}
-        PRIVATE ${lupine_cuda_ops_dir})
+        ${CUDAToolkit_INCLUDE_DIRS})
     set_target_properties(lupine_cuda_smemcpy_module PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 endif()
