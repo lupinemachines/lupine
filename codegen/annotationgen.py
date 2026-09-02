@@ -2,94 +2,103 @@
 # requires-python = ">=3.10"
 # dependencies = ["cxxheaderparser"]
 # ///
+import argparse
+import glob
 import os
 
-from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
-from cxxheaderparser.types import Type, Pointer, Array
+from cxxheaderparser.simple import ParsedData, ParserOptions, parse_file
+from cxxheaderparser.types import Array, Pointer, Type
 
 
-def main():
-    options = ParserOptions(preprocessor=make_gcc_preprocessor(defines=["CUBLASAPI="]))
+PARTITIONS = {
+    "cuda": ("cuda.h", "annotations_cuda.h"),
+    "nvml": ("nvml.h", "annotations_nvml.h"),
+    "cublas": ("cublas_api.h", "annotations_cublas.h"),
+}
 
-    nvml_ast: ParsedData = parse_file("/usr/include/nvml.h", options=options)
-    cudnn_graph_ast: ParsedData = parse_file("/usr/include/cudnn_graph.h", options=options)
-    cudnn_ops_ast: ParsedData = parse_file("/usr/include/cudnn_ops.h", options=options)
-    cuda_ast: ParsedData = parse_file("/usr/include/cuda.h", options=options)
-    cublas_ast: ParsedData = parse_file("/usr/include/cublas_api.h", options=options)
-    cudart_ast: ParsedData = parse_file(
-        "/usr/include/cuda_runtime_api.h", options=options
+INCLUDE_DIRS = (
+    "/usr/local/cuda/include",
+    "/opt/cuda/include",
+    "/usr/local/include",
+    "/usr/include",
+    "/usr/include/nvidia",
+)
+
+
+def find_header(filename: str) -> str:
+    for include_dir in INCLUDE_DIRS:
+        matches = glob.glob(
+            os.path.join(include_dir, "**", filename), recursive=True
+        )
+        if matches:
+            return matches[0]
+    raise FileNotFoundError(filename)
+
+
+def format_parameters(function) -> str:
+    parameters = []
+    for parameter in function.parameters:
+        formatted_type = parameter.type.format()
+        if parameter.name and "[]" in formatted_type:
+            parameters.append(
+                f"{formatted_type.replace('[]', '')} {parameter.name}[]"
+            )
+        elif parameter.name:
+            parameters.append(f"{formatted_type} {parameter.name}")
+        else:
+            parameters.append(formatted_type)
+    return ", ".join(parameters)
+
+
+def append_missing_functions(partition: str) -> None:
+    header_name, annotations_name = PARTITIONS[partition]
+    header_path = find_header(header_name)
+    include_paths = list(INCLUDE_DIRS) + [os.path.dirname(header_path)]
+    options = ParserOptions(
+        preprocessor=make_gcc_preprocessor(
+            defines=["CUBLASAPI="], include_paths=include_paths
+        )
     )
-    annotations: ParsedData = parse_file("annotations.h", options=options)
+    header: ParsedData = parse_file(header_path, options=options)
+    annotations: ParsedData = parse_file(annotations_name, options=options)
+    annotated_names = {
+        function.name.format() for function in annotations.namespace.functions
+    }
 
-    functions = (
-        nvml_ast.namespace.functions
-        + cuda_ast.namespace.functions
-        + cudart_ast.namespace.functions
-        + cudnn_graph_ast.namespace.functions
-        + cudnn_ops_ast.namespace.functions
-        + cublas_ast.namespace.functions
-    )
-
-    with open("annotations.h", "a") as f:
-        for function in functions:
-            if any(f.name == function.name for f in annotations.namespace.functions):
+    with open(annotations_name, "a", encoding="utf-8") as output:
+        for function in header.namespace.functions:
+            name = function.name.format()
+            if name in annotated_names:
                 continue
-            # produce some best-guess annotations
-            f.write("/**\n")
-            for param in function.parameters:
-                if isinstance(param.type, Type):
-                    f.write(
-                        " * @param {name} SEND_ONLY\n".format(
-                            name=param.name, type=param.type.format()
-                        )
-                    )
-                elif isinstance(param.type, Pointer):
-                    f.write(
-                        " * @param {name} SEND_RECV\n".format(
-                            name=param.name, type=param.type.format()
-                        )
-                    )
-                elif isinstance(param.type, Array):
-                    f.write(
-                        " * @param {name} SEND_ONLY\n".format(
-                            name=param.name, type=param.type.format()
-                        )
-                    )
-            f.write(" */\n")
-
-            params = []
-
-            for param in function.parameters:
-                if param.name and "[]" in param.type.format():
-                    params.append(
-                        "{type} {name}".format(
-                            type=param.type.format().replace("[]", ""),
-                            name=param.name + "[]",
-                        )
-                    )
-                elif param.name:
-                    params.append(
-                        "{type} {name}".format(
-                            type=param.type.format(),
-                            name=param.name,
-                        )
-                    )
+            annotated_names.add(name)
+            output.write("/**\n")
+            for parameter in function.parameters:
+                if isinstance(parameter.type, Type):
+                    direction = "SEND_ONLY"
+                elif isinstance(parameter.type, Pointer):
+                    direction = "SEND_RECV"
+                elif isinstance(parameter.type, Array):
+                    direction = "SEND_ONLY"
                 else:
-                    params.append(param.type.format())
-
-            joined_params = ", ".join(params)
-
-            f.write(
-                "{return_type} {name}({params});\n".format(
-                    return_type=function.return_type.format(),
-                    name=function.name.format(),
-                    params=joined_params,
-                )
+                    continue
+                output.write(f" * @param {parameter.name} {direction}\n")
+            output.write(" */\n")
+            output.write(
+                f"{function.return_type.format()} {name}"
+                f"({format_parameters(function)});\n"
             )
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Append missing declarations to one annotation partition"
+    )
+    parser.add_argument("partition", choices=PARTITIONS)
+    args = parser.parse_args()
+    append_missing_functions(args.partition)
+
+
 if __name__ == "__main__":
-    # annotations.h is read and appended to CWD-relative.
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     main()

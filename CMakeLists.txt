@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.18)
 project(LupineProject LANGUAGES C CXX)
 
 option(LUPINE_BUILD_CUDA "Build the CUDA client and server backend" ON)
+option(LUPINE_BUILD_CUBLAS "Build the cuBLAS client and server backend" ON)
 option(LUPINE_BUILD_NVML "Build the NVML client and server backend" ON)
 option(LUPINE_BUILD_HIP
        "Build the HIP client and server backend when HIP SDK headers are available"
@@ -25,6 +26,11 @@ set(LUPINE_PRECOMPILED_OPS "" CACHE PATH
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
 set(LUPINE_SANITIZE "" CACHE STRING
     "Sanitizer for CPU test targets (e.g. address,undefined or thread)")
+
+if(LUPINE_BUILD_CUBLAS AND NOT LUPINE_BUILD_CUDA)
+    message(STATUS "cuBLAS requires the CUDA shim; disabling cuBLAS")
+    set(LUPINE_BUILD_CUBLAS OFF)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -97,6 +103,33 @@ if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
             message(STATUS
                 "Using CUDA driver stub for SDK-free server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
         endif()
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUBLAS)
+    find_path(LUPINE_CUBLAS_INCLUDE_DIR cublas_v2.h
+        HINTS
+            ${CUDAToolkit_INCLUDE_DIRS}
+            ${CUDAToolkit_ROOT}/include
+            $ENV{CUDA_HOME}/include
+            $ENV{CUDA_PATH}/include
+            /usr/local/cuda/include)
+    if(LUPINE_CUBLAS_INCLUDE_DIR)
+        list(APPEND CUDAToolkit_INCLUDE_DIRS ${LUPINE_CUBLAS_INCLUDE_DIR})
+        if(CUDAToolkit_VERSION_MAJOR)
+            set(LUPINE_CUBLAS_SOVERSION ${CUDAToolkit_VERSION_MAJOR})
+        elseif(LUPINE_CUDA_HEADER_VERSION)
+            math(EXPR LUPINE_CUBLAS_SOVERSION
+                 "${LUPINE_CUDA_HEADER_VERSION} / 1000")
+        else()
+            string(REGEX MATCH "^[0-9]+" LUPINE_CUBLAS_SOVERSION
+                   "${CUDAToolkit_VERSION}")
+        endif()
+        message(STATUS
+            "Found cuBLAS headers: ${LUPINE_CUBLAS_INCLUDE_DIR}")
+    else()
+        message(STATUS "cuBLAS headers not found; disabling cuBLAS")
+        set(LUPINE_BUILD_CUBLAS OFF)
     endif()
 endif()
 
@@ -270,6 +303,7 @@ endif()
 if(LUPINE_BUILD_CUDA)
     add_library(lupine_cuda_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cublas_bridge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
@@ -280,7 +314,8 @@ if(LUPINE_BUILD_CUDA)
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen
         ${CUDAToolkit_INCLUDE_DIRS})
-    target_compile_definitions(lupine_cuda_client PRIVATE LUPINE_RPC_CLIENT)
+    target_compile_definitions(lupine_cuda_client PRIVATE
+        LUPINE_RPC_CLIENT LUPINE_CUBLAS_BRIDGE_EXPORTS)
     target_link_libraries(lupine_cuda_client PRIVATE
         lupine_client_transport lupine_cuda_checkpoint lupine_ipc
         ${CMAKE_DL_LIBS})
@@ -308,6 +343,41 @@ if(LUPINE_BUILD_CUDA)
                 SOVERSION 1)
         endif()
     endif()
+endif()
+
+if(LUPINE_BUILD_CUBLAS)
+    add_library(lupine_cublas_client SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/cublas_client.cpp)
+    target_include_directories(lupine_cublas_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(lupine_cublas_client PRIVATE lupine_cuda_client)
+    set_target_properties(lupine_cublas_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    if(WIN32)
+        target_compile_definitions(lupine_cublas_client PRIVATE
+            LUPINE_WINDOWS_POSIX_SHIMS
+            _CRT_DECLARE_NONSTDC_NAMES=0)
+        target_compile_options(lupine_cublas_client PRIVATE /wd4996)
+        set_target_properties(lupine_cublas_client PROPERTIES
+            OUTPUT_NAME cublas64_${LUPINE_CUBLAS_SOVERSION}
+            PREFIX ""
+            WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cublas_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cublas_client PROPERTIES
+            OUTPUT_NAME cublas)
+        if(NOT APPLE)
+            target_link_options(lupine_cublas_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cublas.exports")
+            set_target_properties(lupine_cublas_client PROPERTIES
+                VERSION ${LUPINE_CUBLAS_SOVERSION}
+                SOVERSION ${LUPINE_CUBLAS_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_cublas DEPENDS lupine_cublas_client)
 endif()
 
 if(LUPINE_BUILD_NVML)
@@ -390,6 +460,16 @@ if(LUPINE_BUILD_SERVER)
             lupine_cuda_smemcpy_module CUDA::cuda_driver)
     endif()
 
+    if(LUPINE_BUILD_CUBLAS)
+        add_library(lupine_cublas_server STATIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/cublas_server.cpp)
+        lupine_internal_target(lupine_cublas_server)
+        target_include_directories(lupine_cublas_server PRIVATE
+            ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(lupine_cublas_server PRIVATE
+            lupine_server_core ${CMAKE_DL_LIBS})
+    endif()
+
     if(LUPINE_BUILD_NVML)
         add_library(lupine_nvml_server STATIC
             ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp)
@@ -425,6 +505,12 @@ if(LUPINE_BUILD_SERVER)
             LUPINE_RPC_SERVER
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
         target_link_libraries(lupine_driver_server PRIVATE lupine_cuda_server)
+    endif()
+    if(LUPINE_BUILD_CUBLAS)
+        target_compile_definitions(lupine_driver_server PRIVATE
+            LUPINE_BUILD_CUBLAS_BACKEND)
+        target_link_libraries(lupine_driver_server PRIVATE
+            lupine_cublas_server)
     endif()
     if(LUPINE_BUILD_NVML)
         target_compile_definitions(lupine_driver_server PRIVATE
@@ -569,6 +655,11 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetMemoryErrorCounter && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetCudaComputeCapability")
     endif()
+    if(TARGET lupine_cublas_client)
+        add_test(NAME cublas_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasCreate_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmBatchedEx_64")
+    endif()
 endif()
 
 message(STATUS "RPC core target: lupine_rpc_core")
@@ -579,6 +670,10 @@ endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
         "Building NVML client: lupine_nvml_client (libnvidia-ml.so.1)")
+endif()
+if(TARGET lupine_cublas_client)
+    message(STATUS
+        "Building cuBLAS client: lupine_cublas_client (libcublas.so.${LUPINE_CUBLAS_SOVERSION})")
 endif()
 if(TARGET lupine_hip_client)
     message(STATUS "Building HIP client: lupine_hip_client (libamdhip64.so.1)")

@@ -173,8 +173,8 @@ int handle_cuDeviceGetUuid_v2(conn_t *conn) {
   CUresult lupine_intercept_result;
   if (false)
     goto ERROR_0;
-  uuid = (CUuuid *)malloc(16 * sizeof(CUuuid));
-  if ((16 * sizeof(CUuuid) != 0 && uuid == nullptr) ||
+  uuid = (CUuuid *)malloc(16);
+  if ((16 != 0 && uuid == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -204,8 +204,8 @@ int handle_cuDeviceGetLuid(conn_t *conn) {
   CUresult lupine_intercept_result;
   if (false)
     goto ERROR_0;
-  luid = (char *)malloc(8 * sizeof(char));
-  if ((8 * sizeof(char) != 0 && luid == nullptr) ||
+  luid = (char *)malloc(8);
+  if ((8 != 0 && luid == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 

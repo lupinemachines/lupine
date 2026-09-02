@@ -65,7 +65,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 FROM builder AS client-build
 
 RUN cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_nvml_client lupine_hip_client
+      --target lupine_cuda_client lupine_cublas_client lupine_nvml_client lupine_hip_client
 
 FROM builder AS server-build
 
@@ -81,7 +81,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA, cuBLAS, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -124,14 +124,19 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/* /tmp/nvidia-utils
 
 COPY --from=client-build /opt/lupine/build/libcuda.so.1 /opt/lupine/lib/libcuda.so.1
+COPY --from=client-build /opt/lupine/build/libcublas.so.* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
 
 RUN ln -sf /opt/lupine/lib/libcuda.so.1 /opt/lupine/lib/libcuda.so \
+    && cublas_lib="$(find /opt/lupine/lib -maxdepth 1 -type f -name 'libcublas.so.*' -print -quit)" \
+    && test -n "$cublas_lib" \
+    && ln -sf "$(basename "$cublas_lib")" /opt/lupine/lib/libcublas.so \
     && ln -sf /opt/lupine/lib/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so \
     && ln -sf /opt/lupine/lib/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so
 
 ENV LUPINE_LIBCUDA=/opt/lupine/lib/libcuda.so.1
+ENV LUPINE_LIBCUBLAS=/opt/lupine/lib/libcublas.so
 ENV LUPINE_LIB=/opt/lupine/lib/libcuda.so.1
 ENV LUPINE_LIBHIP=/opt/lupine/lib/libamdhip64.so.1
 ENV LD_LIBRARY_PATH=/opt/lupine/lib
@@ -197,6 +202,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* /tmp/*.deb
 
 COPY --from=server-build /opt/lupine/build/lupine_driver_server /opt/lupine/bin/lupine_driver_server
+COPY --from=cuda-sdk /usr/local/cuda/lib64/libcublas.so* /opt/lupine/cuda/lib64/
+COPY --from=cuda-sdk /usr/local/cuda/lib64/libcublasLt.so* /opt/lupine/cuda/lib64/
 COPY client-bundles/ /opt/lupine/client-bundles/
 
 RUN set -eux; \
@@ -211,7 +218,7 @@ RUN set -eux; \
       done; \
     fi
 
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/compat:/opt/rocm/lib
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/compat:/opt/lupine/cuda/lib64:/opt/rocm/lib
 ENV LUPINE_PORT=14833
 ENV LUPINE_CLIENT_BUNDLE_DIR=/opt/lupine/client-bundles
 ENV NVIDIA_VISIBLE_DEVICES=all

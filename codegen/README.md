@@ -1,9 +1,15 @@
 Codegen works via a human-in-the-loop system. It's quite challenging to build a codegen engine that can correctly
 infer what parameters should be sent and received so we instead have a two-step process.
 
-First, `annotationgen.py` reads in all the `nvml.h`, `cuda.h`, et al headers and copies the function signatures
-into `annotations.h`. This file is intended to be modified by humans. In particular, the `@param` annotations
+The API declarations are partitioned by their owning SDK header:
+`annotations_cuda.h`, `annotations_nvml.h`, and `annotations_cublas.h`. These
+files are intended to be modified by humans. The generator matches each
+partition against its corresponding SDK header rather than inferring API
+ownership from a function-name prefix. In particular, the `@param` annotations
 have significant meanings.
+
+`uv run codegen/annotationgen.py <cuda|nvml|cublas>` appends declarations that
+are present in that partition's SDK header but not yet annotated.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
 `SEND_ONLY`, `RECV_ONLY`, and `SEND_RECV` indicate the directions the parameter is transferred in. Other arguments

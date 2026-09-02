@@ -66,6 +66,7 @@ jobs:
             docker run --rm --entrypoint bash "$image" -lc '
               set -euo pipefail
               test -e /opt/lupine/lib/libcuda.so.1
+              test -e /opt/lupine/lib/libcublas.so
               test -e /opt/lupine/lib/libnvidia-ml.so.1
               test -e /opt/lupine/lib/libamdhip64.so.1
               test -x /usr/bin/nvidia-smi
@@ -96,12 +97,16 @@ jobs:
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
 
           docker cp "$container:/opt/lupine/lib/libcuda.so.1" "$out/libcuda.so.1"
+          cuda_major="${{ matrix.cuda }}"
+          cuda_major="${cuda_major%%.*}"
+          docker cp "$container:/opt/lupine/lib/libcublas.so.${cuda_major}" "$out/libcublas.so.${cuda_major}"
           docker cp "$container:/opt/lupine/lib/libnvidia-ml.so.1" "$out/libnvidia-ml.so.1"
           docker cp "$container:/opt/lupine/lib/libamdhip64.so.1" "$out/libamdhip64.so.1"
           cp "$out/libcuda.so.1" "$out/libcuda.so"
+          cp "$out/libcublas.so.${cuda_major}" "$out/libcublas.so"
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           cp "$out/libamdhip64.so.1" "$out/libamdhip64.so"
-          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
+          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcublas.so "libcublas.so.${cuda_major}" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts

@@ -134,13 +134,18 @@ class ArrayOperation:
     send: bool
     recv: bool
     parameter: Parameter
-    ptr: Pointer
+    ptr: Union[Pointer, Array]
     # if int, it's a constant length, if Parameter, it's a variable length.
     length: Union[int, Parameter]
 
     @property
     def is_void_bytes(self) -> bool:
-        return self.ptr.ptr_to.format() in ("void", "const void")
+        return self.element_type() in ("void", "const void")
+
+    def element_type(self) -> str:
+        if isinstance(self.ptr, Array):
+            return self.ptr.array_of.format()
+        return self.ptr.ptr_to.format()
 
     def byte_count_expr(self) -> str:
         if isinstance(self.length, int):
@@ -157,9 +162,12 @@ class ArrayOperation:
         return self.length.name
 
     def transfer_size_expr(self) -> str:
+        # SIZE:<n> is a byte count. LENGTH:<param> is an element count.
+        if isinstance(self.length, int):
+            return str(self.length)
         if self.is_void_bytes:
             return self.byte_count_expr()
-        return f"{self.element_count_expr()} * sizeof({self.ptr.ptr_to.format()})"
+        return f"{self.element_count_expr()} * sizeof({self.element_type()})"
 
     def server_element_count_expr(self) -> str:
         if isinstance(self.length, int):
@@ -168,18 +176,25 @@ class ArrayOperation:
         return self.length.name
 
     def server_transfer_size_expr(self) -> str:
+        if isinstance(self.length, int):
+            return str(self.length)
         if self.is_void_bytes:
             return self.server_element_count_expr()
         return (
             f"{self.server_element_count_expr()} * "
-            f"sizeof({self.ptr.ptr_to.format()})"
+            f"sizeof({self.element_type()})"
         )
 
     def mutable_ptr_format(self) -> str:
-        c = self.ptr.ptr_to.const
-        self.ptr.ptr_to.const = False
-        result = self.ptr.format()
-        self.ptr.ptr_to.const = c
+        element = (
+            self.ptr.array_of
+            if isinstance(self.ptr, Array)
+            else self.ptr.ptr_to
+        )
+        c = element.const
+        element.const = False
+        result = f"{element.format()} *"
+        element.const = c
         return result
 
     def client_preflight(self, f, error_return: str):
@@ -192,7 +207,6 @@ class ArrayOperation:
         if (
             not self.send
             or isinstance(self.length, int)
-            or isinstance(self.ptr, Array)
         ):
             return
         f.write(
@@ -206,29 +220,12 @@ class ArrayOperation:
     def client_rpc_write(self, f):
         if not self.send:
             return
-        if isinstance(self.length, int):
-            f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
+        f.write(
+            "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
+                param_name=self.parameter.name,
+                size=self.transfer_size_expr(),
             )
-        # array length operations are handled differently than char
-        elif isinstance(self.ptr, Array):
-            f.write(
-                "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    param_type=self.ptr.array_of.format(),
-                )
-            )
-        else:
-            f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
+        )
 
     def client_unified_copy(self, f, direction, error):
         f.write(
@@ -294,42 +291,30 @@ class ArrayOperation:
 
     @property
     def server_declaration(self) -> str:
-        if isinstance(self.ptr, Array):
-            c = self.ptr.array_of.const
-            self.ptr.array_of.const = False
-            s = f"    {self.ptr.array_of.format()}* {self.parameter.name} = nullptr;\n"
-            self.ptr.array_of.const = c
-        else:
-            c = self.ptr.ptr_to.const
-            self.ptr.ptr_to.const = False
-            s = f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
-            if self.send:
-                s += f"    size_t {self.parameter.name}_size;\n"
-            self.ptr.ptr_to.const = c
+        s = f"    {self.mutable_ptr_format()} {self.parameter.name} = nullptr;\n"
+        if self.send:
+            s += f"    size_t {self.parameter.name}_size;\n"
         return s
 
     def server_rpc_read(self, f) -> Optional[str]:
         if not self.send:
-            # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
-            if isinstance(self.ptr, Pointer):
-                f.write("        false)\n")
-                f.write("        goto ERROR_0;\n")
-                f.write(
-                    "    {param_name} = ({server_type})malloc({size});\n".format(
-                        param_name=self.parameter.name,
-                        server_type=self.ptr.format(),
-                        size=self.server_transfer_size_expr(),
-                    )
+            f.write("        false)\n")
+            f.write("        goto ERROR_0;\n")
+            f.write(
+                "    {param_name} = ({server_type})malloc({size});\n".format(
+                    param_name=self.parameter.name,
+                    server_type=self.mutable_ptr_format(),
+                    size=self.server_transfer_size_expr(),
                 )
-                f.write(
-                    "    if (({size} != 0 && {param_name} == nullptr) ||\n".format(
-                        param_name=self.parameter.name,
-                        size=self.server_transfer_size_expr(),
-                    )
+            )
+            f.write(
+                "    if (({size} != 0 && {param_name} == nullptr) ||\n".format(
+                    param_name=self.parameter.name,
+                    size=self.server_transfer_size_expr(),
                 )
-                return self.parameter.name
-            return
-        elif isinstance(self.ptr, Pointer):
+            )
+            return self.parameter.name
+        else:
             f.write("        false)\n")
             f.write("        goto ERROR_0;\n")
             f.write(
@@ -359,34 +344,11 @@ class ArrayOperation:
                 )
             )
             return self.parameter.name
-        elif isinstance(self.length, int):
-            f.write(
-                "        rpc_read(conn, &{param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
-            )
-        elif isinstance(self.ptr, Array):
-            f.write(
-                "        rpc_read(conn, &{param_name}, sizeof({param_type}*)) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    param_type=self.ptr.array_of.format(),
-                )
-            )
-        else:
-            f.write(
-                "        rpc_read(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
-        return None
 
     @property
     def server_reference(self) -> str:
         if isinstance(self.length, int):
-            return f"{self.parameter.name}"
+            return self.parameter.name
         return (
             f"({self.server_transfer_size_expr()} == 0 ? "
             f"nullptr : {self.parameter.name})"
@@ -395,39 +357,22 @@ class ArrayOperation:
     def server_rpc_write(self, f):
         if not self.recv:
             return
-        if isinstance(self.length, int):
-            f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
+        f.write(
+            "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
+                param_name=self.parameter.name,
+                size=self.server_transfer_size_expr(),
             )
-        else:
-            f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.server_transfer_size_expr(),
-                )
-            )
+        )
 
     def client_rpc_read(self, f):
         if not self.recv:
             return
-        if isinstance(self.length, int):
-            f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
+        f.write(
+            "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
+                param_name=self.parameter.name,
+                size=self.transfer_size_expr(),
             )
-        else:
-            f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
-            )
-
+        )
 
 @dataclass
 class InOutCountOperation:

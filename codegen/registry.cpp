@@ -383,6 +383,485 @@
   HANDLER(RPC_cuMemPrefetchAsync, handle_cuMemPrefetchAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphExecUpdate, handle_cuGraphExecUpdate, rpc_backend::cuda)
+#define LUPINE_CUBLAS_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cublasCreate_v2, handle_cublasCreate_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDestroy_v2, handle_cublasDestroy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetVersion_v2, handle_cublasGetVersion_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetProperty, handle_cublasGetProperty, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSetWorkspace_v2, handle_cublasSetWorkspace_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSetStream_v2, handle_cublasSetStream_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetStream_v2, handle_cublasGetStream_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetPointerMode_v2, handle_cublasGetPointerMode_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSetPointerMode_v2, handle_cublasSetPointerMode_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetAtomicsMode, handle_cublasGetAtomicsMode, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSetAtomicsMode, handle_cublasSetAtomicsMode, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetMathMode, handle_cublasGetMathMode, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSetMathMode, handle_cublasSetMathMode, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetSmCountTarget, handle_cublasGetSmCountTarget, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSetSmCountTarget, handle_cublasSetSmCountTarget, rpc_backend::cuda) \
+  HANDLER(RPC_cublasLoggerConfigure, handle_cublasLoggerConfigure, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSetLoggerCallback, handle_cublasSetLoggerCallback, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGetLoggerCallback, handle_cublasGetLoggerCallback, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSnrm2_v2, handle_cublasSnrm2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSnrm2_v2_64, handle_cublasSnrm2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDnrm2_v2, handle_cublasDnrm2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDnrm2_v2_64, handle_cublasDnrm2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasScnrm2_v2, handle_cublasScnrm2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasScnrm2_v2_64, handle_cublasScnrm2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDznrm2_v2, handle_cublasDznrm2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDznrm2_v2_64, handle_cublasDznrm2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSdot_v2, handle_cublasSdot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSdot_v2_64, handle_cublasSdot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDdot_v2, handle_cublasDdot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDdot_v2_64, handle_cublasDdot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCdotu_v2, handle_cublasCdotu_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCdotu_v2_64, handle_cublasCdotu_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCdotc_v2, handle_cublasCdotc_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCdotc_v2_64, handle_cublasCdotc_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdotu_v2, handle_cublasZdotu_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdotu_v2_64, handle_cublasZdotu_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdotc_v2, handle_cublasZdotc_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdotc_v2_64, handle_cublasZdotc_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSscal_v2, handle_cublasSscal_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSscal_v2_64, handle_cublasSscal_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDscal_v2, handle_cublasDscal_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDscal_v2_64, handle_cublasDscal_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCscal_v2, handle_cublasCscal_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCscal_v2_64, handle_cublasCscal_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsscal_v2, handle_cublasCsscal_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsscal_v2_64, handle_cublasCsscal_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZscal_v2, handle_cublasZscal_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZscal_v2_64, handle_cublasZscal_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdscal_v2, handle_cublasZdscal_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdscal_v2_64, handle_cublasZdscal_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSaxpy_v2, handle_cublasSaxpy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSaxpy_v2_64, handle_cublasSaxpy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDaxpy_v2, handle_cublasDaxpy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDaxpy_v2_64, handle_cublasDaxpy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCaxpy_v2, handle_cublasCaxpy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCaxpy_v2_64, handle_cublasCaxpy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZaxpy_v2, handle_cublasZaxpy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZaxpy_v2_64, handle_cublasZaxpy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCopyEx, handle_cublasCopyEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCopyEx_64, handle_cublasCopyEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasScopy_v2, handle_cublasScopy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasScopy_v2_64, handle_cublasScopy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDcopy_v2, handle_cublasDcopy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDcopy_v2_64, handle_cublasDcopy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCcopy_v2, handle_cublasCcopy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCcopy_v2_64, handle_cublasCcopy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZcopy_v2, handle_cublasZcopy_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZcopy_v2_64, handle_cublasZcopy_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSswap_v2, handle_cublasSswap_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSswap_v2_64, handle_cublasSswap_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDswap_v2, handle_cublasDswap_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDswap_v2_64, handle_cublasDswap_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCswap_v2, handle_cublasCswap_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCswap_v2_64, handle_cublasCswap_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZswap_v2, handle_cublasZswap_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZswap_v2_64, handle_cublasZswap_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSwapEx, handle_cublasSwapEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSwapEx_64, handle_cublasSwapEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIsamax_v2, handle_cublasIsamax_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIsamax_v2_64, handle_cublasIsamax_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIdamax_v2, handle_cublasIdamax_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIdamax_v2_64, handle_cublasIdamax_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIcamax_v2, handle_cublasIcamax_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIcamax_v2_64, handle_cublasIcamax_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIzamax_v2, handle_cublasIzamax_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIzamax_v2_64, handle_cublasIzamax_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIamaxEx, handle_cublasIamaxEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIamaxEx_64, handle_cublasIamaxEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIsamin_v2, handle_cublasIsamin_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIsamin_v2_64, handle_cublasIsamin_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIdamin_v2, handle_cublasIdamin_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIdamin_v2_64, handle_cublasIdamin_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIcamin_v2, handle_cublasIcamin_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIcamin_v2_64, handle_cublasIcamin_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIzamin_v2, handle_cublasIzamin_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIzamin_v2_64, handle_cublasIzamin_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIaminEx, handle_cublasIaminEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasIaminEx_64, handle_cublasIaminEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSasum_v2, handle_cublasSasum_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSasum_v2_64, handle_cublasSasum_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDasum_v2, handle_cublasDasum_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDasum_v2_64, handle_cublasDasum_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasScasum_v2, handle_cublasScasum_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasScasum_v2_64, handle_cublasScasum_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDzasum_v2, handle_cublasDzasum_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDzasum_v2_64, handle_cublasDzasum_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSrot_v2, handle_cublasSrot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSrot_v2_64, handle_cublasSrot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDrot_v2, handle_cublasDrot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDrot_v2_64, handle_cublasDrot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCrot_v2, handle_cublasCrot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCrot_v2_64, handle_cublasCrot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsrot_v2, handle_cublasCsrot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsrot_v2_64, handle_cublasCsrot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZrot_v2, handle_cublasZrot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZrot_v2_64, handle_cublasZrot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdrot_v2, handle_cublasZdrot_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdrot_v2_64, handle_cublasZdrot_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSrotg_v2, handle_cublasSrotg_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDrotg_v2, handle_cublasDrotg_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCrotg_v2, handle_cublasCrotg_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZrotg_v2, handle_cublasZrotg_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSrotm_v2, handle_cublasSrotm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSrotm_v2_64, handle_cublasSrotm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDrotm_v2, handle_cublasDrotm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDrotm_v2_64, handle_cublasDrotm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSrotmg_v2, handle_cublasSrotmg_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDrotmg_v2, handle_cublasDrotmg_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemv_v2, handle_cublasSgemv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemv_v2_64, handle_cublasSgemv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemv_v2, handle_cublasDgemv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemv_v2_64, handle_cublasDgemv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemv_v2, handle_cublasCgemv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemv_v2_64, handle_cublasCgemv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemv_v2, handle_cublasZgemv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemv_v2_64, handle_cublasZgemv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgbmv_v2, handle_cublasSgbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgbmv_v2_64, handle_cublasSgbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgbmv_v2, handle_cublasDgbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgbmv_v2_64, handle_cublasDgbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgbmv_v2, handle_cublasCgbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgbmv_v2_64, handle_cublasCgbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgbmv_v2, handle_cublasZgbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgbmv_v2_64, handle_cublasZgbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrmv_v2, handle_cublasStrmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrmv_v2_64, handle_cublasStrmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrmv_v2, handle_cublasDtrmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrmv_v2_64, handle_cublasDtrmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrmv_v2, handle_cublasCtrmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrmv_v2_64, handle_cublasCtrmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrmv_v2, handle_cublasZtrmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrmv_v2_64, handle_cublasZtrmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStbmv_v2, handle_cublasStbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStbmv_v2_64, handle_cublasStbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtbmv_v2, handle_cublasDtbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtbmv_v2_64, handle_cublasDtbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtbmv_v2, handle_cublasCtbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtbmv_v2_64, handle_cublasCtbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtbmv_v2, handle_cublasZtbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtbmv_v2_64, handle_cublasZtbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStpmv_v2, handle_cublasStpmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStpmv_v2_64, handle_cublasStpmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtpmv_v2, handle_cublasDtpmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtpmv_v2_64, handle_cublasDtpmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtpmv_v2, handle_cublasCtpmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtpmv_v2_64, handle_cublasCtpmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtpmv_v2, handle_cublasZtpmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtpmv_v2_64, handle_cublasZtpmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrsv_v2, handle_cublasStrsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrsv_v2_64, handle_cublasStrsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrsv_v2, handle_cublasDtrsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrsv_v2_64, handle_cublasDtrsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrsv_v2, handle_cublasCtrsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrsv_v2_64, handle_cublasCtrsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrsv_v2, handle_cublasZtrsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrsv_v2_64, handle_cublasZtrsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStpsv_v2, handle_cublasStpsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStpsv_v2_64, handle_cublasStpsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtpsv_v2, handle_cublasDtpsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtpsv_v2_64, handle_cublasDtpsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtpsv_v2, handle_cublasCtpsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtpsv_v2_64, handle_cublasCtpsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtpsv_v2, handle_cublasZtpsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtpsv_v2_64, handle_cublasZtpsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStbsv_v2, handle_cublasStbsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStbsv_v2_64, handle_cublasStbsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtbsv_v2, handle_cublasDtbsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtbsv_v2_64, handle_cublasDtbsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtbsv_v2, handle_cublasCtbsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtbsv_v2_64, handle_cublasCtbsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtbsv_v2, handle_cublasZtbsv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtbsv_v2_64, handle_cublasZtbsv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsymv_v2, handle_cublasSsymv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsymv_v2_64, handle_cublasSsymv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsymv_v2, handle_cublasDsymv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsymv_v2_64, handle_cublasDsymv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsymv_v2, handle_cublasCsymv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsymv_v2_64, handle_cublasCsymv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsymv_v2, handle_cublasZsymv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsymv_v2_64, handle_cublasZsymv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChemv_v2, handle_cublasChemv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChemv_v2_64, handle_cublasChemv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhemv_v2, handle_cublasZhemv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhemv_v2_64, handle_cublasZhemv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsbmv_v2, handle_cublasSsbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsbmv_v2_64, handle_cublasSsbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsbmv_v2, handle_cublasDsbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsbmv_v2_64, handle_cublasDsbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChbmv_v2, handle_cublasChbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChbmv_v2_64, handle_cublasChbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhbmv_v2, handle_cublasZhbmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhbmv_v2_64, handle_cublasZhbmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSspmv_v2, handle_cublasSspmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSspmv_v2_64, handle_cublasSspmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDspmv_v2, handle_cublasDspmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDspmv_v2_64, handle_cublasDspmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChpmv_v2, handle_cublasChpmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChpmv_v2_64, handle_cublasChpmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhpmv_v2, handle_cublasZhpmv_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhpmv_v2_64, handle_cublasZhpmv_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSger_v2, handle_cublasSger_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSger_v2_64, handle_cublasSger_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDger_v2, handle_cublasDger_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDger_v2_64, handle_cublasDger_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgeru_v2, handle_cublasCgeru_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgeru_v2_64, handle_cublasCgeru_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgerc_v2, handle_cublasCgerc_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgerc_v2_64, handle_cublasCgerc_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgeru_v2, handle_cublasZgeru_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgeru_v2_64, handle_cublasZgeru_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgerc_v2, handle_cublasZgerc_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgerc_v2_64, handle_cublasZgerc_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyr_v2, handle_cublasSsyr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyr_v2_64, handle_cublasSsyr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyr_v2, handle_cublasDsyr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyr_v2_64, handle_cublasDsyr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyr_v2, handle_cublasCsyr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyr_v2_64, handle_cublasCsyr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyr_v2, handle_cublasZsyr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyr_v2_64, handle_cublasZsyr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCher_v2, handle_cublasCher_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCher_v2_64, handle_cublasCher_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZher_v2, handle_cublasZher_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZher_v2_64, handle_cublasZher_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSspr_v2, handle_cublasSspr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSspr_v2_64, handle_cublasSspr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDspr_v2, handle_cublasDspr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDspr_v2_64, handle_cublasDspr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChpr_v2, handle_cublasChpr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChpr_v2_64, handle_cublasChpr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhpr_v2, handle_cublasZhpr_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhpr_v2_64, handle_cublasZhpr_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyr2_v2, handle_cublasSsyr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyr2_v2_64, handle_cublasSsyr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyr2_v2, handle_cublasDsyr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyr2_v2_64, handle_cublasDsyr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyr2_v2, handle_cublasCsyr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyr2_v2_64, handle_cublasCsyr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyr2_v2, handle_cublasZsyr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyr2_v2_64, handle_cublasZsyr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCher2_v2, handle_cublasCher2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCher2_v2_64, handle_cublasCher2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZher2_v2, handle_cublasZher2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZher2_v2_64, handle_cublasZher2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSspr2_v2, handle_cublasSspr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSspr2_v2_64, handle_cublasSspr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDspr2_v2, handle_cublasDspr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDspr2_v2_64, handle_cublasDspr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChpr2_v2, handle_cublasChpr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChpr2_v2_64, handle_cublasChpr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhpr2_v2, handle_cublasZhpr2_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhpr2_v2_64, handle_cublasZhpr2_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemvBatched, handle_cublasSgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemvBatched_64, handle_cublasSgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemvBatched, handle_cublasDgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemvBatched_64, handle_cublasDgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemvBatched, handle_cublasCgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemvBatched_64, handle_cublasCgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemvBatched, handle_cublasZgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemvBatched_64, handle_cublasZgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSHgemvBatched, handle_cublasHSHgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSHgemvBatched_64, handle_cublasHSHgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSSgemvBatched, handle_cublasHSSgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSSgemvBatched_64, handle_cublasHSSgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSTgemvBatched, handle_cublasTSTgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSTgemvBatched_64, handle_cublasTSTgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSSgemvBatched, handle_cublasTSSgemvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSSgemvBatched_64, handle_cublasTSSgemvBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemvStridedBatched, handle_cublasSgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemvStridedBatched_64, handle_cublasSgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemvStridedBatched, handle_cublasDgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemvStridedBatched_64, handle_cublasDgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemvStridedBatched, handle_cublasCgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemvStridedBatched_64, handle_cublasCgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemvStridedBatched, handle_cublasZgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemvStridedBatched_64, handle_cublasZgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSHgemvStridedBatched, handle_cublasHSHgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSHgemvStridedBatched_64, handle_cublasHSHgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSSgemvStridedBatched, handle_cublasHSSgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHSSgemvStridedBatched_64, handle_cublasHSSgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSTgemvStridedBatched, handle_cublasTSTgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSTgemvStridedBatched_64, handle_cublasTSTgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSSgemvStridedBatched, handle_cublasTSSgemvStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasTSSgemvStridedBatched_64, handle_cublasTSSgemvStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemm_v2, handle_cublasSgemm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemm_v2_64, handle_cublasSgemm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemm_v2, handle_cublasDgemm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemm_v2_64, handle_cublasDgemm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm_v2, handle_cublasCgemm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm_v2_64, handle_cublasCgemm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3m, handle_cublasCgemm3m, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3m_64, handle_cublasCgemm3m_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3mEx, handle_cublasCgemm3mEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3mEx_64, handle_cublasCgemm3mEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemm_v2, handle_cublasZgemm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemm_v2_64, handle_cublasZgemm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemm3m, handle_cublasZgemm3m, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemm3m_64, handle_cublasZgemm3m_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHgemm, handle_cublasHgemm, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHgemm_64, handle_cublasHgemm_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemmEx, handle_cublasSgemmEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemmEx_64, handle_cublasSgemmEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemmEx, handle_cublasCgemmEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemmEx_64, handle_cublasCgemmEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyrk_v2, handle_cublasSsyrk_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyrk_v2_64, handle_cublasSsyrk_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyrk_v2, handle_cublasDsyrk_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyrk_v2_64, handle_cublasDsyrk_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrk_v2, handle_cublasCsyrk_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrk_v2_64, handle_cublasCsyrk_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyrk_v2, handle_cublasZsyrk_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyrk_v2_64, handle_cublasZsyrk_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrkEx, handle_cublasCsyrkEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrkEx_64, handle_cublasCsyrkEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrk3mEx, handle_cublasCsyrk3mEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrk3mEx_64, handle_cublasCsyrk3mEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherk_v2, handle_cublasCherk_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherk_v2_64, handle_cublasCherk_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZherk_v2, handle_cublasZherk_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZherk_v2_64, handle_cublasZherk_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherkEx, handle_cublasCherkEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherkEx_64, handle_cublasCherkEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherk3mEx, handle_cublasCherk3mEx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherk3mEx_64, handle_cublasCherk3mEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyr2k_v2, handle_cublasSsyr2k_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyr2k_v2_64, handle_cublasSsyr2k_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyr2k_v2, handle_cublasDsyr2k_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyr2k_v2_64, handle_cublasDsyr2k_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyr2k_v2, handle_cublasCsyr2k_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyr2k_v2_64, handle_cublasCsyr2k_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyr2k_v2, handle_cublasZsyr2k_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyr2k_v2_64, handle_cublasZsyr2k_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCher2k_v2, handle_cublasCher2k_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCher2k_v2_64, handle_cublasCher2k_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZher2k_v2, handle_cublasZher2k_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZher2k_v2_64, handle_cublasZher2k_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyrkx, handle_cublasSsyrkx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsyrkx_64, handle_cublasSsyrkx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyrkx, handle_cublasDsyrkx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsyrkx_64, handle_cublasDsyrkx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrkx, handle_cublasCsyrkx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsyrkx_64, handle_cublasCsyrkx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyrkx, handle_cublasZsyrkx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsyrkx_64, handle_cublasZsyrkx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherkx, handle_cublasCherkx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCherkx_64, handle_cublasCherkx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZherkx, handle_cublasZherkx, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZherkx_64, handle_cublasZherkx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsymm_v2, handle_cublasSsymm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSsymm_v2_64, handle_cublasSsymm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsymm_v2, handle_cublasDsymm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDsymm_v2_64, handle_cublasDsymm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsymm_v2, handle_cublasCsymm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCsymm_v2_64, handle_cublasCsymm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsymm_v2, handle_cublasZsymm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZsymm_v2_64, handle_cublasZsymm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChemm_v2, handle_cublasChemm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasChemm_v2_64, handle_cublasChemm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhemm_v2, handle_cublasZhemm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZhemm_v2_64, handle_cublasZhemm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrsm_v2, handle_cublasStrsm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrsm_v2_64, handle_cublasStrsm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrsm_v2, handle_cublasDtrsm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrsm_v2_64, handle_cublasDtrsm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrsm_v2, handle_cublasCtrsm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrsm_v2_64, handle_cublasCtrsm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrsm_v2, handle_cublasZtrsm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrsm_v2_64, handle_cublasZtrsm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrmm_v2, handle_cublasStrmm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrmm_v2_64, handle_cublasStrmm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrmm_v2, handle_cublasDtrmm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrmm_v2_64, handle_cublasDtrmm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrmm_v2, handle_cublasCtrmm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrmm_v2_64, handle_cublasCtrmm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrmm_v2, handle_cublasZtrmm_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrmm_v2_64, handle_cublasZtrmm_v2_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHgemmBatched, handle_cublasHgemmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHgemmBatched_64, handle_cublasHgemmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemmBatched, handle_cublasSgemmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemmBatched_64, handle_cublasSgemmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemmBatched, handle_cublasDgemmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemmBatched_64, handle_cublasDgemmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemmBatched, handle_cublasCgemmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemmBatched_64, handle_cublasCgemmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3mBatched, handle_cublasCgemm3mBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3mBatched_64, handle_cublasCgemm3mBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemmBatched, handle_cublasZgemmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemmBatched_64, handle_cublasZgemmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHgemmStridedBatched, handle_cublasHgemmStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasHgemmStridedBatched_64, handle_cublasHgemmStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemmStridedBatched, handle_cublasSgemmStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgemmStridedBatched_64, handle_cublasSgemmStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemmStridedBatched, handle_cublasDgemmStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgemmStridedBatched_64, handle_cublasDgemmStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemmStridedBatched, handle_cublasCgemmStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemmStridedBatched_64, handle_cublasCgemmStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3mStridedBatched, handle_cublasCgemm3mStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgemm3mStridedBatched_64, handle_cublasCgemm3mStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemmStridedBatched, handle_cublasZgemmStridedBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgemmStridedBatched_64, handle_cublasZgemmStridedBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasGemmBatchedEx_64, handle_cublasGemmBatchedEx_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgeam, handle_cublasSgeam, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgeam_64, handle_cublasSgeam_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgeam, handle_cublasDgeam, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgeam_64, handle_cublasDgeam_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgeam, handle_cublasCgeam, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgeam_64, handle_cublasCgeam_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgeam, handle_cublasZgeam, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgeam_64, handle_cublasZgeam_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrsmBatched, handle_cublasStrsmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrsmBatched_64, handle_cublasStrsmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrsmBatched, handle_cublasDtrsmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrsmBatched_64, handle_cublasDtrsmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrsmBatched, handle_cublasCtrsmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrsmBatched_64, handle_cublasCtrsmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrsmBatched, handle_cublasZtrsmBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrsmBatched_64, handle_cublasZtrsmBatched_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSdgmm, handle_cublasSdgmm, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSdgmm_64, handle_cublasSdgmm_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDdgmm, handle_cublasDdgmm, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDdgmm_64, handle_cublasDdgmm_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCdgmm, handle_cublasCdgmm, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCdgmm_64, handle_cublasCdgmm_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdgmm, handle_cublasZdgmm, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZdgmm_64, handle_cublasZdgmm_64, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSmatinvBatched, handle_cublasSmatinvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDmatinvBatched, handle_cublasDmatinvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCmatinvBatched, handle_cublasCmatinvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZmatinvBatched, handle_cublasZmatinvBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgeqrfBatched, handle_cublasSgeqrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgeqrfBatched, handle_cublasDgeqrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgeqrfBatched, handle_cublasCgeqrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgeqrfBatched, handle_cublasZgeqrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgelsBatched, handle_cublasSgelsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgelsBatched, handle_cublasDgelsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgelsBatched, handle_cublasCgelsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgelsBatched, handle_cublasZgelsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStpttr, handle_cublasStpttr, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtpttr, handle_cublasDtpttr, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtpttr, handle_cublasCtpttr, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtpttr, handle_cublasZtpttr, rpc_backend::cuda) \
+  HANDLER(RPC_cublasStrttp, handle_cublasStrttp, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDtrttp, handle_cublasDtrttp, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCtrttp, handle_cublasCtrttp, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZtrttp, handle_cublasZtrttp, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgetrfBatched, handle_cublasSgetrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgetrfBatched, handle_cublasDgetrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgetrfBatched, handle_cublasCgetrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgetrfBatched, handle_cublasZgetrfBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgetriBatched, handle_cublasSgetriBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgetriBatched, handle_cublasDgetriBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgetriBatched, handle_cublasCgetriBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgetriBatched, handle_cublasZgetriBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasSgetrsBatched, handle_cublasSgetrsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasDgetrsBatched, handle_cublasDgetrsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasCgetrsBatched, handle_cublasCgetrsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasZgetrsBatched, handle_cublasZgetrsBatched, rpc_backend::cuda) \
+  HANDLER(RPC_cublasUint8gemmBias, handle_cublasUint8gemmBias, rpc_backend::cuda)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -595,6 +1074,69 @@ LUPINE_DECLARE_HANDLER(RPC_cuStreamGetDevResource,
                        handle_cuStreamGetDevResource, rpc_backend::cuda)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasGetEmulationStrategy,
+                       handle_cublasGetEmulationStrategy, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasSetEmulationStrategy,
+                       handle_cublasSetEmulationStrategy, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasGetEmulationSpecialValuesSupport,
+                       handle_cublasGetEmulationSpecialValuesSupport,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasSetEmulationSpecialValuesSupport,
+                       handle_cublasSetEmulationSpecialValuesSupport,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasGetFixedPointEmulationMantissaControl,
+                       handle_cublasGetFixedPointEmulationMantissaControl,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasSetFixedPointEmulationMantissaControl,
+                       handle_cublasSetFixedPointEmulationMantissaControl,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasGetFixedPointEmulationMaxMantissaBitCount,
+                       handle_cublasGetFixedPointEmulationMaxMantissaBitCount,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasSetFixedPointEmulationMaxMantissaBitCount,
+                       handle_cublasSetFixedPointEmulationMaxMantissaBitCount,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasGetFixedPointEmulationMantissaBitOffset,
+                       handle_cublasGetFixedPointEmulationMantissaBitOffset,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_cublasSetFixedPointEmulationMantissaBitOffset,
+                       handle_cublasSetFixedPointEmulationMantissaBitOffset,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(
+    RPC_cublasGetFixedPointEmulationMantissaBitCountPointer,
+    handle_cublasGetFixedPointEmulationMantissaBitCountPointer,
+    rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(
+    RPC_cublasSetFixedPointEmulationMantissaBitCountPointer,
+    handle_cublasSetFixedPointEmulationMantissaBitCountPointer,
+    rpc_backend::cuda)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -714,6 +1256,45 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cuStreamGetDevResource, handle_cuStreamGetDevResource, rpc_backend::cuda)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+      LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetEmulationStrategy, handle_cublasGetEmulationStrategy, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetEmulationStrategy, handle_cublasSetEmulationStrategy, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetEmulationSpecialValuesSupport, handle_cublasGetEmulationSpecialValuesSupport, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetEmulationSpecialValuesSupport, handle_cublasSetEmulationSpecialValuesSupport, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMantissaControl, handle_cublasGetFixedPointEmulationMantissaControl, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMantissaControl, handle_cublasSetFixedPointEmulationMantissaControl, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMaxMantissaBitCount, handle_cublasGetFixedPointEmulationMaxMantissaBitCount, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMaxMantissaBitCount, handle_cublasSetFixedPointEmulationMaxMantissaBitCount, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMantissaBitOffset, handle_cublasGetFixedPointEmulationMantissaBitOffset, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMantissaBitOffset, handle_cublasSetFixedPointEmulationMantissaBitOffset, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMantissaBitCountPointer, handle_cublasGetFixedPointEmulationMantissaBitCountPointer, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMantissaBitCountPointer, handle_cublasSetFixedPointEmulationMantissaBitCountPointer, rpc_backend::cuda)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -729,5 +1310,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 }
 
 #undef LUPINE_CUDA_RPC_HANDLERS
+#undef LUPINE_CUBLAS_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

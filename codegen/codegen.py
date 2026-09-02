@@ -244,6 +244,8 @@ REGISTRY_CPP_TEMPLATE = Template(
 // clang-format off
 #define LUPINE_CUDA_RPC_HANDLERS(HANDLER) \
 $cuda_registry_entries
+#define LUPINE_CUBLAS_RPC_HANDLERS(HANDLER) \
+$cublas_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -255,6 +257,10 @@ $hip_registry_entries
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cuda_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$cublas_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -277,6 +283,10 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cuda_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+      LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$cublas_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -292,6 +302,7 @@ $hip_guarded_handlers
 }
 
 #undef LUPINE_CUDA_RPC_HANDLERS
+#undef LUPINE_CUBLAS_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -312,6 +323,9 @@ class ServerBinding:
 
 SERVER_BACKENDS = {
     "CUDA": "rpc_backend::cuda",
+    # cuBLAS calls execute in the CUDA connection process so they share its
+    # current context, allocations, streams, and checkpoint guard.
+    "CUBLAS": "rpc_backend::cuda",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -378,13 +392,13 @@ def rpc_id(name: str) -> int:
     return zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
 
 
-def annotated_rpc_names(annotations: ParsedData) -> list[str]:
-    names: set[str] = set()
-    for function in annotations.namespace.functions:
-        name = function.name.format()
-        if len(name) > 2 and name.startswith("cu") and name[2].isupper():
-            names.add(name)
-    return sorted(names)
+def partition_function_names(
+    parsed: ParsedData, *, excluded: Optional[set[str]] = None
+) -> list[str]:
+    names = {
+        function.name.format() for function in parsed.namespace.functions
+    }
+    return sorted(names - (excluded or set()))
 
 
 SKIP_FUNCTIONS = {
@@ -411,6 +425,8 @@ def infer_routing_key(
         type_name = param.type.format().replace("const ", "").strip()
         if type_name == "nvmlDevice_t":
             return "NVML_DEVICE", param
+        if type_name == "cublasHandle_t":
+            return "CUBLAS_HANDLE", param
         if type_name == "CUdevice":
             return "DEVICE", param
         if type_name == "CUcontext":
@@ -753,10 +769,14 @@ def parse_annotation(
                     )
                 )
             elif isinstance(param.type, Array):
-                length_param = next(
-                    p for p in params if p.name == length_arg.split(":")[1]
+                if length_arg is None:
+                    raise NotImplementedError(
+                        f"Array parameter {param.name} requires LENGTH:<param>"
+                    )
+                length_param = annotation_param(
+                    params, length_arg.split(":", 1)[1]
                 )
-                if param.type.const:
+                if param.type.array_of.const:
                     recv = False
                 operations.append(
                     ArrayOperation(
@@ -767,87 +787,8 @@ def parse_annotation(
                         length=length_param,
                     )
                 )
-            elif size_arg:
-                # if it has a size, it's an array operation with constant length
-                operations.append(
-                    ArrayOperation(
-                        send=send,
-                        recv=recv,
-                        parameter=param,
-                        ptr=param.type,
-                        length=int(size_arg.split(":")[1]),
-                    )
-                )
-            elif null_terminated:
-                # if it's null terminated, it's a null terminated operation
-                operations.append(
-                    NullTerminatedOperation(
-                        send=send,
-                        recv=recv,
-                        parameter=param,
-                        ptr=param.type,
-                    )
-                )
-            elif nullable:
-                # if it's nullable, it's a nullable operation
-                operations.append(
-                    NullableOperation(
-                        send=send,
-                        recv=recv,
-                        parameter=param,
-                        ptr=param.type,
-                    )
-                )
             else:
-                # otherwise, it's a pointer to a single value or another pointer
-                if recv:
-                    if param.type.ptr_to.format() == "void":
-                        raise NotImplementedError("Cannot dereference a void pointer")
-                    # this is an out parameter so use the base type as the server declaration
-                    operations.append(
-                        DereferenceOperation(
-                            send=send,
-                            recv=recv,
-                            parameter=param,
-                            type_=param.type,
-                        )
-                    )
-                else:
-                    # otherwise, treat it as an opaque type
-                    operations.append(
-                        OpaqueTypeOperation(
-                            send=send,
-                            recv=recv,
-                            parameter=param,
-                            type_=param.type,
-                        )
-                    )
-        elif isinstance(param.type, Type):
-            if param.type.const:
-                recv = False
-            operations.append(
-                OpaqueTypeOperation(
-                    send=send,
-                    recv=recv,
-                    parameter=param,
-                    type_=param.type,
-                )
-            )
-        elif isinstance(param.type, Array):
-            length_param = next(p for p in params if p.name == length_arg.split(":")[1])
-            if param.type.array_of.const:
-                recv = False
-            operations.append(
-                ArrayOperation(
-                    send=send,
-                    recv=recv,
-                    parameter=param,
-                    ptr=param.type,
-                    length=length_param,
-                )
-            )
-        else:
-            raise NotImplementedError("Unknown type")
+                raise NotImplementedError("Unknown type")
     # Promote the count param of any optional out-array to an
     # InOutCountOperation. Several arrays may share one count (cuGraphGetEdges);
     # the first one is the anchor whose presence the client uses to decide
@@ -1146,29 +1087,91 @@ def server_call_name(function_name: str) -> str:
     return function_name
 
 
-def collect_nvml_functions(
-    annotations: ParsedData, server_bindings: dict[str, ServerBinding]
+def collect_annotated_functions(
+    header: ParsedData,
+    annotations: ParsedData,
+    *,
+    names: Optional[list[str]] = None,
+    signature_source: str = "header",
+    expected_return_type: Optional[str] = None,
+    configure=None,
+    strict: bool = True,
 ):
-    by_name = {
+    """Match one header partition to its annotation partition.
+
+    ``names`` keeps deliberately partial backends (currently NVML and HIP) on
+    an explicit surface. Without it, every function declared by the header
+    must have an annotation. No API-name prefix is used as a namespace proxy.
+    """
+    header_by_name = {}
+    header_order = []
+    for function in header.namespace.functions:
+        name = function.name.format()
+        if name in header_by_name:
+            continue
+        header_by_name[name] = function
+        header_order.append(name)
+    annotations_by_name = {
         function.name.format(): function
         for function in annotations.namespace.functions
     }
+    selected_names = header_order if names is None else names
     result = []
-    for name in NVML_RPC_FUNCTIONS:
-        if name in server_bindings:
+    for name in selected_names:
+        try:
+            header_function = header_by_name.get(name)
+            if header_function is None:
+                raise RuntimeError(f"Header declaration for {name} not found")
+            annotation = annotations_by_name.get(name)
+            if annotation is None:
+                raise RuntimeError(f"Annotation for {name} not found")
+            function = (
+                header_function
+                if signature_source == "header"
+                else annotation
+            )
+            # Doxygen lives on the annotation declaration even when the SDK
+            # header supplies the ABI signature.
+            metadata = parse_annotation(annotation.doxygen, function.parameters)
+            if not (metadata.disabled_client and metadata.disabled_server):
+                annotated_params = {
+                    operation.parameter.name for operation in metadata.operations
+                }
+                header_params = {
+                    parameter.name for parameter in function.parameters
+                }
+                if annotated_params != header_params:
+                    raise RuntimeError(
+                        f"{name}: annotation parameter mismatch; "
+                        f"missing={sorted(header_params - annotated_params)}, "
+                        f"extra={sorted(annotated_params - header_params)}"
+                    )
+                if (
+                    expected_return_type is not None
+                    and function.return_type.format() != expected_return_type
+                ):
+                    raise RuntimeError(
+                        f"{name}: expected {expected_return_type}, got "
+                        f"{function.return_type.format()}"
+                    )
+            if configure is not None:
+                configure(function, metadata)
+        except Exception as error:
+            if strict:
+                raise RuntimeError(f"{name}: {error}") from error
+            print(f"Error parsing annotation for {name}: {error}")
             continue
-        function = by_name.get(name)
-        if function is None:
-            raise RuntimeError(f"NVML annotation for {name} not found")
-        metadata = parse_annotation(function.doxygen, function.parameters)
-        for operation in metadata.operations:
-            if isinstance(operation, NullTerminatedOperation):
-                # Preserve the existing NVML wire format. CUDA RPC strings use
-                # size_t lengths, while the NVML protocol historically used
-                # unsigned int lengths.
-                operation.length_type = "unsigned int"
-        result.append((function, function, metadata.operations, metadata))
+        result.append((function, annotation, metadata.operations, metadata))
     return result
+
+
+def configure_nvml_operations(_function, metadata):
+    for operation in metadata.operations:
+        if isinstance(operation, NullTerminatedOperation):
+            # Preserve the existing NVML wire format. CUDA RPC strings use
+            # size_t lengths, while the NVML protocol historically used
+            # unsigned int lengths.
+            operation.length_type = "unsigned int"
 
 
 def write_nvml_client_validation(f, operations):
@@ -1333,19 +1336,184 @@ def write_nvml_server_handler(f, function, operations):
     f.write("}\n\n")
 
 
-def collect_hip_functions(annotations: ParsedData):
-    by_name = {
-        function.name.format(): function
-        for function in annotations.namespace.functions
-    }
-    result = []
-    for name in HIP_RPC_FUNCTIONS:
-        function = by_name.get(name)
-        if function is None:
-            raise RuntimeError(f"HIP annotation for {name} not found")
-        metadata = parse_annotation(function.doxygen, function.parameters)
-        result.append((function, function, metadata.operations, metadata))
-    return result
+def write_cublas_client_validation(f, operations):
+    checks = []
+    for operation in operations:
+        name = operation.parameter.name
+        if isinstance(operation, NullTerminatedOperation) and operation.send:
+            checks.append(f"{name} == nullptr")
+        elif isinstance(operation, DereferenceOperation):
+            checks.append(f"{name} == nullptr")
+    if checks:
+        f.write("  if (" + " ||\n      ".join(checks) + ")\n")
+        f.write("    return CUBLAS_STATUS_INVALID_VALUE;\n")
+    for operation in operations:
+        if isinstance(operation, ArrayOperation):
+            operation.client_preflight(f, "CUBLAS_STATUS_INVALID_VALUE")
+
+
+def cublas_input_handle(function: Function) -> Optional[Parameter]:
+    return next(
+        (
+            parameter
+            for parameter in function.parameters
+            if not isinstance(parameter.type, (Pointer, Array))
+            and parameter.type.format().replace("const ", "").strip()
+            == "cublasHandle_t"
+        ),
+        None,
+    )
+
+
+def cublas_stream_parameter(function: Function) -> Optional[Parameter]:
+    return next(
+        (
+            parameter
+            for parameter in function.parameters
+            if not isinstance(parameter.type, (Pointer, Array))
+            and parameter.type.format().replace("const ", "").strip()
+            in ("cudaStream_t", "CUstream")
+        ),
+        None,
+    )
+
+
+def write_cublas_client_wrapper(f, function, operations, metadata):
+    if metadata.disabled_client:
+        return
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(
+        f'extern "C" cublasStatus_t CUBLASWINAPI {name}({params}) {{\n'
+    )
+    write_cublas_client_validation(f, operations)
+
+    handle = cublas_input_handle(function)
+    stream = cublas_stream_parameter(function)
+    if handle is not None:
+        f.write(f"  int route_id = lupine_cublas_route_for_handle({handle.name});\n")
+    elif stream is not None:
+        f.write(f"  int route_id = lupine_cublas_route_for_stream({stream.name});\n")
+    else:
+        f.write("  int route_id = lupine_cublas_default_route();\n")
+    if stream is not None:
+        f.write(
+            f"  if (!lupine_cublas_stream_matches_route(route_id, {stream.name}))\n"
+            "    return CUBLAS_STATUS_INVALID_VALUE;\n"
+        )
+    f.write("  conn_t *conn = lupine_cublas_connection(route_id);\n")
+    f.write("  if (conn == nullptr)\n")
+    f.write("    return CUBLAS_STATUS_NOT_INITIALIZED;\n")
+
+    for operation in operations:
+        if isinstance(operation, OpaqueTypeOperation):
+            f.write(operation.client_declaration())
+        if (
+            isinstance(operation, (InOutCountOperation, NullableArrayOperation))
+            or (
+                isinstance(operation, NullTerminatedOperation)
+                and operation.recv
+            )
+        ):
+            f.write(operation.client_declaration())
+        if isinstance(operation, NullTerminatedOperation) and operation.send:
+            f.write(
+                f"  std::size_t {operation.parameter.name}_len = "
+                f"std::strlen({operation.parameter.name}) + 1;\n"
+            )
+        if isinstance(operation, NullableOperation) and operation.recv:
+            f.write(
+                f"  {operation.ptr.format()} "
+                f"{operation.parameter.name}_null_check;\n"
+            )
+
+    f.write("  cublasStatus_t return_value = CUBLAS_STATUS_INTERNAL_ERROR;\n")
+    f.write("  if (lupine_prepare_rpc(conn) < 0 ||\n")
+    f.write(f"      rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_write(f)
+    f.write("      rpc_wait_for_response(conn) < 0 ||\n")
+    for operation in operations:
+        operation.client_rpc_read(f)
+    f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_read_end(conn) < 0)\n")
+    f.write("    return CUBLAS_STATUS_INTERNAL_ERROR;\n")
+
+    for owner in metadata.record_owners:
+        if owner.kind != "CUBLAS_HANDLE" or not isinstance(
+            owner.parameter.type, Pointer
+        ):
+            raise RuntimeError(f"{name}: invalid cuBLAS handle owner annotation")
+        f.write(
+            f"  if (return_value == CUBLAS_STATUS_SUCCESS && "
+            f"{owner.parameter.name} != nullptr)\n"
+            f"    lupine_cublas_note_handle(*{owner.parameter.name}, route_id);\n"
+        )
+    for release in metadata.releases:
+        if release.kind != "CUBLAS_HANDLE":
+            raise RuntimeError(f"{name}: invalid cuBLAS handle release annotation")
+        f.write(
+            "  if (return_value == CUBLAS_STATUS_SUCCESS)\n"
+            f"    lupine_cublas_forget_handle({release.parameter.name});\n"
+        )
+    f.write("  return return_value;\n")
+    f.write("}\n\n")
+
+
+def write_cublas_server_handler(f, function, operations):
+    name = function.name.format()
+    fn_params = ", ".join(
+        parameter.type.format() for parameter in function.parameters
+    )
+    f.write(f"int handle_{name}(conn_t *conn) {{\n")
+    owned_buffers = []
+    for operation in operations:
+        f.write(operation.server_declaration)
+        if (
+            isinstance(operation, DereferenceOperation)
+            and operation.recv
+            and not operation.send
+        ):
+            f.write(f"  {operation.parameter.name} = {{}};\n")
+    f.write("  int request_id;\n")
+    f.write("  cublasStatus_t return_value;\n")
+    f.write(
+        f"  using fn_t = cublasStatus_t (CUBLASWINAPI *)({fn_params});\n"
+    )
+    f.write("  fn_t fn = nullptr;\n")
+    f.write("  if (\n")
+    for operation in operations:
+        if owned_buffer := operation.server_rpc_read(f):
+            owned_buffers.append(owned_buffer)
+    f.write("      false)\n")
+    f.write("    goto ERROR_0;\n\n")
+    f.write("  request_id = rpc_read_end(conn);\n")
+    f.write("  if (request_id < 0)\n")
+    f.write("    goto ERROR_0;\n\n")
+
+    call_args = []
+    for parameter in function.parameters:
+        operation = next(
+            op for op in operations if op.parameter.name == parameter.name
+        )
+        call_args.append(operation.server_reference)
+    f.write(f'  fn = cublas_symbol<fn_t>("{name}");\n')
+    f.write(
+        "  return_value = fn == nullptr ? CUBLAS_STATUS_NOT_SUPPORTED\n"
+        f"                               : fn({', '.join(call_args)});\n\n"
+    )
+    f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+    for operation in operations:
+        operation.server_rpc_write(f)
+    f.write("      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||\n")
+    f.write("      rpc_write_end(conn) < 0)\n")
+    f.write("    goto ERROR_0;\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return 0;\n")
+    f.write("ERROR_0:\n")
+    write_server_buffer_cleanup(f, owned_buffers, "  ")
+    f.write("  return -1;\n")
+    f.write("}\n\n")
 
 
 def write_hip_client_validation(f, function, operations):
@@ -1564,67 +1732,77 @@ def attach_client_call_template(
 
 def main():
     cuda_header = find_header_file("cuda.h")
+    cublas_header = find_header_file("cublas_api.h")
+    nvml_header = find_header_file("nvml.h")
     hip_header = find_header_file("hip_runtime_api.h")
-    annotations_header = find_header_file("annotations.h")
+    cuda_annotations_header = find_header_file("annotations_cuda.h")
+    nvml_annotations_header = find_header_file("annotations_nvml.h")
+    cublas_annotations_header = find_header_file("annotations_cublas.h")
 
     cuda_include_dir = os.path.dirname(cuda_header)
     hip_include_dir = os.path.dirname(os.path.dirname(hip_header))
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            defines=["__HIP_PLATFORM_AMD__"],
+            defines=["__HIP_PLATFORM_AMD__", "CUBLASAPI="],
             include_paths=[cuda_include_dir, hip_include_dir],
         ),
     )
 
     # Parse the files
     cuda_ast: ParsedData = parse_file(cuda_header, options=options)
-    annotations: ParsedData = parse_file(annotations_header, options=options)
+    cublas_ast: ParsedData = parse_file(cublas_header, options=options)
+    nvml_ast: ParsedData = parse_file(nvml_header, options=options)
+    hip_ast: ParsedData = parse_file(hip_header, options=options)
+    cuda_annotations: ParsedData = parse_file(
+        cuda_annotations_header, options=options
+    )
+    nvml_annotations: ParsedData = parse_file(
+        nvml_annotations_header, options=options
+    )
+    cublas_annotations: ParsedData = parse_file(
+        cublas_annotations_header, options=options
+    )
     definition_return_types = {
         function.name.format(): function.return_type.format()
-        for function in annotations.namespace.functions
+        for function in cuda_annotations.namespace.functions
         if function.has_body
     }
     client_call_templates = collect_client_call_templates(
-        annotations_header, definition_return_types
+        cuda_annotations_header, definition_return_types
     )
-    server_bindings = collect_server_bindings(annotations_header)
-    functions = [
-        function
-        for function in cuda_ast.namespace.functions
-        if function.name.format().startswith("cu")
-        and function.name.format() not in SKIP_FUNCTIONS
-    ]
-
-    functions_with_annotations: list[
-        tuple[Function, Function, list[Operation], FunctionAnnotationMetadata]
-    ] = []
-
-    dupes = {}
-
-    for function in functions:
-        # ensure duplicate functions can't be written
-        if dupes.get(function.name.format()):
+    server_bindings = {}
+    for annotations_header in (
+        cuda_annotations_header,
+        nvml_annotations_header,
+        cublas_annotations_header,
+    ):
+        for name, binding in collect_server_bindings(annotations_header).items():
+            previous = server_bindings.get(name)
+            if previous is not None and previous != binding:
+                raise RuntimeError(f"Conflicting @server annotations for {name}")
+            server_bindings[name] = binding
+    cuda_annotation_names = {
+        function.name.format()
+        for function in cuda_annotations.namespace.functions
+    }
+    cuda_function_names = []
+    for function in cuda_ast.namespace.functions:
+        name = function.name.format()
+        if name in SKIP_FUNCTIONS or name in cuda_function_names:
             continue
-
-        dupes[function.name.format()] = True
-
-        try:
-            annotation = next(
-                f for f in annotations.namespace.functions if f.name == function.name
-            )
-        except StopIteration:
-            print(f"Annotation for {function.name} not found")
+        if name not in cuda_annotation_names:
+            print(f"Annotation for {name} not found")
             continue
-        try:
-            metadata = parse_annotation(annotation.doxygen, function.parameters)
-        except Exception as e:
-            print(f"Error parsing annotation for {function.name}: {e}")
-            continue
+        cuda_function_names.append(name)
+    functions_with_annotations = collect_annotated_functions(
+        cuda_ast,
+        cuda_annotations,
+        names=cuda_function_names,
+        strict=False,
+    )
+    for function, _, _, metadata in functions_with_annotations:
         attach_client_call_template(function, metadata, client_call_templates)
         validate_async_annotation(function, metadata)
-        functions_with_annotations.append(
-            (function, annotation, metadata.operations, metadata)
-        )
 
     # Generate explicitly listed legacy ABI entry points that cuda.h hides
     # behind macros. A legacy entry point may still use @disabled server when
@@ -1636,22 +1814,24 @@ def main():
     }
     legacy_abi_functions = []
     annotation_only_server_functions = []
-    for annotation in annotations.namespace.functions:
+    for annotation in cuda_annotations.namespace.functions:
         name = annotation.name.format()
-        if (
-            len(name) <= 2
-            or not name.startswith("cu")
-            or not name[2].isupper()
-            or name in server_function_names
-        ):
+        if name in server_function_names:
             continue
         directives = annotation_directives(annotation.doxygen)
         legacy_abi = name in LEGACY_ABI_FUNCTIONS
+        binding = server_bindings.get(name)
         client_disabled = any(
             directive.startswith("@disabled client")
             for directive in directives
         )
-        if not legacy_abi and not client_disabled:
+        # Annotation-only declarations belong to this API because they live in
+        # its partition. They do not need a spelling convention or an API-name
+        # prefix to prove ownership.
+        if not legacy_abi and not (
+            client_disabled
+            and (binding is None or binding.backend == "CUDA")
+        ):
             continue
         if not legacy_abi and any(
             directive == "@disabled"
@@ -1706,13 +1886,42 @@ def main():
             + ", ".join(sorted(missing_legacy_abi_functions))
         )
 
-    nvml_functions_with_annotations = collect_nvml_functions(
-        annotations, server_bindings
+    nvml_functions_with_annotations = collect_annotated_functions(
+        nvml_ast,
+        nvml_annotations,
+        names=[
+            name for name in NVML_RPC_FUNCTIONS if name not in server_bindings
+        ],
+        signature_source="annotation",
+        expected_return_type="nvmlReturn_t",
+        configure=configure_nvml_operations,
     )
-    hip_functions_with_annotations = collect_hip_functions(annotations)
+    cublas_functions_with_annotations = collect_annotated_functions(
+        cublas_ast,
+        cublas_annotations,
+        expected_return_type="cublasStatus_t",
+    )
+    hip_functions_with_annotations = collect_annotated_functions(
+        hip_ast,
+        cuda_annotations,
+        names=HIP_RPC_FUNCTIONS,
+        signature_source="annotation",
+        expected_return_type="hipError_t",
+    )
 
+    non_cuda_annotation_names = {
+        function.name.format() for function in hip_ast.namespace.functions
+    } | {
+        name
+        for name, binding in server_bindings.items()
+        if binding.backend != "CUDA"
+    }
     annotated_names = sorted(
-        set(annotated_rpc_names(annotations))
+        set(
+            partition_function_names(
+                cuda_annotations, excluded=non_cuda_annotation_names
+            )
+        )
         | {
             name
             for name, binding in server_bindings.items()
@@ -1751,6 +1960,11 @@ def main():
             write_rpc_define(f"RPC_{name}", name)
         for name in NVML_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
+        for function, _, _, metadata in cublas_functions_with_annotations:
+            if metadata.disabled_client and metadata.disabled_server:
+                continue
+            name = function.name.format()
+            write_rpc_define(f"RPC_{name}", name)
         for name in HIP_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
         f.write("\n")
@@ -1778,6 +1992,37 @@ def main():
             if metadata.disabled_server:
                 continue
             f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
+
+    with open("gen_cublas_client.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function, _, operations, metadata in cublas_functions_with_annotations:
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
+            write_cublas_client_wrapper(f, function, operations, metadata)
+            if metadata.guard is not None:
+                f.write("#endif\n\n")
+
+    with open("gen_cublas_server.inc", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function, _, operations, metadata in cublas_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
+            write_cublas_server_handler(f, function, operations)
+            if metadata.guard is not None:
+                f.write("#endif\n\n")
+
+    with open("gen_cublas_server.h", "w") as f:
+        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
+        for function, _, _, metadata in cublas_functions_with_annotations:
+            if metadata.disabled_server:
+                continue
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
+            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
+            if metadata.guard is not None:
+                f.write("#endif\n")
 
     with open("gen_hip_client.inc", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2399,6 +2644,17 @@ def main():
         and function.name.format() not in server_bindings
     ]
     generated_bindings.extend(
+        ServerBinding(
+            function.name.format(),
+            "CUBLAS",
+            f"handle_{function.name.format()}",
+            metadata.guard,
+        )
+        for function, _, _, metadata in cublas_functions_with_annotations
+        if not metadata.disabled_server
+        and function.name.format() not in server_bindings
+    )
+    generated_bindings.extend(
         ServerBinding(name, "NVML", f"handle_{name}")
         for name in NVML_RPC_FUNCTIONS
         if name not in server_bindings
@@ -2448,10 +2704,14 @@ def main():
         f.write(
             REGISTRY_CPP_TEMPLATE.substitute(
                 cuda_registry_entries=" \\\n".join(registry_entries["CUDA"]),
+                cublas_registry_entries=" \\\n".join(registry_entries["CUBLAS"]),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
                     guarded_declarations["CUDA"]
+                ),
+                cublas_guarded_declarations="\n".join(
+                    guarded_declarations["CUBLAS"]
                 ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
@@ -2460,6 +2720,9 @@ def main():
                     guarded_declarations["HIP"]
                 ),
                 cuda_guarded_handlers="\n".join(guarded_handlers["CUDA"]),
+                cublas_guarded_handlers="\n".join(
+                    guarded_handlers["CUBLAS"]
+                ),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -2473,6 +2736,9 @@ def main():
             "gen_nvml_client.inc",
             "gen_nvml_server.h",
             "gen_nvml_server.inc",
+            "gen_cublas_client.inc",
+            "gen_cublas_server.inc",
+            "gen_cublas_server.h",
             "gen_cuda_server.cpp",
             "registry.cpp",
             "gen_hip_client.inc",
@@ -2491,6 +2757,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_nvml_server.inc",
             "gen_nvml_server.h",
         ],
+        "cublas": [
+            "gen_cublas_client.inc",
+            "gen_cublas_server.inc",
+            "gen_cublas_server.h",
+        ],
         "hip": [
             "gen_hip_client.inc",
             "gen_hip_server.inc",
@@ -2500,6 +2771,7 @@ def verify_backend_boundaries(backend: str) -> None:
     forbidden = {
         "cuda": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
+        "cublas": ["nvml", "hip"],
         "hip": ["cuda", "nvml"],
     }
     selected = (
@@ -2519,11 +2791,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "nvml", "hip"),
+        choices=("all", "cuda", "cublas", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()
-    # Inputs (annotations.h) and gen_* outputs are CWD-relative.
+    # Annotation partitions and gen_* outputs are CWD-relative.
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     if args.verify_backend:
         verify_backend_boundaries(args.verify_backend)

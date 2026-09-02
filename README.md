@@ -87,8 +87,9 @@ Mon May 18 15:40:46 2026
 ```
 
 Inside the client container, `LD_LIBRARY_PATH=/opt/lupine/lib` is already set,
-so CUDA driver users pick up the LUPINE `libcuda.so.1` shim and NVML users such
-as `nvidia-smi` pick up the LUPINE `libnvidia-ml.so.1` shim automatically.
+so CUDA driver and cuBLAS users pick up the LUPINE `libcuda.so.1` and
+`libcublas.so` shims, while NVML users such as `nvidia-smi` pick up the LUPINE
+`libnvidia-ml.so.1` shim automatically.
 
 ## Client compatibility
 
@@ -339,9 +340,10 @@ cmake -S . -B build
 cmake --build build
 ```
 
-CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NVML shim at
-`build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
-server at `build/lupine_driver_server`.
+CMake builds the CUDA driver shim at `build/libcuda.so.1`, the cuBLAS shim at
+`build/libcublas.so`, the NVML shim at `build/libnvidia-ml.so.1`, the HIP shim
+at `build/libamdhip64.so.1`, and the server at
+`build/lupine_driver_server`.
 
 The Lupine server must be running before initiating client commands.
 
@@ -358,13 +360,15 @@ Server listening on port 14833...
 ## Running the client
 
 For local development, preload the built `libcuda.so.1` before executing CUDA
-commands. The published client image sets `LD_LIBRARY_PATH` for you instead.
+commands and put the build directory first in `LD_LIBRARY_PATH` for applications
+that load cuBLAS. The published client image does both for you.
 
 Once the server above is running:
 
 ```sh
 # update to your desired IP/port
 export LUPINE_SERVER=<server>:14833
+export LD_LIBRARY_PATH="$PWD/build:${LD_LIBRARY_PATH:-}"
 
 LD_PRELOAD=./build/libcuda.so.1 python3 -c "import torch; print(torch.cuda.is_available())"
 

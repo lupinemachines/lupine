@@ -17,7 +17,9 @@ def _template_section(source: str) -> str:
 def _definition_body(source: str, name: str, return_type: str) -> str:
     signature = f"{return_type} {name}("
     if source.count(signature) != 1:
-        raise RuntimeError(f"{name}: could not locate definition in annotations.h")
+        raise RuntimeError(
+            f"{name}: could not locate definition in the CUDA annotations"
+        )
 
     signature_start = source.index(signature)
     body_start = source.index("{", signature_start) + 1
