@@ -4,18 +4,39 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lupine"
-version = "1.0.0"
-description = "Small PyTorch adapter helpers for LUPINE-backed CUDA devices"
+version = "2.0.3"
+description = "CUDA on any host: server-selected LUPINE shims plus PyTorch adapter"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["httpx[http2]>=0.28", "packaging>=24"]
+dependencies = []
 
 [project.optional-dependencies]
 torch = ["torch"]
+auto = ["lupine-auto==2.0.3"]
+
+[project.scripts]
+lupine = "lupine.__main__:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
 
+[tool.uv.sources]
+lupine-auto = { path = "auto" }
+
 [tool.hatch.build.targets.wheel]
 packages = ["lupine"]
+# The Python workflow stages only CUDA runtime translation stubs. Complete
+# driver/NVML clients are published separately and must never
+# enter the wheel. Keep native staging excluded from package discovery, then
+# allowlist only the runtime filenames.
+exclude = ["lupine/_libs/**"]
+artifacts = [
+  "lupine/_libs/**/libcudart.so.13",
+  "lupine/_libs/**/libcudart.dylib",
+  "lupine/_libs/**/cudart64_13.dll",
+]
+
+[tool.hatch.build.targets.sdist]
+# Native libraries never enter the sdist; build wheels from a checkout.
+exclude = ["lupine/_libs"]

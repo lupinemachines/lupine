@@ -3,36 +3,6 @@
 LUPINE is a GPU over IP bridge allowing GPUs on remote machines to be attached
 to CPU-only machines.
 
-## Hosted Demo
-
-Connect to a hosted demo server with a T4 attached for free. This might take a while if there's no GPU
-currently provisioned, but subsequent requests should be faster.
-
-```
-$ docker run --rm \
-  -e LUPINE_SERVER=demo.lupinemachines.com:14833 \
-  ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04 \
-  nvidia-smi -L
-GPU 0: Tesla T4 (via lupine demo.lupinemachines.com) (UUID: GPU-b80ae1b9-863f-8f91-7c63-d351fabff035)
-```
-
-## Mac Demo
-
-LUPINE lets you spin up a container with a virtual GPU, like connecting a Mac to a Linux GPU server.
-
-```sh
-% uname -mors 
-Darwin 25.5.0 arm64
-% uv run https://raw.githubusercontent.com/lupinemachines/lupine/main/python/examples/tensor.py
-LUPINE server host: 100.106.167.98  <-- the ip of a machine with the LUPINE server running
-LUPINE server port [14833]: 
-cuda available: True
-device: lupine:0
-count: 1
-gpu: NVIDIA GeForce RTX 4090
-result: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
-```
-
 ## Quick Start
 
 Use the published GHCR images. The examples below pin CUDA 13.3.1 on
@@ -101,6 +71,17 @@ the server does no background NVML polling.
 
 Client metadata is optional. Servers advertise support during the HTTP/2
 handshake, and clients skip the report when that capability is absent.
+
+## Client compatibility
+
+Each production server executable embeds the matching Linux, macOS, and
+Windows client objects for amd64 and arm64; there is no client-bundle directory
+to deploy beside it. Python clients fetch the current object from
+`/.well-known/lupine/client/v1/<os>/<arch>`, verify its strong ETag, content
+digest, manifest, and file hashes, and cache it locally. The selected ETag is
+also asserted when the RPC connection opens, closing the race between
+discovery and a server upgrade. `LUPINE_LIBDIR` remains an explicit local
+override for development.
 
 ## Graceful Server Checkpoints
 
@@ -344,6 +325,12 @@ cmake --build build
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NVML shim at
 `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
 server at `build/lupine_driver_server`.
+
+Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
+native client directories. CMake deterministically assembles all six platform
+routes and links them into `lupine_driver_server`. The Docker `server` target
+requires that generated registry, so a server image cannot be produced without
+the clients.
 
 The Lupine server must be running before initiating client commands.
 

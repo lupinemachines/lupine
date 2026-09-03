@@ -1,5 +1,6 @@
 .git/
 .github/
+.claude/
 .vscode/
 
 build/
@@ -10,11 +11,14 @@ cmake_install.cmake
 Makefile
 
 .venv*/
+**/.venv*/
 venv/
 __pycache__/
 *.py[cod]
 
 test/cuda-samples/
+test/cuda-library-samples/*
+!test/cuda-library-samples/known_failures.txt
 test/pytorch/results/
 *.log
 *.tsv

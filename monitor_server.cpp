@@ -821,9 +821,8 @@ std::string lupine_monitoring_render_metrics() {
       << registry_values.host_pid_discovery_ambiguities << "\n";
 
   for (const auto &device : devices) {
-    out << "lupine_monitor_process_utilization_supported{"
-        << "device_index=\"" << device.index << "\","
-        << label("device_uuid", device.uuid) << "} "
+    out << "lupine_monitor_process_utilization_supported{" << "device_index=\""
+        << device.index << "\"," << label("device_uuid", device.uuid) << "} "
         << (device.process_utilization_supported ? 1 : 0) << "\n";
   }
 
@@ -839,8 +838,8 @@ std::string lupine_monitoring_render_metrics() {
         << label("client_name", metadata.client_process_name) << ','
         << "client_pid=\"" << metadata.client_pid << "\","
         << label("connection_kind", metadata.connection_kind) << ','
-        << "host_pid=\"" << child.host_pid << "\","
-        << "server_pid=\"" << child.server_pid << "\"} 1\n";
+        << "host_pid=\"" << child.host_pid << "\"," << "server_pid=\""
+        << child.server_pid << "\"} 1\n";
   }
 
   out << "# HELP lupine_host_gpu_memory_total_bytes Total GPU memory in "

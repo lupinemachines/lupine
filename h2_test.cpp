@@ -1,3 +1,4 @@
+#include "client_bundle.h"
 #include "lupine_log.h"
 #include "monitoring.h"
 #include "rpc.h"
@@ -423,41 +424,67 @@ void test_head_probe_cuda_version_metadata(const char *expected_cuda_version) {
   }
 }
 
-// The preflight refuses a peer only when both sides state an identity and they
-// differ; an unstated identity must stay connectable so builds without git and
-// servers predating the header are not locked out.
-void test_wire_identity_compatibility_rule() {
-  require(lupine_wire_identity_compatible("abc", "abc"),
-          "matching identities were rejected");
-  require(!lupine_wire_identity_compatible("abc", "def"),
-          "mismatched identities were accepted");
-  require(lupine_wire_identity_compatible("", "def"),
-          "unstated local identity was treated as a mismatch");
-  require(lupine_wire_identity_compatible("abc", ""),
-          "unstated peer identity was treated as a mismatch");
-  require(lupine_wire_identity_compatible(nullptr, nullptr),
-          "null identities were treated as a mismatch");
-}
+constexpr char kClientBundleEtag[] =
+    "\"sha256:"
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
+const char kClientBundleData[] = "bundle";
+const lupine_client_bundle_chunk kClientBundleChunks[] = {
+    {kClientBundleData, sizeof(kClientBundleData) - 1},
+};
+const lupine_client_bundle_payload kClientBundle = {
+    kClientBundleEtag, "sha-256=:YnVuZGxl:", kClientBundleChunks, 1,
+    sizeof(kClientBundleData) - 1};
+const lupine_client_bundle_entry kClientBundleEntries[] = {
+    {"linux/amd64", &kClientBundle},
+};
+const lupine_client_bundle_registry kClientBundles = {kClientBundleEntries, 1};
 
-// The identity rides the response on the session's own connection, so the
-// build check costs a round trip rather than a second dial.
-void test_client_await_ready_reports_wire_identity() {
+// The selected object's ETag rides the session's own connection, so the
+// server can close a discovery/connect race without a second dial.
+void test_client_await_ready_accepts_current_bundle() {
+  lupine_test_setenv("LUPINE_CLIENT_ETAG", kClientBundleEtag);
+  lupine_test_setenv("LUPINE_CLIENT_PLATFORM", "linux/amd64");
   h2_pair pair;
   init_pair_sockets(&pair);
 
-  std::string peer;
   int ready = -1;
   std::thread client([&] {
     require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
     ready = rpc_http2_client_await_ready(&pair.client);
-    peer = rpc_http2_peer_wire_identity(&pair.client);
   });
-  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
+  rpc_http2_server_metadata metadata = {nullptr, &kClientBundles};
+  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
+          "server rejected current client bundle");
   client.join();
 
-  require(ready == 0, "matching builds were not accepted");
-  require(peer == lupine_wire_identity(),
-          "response did not carry this build's wire identity");
+  lupine_test_unsetenv("LUPINE_CLIENT_ETAG");
+  lupine_test_unsetenv("LUPINE_CLIENT_PLATFORM");
+  require(ready == 0, "current client bundle was not accepted");
+}
+
+void test_client_await_ready_rejects_stale_bundle() {
+  lupine_test_setenv(
+      "LUPINE_CLIENT_ETAG",
+      "\"sha256:"
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"");
+  lupine_test_setenv("LUPINE_CLIENT_PLATFORM", "linux/amd64");
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  int ready = 0;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    ready = rpc_http2_client_await_ready(&pair.client);
+  });
+  rpc_http2_server_metadata metadata = {nullptr, &kClientBundles};
+  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 1,
+          "server dispatched a stale client bundle");
+  client.join();
+
+  lupine_test_unsetenv("LUPINE_CLIENT_ETAG");
+  lupine_test_unsetenv("LUPINE_CLIENT_PLATFORM");
+  require(ready == LUPINE_RPC_HTTP2_CLIENT_MISMATCH,
+          "stale client bundle did not report a client mismatch");
 }
 
 void test_client_await_ready_reports_capabilities(bool advertise) {
@@ -473,6 +500,7 @@ void test_client_await_ready_reports_capabilities(bool advertise) {
         &pair.client, LUPINE_SERVER_CAPABILITY_CLIENT_METADATA);
   });
   const rpc_http2_server_metadata metadata = {
+      nullptr,
       nullptr,
       advertise ? LUPINE_SERVER_CAPABILITY_CLIENT_METADATA : 0,
   };
@@ -511,6 +539,7 @@ void test_client_metadata_capability(bool advertise, int metadata_status) {
   });
 
   const rpc_http2_server_metadata metadata = {
+      nullptr,
       nullptr,
       advertise ? LUPINE_SERVER_CAPABILITY_CLIENT_METADATA : 0,
   };
@@ -1300,6 +1329,89 @@ void test_lz4_content_encoding_round_trip() {
   require(received_suffix == suffix, "LZ4 suffix mismatch");
 }
 
+struct refill_chunks {
+  std::vector<std::string> chunks;
+  size_t index = 0;
+  size_t calls = 0;
+};
+
+int refill_next_chunk(void *opaque, rpc_write_cursor *cursor) {
+  auto *source = static_cast<refill_chunks *>(opaque);
+  ++source->calls;
+  if (source->index == source->chunks.size()) {
+    return 0;
+  }
+  const std::string &chunk = source->chunks[source->index++];
+  cursor->data = reinterpret_cast<const unsigned char *>(chunk.data());
+  cursor->size = chunk.size();
+  return 1;
+}
+
+void test_refillable_cursor_round_trip() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  refill_chunks source;
+  source.chunks = {
+      "first", std::string(LUPINE_RPC_TRANSFER_CHUNK_BYTES + 17, 'x'), "last"};
+  std::string expected = "prefix";
+  for (const auto &chunk : source.chunks) {
+    expected += chunk;
+  }
+  expected += "suffix";
+
+  std::string received;
+  std::thread reader(
+      [&] { received = read_string(&pair.server, expected.size()); });
+  std::string prefix = "prefix";
+  std::string suffix = "suffix";
+  std::vector<rpc_write_cursor> cursors = {
+      rpc_write_cursor(prefix.data(), prefix.size()),
+      rpc_write_cursor(refill_next_chunk, &source),
+      rpc_write_cursor(suffix.data(), suffix.size())};
+  require(rpc_http2_write(&pair.client, cursors) == 0,
+          "refillable cursor write failed");
+  reader.join();
+
+  require(received == expected, "refillable cursor payload mismatch");
+  require(source.calls == source.chunks.size() + 1,
+          "refillable cursor did not reach EOF exactly once");
+}
+
+void test_refillable_cursor_across_flow_control_window() {
+  h2_pair pair = make_pair();
+  exchange_settings(&pair);
+
+  refill_chunks source;
+  constexpr size_t chunk_size = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
+  source.chunks.resize(3, std::string(chunk_size, '\0'));
+  uint32_t seed = 91;
+  for (auto &chunk : source.chunks) {
+    for (char &byte : chunk) {
+      seed = seed * 1664525u + 1013904223u;
+      byte = static_cast<char>(seed >> 24);
+    }
+  }
+
+  std::string received;
+  std::thread reader([&] {
+    received = read_string(&pair.server, chunk_size * source.chunks.size());
+  });
+  rpc_write_cursor cursor(refill_next_chunk, &source);
+  std::vector<rpc_write_cursor> cursors = {cursor};
+  require(rpc_http2_write(&pair.client, cursors) == 0,
+          "flow-controlled refillable cursor write failed");
+  reader.join();
+
+  for (size_t index = 0; index < source.chunks.size(); ++index) {
+    require(received.compare(index * chunk_size, chunk_size,
+                             source.chunks[index]) == 0,
+            "flow-controlled refillable cursor payload mismatch");
+  }
+  require(source.calls == source.chunks.size() + 1,
+          "flow-controlled refillable cursor did not reach EOF exactly once");
+}
+
 void test_rpc_write_queue_grows() {
   conn_t zero_length = {};
   require(rpc_write(&zero_length, nullptr, 0) == 0,
@@ -1655,8 +1767,8 @@ int main() {
   RUN_CASE(test_server_to_client_after_request_headers());
   RUN_CASE(test_head_probe_cuda_version_metadata(LUPINE_CUDA_VERSION));
   RUN_CASE(test_head_probe_cuda_version_metadata(nullptr));
-  RUN_CASE(test_wire_identity_compatibility_rule());
-  RUN_CASE(test_client_await_ready_reports_wire_identity());
+  RUN_CASE(test_client_await_ready_accepts_current_bundle());
+  RUN_CASE(test_client_await_ready_rejects_stale_bundle());
   RUN_CASE(test_client_await_ready_reports_capabilities(true));
   RUN_CASE(test_client_await_ready_reports_capabilities(false));
   RUN_CASE(test_client_metadata_capability(true, 0));
@@ -1676,7 +1788,9 @@ int main() {
   RUN_CASE(test_socket_reader_hands_off_between_streams());
   RUN_CASE(test_large_payload());
   RUN_CASE(test_lz4_content_encoding_round_trip());
+  RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
+  RUN_CASE(test_refillable_cursor_across_flow_control_window());
   RUN_CASE(test_payload_larger_than_flow_control_window());
 #endif
   RUN_CASE(test_server_window_hold_caps_and_releases());

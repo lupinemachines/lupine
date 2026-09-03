@@ -17,31 +17,60 @@ permissions:
   contents: write
 
 jobs:
+  native-clients:
+    name: Build all native client variants
+    uses: ./.github/workflows/native-clients.yml
+
   build:
     name: Windows server executable CUDA ${{ matrix.cuda }}
+    needs: native-clients
     runs-on: windows-2022
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        cuda:
-          - 13.3.1
-          - 12.9.1
-          - 11.8.0
+        include:
+          # CUDA 13 split the nvcc component: crt holds the host_config.h that
+          # cuda_runtime.h includes, and nvvm holds cicc, the device frontend.
+          - cuda: 13.3.1
+            extra_packages: ', "crt", "nvvm"'
+          - cuda: 12.9.1
+          # The runner's MSVC both postdates the host compilers CUDA 11.8 knows
+          # about and static_asserts on nvcc this old from its own STL headers.
+          - cuda: 11.8.0
+            cuda_flags: -allow-unsupported-compiler
+            host_defines: /D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
 
     env:
       VCPKG_TARGET_TRIPLET: x64-windows-static
+      # MSBuild's CUDA integration drops defines passed through nvcc, so the
+      # STL version override has to reach cl.exe by its own environment.
+      CL: ${{ matrix.host_defines }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Download all native client variants
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lupine-client-*
+          path: client-libs
+          merge-multiple: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.18"
 
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: ${{ matrix.cuda }}
           method: network
-          sub-packages: '["cudart", "nvml_dev"]'
+          # nvcc and the MSBuild integration are what enable_language(CUDA)
+          # needs; without them CMake fails with "No CUDA toolset found".
+          sub-packages: '["cudart", "nvml_dev", "nvcc", "visual_studio_integration"${{ matrix.extra_packages }}]'
 
       - name: Set up vcpkg
         shell: pwsh
@@ -74,10 +103,12 @@ jobs:
             "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
             "-DOPENSSL_USE_STATIC_LIBS=ON" `
-            "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+            "-DCMAKE_CUDA_FLAGS=${{ matrix.cuda_flags }}" `
+            "-DCUDAToolkit_ROOT=$env:CUDA_PATH" `
+            "-DLUPINE_CLIENT_BUNDLE_INPUT=$PWD\client-libs"
 
       - name: Build
-        run: cmake --build build/windows-server --config Release --target lupine_driver_server --parallel
+        run: cmake --build build/windows-server --config Release --target lupine_driver_server lupine_cuda_smemcpy --parallel
 
       - name: Verify the executable is self-contained
         shell: pwsh

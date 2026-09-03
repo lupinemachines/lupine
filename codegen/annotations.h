@@ -2216,7 +2216,19 @@ CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
  * @param ctx SEND_ONLY
  * @server CUDA
  */
-CUresult cuCtxDestroy_v2(CUcontext ctx);
+CUresult cuCtxDestroy_v2(CUcontext ctx) {
+  CUcontext lupine_current_before_destroy = nullptr;
+  if (cuCtxGetCurrent(&lupine_current_before_destroy) == CUDA_SUCCESS &&
+      lupine_current_before_destroy == ctx) {
+    cuCtxSetCurrent(nullptr);
+  }
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_destroyed_context(ctx);
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_current_context_cache();
+  return return_value;
+}
 /**
  * @disabled client - manual client maintains the virtual context stack
  * @param ctx SEND_ONLY
@@ -2345,7 +2357,12 @@ CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
  * @param ctx SEND_ONLY
  * @server CUDA
  */
-CUresult cuCtxDetach(CUcontext ctx);
+CUresult cuCtxDetach(CUcontext ctx) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_current_context_cache();
+  return return_value;
+}
 /**
  * @disabled - manual client sends mapped file bytes to server
  * @param module RECV_ONLY
@@ -2367,6 +2384,7 @@ CUresult cuModuleLoadData(CUmodule *module, const void *image);
  * @param numOptions SEND_ONLY
  * @param options SEND_ONLY LENGTH:numOptions
  * @param optionValues SEND_RECV
+ * @server CUDA
  */
 CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
                             unsigned int numOptions, CUjit_option *options,
@@ -2382,7 +2400,12 @@ CUresult cuModuleLoadFatBinary(CUmodule *module, const void *fatCubin);
  * @release MODULE hmod
  * @param hmod SEND_ONLY
  */
-CUresult cuModuleUnload(CUmodule hmod);
+CUresult cuModuleUnload(CUmodule hmod) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_function_caches();
+  return return_value;
+}
 /**
  * @param mode SEND_RECV
  */
@@ -2407,7 +2430,12 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
  * @server CUDA
  */
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
-                              const char *name);
+                              const char *name) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+  return return_value;
+}
 /**
  * @disabled client - manual client handles JIT option values
  * @param numOptions SEND_ONLY
@@ -2518,7 +2546,12 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
  * @param library SEND_ONLY
  * @server CUDA
  */
-CUresult cuLibraryUnload(CUlibrary library);
+CUresult cuLibraryUnload(CUlibrary library) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_invalidate_function_caches();
+  return return_value;
+}
 /**
  * @disabled client - manual client serves the library kernel table
  * @routingkey LIBRARY library
@@ -2578,7 +2611,12 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
-                            const char *name);
+                            const char *name) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+  return return_value;
+}
 /**
  * @routingkey LIBRARY library
  * @recordowner DEVICEPTR dptr
@@ -2588,7 +2626,12 @@ CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
-                             CUlibrary library, const char *name);
+                             CUlibrary library, const char *name) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+  return return_value;
+}
 /**
  * @routingkey LIBRARY library
  * @param fptr RECV_ONLY
@@ -2614,7 +2657,13 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
  * @param dev SEND_ONLY
  */
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
-                              CUkernel kernel, CUdevice dev);
+                              CUkernel kernel, CUdevice dev) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
+                                        (int)attrib, (int)dev);
+  return return_value;
+}
 /**
  * @param kernel SEND_ONLY
  * @param config SEND_ONLY
@@ -2642,7 +2691,12 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  */
-CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize);
+CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return return_value;
+}
 /**
  * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
@@ -2654,7 +2708,18 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize);
  */
 CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
                             size_t WidthInBytes, size_t Height,
-                            unsigned int ElementSizeBytes);
+                            unsigned int ElementSizeBytes) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
+    size_t allocation_size = 0;
+    if (pPitch != nullptr)
+      allocation_size = (*pPitch) * Height;
+    else
+      allocation_size = WidthInBytes * Height;
+    lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);
+  }
+  return return_value;
+}
 /**
  * @disabled client - manual client handles managed host alias
  * @disabled server - manual server releases identity-mapped allocations
@@ -3307,7 +3372,12 @@ CUresult cuMemRetainAllocationHandle(CUmemGenericAllocationHandle *handle,
  * @param dptr SEND_ONLY
  * @param hStream SEND_ONLY
  */
-CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream);
+CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_deviceptr_owner(dptr);
+  return return_value;
+}
 /**
  * @routingkey STREAM hStream
  * @recordowner DEVICEPTR dptr
@@ -3315,7 +3385,12 @@ CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream);
  * @param bytesize SEND_ONLY
  * @param hStream SEND_ONLY
  */
-CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream);
+CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return return_value;
+}
 /**
  * @param pool SEND_ONLY
  * @param minBytesToKeep SEND_ONLY
@@ -3370,7 +3445,12 @@ CUresult cuMemPoolDestroy(CUmemoryPool pool);
  * @param hStream SEND_ONLY
  */
 CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
-                                 CUmemoryPool pool, CUstream hStream);
+                                 CUmemoryPool pool, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return return_value;
+}
 /**
  * @disabled both - POSIX fds cross the wire via the IPC fd broker
  * @server CUDA
@@ -3635,13 +3715,23 @@ CUresult cuGreenCtxCreate(CUgreenCtx *phCtx, CUdevResourceDesc desc,
  * @param pContext RECV_ONLY
  * @param hCtx SEND_ONLY
  */
-CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx);
+CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && pContext != nullptr)
+    lupine_mark_context_green(*pContext);
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
  */
-CUresult cuGreenCtxDestroy(CUgreenCtx hCtx);
+CUresult cuGreenCtxDestroy(CUgreenCtx hCtx) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_destroyed_context(reinterpret_cast<CUcontext>(hCtx));
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12050
  * @routingkey CURRENT_CONTEXT
@@ -3776,7 +3866,12 @@ CUresult cuStreamSynchronize(CUstream hStream);
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
-CUresult cuStreamDestroy_v2(CUstream hStream);
+CUresult cuStreamDestroy_v2(CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_stream_owner(hStream);
+  return return_value;
+}
 /**
  * @routingkey STREAM dst
  * @param dst SEND_ONLY
@@ -3971,7 +4066,14 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
  * @param value SEND_ONLY
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
-                            int value);
+                            int value) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS) {
+    lupine_invalidate_kernel_attribute_cache();
+    lupine_invalidate_function_attribute_cache();
+  }
+  return return_value;
+}
 /**
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
@@ -4407,6 +4509,7 @@ cuGraphBatchMemOpNodeSetParams(CUgraphNode hNode,
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams paramArray count
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecBatchMemOpNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4531,31 +4634,33 @@ CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes);
 CUresult cuGraphGetRootNodes(CUgraph hGraph, CUgraphNode *rootNodes,
                              size_t *numRootNodes);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hGraph SEND_ONLY
- * @param from SEND_RECV
- * @param to SEND_RECV
  * @param numEdges SEND_RECV
+ * @param from RECV_ONLY NULLABLE LENGTH:numEdges
+ * @param to RECV_ONLY NULLABLE LENGTH:numEdges
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numEdges
  */
 CUresult cuGraphGetEdges(CUgraph hGraph, CUgraphNode *from, CUgraphNode *to,
-                         size_t *numEdges);
+                         CUgraphEdgeData *edgeData, size_t *numEdges);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hNode SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_RECV
+ * @param dependencies RECV_ONLY NULLABLE LENGTH:numDependencies
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numDependencies
  */
 CUresult cuGraphNodeGetDependencies(CUgraphNode hNode,
                                     CUgraphNode *dependencies,
+                                    CUgraphEdgeData *edgeData,
                                     size_t *numDependencies);
 /**
- * @disabled - manual optional node array handling; remapped to _v2 by cuda.h
  * @param hNode SEND_ONLY
- * @param dependentNodes SEND_RECV
  * @param numDependentNodes SEND_RECV
+ * @param dependentNodes RECV_ONLY NULLABLE LENGTH:numDependentNodes
+ * @param edgeData RECV_ONLY NULLABLE LENGTH:numDependentNodes
  */
 CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
                                       CUgraphNode *dependentNodes,
+                                      CUgraphEdgeData *edgeData,
                                       size_t *numDependentNodes);
 /**
  * @param hGraph SEND_ONLY
@@ -4616,6 +4721,21 @@ cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
  */
 CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
 /**
+ * @guard CUDA_VERSION >= 12020
+ * @param hNode SEND_ONLY
+ * @param nodeParams SEND_ONLY DEREF
+ */
+CUresult cuGraphNodeSetParams(CUgraphNode hNode,
+                              CUgraphNodeParams *nodeParams);
+/**
+ * @guard CUDA_VERSION >= 12020
+ * @param hGraphExec SEND_ONLY
+ * @param hNode SEND_ONLY
+ * @param nodeParams SEND_ONLY DEREF
+ */
+CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
+                                  CUgraphNodeParams *nodeParams);
+/**
  * @disabled both - manual kernel parameter packing
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
@@ -4630,6 +4750,7 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hNode SEND_ONLY
  * @param copyParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
                                         CUgraphNode hNode,
@@ -4640,6 +4761,7 @@ CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
  * @param hNode SEND_ONLY
  * @param memsetParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult
 cuGraphExecMemsetNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4658,6 +4780,7 @@ CUresult cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param childGraph SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
                                             CUgraphNode hNode,
@@ -4666,6 +4789,7 @@ CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
                                             CUgraphNode hNode, CUevent event);
@@ -4673,6 +4797,7 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
                                           CUgraphNode hNode, CUevent event);
@@ -4682,6 +4807,7 @@ CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4692,6 +4818,7 @@ CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -4700,6 +4827,7 @@ CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param isEnabled SEND_ONLY
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
                                unsigned int isEnabled);
@@ -4707,6 +4835,7 @@ CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param isEnabled SEND_RECV
+ * @graphexecnode hGraphExec hNode
  */
 CUresult cuGraphNodeGetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
                                unsigned int *isEnabled);
@@ -4731,6 +4860,18 @@ CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
  * @server CUDA
  */
 CUresult cuGraphDestroy(CUgraph hGraph);
+#ifdef cuGraphExecUpdate
+#undef cuGraphExecUpdate
+#endif
+/**
+ * @param hGraphExec SEND_ONLY
+ * @param hGraph SEND_ONLY
+ * @param hErrorNode_out RECV_ONLY NULLABLE
+ * @param updateResult_out RECV_ONLY NULLABLE
+ */
+CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
+                           CUgraphNode *hErrorNode_out,
+                           CUgraphExecUpdateResult *updateResult_out);
 /**
  * @param hGraphExec SEND_ONLY
  * @param hGraph SEND_ONLY
@@ -6611,7 +6752,7 @@ cudaError_t cudaGraphCreate(cudaGraph_t *pGraph, unsigned int flags);
  * @param numDependencies SEND_ONLY
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param pNodeParams SEND_ONLY NULLABLE
  */
 cudaError_t
@@ -6663,7 +6804,7 @@ cudaGraphKernelNodeSetAttribute(cudaGraphNode_t hNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param pCopyParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddMemcpyNode(cudaGraphNode_t *pGraphNode,
@@ -6675,7 +6816,7 @@ cudaError_t cudaGraphAddMemcpyNode(cudaGraphNode_t *pGraphNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param symbol SEND_RECV
  * @param src SEND_RECV
  * @param count SEND_ONLY
@@ -6693,7 +6834,7 @@ cudaError_t cudaGraphAddMemcpyNodeToSymbol(cudaGraphNode_t *pGraphNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param dst SEND_RECV
  * @param symbol SEND_RECV
  * @param count SEND_ONLY
@@ -6708,7 +6849,7 @@ cudaError_t cudaGraphAddMemcpyNodeFromSymbol(
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param dst SEND_RECV
  * @param src SEND_RECV
  * @param count SEND_ONLY
@@ -6774,7 +6915,7 @@ cudaError_t cudaGraphMemcpyNodeSetParams1D(cudaGraphNode_t node, void *dst,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param pMemsetParams SEND_ONLY NULLABLE
  */
 cudaError_t
@@ -6800,7 +6941,7 @@ cudaGraphMemsetNodeSetParams(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_RECV ITER:numDependencies
+ * @param pDependencies SEND_RECV LENGTH:numDependencies
  * @param pNodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddHostNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
@@ -6824,7 +6965,7 @@ cudaGraphHostNodeSetParams(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param childGraph SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddChildGraphNode(cudaGraphNode_t *pGraphNode,
@@ -6842,7 +6983,7 @@ cudaError_t cudaGraphChildGraphNodeGetGraph(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  */
 cudaError_t cudaGraphAddEmptyNode(cudaGraphNode_t *pGraphNode,
                                   cudaGraph_t graph,
@@ -6852,7 +6993,7 @@ cudaError_t cudaGraphAddEmptyNode(cudaGraphNode_t *pGraphNode,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param event SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddEventRecordNode(cudaGraphNode_t *pGraphNode,
@@ -6876,7 +7017,7 @@ cudaError_t cudaGraphEventRecordNodeSetEvent(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param event SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddEventWaitNode(cudaGraphNode_t *pGraphNode,
@@ -6900,7 +7041,7 @@ cudaError_t cudaGraphEventWaitNodeSetEvent(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param nodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddExternalSemaphoresSignalNode(
@@ -6925,7 +7066,7 @@ cudaError_t cudaGraphExternalSemaphoresSignalNodeSetParams(
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param nodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddExternalSemaphoresWaitNode(
@@ -6951,7 +7092,7 @@ cudaError_t cudaGraphExternalSemaphoresWaitNodeSetParams(
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param nodeParams SEND_ONLY NULLABLE
  */
 cudaError_t cudaGraphAddMemAllocNode(cudaGraphNode_t *pGraphNode,
@@ -6971,7 +7112,7 @@ cudaGraphMemAllocNodeGetParams(cudaGraphNode_t node,
  * @param numDependencies SEND_ONLY
  * @param pGraphNode SEND_RECV
  * @param graph SEND_ONLY
- * @param pDependencies SEND_ONLY ITER:numDependencies
+ * @param pDependencies SEND_ONLY LENGTH:numDependencies
  * @param dptr SEND_ONLY
  */
 cudaError_t cudaGraphAddMemFreeNode(cudaGraphNode_t *pGraphNode,
@@ -17441,12 +17582,6 @@ void lupineLibraryAttributeSnapshot();
 void cuGraphConditionalHandleCreate();
 /** @server CUDA handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
-/** @server CUDA handle_cuGraphGetEdges */
-void cuGraphGetEdges_v2();
-/** @server CUDA handle_cuGraphNodeGetDependencies */
-void cuGraphNodeGetDependencies_v2();
-/** @server CUDA handle_cuGraphNodeGetDependentNodes */
-void cuGraphNodeGetDependentNodes_v2();
 /** @server CUDA */
 void lupineEventQueryBatch();
 /** @server CUDA */

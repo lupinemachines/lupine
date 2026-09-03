@@ -21,8 +21,13 @@ permissions:
   packages: write
 
 jobs:
+  native-clients:
+    name: Build all native client variants
+    uses: ./.github/workflows/native-clients.yml
+
   build:
     name: Server image CUDA ${{ matrix.cuda.version }} / Ubuntu ${{ matrix.cuda.ubuntu }} / ${{ matrix.platform.arch }}
+    needs: native-clients
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 45
     strategy:
@@ -46,6 +51,19 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Resolve source revision
+        id: source
+        run: echo "revision=$(git rev-parse --verify HEAD^{commit})" >> "$GITHUB_OUTPUT"
+
+      - name: Download all native client variants
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lupine-client-*
+          path: client-libs
+          merge-multiple: false
 
       - name: Free runner disk space
         run: |
@@ -87,11 +105,12 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             CUDA_VERSION=${{ matrix.cuda.version }}
+            LUPINE_CLIENT_BUNDLE_INPUT=/opt/lupine/client-libs
             UBUNTU_VERSION=${{ matrix.cuda.ubuntu }}
           tags: ${{ steps.image-tags.outputs.server }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
 
   publish:
     name: Publish server manifest CUDA ${{ matrix.cuda.version }} / Ubuntu ${{ matrix.cuda.ubuntu }}

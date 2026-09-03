@@ -19,6 +19,7 @@
   HANDLER(RPC_cuCtxDetach, handle_cuCtxDetach, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleLoad, handle_cuModuleLoad, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleLoadData, handle_cuModuleLoadData, rpc_backend::cuda) \
+  HANDLER(RPC_cuModuleLoadDataEx, handle_cuModuleLoadDataEx, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleGetGlobal_v2, handle_cuModuleGetGlobal_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuLinkCreate_v2, handle_cuLinkCreate_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuLinkAddData_v2, handle_cuLinkAddData_v2, rpc_backend::cuda) \
@@ -97,10 +98,7 @@
   HANDLER(LUPINE_RPC_lupineLibrarySnapshot, handle_lupineLibrarySnapshot, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineLibraryAttributeSnapshot, handle_lupineLibraryAttributeSnapshot, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_cuGraphConditionalHandleCreate, handle_cuGraphConditionalHandleCreate, rpc_backend::cuda) \
-  HANDLER(LUPINE_RPC_cuGraphAddNode_v2, handle_cuGraphAddNode, rpc_backend::cuda) \
-  HANDLER(RPC_cuGraphGetEdges_v2, handle_cuGraphGetEdges, rpc_backend::cuda) \
-  HANDLER(RPC_cuGraphNodeGetDependencies_v2, handle_cuGraphNodeGetDependencies, rpc_backend::cuda) \
-  HANDLER(RPC_cuGraphNodeGetDependentNodes_v2, handle_cuGraphNodeGetDependentNodes, rpc_backend::cuda) \
+  HANDLER(RPC_cuGraphAddNode_v2, handle_cuGraphAddNode, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineEventQueryBatch, handle_lupineEventQueryBatch, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_cuStreamBeginCaptureToGraph, handle_cuStreamBeginCaptureToGraph, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamUpdateCaptureDependencies_v2, handle_cuStreamUpdateCaptureDependencies, rpc_backend::cuda) \
@@ -305,6 +303,9 @@
   HANDLER(RPC_cuGraphNodeGetType, handle_cuGraphNodeGetType, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphGetNodes, handle_cuGraphGetNodes, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphGetRootNodes, handle_cuGraphGetRootNodes, rpc_backend::cuda) \
+  HANDLER(RPC_cuGraphGetEdges_v2, handle_cuGraphGetEdges_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cuGraphNodeGetDependencies_v2, handle_cuGraphNodeGetDependencies_v2, rpc_backend::cuda) \
+  HANDLER(RPC_cuGraphNodeGetDependentNodes_v2, handle_cuGraphNodeGetDependentNodes_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphDestroyNode, handle_cuGraphDestroyNode, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphExecGetFlags, handle_cuGraphExecGetFlags, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphExecMemcpyNodeSetParams, handle_cuGraphExecMemcpyNodeSetParams, rpc_backend::cuda) \
@@ -380,7 +381,8 @@
   HANDLER(RPC_cuGraphicsMapResources, handle_cuGraphicsMapResources, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphicsUnmapResources, handle_cuGraphicsUnmapResources, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPrefetchAsync, handle_cuMemPrefetchAsync, rpc_backend::cuda) \
-  HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda)
+  HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda) \
+  HANDLER(RPC_cuGraphExecUpdate, handle_cuGraphExecUpdate, rpc_backend::cuda)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -516,6 +518,14 @@ LUPINE_DECLARE_HANDLER(RPC_cuGraphGetId, handle_cuGraphGetId, rpc_backend::cuda)
 LUPINE_DECLARE_HANDLER(RPC_cuGraphExecGetId, handle_cuGraphExecGetId,
                        rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12020
+LUPINE_DECLARE_HANDLER(RPC_cuGraphNodeSetParams, handle_cuGraphNodeSetParams,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12020
+LUPINE_DECLARE_HANDLER(RPC_cuGraphExecNodeSetParams,
+                       handle_cuGraphExecNodeSetParams, rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 12010
 LUPINE_DECLARE_HANDLER(RPC_cuCoredumpGetAttributeGlobal,
                        handle_cuCoredumpGetAttributeGlobal, rpc_backend::cuda)
@@ -645,6 +655,12 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 13010
       LUPINE_REGISTER_HANDLER(RPC_cuGraphExecGetId, handle_cuGraphExecGetId, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12020
+      LUPINE_REGISTER_HANDLER(RPC_cuGraphNodeSetParams, handle_cuGraphNodeSetParams, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12020
+      LUPINE_REGISTER_HANDLER(RPC_cuGraphExecNodeSetParams, handle_cuGraphExecNodeSetParams, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12010
       LUPINE_REGISTER_HANDLER(RPC_cuCoredumpGetAttributeGlobal, handle_cuCoredumpGetAttributeGlobal, rpc_backend::cuda)

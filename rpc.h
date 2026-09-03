@@ -10,18 +10,42 @@
 // encoding, which is transparent to the RPC layer.
 #define LUPINE_RPC_TRANSFER_CHUNK_BYTES (4 * 1024 * 1024)
 
+// Server-originated operations run on the client's dispatch thread. CUDA host
+// functions use these requests for side effects that occur when stream work
+// executes rather than when an API call is captured.
+static constexpr int LUPINE_SIDE_EFFECT_HOST_FUNCTION = 1;
+static constexpr int LUPINE_SIDE_EFFECT_STREAM_CALLBACK = 2;
+static constexpr int LUPINE_SIDE_EFFECT_READ_HOST_MEMORY = 3;
+
+static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOH = 0;
+static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;
+static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOH = 2;
+static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOD = 3;
+
 // References caller-owned bytes while an RPC is being serialized. Cursors are
 // consumed directly by the HTTP/2 transport.
+struct rpc_write_cursor;
+// A refill supplies a non-empty cursor and returns positive, returns zero at
+// end of input, or returns negative on failure.
+using rpc_write_cursor_refill = int (*)(void *context,
+                                        rpc_write_cursor *cursor);
+
 struct rpc_write_cursor {
   const unsigned char *data = nullptr;
   size_t size = 0;
+  rpc_write_cursor_refill refill = nullptr;
+  void *refill_context = nullptr;
 
   rpc_write_cursor() = default;
 
   rpc_write_cursor(const void *bytes, size_t byte_count)
       : data(static_cast<const unsigned char *>(bytes)), size(byte_count) {}
 
+  rpc_write_cursor(rpc_write_cursor_refill refill_fn, void *context)
+      : refill(refill_fn), refill_context(context) {}
+
   size_t remaining() const { return size; }
+  bool pending() const { return size != 0 || refill != nullptr; }
 };
 
 struct rpc_http2_read_stats {
@@ -206,15 +230,9 @@ extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
 
 constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
 constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
-// Peer was built from a different tree. Retrying another arena slot cannot
-// help, so the dial loop gives up rather than treating this as a VA conflict.
-constexpr int LUPINE_RPC_HTTP2_IDENTITY_MISMATCH = -4;
-// This build's wire identity, and the comparison the connect check applies. An
-// empty side means that peer cannot state what it is, which reads as
-// unverifiable rather than as a match.
-extern const char *lupine_wire_identity(void);
-extern bool lupine_wire_identity_compatible(const char *local,
-                                            const char *peer);
+// The selected native client object no longer matches the server. Retrying an
+// arena slot cannot help; the launcher must fetch the advertised bundle.
+constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
 extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
@@ -228,17 +246,19 @@ extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
 // Waits for the peer's response headers on the session's own connection and
-// settles the build check and, when one was requested, the arena verdict.
-// rpc_http2_client_init already does this when an arena was requested; callers
-// that requested none run it themselves, and a caller with no live peer skips
-// it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT, or
-// LUPINE_RPC_HTTP2_IDENTITY_MISMATCH.
+// settles the client-bundle check and, when one was requested, the arena
+// verdict. rpc_http2_client_init already does this when an arena was requested;
+// callers that requested none run it themselves, and a caller with no live peer
+// skips it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT, or
+// LUPINE_RPC_HTTP2_CLIENT_MISMATCH.
 extern int rpc_http2_client_await_ready(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
+struct lupine_client_bundle_registry;
 struct rpc_http2_server_metadata {
-  const char *backend_version;
-  uint64_t capabilities;
+  const char *backend_version = nullptr;
+  const lupine_client_bundle_registry *client_bundles = nullptr;
+  uint64_t capabilities = 0;
 };
 constexpr uint64_t LUPINE_SERVER_CAPABILITY_CLIENT_METADATA = UINT64_C(1);
 // Sends HEAD / and returns the backend-version response header, or nullptr
@@ -246,9 +266,6 @@ constexpr uint64_t LUPINE_SERVER_CAPABILITY_CLIENT_METADATA = UINT64_C(1);
 // The returned pointer remains valid until rpc_http2_destroy() or
 // rpc_conn_destroy(); the probe connection must not be reused for RPC.
 extern const char *rpc_http2_client_probe(conn_t *conn);
-// Read after the peer's response headers arrive. Valid until the transport is
-// destroyed.
-extern const char *rpc_http2_peer_wire_identity(conn_t *conn);
 // Returns true when the server advertised every requested capability bit.
 extern bool rpc_http2_peer_supports(conn_t *conn, uint64_t capabilities);
 // The arena window the peer stated it can host. False when it stated none.

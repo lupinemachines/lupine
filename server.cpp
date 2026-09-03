@@ -22,6 +22,7 @@
 #include <vector>
 #endif
 
+#include "client_bundle.h"
 #include "dispatch.h"
 #include "ipc.h"
 #include "lupine_log.h"
@@ -37,6 +38,33 @@
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
 #define MAX_LANES 256
+
+#ifdef LUPINE_EMBED_CLIENT_BUNDLES
+extern const lupine_client_bundle_payload
+    lupine_embedded_client_bundle_linux_x86_64;
+extern const lupine_client_bundle_payload
+    lupine_embedded_client_bundle_linux_aarch64;
+extern const lupine_client_bundle_payload
+    lupine_embedded_client_bundle_macosx_universal2;
+extern const lupine_client_bundle_payload
+    lupine_embedded_client_bundle_win_amd64;
+extern const lupine_client_bundle_payload
+    lupine_embedded_client_bundle_win_arm64;
+
+namespace {
+const lupine_client_bundle_entry kClientBundles[] = {
+    {"linux/amd64", &lupine_embedded_client_bundle_linux_x86_64},
+    {"linux/arm64", &lupine_embedded_client_bundle_linux_aarch64},
+    {"macos/amd64", &lupine_embedded_client_bundle_macosx_universal2},
+    {"macos/arm64", &lupine_embedded_client_bundle_macosx_universal2},
+    {"windows/amd64", &lupine_embedded_client_bundle_win_amd64},
+    {"windows/arm64", &lupine_embedded_client_bundle_win_arm64},
+};
+} // namespace
+
+const lupine_client_bundle_registry lupine_embedded_client_bundles = {
+    kClientBundles, sizeof(kClientBundles) / sizeof(kClientBundles[0])};
+#endif
 
 #ifndef _WIN32
 static volatile sig_atomic_t lupine_parent_termination_requested = 0;
@@ -178,6 +206,11 @@ int client_handler(lupine_socket_t connfd) {
   const rpc_http2_server_metadata metadata = {
 #ifdef LUPINE_BACKEND_VERSION
       LUPINE_BACKEND_VERSION,
+#else
+      nullptr,
+#endif
+#ifdef LUPINE_EMBED_CLIENT_BUNDLES
+      &lupine_embedded_client_bundles,
 #else
       nullptr,
 #endif

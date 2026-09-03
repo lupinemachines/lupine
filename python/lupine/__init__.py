@@ -1,26 +1,43 @@
-"""PyTorch adapter helpers for LUPINE.
+"""PyTorch adapter for LUPINE-backed CUDA devices.
 
-The adapter returns ordinary ``torch.device("cuda:N")`` objects. PyTorch stays
-on its built-in CUDA dispatch path while LUPINE handles CUDA driver calls below
-it.
+``lupine.connect(...)`` points the process at one or more LUPINE GPU
+servers and preloads the server-selected native shims (driver API, runtime API,
+NVML) so ordinary CUDA consumers — PyTorch included — transparently run on
+the remote GPUs:
+
+.. code-block:: python
+
+    import lupine
+
+    with lupine.connect(host="gpu-host:14833") as session:
+        import torch
+
+        x = torch.arange(8, device=session.device(), dtype=torch.float32)
+        print((x * 2).cpu())
+
+The adapter returns ordinary ``torch.device("cuda:N")`` objects; PyTorch
+keeps its built-in CUDA dispatch path while the LUPINE shims handle the
+driver and runtime calls underneath it. No NVIDIA software is required on
+the client — the wheel supplies the portable runtime stub and the bound
+server supplies its compatible full client.
 """
 
 from __future__ import annotations
 
 import os
-import ctypes
-import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_PORT = 14833
 
 
 class LupineError(RuntimeError):
     """Raised when the LUPINE adapter cannot select a usable device."""
+
+
+class LupineAuthenticationError(LupineError):
+    """Raised when Lupine Cloud needs a user credential."""
 
 
 def _torch() -> Any:
@@ -31,26 +48,16 @@ def _torch() -> Any:
     return torch
 
 
-def _cuda_initialized() -> bool:
-    try:
-        return bool(_torch().cuda.is_initialized())
-    except LupineError:
-        return False
-
-
-def _has_native_cuda_backend() -> bool:
+def _torch_has_cuda() -> bool:
     try:
         return _torch().version.cuda is not None
     except LupineError:
         return False
 
 
-def _require_mutable_config() -> None:
-    if _cuda_initialized():
-        raise LupineError("connect to LUPINE before PyTorch initializes CUDA")
-
-
 def _normalize_server(host: str, port: int | None = None) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
     host = str(host).strip()
     if not host:
         raise LupineError("host must not be empty")
@@ -87,29 +94,6 @@ def _normalize_hosts(
     return tuple(_normalize_server(item, port) for item in host)
 
 
-def _set_server_env(servers: Sequence[str]) -> None:
-    os.environ["LUPINE_SERVER"] = ",".join(servers)
-
-
-def _default_libcuda() -> Path | None:
-    override = os.environ.get("LUPINE_LIBCUDA")
-    if override:
-        return Path(override)
-    repo_candidate = Path(__file__).resolve().parents[2] / "build" / "libcuda.so.1"
-    if repo_candidate.exists():
-        return repo_candidate
-    return None
-
-
-def _load_libcuda(path: str | os.PathLike[str] | None) -> None:
-    libcuda = Path(path) if path is not None else _default_libcuda()
-    if libcuda is None:
-        return
-    if not libcuda.exists():
-        raise LupineError(f"LUPINE libcuda does not exist: {libcuda}")
-    ctypes.CDLL(str(libcuda), mode=ctypes.RTLD_GLOBAL)
-
-
 def _servers_from_env() -> tuple[str, ...]:
     value = os.environ.get("LUPINE_SERVER", "")
     return tuple(server.strip() for server in value.split(",") if server.strip())
@@ -117,101 +101,93 @@ def _servers_from_env() -> tuple[str, ...]:
 
 @dataclass
 class Session:
-    """A process-local LUPINE connection declaration."""
+    """A process-local LUPINE connection declaration.
+
+    Entering the session exports ``LUPINE_SERVER`` and loads the selected
+    native shims; both stay in effect for the process after exit (library
+    unloading is not possible once CUDA state references the shims).
+    """
 
     servers: tuple[str, ...]
-    libcuda: str | os.PathLike[str] | None = None
+    _previous_server: str | None = field(default=None, repr=False)
+    _loaded: bool = field(default=False, repr=False)
 
-    def __enter__(self) -> "Session":
-        self._previous_server = os.environ.get("LUPINE_SERVER")
+    def __enter__(self) -> Session:  # noqa: PYI034
         if not self.servers:
             return self
-        _require_mutable_config()
+        if self._loaded:
+            # Already active (e.g. connect() entered before returning the
+            # session); re-entering must not reload or reset state.
+            return self
         configured = _servers_from_env()
         if configured and configured != self.servers:
             raise LupineError(
                 "LUPINE_SERVER is already configured differently; start a new "
                 "process or pass the same hosts to lupine.connect()."
             )
+        self._previous_server = os.environ.get("LUPINE_SERVER")
         if not configured:
-            _set_server_env(self.servers)
-        _load_libcuda(self.libcuda)
+            os.environ["LUPINE_SERVER"] = ",".join(self.servers)
+        from . import _native
+
+        _native.load(missing_ok=False)
+        self._loaded = True
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        self._restore_env()
-        return False
-
-    def _restore_env(self) -> None:
         if getattr(self, "_previous_server", None) is None:
             os.environ.pop("LUPINE_SERVER", None)
         else:
             os.environ["LUPINE_SERVER"] = self._previous_server
+        return False
 
     def devices(self) -> list[Any]:
-        """Return every GPU in LUPINE's native virtual device topology."""
+        """Return every GPU in LUPINE's virtual device topology."""
 
         if not self.servers:
             return []
+        if not self._loaded and not _native_loaded():
+            raise LupineError(
+                "Session is not active; use 'with lupine.connect(...) as s:'."
+            )
         torch = _torch()
         count = int(torch.cuda.device_count())
         return [torch.device("cuda", index) for index in range(count)]
 
     def device(self, index: int = 0) -> Any:
-        """Return one GPU from LUPINE's native virtual device topology."""
+        """Return one GPU from LUPINE's virtual device topology."""
 
         torch = _torch()
         count = int(torch.cuda.device_count()) if self.servers else 0
+        if index >= count or index < -count:
+            raise LupineError(f"device index {index} out of range ({count} devices)")
         return torch.device("cuda", range(count)[index])
 
 
-def _create_sidecar(
-    server: str | None,
-    *,
-    image: str | None = None,
-    runtime: str = "auto",
-    platform: str | None = None,
-    rosetta: bool = False,
-    env: dict[str, str] | None = None,
-) -> Any:
-    from .sidecar import sidecar as create_sidecar
+def _native_loaded() -> bool:
+    from . import _native
 
-    return create_sidecar(
-        server=server,
-        image=image,
-        runtime=runtime,
-        platform=platform,
-        rosetta=rosetta,
-        env=env,
-    )
+    return bool(_native.loaded())
 
 
 def connect(
     *,
     host: str | Sequence[str] | None = None,
     port: int | None = None,
-    libcuda: str | os.PathLike[str] | None = None,
-    sidecar: bool | None = None,
-) -> Any:
+) -> Session:
     """Create a LUPINE session for one or more remote GPU hosts.
 
-    Use the session before any PyTorch CUDA operation:
+    Use the session before any CUDA operation (including ``import torch``
+    on platforms where PyTorch eagerly resolves CUDA symbols):
 
     ``with lupine.connect(host=["a:14833", "b:14833"]) as s:``
 
     ``host`` defaults to ``LUPINE_SERVER``, which is how a launcher such as
     ``lupine run`` hands the session its already-bound hosts.
 
-    ``s.devices()`` then returns every CUDA ordinal in LUPINE's native virtual
+    ``s.devices()`` then returns every CUDA ordinal in LUPINE's virtual
     device topology.
-
-    ``sidecar=None`` automatically selects the sidecar on macOS when PyTorch
-    has no native CUDA backend. Pass ``sidecar=True`` to force the sidecar or
-    ``sidecar=False`` to force the native CUDA path.
     """
-
-    if sidecar is not None and not isinstance(sidecar, bool):
-        raise TypeError("sidecar must be True, False, or None")
 
     if host is None:
         host = _servers_from_env()
@@ -220,40 +196,52 @@ def connect(
 
     servers = _normalize_hosts(host, port)
     if not servers:
-        if sidecar is True:
-            raise LupineError("sidecar mode requires exactly one host")
-        return Session(servers=servers, libcuda=libcuda)
+        return Session(servers=servers)
 
-    has_native_cuda = _has_native_cuda_backend()
-    use_sidecar = sidecar is True or (
-        sidecar is None and sys.platform == "darwin" and not has_native_cuda
+    session = Session(servers=servers)
+    # Bind immediately: the caller may import torch right after connect()
+    # without using the context manager form.
+    session.__enter__()
+    session._previous_server = None  # keep LUPINE_SERVER configured on exit
+    return session
+
+
+def cloud(
+    *,
+    api_url: str | None = None,
+    token: str | None = None,
+    gpu_type: str | None = None,
+    gpu_count: int | None = None,
+    region: str | None = None,
+) -> Any:
+    """Acquire and activate an authenticated Lupine Cloud GPU.
+
+    ``token`` defaults to ``LUPINE_API_TOKEN`` and then to the credential
+    stored by ``lupine login``. The lease is released when its context exits
+    or, when called without a context manager, at process shutdown.
+    """
+
+    from ._cloud import connect as connect_cloud
+
+    return connect_cloud(
+        api_url=api_url,
+        token=token,
+        gpu_type=gpu_type,
+        gpu_count=gpu_count,
+        region=region,
     )
-    if use_sidecar:
-        if len(servers) != 1:
-            raise LupineError("sidecar mode requires exactly one host")
-        if libcuda is not None:
-            raise LupineError("libcuda is only supported with sidecar=False")
-        return _create_sidecar(server=servers[0])
 
-    if not has_native_cuda:
-        if sidecar is False:
-            raise LupineError(
-                "PyTorch is not compiled with CUDA and sidecar=False disables "
-                "the LUPINE sidecar."
-            )
-        raise LupineError(
-            "PyTorch is not compiled with CUDA and automatic LUPINE sidecar "
-            "selection is only supported on macOS; pass sidecar=True to force it."
-        )
 
-    return Session(
-        servers=servers,
-        libcuda=libcuda,
-    )
+def login(**kwargs: Any) -> Any:
+    """Authenticate in a browser and store a Lupine Cloud credential."""
+
+    from ._login import login as browser_login
+
+    return browser_login(**kwargs)
 
 
 def devices() -> list[Any]:
-    """Return devices in PyTorch's current native CUDA topology."""
+    """Return devices in PyTorch's current LUPINE-backed CUDA topology."""
 
     torch = _torch()
     count = int(torch.cuda.device_count())
@@ -272,34 +260,33 @@ def is_configured() -> bool:
     return bool(servers())
 
 
-def sidecar(
-    server: str | None = None,
-    *,
-    image: str | None = None,
-    runtime: str = "auto",
-    platform: str | None = None,
-    rosetta: bool = False,
-    env: dict[str, str] | None = None,
-) -> Any:
-    """Create a session-scoped sidecar PyTorch worker frontend."""
+def load_native(*, missing_ok: bool = True) -> dict[str, str]:
+    """Load the server-selected native shims; see :mod:`lupine._native`."""
 
-    return _create_sidecar(
-        server=server,
-        image=image,
-        runtime=runtime,
-        platform=platform,
-        rosetta=rosetta,
-        env=env,
-    )
+    from . import _native
+
+    return _native.load(missing_ok=missing_ok)
+
+
+def libdir() -> Any:
+    """Directory holding the selected native shims, if any."""
+
+    from . import _native
+
+    return _native.libdir()
 
 
 __all__ = [
     "DEFAULT_PORT",
+    "LupineAuthenticationError",
     "LupineError",
     "Session",
+    "cloud",
     "connect",
     "devices",
     "is_configured",
-    "sidecar",
+    "libdir",
+    "load_native",
+    "login",
     "servers",
 ]

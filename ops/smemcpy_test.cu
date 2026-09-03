@@ -348,6 +348,28 @@ bool run_parameter_validation() {
     std::fputs("zero-byte copy validation failed\n", stderr);
     return false;
   }
+
+  params = {};
+  params.source = 1;
+  params.destination = 1;
+  params.width = 64;
+  params.rows = 2;
+  params.destination_row_stride = 64;
+  params.destination_slice_stride = 128;
+  params.logical_offset = 32;
+  params.bytes = 160;
+  if (lupine_smemcpy_prepare_launch(&params, &launch) != cudaSuccess ||
+      !launch.use_cuda_memcpy || launch.kernel != nullptr) {
+    std::fputs("contiguous dispatch validation failed\n", stderr);
+    return false;
+  }
+
+  params.destination_slice_stride = 192;
+  if (lupine_smemcpy_prepare_launch(&params, &launch) != cudaSuccess ||
+      launch.use_cuda_memcpy || launch.kernel == nullptr) {
+    std::fputs("scatter dispatch validation failed\n", stderr);
+    return false;
+  }
   return true;
 }
 

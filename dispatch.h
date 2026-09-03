@@ -16,12 +16,10 @@ int lupine_h2_preface_check(const unsigned char *data, size_t len);
 // Decides what protocol an accepted connection speaks before any RPC state
 // exists. The socket is only peeked at: an HTTP/2 preface leaves every byte
 // in place for the nghttp2 session and returns 0. Anything else is answered
-// as a single HTTP/1.x request (HEAD / and GET / mirror the HTTP/2 version
-// probe; every other path is a 404) and returns 1 with the connection fully
-// served. Returns -1 when the peer disconnects before the protocol is
-// decidable or the socket fails; the caller closes the socket for every
-// nonzero result. Reads block: a stalled peer holds only its own
-// per-connection child until the transport keepalive declares it dead.
+// as a single HTTP/1.x request and returns 1 with the connection fully served.
+// HTTP/1.x reads and writes use a short deadline. Returns -1 when the peer
+// disconnects before the protocol is decidable or the socket fails; the caller
+// closes the socket for every nonzero result.
 using lupine_metrics_handler = std::string (*)();
 
 int lupine_connection_dispatch(lupine_socket_t connfd,

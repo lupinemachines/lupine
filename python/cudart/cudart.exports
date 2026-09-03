@@ -1,0 +1,10 @@
+# Version script matching NVIDIA's libcudart.so.13: the version node is
+# literally named after the SONAME, and torch's undefined symbols carry
+# @libcudart.so.13 version references.
+libcudart.so.13 {
+  global:
+    cuda*;
+    __cuda*;
+  local:
+    *;
+};

@@ -17,7 +17,11 @@ option(LUPINE_BUILD_SERVER "Build the RPC server"
 set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
     "CUDA driver library or stub to use without a complete CUDA Toolkit")
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
-    "CUDA version reported by a header-only server build")
+    "CUDA version reported by an SDK-free server build")
+set(LUPINE_PRECOMPILED_OPS "" CACHE PATH
+    "Optional directory containing precompiled device operations")
+set(LUPINE_CLIENT_BUNDLE_INPUT "" CACHE PATH
+    "Directory containing staged native clients to embed in the server")
 
 # Sanitizers are applied only to the CPU-only *_test executables. Set to a
 # -fsanitize value such as "address,undefined" or "thread"; empty disables.
@@ -27,24 +31,6 @@ set(LUPINE_SANITIZE "" CACHE STRING
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-# Client and server must come from the same build: the RPC opcode numbering and
-# the struct layouts behind it are shared and unversioned. This identity travels
-# with every connection so a mismatched pair is refused at connect instead of
-# failing later as an opaque runtime error. Builds without git leave it empty,
-# which reads as "cannot verify" rather than as a match. Committed builds compare
-# exactly; a dirty tree is only flagged as dirty, not content-hashed, so two
-# different uncommitted trees at the same commit still compare equal.
-find_package(Git QUIET)
-set(LUPINE_WIRE_IDENTITY "")
-if(Git_FOUND)
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --always --dirty --abbrev=12
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        OUTPUT_VARIABLE LUPINE_WIRE_IDENTITY
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET)
-endif()
 
 include(CTest)
 find_package(Threads REQUIRED)
@@ -111,7 +97,7 @@ if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
             set_target_properties(CUDA::cuda_driver PROPERTIES
                 IMPORTED_LOCATION "${LUPINE_CUDA_DRIVER_LIBRARY}")
             message(STATUS
-                "Using CUDA driver stub for header-only server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
+                "Using CUDA driver stub for SDK-free server build: ${LUPINE_CUDA_DRIVER_LIBRARY}")
         endif()
     endif()
 endif()
@@ -136,9 +122,50 @@ if(LUPINE_BUILD_SERVER AND
         "LUPINE_BUILD_SERVER requires at least one available backend")
 endif()
 
-if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA AND
-   NOT LUPINE_CUDA_DRIVER_LIBRARY)
-    enable_language(CUDA)
+# A precompiled operations directory lets the SDK-neutral server build consume
+# artifacts produced by each backend's SDK. Without one, build the operations
+# locally with the available accelerator compilers.
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA)
+    if(LUPINE_PRECOMPILED_OPS)
+        if(NOT IS_DIRECTORY "${LUPINE_PRECOMPILED_OPS}")
+            message(FATAL_ERROR
+                "LUPINE_PRECOMPILED_OPS is not a directory: ${LUPINE_PRECOMPILED_OPS}")
+        endif()
+        message(STATUS
+            "Using precompiled device operations: ${LUPINE_PRECOMPILED_OPS}")
+    elseif(NOT LUPINE_CUDA_DRIVER_LIBRARY)
+        enable_language(CUDA)
+    else()
+        message(FATAL_ERROR
+            "LUPINE_PRECOMPILED_OPS is required for an SDK-free CUDA server build")
+    endif()
+endif()
+
+if(LUPINE_BUILD_SERVER AND LUPINE_BUILD_HIP AND
+   NOT CMAKE_VERSION VERSION_LESS 3.21)
+    # hipcc defaults to gfx906 alone, which loads but never runs on a newer
+    # card, and clang's "native" needs /dev/kfd, so it fails on GPU-less
+    # builders and under WSL. Ship a fat binary covering the supported CDNA and
+    # RDNA targets instead. This must precede the compiler probe so the probe
+    # and the build agree on the targets.
+    if(NOT CMAKE_HIP_ARCHITECTURES)
+        set(CMAKE_HIP_ARCHITECTURES
+            gfx90a gfx942 gfx1030 gfx1100 gfx1101 gfx1102 gfx1200 gfx1201)
+    endif()
+    # The HIP SDK check above only needs headers, which is all the client shim
+    # and the server dispatch require. Device code additionally needs a HIP
+    # compiler, so the operation is built only where one exists.
+    include(CheckLanguage)
+    check_language(HIP)
+    if(CMAKE_HIP_COMPILER)
+        enable_language(HIP)
+    endif()
+endif()
+
+get_property(lupine_enabled_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+if((LUPINE_BUILD_SERVER AND LUPINE_BUILD_CUDA) OR
+   "CUDA" IN_LIST lupine_enabled_languages OR
+   "HIP" IN_LIST lupine_enabled_languages)
     add_subdirectory(ops)
 endif()
 
@@ -191,6 +218,7 @@ add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/client_bundle.cpp
 )
 lupine_internal_target(lupine_rpc_core)
 target_include_directories(lupine_rpc_core
@@ -198,8 +226,6 @@ target_include_directories(lupine_rpc_core
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
     Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
-target_compile_definitions(lupine_rpc_core PRIVATE
-    LUPINE_WIRE_IDENTITY="${LUPINE_WIRE_IDENTITY}")
 if(OpenSSL_FOUND)
     target_compile_definitions(lupine_rpc_core PRIVATE LUPINE_TLS_OPENSSL)
     target_link_libraries(lupine_rpc_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
@@ -368,7 +394,7 @@ if(LUPINE_BUILD_SERVER)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
-            CUDA::cuda_driver)
+            lupine_cuda_smemcpy_module CUDA::cuda_driver)
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -408,6 +434,57 @@ if(LUPINE_BUILD_SERVER)
         ${CUDAToolkit_INCLUDE_DIRS})
     target_link_libraries(lupine_driver_server PRIVATE
         lupine_server_core lupine_ipc ${CMAKE_DL_LIBS})
+    if(LUPINE_CLIENT_BUNDLE_INPUT)
+        if(NOT IS_DIRECTORY "${LUPINE_CLIENT_BUNDLE_INPUT}")
+            message(FATAL_ERROR
+                "LUPINE_CLIENT_BUNDLE_INPUT is not a directory: ${LUPINE_CLIENT_BUNDLE_INPUT}")
+        endif()
+        find_program(UV_EXECUTABLE uv REQUIRED)
+        set(LUPINE_CLIENT_BUNDLE_GENERATED_DIR
+            ${CMAKE_CURRENT_BINARY_DIR}/client-bundles)
+
+        function(lupine_embed_client_bundle tag platforms)
+            set(files ${ARGN})
+            set(input_dir
+                ${LUPINE_CLIENT_BUNDLE_INPUT}/lupine-client-${tag})
+            set(output_dir ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag})
+            set(archive ${output_dir}/client.zip)
+            set(source ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag}.cpp)
+            string(REPLACE "-" "_" symbol ${tag})
+            set(inputs)
+            foreach(file IN LISTS files)
+                list(APPEND inputs ${input_dir}/${file})
+            endforeach()
+            add_custom_command(
+                OUTPUT ${source}
+                BYPRODUCTS ${archive}
+                COMMAND ${UV_EXECUTABLE} run --script
+                        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bundle_codegen.py
+                        ${input_dir} ${archive} "${platforms}"
+                        lupine_embedded_client_bundle_${symbol} ${source} ${files}
+                DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bundle_codegen.py
+                        ${inputs}
+                COMMENT "Embedding ${tag} client bundle"
+                VERBATIM)
+            target_sources(lupine_driver_server PRIVATE ${source})
+        endfunction()
+
+        lupine_embed_client_bundle(linux-x86_64 "linux/amd64"
+            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+        lupine_embed_client_bundle(linux-aarch64 "linux/arm64"
+            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+        lupine_embed_client_bundle(macosx-universal2
+            "macos/amd64;macos/arm64"
+            libcuda.dylib libcudart.dylib libnvidia-ml.dylib)
+        lupine_embed_client_bundle(win-amd64 "windows/amd64"
+            nvcuda.dll cudart64_13.dll nvml.dll)
+        lupine_embed_client_bundle(win-arm64 "windows/arm64"
+            nvcuda.dll cudart64_13.dll nvml.dll)
+        target_compile_definitions(lupine_driver_server PRIVATE
+            LUPINE_EMBED_CLIENT_BUNDLES)
+        message(STATUS
+            "Embedding server client bundles from: ${LUPINE_CLIENT_BUNDLE_INPUT}")
+    endif()
     if(LUPINE_BUILD_CUDA)
         target_compile_definitions(lupine_driver_server PRIVATE
             LUPINE_BUILD_CUDA_BACKEND
@@ -469,7 +546,7 @@ if(BUILD_TESTING AND NOT WIN32)
     target_link_libraries(h2_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(h2_test)
     add_test(NAME h2_test COMMAND h2_test)
-    lupine_scaled_timeout(h2_timeout 30)
+    lupine_scaled_timeout(h2_timeout 60)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
 
     add_executable(dispatch_test ${CMAKE_CURRENT_SOURCE_DIR}/dispatch_test.cpp)

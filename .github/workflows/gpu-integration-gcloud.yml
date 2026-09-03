@@ -17,6 +17,7 @@ concurrency:
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -659,6 +660,9 @@ jobs:
                 scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
                   "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 
+              # This sample hard-codes GPUs {0, 1}, while the GCE lane exposes
+              # one L4. Keep it enabled for two-GPU runs outside this workflow.
+              export LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example"
               export INTEGRATION_RESULTS_DIR="/results/test/integration/results/$(date +%Y%m%d-%H%M%S)"
               mkdir -p "$INTEGRATION_RESULTS_DIR"
               cmake -S /src/test/integration -B /tmp/lupine-integration-ctest
