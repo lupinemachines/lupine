@@ -392,6 +392,11 @@
 #define RPC_cuGreenCtxStreamCreate 1433266945
 #define RPC_cuGreenCtxGetId 1724676806
 #define RPC_cuStreamGetDevResource 494275841
+#define RPC_cuLogsRegisterCallback 1180166835
+#define RPC_cuLogsUnregisterCallback 837442292
+#define RPC_cuLogsCurrent 1759869652
+#define RPC_cuLogsDumpToFile 995845771
+#define RPC_cuLogsDumpToMemory 330498516
 #define RPC_cuGraphInstantiate_v2 1599532620
 #define RPC_cuGraphExecUpdate 882549126
 #define RPC_cuCtxCreate_v2 804269166

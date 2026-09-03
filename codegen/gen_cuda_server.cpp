@@ -8954,6 +8954,136 @@ ERROR_0:
 
 #endif
 
+#if CUDA_VERSION >= 12090
+int handle_cuLogsCurrent(conn_t *conn) {
+  CUlogIterator *iterator_out_null_check;
+  CUlogIterator iterator_out;
+  unsigned int flags;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &iterator_out_null_check, sizeof(CUlogIterator *)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result =
+      cuLogsCurrent(iterator_out_null_check ? &iterator_out : nullptr, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &iterator_out_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_out_null_check &&
+       rpc_write(conn, &iterator_out, sizeof(CUlogIterator)) < 0) ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12090
+int handle_cuLogsDumpToFile(conn_t *conn) {
+  CUlogIterator *iterator_null_check;
+  CUlogIterator iterator;
+  const char *pathToFile = nullptr;
+  std::size_t pathToFile_len;
+  unsigned int flags;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_null_check &&
+       rpc_read(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_read(conn, &pathToFile_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  pathToFile = (const char *)malloc(pathToFile_len);
+  if ((pathToFile_len != 0 && pathToFile == nullptr) ||
+      rpc_read(conn, (void *)pathToFile, pathToFile_len) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuLogsDumpToFile(
+      iterator_null_check ? &iterator : nullptr, pathToFile, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_null_check &&
+       rpc_write(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  free((void *)pathToFile);
+  return 0;
+ERROR_0:
+  free((void *)pathToFile);
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12090
+int handle_cuLogsDumpToMemory(conn_t *conn) {
+  CUlogIterator *iterator_null_check;
+  CUlogIterator iterator;
+  size_t size = 0;
+  size_t size_requested = 0;
+  char *buffer = nullptr;
+  uint8_t buffer_null = 0;
+  unsigned int flags;
+  int request_id;
+  CUresult lupine_intercept_result;
+  if (rpc_read(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_null_check &&
+       rpc_read(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_read(conn, &size_requested, sizeof(size_t)) < 0 ||
+      ((size = size_requested), false) ||
+      rpc_read(conn, &buffer_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!buffer_null) {
+    buffer = (char *)malloc((size_requested != 0 ? size_requested : 1) *
+                            sizeof(char));
+    if (buffer == nullptr)
+      goto ERROR_0;
+  }
+  if (rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+  lupine_intercept_result = cuLogsDumpToMemory(
+      iterator_null_check ? &iterator : nullptr, buffer, &size, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_null_check &&
+       rpc_write(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      (!buffer_null &&
+       rpc_write(conn, buffer,
+                 (size < size_requested ? size : size_requested) *
+                     sizeof(char)) < 0) ||
+      rpc_write(conn, &lupine_intercept_result, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+
+  free((void *)buffer);
+  return 0;
+ERROR_0:
+  free((void *)buffer);
+  return -1;
+}
+
+#endif
+
 int handle_cuMemPrefetchAsync(conn_t *conn) {
   CUdeviceptr devPtr;
   size_t count;

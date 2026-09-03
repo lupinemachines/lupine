@@ -100,6 +100,7 @@ int handle_cuTensorMapEncodeTiled(conn_t *conn);
 
 bool lupine_server_initialize_connection(conn_t *conn);
 void lupine_server_cleanup_connection(conn_t *conn);
+void lupine_server_cleanup_log_callbacks(conn_t *conn);
 
 int handle_cuDevicePrimaryCtxRetain(conn_t *conn);
 int handle_cuDevicePrimaryCtxRelease_v2(conn_t *conn);

@@ -547,6 +547,27 @@ struct lupine_stream_callback_data {
   void *userData = nullptr;
 };
 
+#if CUDA_VERSION >= 12090
+struct lupine_logs_callback_data {
+  std::atomic<conn_t *> conn;
+  CUlogsCallback callback = nullptr;
+  void *user_data = nullptr;
+};
+
+static std::mutex &lupine_logs_callback_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static std::unordered_map<CUlogsCallbackHandle, lupine_logs_callback_data *> &
+lupine_logs_callbacks() {
+  static auto *callbacks =
+      new std::unordered_map<CUlogsCallbackHandle,
+                             lupine_logs_callback_data *>();
+  return *callbacks;
+}
+#endif
+
 static bool lupine_is_event_dtoh_marker(const lupine_pending_dtoh_item &item,
                                         CUevent event) {
   return item.event != nullptr && item.event == event;
@@ -2438,6 +2459,41 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   delete callback;
 }
 
+#if CUDA_VERSION >= 12090
+static void CUDA_CB lupine_logs_callback(void *user_data, CUlogLevel level,
+                                         char *message, size_t length) {
+  auto *callback = static_cast<lupine_logs_callback_data *>(user_data);
+  if (callback == nullptr) {
+    return;
+  }
+
+  conn_t *conn = nullptr;
+  CUlogsCallback client_callback = nullptr;
+  void *client_user_data = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+    conn = callback->conn.load(std::memory_order_acquire);
+    client_callback = callback->callback;
+    client_user_data = callback->user_data;
+  }
+  if (conn == nullptr || client_callback == nullptr) {
+    return;
+  }
+
+  void *response = nullptr;
+  if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_LOG_CALLBACK) >= 0 &&
+      rpc_write(conn, &level, sizeof(level)) >= 0 &&
+      rpc_write(conn, &length, sizeof(length)) >= 0 &&
+      (length == 0 || rpc_write(conn, message, length) >= 0) &&
+      rpc_write(conn, &client_callback, sizeof(client_callback)) >= 0 &&
+      rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
+      rpc_wait_for_response(conn) >= 0) {
+    rpc_read(conn, &response, sizeof(response));
+    rpc_read_end(conn);
+  }
+}
+#endif
+
 int handle_cuGraphAddKernelNode(conn_t *conn) {
   CUgraph hGraph = nullptr;
   std::vector<CUgraphNode> deps;
@@ -3058,6 +3114,107 @@ int handle_cuStreamAddCallback(conn_t *conn) {
     return -1;
   }
   return 0;
+}
+
+#if CUDA_VERSION >= 12090
+int handle_cuLogsRegisterCallback(conn_t *conn) {
+  CUlogsCallback callback = nullptr;
+  void *user_data = nullptr;
+  CUlogsCallbackHandle callback_handle = nullptr;
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+
+  if (rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+      rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  lupine_logs_callback_data *data = nullptr;
+  if (callback != nullptr) {
+    data = new (std::nothrow) lupine_logs_callback_data;
+    if (data == nullptr) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    } else {
+      data->conn.store(conn, std::memory_order_release);
+      data->callback = callback;
+      data->user_data = user_data;
+      result =
+          cuLogsRegisterCallback(lupine_logs_callback, data, &callback_handle);
+      if (result == CUDA_SUCCESS) {
+        std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+        lupine_logs_callbacks()[callback_handle] = data;
+      } else {
+        delete data;
+      }
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &callback_handle, sizeof(callback_handle)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cuLogsUnregisterCallback(conn_t *conn) {
+  CUlogsCallbackHandle callback_handle = nullptr;
+  if (rpc_read(conn, &callback_handle, sizeof(callback_handle)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = cuLogsUnregisterCallback(callback_handle);
+  lupine_logs_callback_data *data = nullptr;
+  if (result == CUDA_SUCCESS) {
+    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+    auto it = lupine_logs_callbacks().find(callback_handle);
+    if (it != lupine_logs_callbacks().end()) {
+      data = it->second;
+      lupine_logs_callbacks().erase(it);
+    }
+  }
+  delete data;
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
+
+void lupine_server_cleanup_log_callbacks(conn_t *conn) {
+#if CUDA_VERSION >= 12090
+  std::vector<std::pair<CUlogsCallbackHandle, lupine_logs_callback_data *>>
+      callbacks;
+  {
+    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+    for (auto it = lupine_logs_callbacks().begin();
+         it != lupine_logs_callbacks().end();) {
+      if (it->second->conn.load(std::memory_order_acquire) == conn) {
+        it->second->conn.store(nullptr, std::memory_order_release);
+        callbacks.emplace_back(it->first, it->second);
+        it = lupine_logs_callbacks().erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  for (const auto &[handle, data] : callbacks) {
+    if (cuLogsUnregisterCallback(handle) == CUDA_SUCCESS) {
+      delete data;
+    }
+  }
+#else
+  (void)conn;
+#endif
 }
 
 static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {

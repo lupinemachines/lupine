@@ -471,6 +471,14 @@ LUPINE_DECLARE_HANDLER(RPC_cuCtxSynchronize_v2, handle_cuCtxSynchronize_v2,
 LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
                        handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12090
+LUPINE_DECLARE_HANDLER(RPC_cuLogsRegisterCallback,
+                       handle_cuLogsRegisterCallback, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+LUPINE_DECLARE_HANDLER(RPC_cuLogsUnregisterCallback,
+                       handle_cuLogsUnregisterCallback, rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 13000
 LUPINE_DECLARE_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2,
                        rpc_backend::cuda)
@@ -594,6 +602,18 @@ LUPINE_DECLARE_HANDLER(RPC_cuGreenCtxGetId, handle_cuGreenCtxGetId,
 LUPINE_DECLARE_HANDLER(RPC_cuStreamGetDevResource,
                        handle_cuStreamGetDevResource, rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12090
+LUPINE_DECLARE_HANDLER(RPC_cuLogsCurrent, handle_cuLogsCurrent,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+LUPINE_DECLARE_HANDLER(RPC_cuLogsDumpToFile, handle_cuLogsDumpToFile,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+LUPINE_DECLARE_HANDLER(RPC_cuLogsDumpToMemory, handle_cuLogsDumpToMemory,
+                       rpc_backend::cuda)
+#endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -619,6 +639,12 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cuTensorMapEncodeTiled, handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+      LUPINE_REGISTER_HANDLER(RPC_cuLogsRegisterCallback, handle_cuLogsRegisterCallback, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+      LUPINE_REGISTER_HANDLER(RPC_cuLogsUnregisterCallback, handle_cuLogsUnregisterCallback, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 13000
       LUPINE_REGISTER_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2, rpc_backend::cuda)
@@ -712,6 +738,15 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 13010
       LUPINE_REGISTER_HANDLER(RPC_cuStreamGetDevResource, handle_cuStreamGetDevResource, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+      LUPINE_REGISTER_HANDLER(RPC_cuLogsCurrent, handle_cuLogsCurrent, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+      LUPINE_REGISTER_HANDLER(RPC_cuLogsDumpToFile, handle_cuLogsDumpToFile, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12090
+      LUPINE_REGISTER_HANDLER(RPC_cuLogsDumpToMemory, handle_cuLogsDumpToMemory, rpc_backend::cuda)
 #endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND

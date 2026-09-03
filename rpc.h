@@ -11,11 +11,12 @@
 #define LUPINE_RPC_TRANSFER_CHUNK_BYTES (4 * 1024 * 1024)
 
 // Server-originated operations run on the client's dispatch thread. CUDA host
-// functions use these requests for side effects that occur when stream work
-// executes rather than when an API call is captured.
+// functions, stream callbacks, and driver log callbacks use these requests for
+// side effects that occur outside the original API call.
 static constexpr int LUPINE_SIDE_EFFECT_HOST_FUNCTION = 1;
 static constexpr int LUPINE_SIDE_EFFECT_STREAM_CALLBACK = 2;
 static constexpr int LUPINE_SIDE_EFFECT_READ_HOST_MEMORY = 3;
+static constexpr int LUPINE_SIDE_EFFECT_LOG_CALLBACK = 4;
 
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOH = 0;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;

@@ -6631,6 +6631,112 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
   return return_value;
 }
 
+#if CUDA_VERSION >= 12090
+static std::mutex &lupine_logs_callback_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+struct lupine_logs_callback_route {
+  lupine_route route;
+  CUlogsCallbackHandle server_callback = nullptr;
+};
+
+static std::unordered_map<CUlogsCallbackHandle, lupine_logs_callback_route> &
+lupine_logs_callback_routes() {
+  static auto *routes = new std::unordered_map<CUlogsCallbackHandle,
+                                               lupine_logs_callback_route>();
+  return *routes;
+}
+
+extern "C" CUresult cuLogsRegisterCallback(CUlogsCallback callbackFunc,
+                                           void *userData,
+                                           CUlogsCallbackHandle *callback_out) {
+  if (callbackFunc == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  auto *client_callback =
+      callback_out == nullptr ? nullptr : new (std::nothrow) unsigned char;
+  if (callback_out != nullptr && client_callback == nullptr) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+
+  lupine_route route = lupine_route_for_default();
+  CUlogsCallbackHandle server_callback = nullptr;
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn(
+        "cuLogsRegisterCallback", callbackFunc, userData,
+        callback_out == nullptr ? nullptr : &server_callback);
+  } else {
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuLogsRegisterCallback) < 0 ||
+        rpc_write(conn, &callbackFunc, sizeof(callbackFunc)) < 0 ||
+        rpc_write(conn, &userData, sizeof(userData)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &server_callback, sizeof(server_callback)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      delete client_callback;
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  }
+
+  if (return_value == CUDA_SUCCESS && callback_out != nullptr) {
+    auto callback = reinterpret_cast<CUlogsCallbackHandle>(client_callback);
+    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+    lupine_logs_callback_routes()[callback] = {route, server_callback};
+    *callback_out = callback;
+  } else {
+    delete client_callback;
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuLogsUnregisterCallback(CUlogsCallbackHandle callback) {
+  lupine_route route = lupine_route_for_default();
+  CUlogsCallbackHandle server_callback = callback;
+  {
+    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+    auto it = lupine_logs_callback_routes().find(callback);
+    if (it != lupine_logs_callback_routes().end()) {
+      route = it->second.route;
+      server_callback = it->second.server_callback;
+    }
+  }
+
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_route_is_local(route)) {
+    return_value =
+        lupine_call_real_cuda_fn("cuLogsUnregisterCallback", server_callback);
+  } else {
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuLogsUnregisterCallback) < 0 ||
+        rpc_write(conn, &server_callback, sizeof(server_callback)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  }
+
+  if (return_value == CUDA_SUCCESS) {
+    bool owned_callback = false;
+    {
+      std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+      owned_callback = lupine_logs_callback_routes().erase(callback) != 0;
+    }
+    if (owned_callback) {
+      delete reinterpret_cast<unsigned char *>(callback);
+    }
+  }
+  return return_value;
+}
+#endif
+
 static bool lupine_is_writable_user_pointer(const void *ptr, size_t size) {
   if (ptr == nullptr || size == 0) {
     return false;
@@ -7915,11 +8021,13 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuGraphExecNodeSetParams)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGraphConditionalHandleCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuDeviceRegisterAsyncNotification)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuDeviceUnregisterAsyncNotification)
+#if CUDA_VERSION < 12090
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsRegisterCallback)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsUnregisterCallback)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsCurrent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsDumpToFile)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLogsDumpToMemory)
+#endif
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGreenCtxGetId)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxRecordEvent)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxWaitEvent)
@@ -8019,11 +8127,13 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuGraphConditionalHandleCreate),
       LUPINE_STUB_ENTRY(cuDeviceRegisterAsyncNotification),
       LUPINE_STUB_ENTRY(cuDeviceUnregisterAsyncNotification),
+#if CUDA_VERSION < 12090
       LUPINE_STUB_ENTRY(cuLogsRegisterCallback),
       LUPINE_STUB_ENTRY(cuLogsUnregisterCallback),
       LUPINE_STUB_ENTRY(cuLogsCurrent),
       LUPINE_STUB_ENTRY(cuLogsDumpToFile),
       LUPINE_STUB_ENTRY(cuLogsDumpToMemory),
+#endif
       LUPINE_STUB_ENTRY(cuGreenCtxGetId),
       LUPINE_STUB_ENTRY(cuCtxRecordEvent),
       LUPINE_STUB_ENTRY(cuCtxWaitEvent),
@@ -8143,6 +8253,55 @@ void *rpc_client_dispatch_thread(void *arg) {
         LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
         break;
       }
+    } else if (op == LUPINE_SIDE_EFFECT_LOG_CALLBACK) {
+#if CUDA_VERSION >= 12090
+      CUlogLevel level = CU_LOG_LEVEL_ERROR;
+      size_t length = 0;
+      CUlogsCallback callback = nullptr;
+      void *user_data = nullptr;
+      if (rpc_read(conn, &level, sizeof(level)) < 0 ||
+          rpc_read(conn, &length, sizeof(length)) < 0) {
+        LUPINE_LOG_ERROR("Failed to read log callback metadata.");
+        break;
+      }
+
+      std::vector<char> message;
+      try {
+        if (length == SIZE_MAX) {
+          throw std::bad_alloc();
+        }
+        message.resize(length + 1);
+      } catch (...) {
+        LUPINE_LOG_ERROR("Failed to allocate log callback message.");
+        break;
+      }
+      if ((length != 0 && rpc_read(conn, message.data(), length) < 0) ||
+          rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
+        LUPINE_LOG_ERROR("Failed to read log callback request.");
+        break;
+      }
+      message[length] = '\0';
+
+      int request_id = rpc_read_end(conn);
+      if (request_id < 0) {
+        break;
+      }
+
+      if (callback != nullptr) {
+        callback(user_data, level, message.data(), length);
+      }
+
+      void *res = nullptr;
+      if (rpc_write_start_response(conn, request_id) < 0 ||
+          rpc_write(conn, &res, sizeof(res)) < 0 || rpc_write_end(conn) < 0) {
+        LUPINE_LOG_ERROR("Failed to acknowledge log callback.");
+        break;
+      }
+#else
+      LUPINE_LOG_ERROR("Received unsupported log callback request.");
+      break;
+#endif
     } else if (op == LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) {
       struct host_read {
         const unsigned char *source = nullptr;
@@ -8823,6 +8982,10 @@ lupine_manual_function_map() {
       {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
       {"cuStreamAddCallback", (void *)cuStreamAddCallback},
       {"cuStreamAddCallback_ptsz", (void *)cuStreamAddCallback},
+#if CUDA_VERSION >= 12090
+      {"cuLogsRegisterCallback", (void *)cuLogsRegisterCallback},
+      {"cuLogsUnregisterCallback", (void *)cuLogsUnregisterCallback},
+#endif
       {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
       {"cuStreamEndCapture_ptsz", (void *)cuStreamEndCapture},
       {"cuStreamIsCapturing_ptsz", (void *)cuStreamIsCapturing},
