@@ -227,6 +227,15 @@ void rpc_shutdown_socket(lupine_socket_t socket) {
 #endif
 }
 
+void rpc_wake_async_waiters(conn_t *conn) {
+  if (!conn->async_sync_initialized) {
+    return;
+  }
+  pthread_mutex_lock(&conn->async_mutex);
+  pthread_cond_broadcast(&conn->async_cond);
+  pthread_mutex_unlock(&conn->async_mutex);
+}
+
 } // namespace
 
 void rpc_shutdown_transport_socket(conn_t *conn) {
@@ -242,6 +251,7 @@ void rpc_shutdown_transport_socket(conn_t *conn) {
   const lupine_socket_t socket =
       __atomic_load_n(&conn->connfd, __ATOMIC_ACQUIRE);
 #endif
+  rpc_wake_async_waiters(conn);
   if (socket != LUPINE_INVALID_SOCKET) {
     rpc_shutdown_socket(socket);
   }
@@ -261,6 +271,7 @@ void rpc_close_transport_socket(conn_t *conn) {
   lupine_socket_t socket = __atomic_exchange_n(
       &conn->connfd, LUPINE_INVALID_SOCKET, __ATOMIC_ACQ_REL);
 #endif
+  rpc_wake_async_waiters(conn);
   if (socket == LUPINE_INVALID_SOCKET) {
     return;
   }
@@ -330,6 +341,18 @@ int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
     pthread_mutex_destroy(&conn->write_mutex);
     goto fail;
   }
+  if (pthread_mutex_init(&conn->async_mutex, nullptr) != 0) {
+    pthread_mutex_destroy(&conn->call_mutex);
+    pthread_mutex_destroy(&conn->write_mutex);
+    goto fail;
+  }
+  if (pthread_cond_init(&conn->async_cond, nullptr) != 0) {
+    pthread_mutex_destroy(&conn->async_mutex);
+    pthread_mutex_destroy(&conn->call_mutex);
+    pthread_mutex_destroy(&conn->write_mutex);
+    goto fail;
+  }
+  conn->async_sync_initialized = 1;
   return 0;
 
 fail:
@@ -337,6 +360,30 @@ fail:
   *conn = {};
   conn->connfd = LUPINE_INVALID_SOCKET;
   return -1;
+}
+
+int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence) {
+  if (pthread_mutex_lock(&conn->async_mutex) != 0) {
+    return -1;
+  }
+  while (!conn->closed && conn->serving_async_sequence != sequence) {
+    if (conn->serving_async_sequence > sequence ||
+        pthread_cond_wait(&conn->async_cond, &conn->async_mutex) != 0) {
+      pthread_mutex_unlock(&conn->async_mutex);
+      return -1;
+    }
+  }
+  if (conn->closed) {
+    pthread_mutex_unlock(&conn->async_mutex);
+    return -1;
+  }
+  return 0;
+}
+
+void rpc_async_sequence_end(conn_t *conn) {
+  ++conn->serving_async_sequence;
+  pthread_cond_broadcast(&conn->async_cond);
+  pthread_mutex_unlock(&conn->async_mutex);
 }
 
 void rpc_conn_destroy(conn_t *conn) {
@@ -349,6 +396,9 @@ void rpc_conn_destroy(conn_t *conn) {
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
+  conn->async_sync_initialized = 0;
+  pthread_cond_destroy(&conn->async_cond);
+  pthread_mutex_destroy(&conn->async_mutex);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
 }
@@ -378,6 +428,7 @@ int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks) {
 
 static void rpc_mark_connection_closed(conn_t *conn) {
   conn->closed = 1;
+  rpc_wake_async_waiters(conn);
   auto hook = connection_closed_hook.load(std::memory_order_acquire);
   if (hook != nullptr) {
     hook(conn);
@@ -753,6 +804,16 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   }
   return 0;
 }
+
+int rpc_write_start_async_request(conn_t *conn, const int op,
+                                  uint64_t *sequence) {
+  if (sequence == nullptr || rpc_write_start_request(conn, op) < 0) {
+    return -1;
+  }
+  *sequence = conn->issued_async_sequence++;
+  return 0;
+}
+
 // rpc_write_start_request starts a new request builder on the given connection
 // index with a specific op code.
 //

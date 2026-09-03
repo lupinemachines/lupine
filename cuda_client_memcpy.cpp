@@ -3353,8 +3353,11 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   }
 
   conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
+  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyDtoHAsync_v2) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemcpyDtoHAsync_v2,
+                                    &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
