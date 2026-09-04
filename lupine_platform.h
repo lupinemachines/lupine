@@ -147,6 +147,10 @@ inline int pthread_mutex_lock(pthread_mutex_t *mutex) {
   return 0;
 }
 
+inline int pthread_mutex_trylock(pthread_mutex_t *mutex) {
+  return TryAcquireSRWLockExclusive(mutex) ? 0 : 1;
+}
+
 inline int pthread_mutex_unlock(pthread_mutex_t *mutex) {
   ReleaseSRWLockExclusive(mutex);
   return 0;

@@ -1560,6 +1560,101 @@ void test_rpc_repeated_responses_on_lane() {
   server.join();
 }
 
+void test_rpc_request_nested_in_response_builder() {
+  h2_pair pair = make_pair();
+
+  constexpr int kOuterOp = 83;
+  constexpr int kNestedOp = 85;
+  constexpr int kBefore = 101;
+  constexpr int kNestedValue = 202;
+  constexpr int kNestedResponse = 203;
+  constexpr int kAfter = 303;
+
+  std::thread client_dispatch([&] {
+    require(rpc_dispatch(&pair.client, 1) == kNestedOp,
+            "nested request dispatch failed");
+    int nested_value = 0;
+    require(rpc_read(&pair.client, &nested_value, sizeof(nested_value)) ==
+                sizeof(nested_value),
+            "nested request payload read failed");
+    require(nested_value == kNestedValue, "nested request payload mismatch");
+    int nested_id = rpc_read_end(&pair.client);
+    require(nested_id > 0, "nested request read end failed");
+    require(rpc_write_start_response(&pair.client, nested_id) == 0,
+            "nested response start failed");
+    require(
+        rpc_write(&pair.client, &kNestedResponse, sizeof(kNestedResponse)) == 0,
+        "nested response payload write failed");
+    require(rpc_write_end(&pair.client) == nested_id,
+            "nested response write end failed");
+  });
+
+  std::thread server([&] {
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "outer response stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOuterOp,
+            "outer request dispatch failed");
+    int outer_id = rpc_read_end(&pair.server);
+    require(outer_id > 0, "outer request read end failed");
+
+    require(rpc_write_start_response(&pair.server, outer_id) == 0,
+            "outer response start failed");
+    require(rpc_copy_alloc(&pair.server, 2 * sizeof(int)) == 0,
+            "outer response copy allocation failed");
+    auto *before = static_cast<int *>(
+        rpc_write_buffer(&pair.server, sizeof(int), alignof(int)));
+    require(before != nullptr, "outer response first buffer failed");
+    *before = kBefore;
+
+    require(rpc_write_start_request(&pair.server, kNestedOp) == 0,
+            "request nested in response start failed");
+    require(rpc_copy_alloc(&pair.server, sizeof(int)) == 0,
+            "nested request copy allocation failed");
+    auto *nested_value = static_cast<int *>(
+        rpc_write_buffer(&pair.server, sizeof(int), alignof(int)));
+    require(nested_value != nullptr, "nested request buffer failed");
+    *nested_value = kNestedValue;
+    require(rpc_wait_for_response(&pair.server) == 0,
+            "nested request response wait failed");
+    int nested_response = 0;
+    require(rpc_read(&pair.server, &nested_response, sizeof(nested_response)) ==
+                sizeof(nested_response),
+            "nested response payload read failed");
+    require(nested_response == kNestedResponse,
+            "nested response payload mismatch");
+    require(rpc_read_end(&pair.server) > 0, "nested response read end failed");
+
+    auto *after = static_cast<int *>(
+        rpc_write_buffer(&pair.server, sizeof(int), alignof(int)));
+    require(after != nullptr, "outer response second buffer failed");
+    *after = kAfter;
+    require(rpc_write_end(&pair.server) == outer_id,
+            "outer response write end failed");
+    rpc_unbind_http2_stream(&pair.server);
+  });
+
+  require(rpc_write_start_request(&pair.client, kOuterOp) == 0,
+          "outer request start failed");
+  int outer_id = rpc_write_end(&pair.client);
+  require(outer_id > 0, "outer request write end failed");
+  require(rpc_read_start(&pair.client, outer_id) == 0,
+          "outer response read start failed");
+  int before = 0;
+  int after = 0;
+  require(rpc_read(&pair.client, &before, sizeof(before)) == sizeof(before),
+          "outer response first payload read failed");
+  require(rpc_read(&pair.client, &after, sizeof(after)) == sizeof(after),
+          "outer response second payload read failed");
+  require(rpc_read_end(&pair.client) == outer_id,
+          "outer response read end failed");
+  require(before == kBefore && after == kAfter,
+          "outer response payload mismatch");
+
+  server.join();
+  client_dispatch.join();
+}
+
 void test_rpc_response_completed_hook() {
   h2_pair pair = make_pair();
   constexpr int kOp = 97;
@@ -1718,6 +1813,7 @@ int main() {
   RUN_CASE(test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy());
   RUN_CASE(test_rpc_small_payload_round_trip());
   RUN_CASE(test_rpc_repeated_responses_on_lane());
+  RUN_CASE(test_rpc_request_nested_in_response_builder());
   RUN_CASE(test_rpc_response_completed_hook());
   RUN_CASE(test_response_wait_sends_transport_heartbeat());
   RUN_CASE(test_data_provider_frame_sizing());
