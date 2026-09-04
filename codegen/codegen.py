@@ -8,6 +8,7 @@ from cxxheaderparser.types import Type, Pointer, Parameter, Function, Array
 from typing import Optional, Union
 from dataclasses import dataclass
 from string import Template
+from types import SimpleNamespace
 import argparse
 import io
 import os
@@ -378,13 +379,19 @@ def rpc_id(name: str) -> int:
     return zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
 
 
+# One annotation file per shim target. A declaration belongs to the target
+# whose file it lives in, so no API-name prefix is needed to tell them apart.
+ANNOTATION_FILES = {
+    "cuda": "annotations_cuda.h",
+    "nvml": "annotations_nvml.h",
+    "hip": "annotations_hip.h",
+}
+
+
 def annotated_rpc_names(annotations: ParsedData) -> list[str]:
-    names: set[str] = set()
-    for function in annotations.namespace.functions:
-        name = function.name.format()
-        if len(name) > 2 and name.startswith("cu") and name[2].isupper():
-            names.add(name)
-    return sorted(names)
+    return sorted(
+        {function.name.format() for function in annotations.namespace.functions}
+    )
 
 
 SKIP_FUNCTIONS = {
@@ -1498,7 +1505,6 @@ HIP_ROOT = (
 
 # List of possible directories to search for header files
 COMMON_INCLUDE_DIRS = [
-    "./",
     os.path.join(HIP_ROOT, "include"),
     "/usr/local/cuda/include/",
     "/opt/cuda/include/",
@@ -1565,7 +1571,6 @@ def attach_client_call_template(
 def main():
     cuda_header = find_header_file("cuda.h")
     hip_header = find_header_file("hip_runtime_api.h")
-    annotations_header = find_header_file("annotations.h")
 
     cuda_include_dir = os.path.dirname(cuda_header)
     hip_include_dir = os.path.dirname(os.path.dirname(hip_header))
@@ -1578,16 +1583,34 @@ def main():
 
     # Parse the files
     cuda_ast: ParsedData = parse_file(cuda_header, options=options)
-    annotations: ParsedData = parse_file(annotations_header, options=options)
+    annotations_by_target = {
+        target: parse_file(path, options=options)
+        for target, path in ANNOTATION_FILES.items()
+    }
+    cuda_annotations = annotations_by_target["cuda"]
+    annotations = SimpleNamespace(
+        namespace=SimpleNamespace(
+            functions=[
+                function
+                for parsed in annotations_by_target.values()
+                for function in parsed.namespace.functions
+            ]
+        )
+    )
     definition_return_types = {
         function.name.format(): function.return_type.format()
-        for function in annotations.namespace.functions
+        for function in cuda_annotations.namespace.functions
         if function.has_body
     }
     client_call_templates = collect_client_call_templates(
-        annotations_header, definition_return_types
+        ANNOTATION_FILES["cuda"], definition_return_types
     )
-    server_bindings = collect_server_bindings(annotations_header)
+    server_bindings = {}
+    for path in ANNOTATION_FILES.values():
+        for name, binding in collect_server_bindings(path).items():
+            if name in server_bindings and server_bindings[name] != binding:
+                raise RuntimeError(f"Conflicting @server annotations for {name}")
+            server_bindings[name] = binding
     functions = [
         function
         for function in cuda_ast.namespace.functions
@@ -1636,14 +1659,9 @@ def main():
     }
     legacy_abi_functions = []
     annotation_only_server_functions = []
-    for annotation in annotations.namespace.functions:
+    for annotation in cuda_annotations.namespace.functions:
         name = annotation.name.format()
-        if (
-            len(name) <= 2
-            or not name.startswith("cu")
-            or not name[2].isupper()
-            or name in server_function_names
-        ):
+        if name in server_function_names:
             continue
         directives = annotation_directives(annotation.doxygen)
         legacy_abi = name in LEGACY_ABI_FUNCTIONS
@@ -1712,7 +1730,7 @@ def main():
     hip_functions_with_annotations = collect_hip_functions(annotations)
 
     annotated_names = sorted(
-        set(annotated_rpc_names(annotations))
+        set(annotated_rpc_names(cuda_annotations))
         | {
             name
             for name, binding in server_bindings.items()
@@ -2523,7 +2541,7 @@ if __name__ == "__main__":
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()
-    # Inputs (annotations.h) and gen_* outputs are CWD-relative.
+    # Annotation inputs and gen_* outputs are CWD-relative.
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     if args.verify_backend:
         verify_backend_boundaries(args.verify_backend)
