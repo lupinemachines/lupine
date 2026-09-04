@@ -71,6 +71,11 @@ else()
     set_property(TARGET lupine_cudart PROPERTY SOVERSION 13)
     target_link_options(lupine_cudart PRIVATE
       "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cudart.exports")
+    if("$ENV{AUDITWHEEL_POLICY}" STREQUAL "manylinux2014")
+      target_link_options(lupine_cudart PRIVATE
+        -static-libgcc
+        -static-libstdc++)
+    endif()
   endif()
   target_link_libraries(lupine_cudart PRIVATE ${LUPINE_CLIENT_LIB} pthread)
 endif()

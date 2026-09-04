@@ -24,8 +24,13 @@
 #define __device__
 #define __device_builtin__
 #define __device_builtin_runtime__
-#define __align__(n) alignas(n)
-#define __builtin_align__(n) alignas(n)
+#if defined(_MSC_VER)
+#define __align__(n) __declspec(align(n))
+#define __builtin_align__(n) __declspec(align(n))
+#else
+#define __align__(n) __attribute__((aligned(n)))
+#define __builtin_align__(n) __attribute__((aligned(n)))
+#endif
 #define __global__
 #define __forceinline__ inline
 #define __no_return__ [[noreturn]]

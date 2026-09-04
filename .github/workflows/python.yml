@@ -23,198 +23,15 @@ permissions:
   contents: read
 
 jobs:
-  runtime:
-    name: Runtime stub / ${{ matrix.tag }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            tag: linux-x86_64
-          - runner: ubuntu-24.04-arm
-            tag: linux-aarch64
-          - runner: macos-26
-            tag: macosx-arm64
-          - runner: macos-26-intel
-            tag: macosx-x86_64
-          - runner: windows-2025-vs2026
-            tag: win-amd64
-          - runner: windows-11-vs2026-arm
-            tag: win-arm64
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout_ref || github.sha }}
-
-      - name: Install build dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y libnghttp2-dev ninja-build
-
-      - name: Install build dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libnghttp2 ninja
-
-      - name: Download CUDA headers (non-Windows)
-        if: runner.os != 'Windows'
-        run: |
-          set -euo pipefail
-          python3 -m pip download \
-            --dest headers \
-            --only-binary=:all: \
-            --platform manylinux2014_x86_64 \
-            --implementation py \
-            --python-version 3 \
-            --abi none \
-            --no-deps \
-            nvidia-cuda-runtime
-          mkdir -p cuda-sdk
-          for wheel in headers/*.whl; do unzip -q "$wheel" -d cuda-sdk; done
-
-      - name: Install build dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not (Test-Path "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe")) {
-            throw 'The runner vcpkg installation was not found'
-          }
-          $triplet = '${{ matrix.tag }}' -eq 'win-arm64' ? 'arm64-windows-static' : 'x64-windows-static'
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-            "nghttp2:$triplet" `
-            "openssl:$triplet"
-
-      - name: Download CUDA headers (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path cuda-wheel, cuda-sdk | Out-Null
-          python -m pip download `
-            --dest cuda-wheel `
-            --only-binary=:all: `
-            --platform manylinux2014_x86_64 `
-            --implementation py `
-            --python-version 3 `
-            --abi none `
-            --no-deps `
-            nvidia-cuda-runtime
-          $cudaWheel = Get-ChildItem 'cuda-wheel/nvidia_cuda_runtime-*.whl' | Select-Object -First 1
-          if ($null -eq $cudaWheel) {
-            throw 'The CUDA header wheel was not downloaded'
-          }
-          python -m zipfile -e $cudaWheel.FullName cuda-sdk
-          $cudaHeader = Get-ChildItem 'cuda-sdk/nvidia' -Recurse -Filter cuda.h | Select-Object -First 1
-          if ($null -eq $cudaHeader) {
-            throw 'CUDA headers were not found in the downloaded wheel'
-          }
-          New-Item -ItemType Directory -Force -Path cuda-sdk/include | Out-Null
-          Copy-Item (Join-Path $cudaHeader.DirectoryName '*') cuda-sdk/include -Recurse -Force
-
-      - name: Configure and build runtime (non-Windows)
-        if: runner.os != 'Windows'
-        run: |
-          set -euo pipefail
-          # libcudart links against libcuda, so build the driver as a link-time
-          # dependency. Only the runtime artifact is staged or uploaded.
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLUPINE_BUILD_SERVER=OFF \
-            -DLUPINE_BUILD_NVML=OFF \
-            -DLUPINE_BUILD_HIP=OFF \
-            -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
-          cmake --build build --parallel --target lupine_cuda_client
-          cmake -S python/cudart -B build-cudart -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include" \
-            -DLUPINE_CLIENT_DIR="$PWD/build"
-          cmake --build build-cudart --parallel
-
-      - name: Configure and build runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $arch = '${{ matrix.tag }}' -eq 'win-arm64' ? 'ARM64' : 'x64'
-          $triplet = '${{ matrix.tag }}' -eq 'win-arm64' ? 'arm64-windows-static' : 'x64-windows-static'
-          cmake -S . -B build -G "Visual Studio 18 2026" -A $arch `
-            -DLUPINE_BUILD_SERVER=OFF `
-            -DLUPINE_BUILD_NVML=OFF `
-            -DLUPINE_BUILD_HIP=OFF `
-            -DCMAKE_BUILD_TYPE=Release `
-            "-DCMAKE_PREFIX_PATH=$PWD\cuda-sdk" `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            "-DVCPKG_TARGET_TRIPLET=$triplet" `
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
-          cmake --build build --config Release --target lupine_cuda_client
-          cmake -S python/cudart -B build-cudart -G "Visual Studio 18 2026" -A $arch `
-            -DCMAKE_BUILD_TYPE=Release `
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
-            "-DLUPINE_CUDA_INCLUDE_DIR=$PWD\cuda-sdk\include" `
-            "-DLUPINE_CLIENT_DIR=$PWD\build\Release"
-          cmake --build build-cudart --config Release
-
-      - name: Collect runtime stub
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p runtime-stub
-          case "${{ matrix.tag }}" in
-            win-*) cp build-cudart/Release/cudart64_13.dll runtime-stub/ ;;
-            macosx-*) cp build-cudart/libcudart.dylib runtime-stub/ ;;
-            *) cp build-cudart/libcudart.so.13 runtime-stub/ ;;
-          esac
-
-      - name: Upload runtime stub
-        uses: actions/upload-artifact@v7
-        with:
-          name: lupine-runtime-${{ matrix.tag }}
-          path: runtime-stub
-          if-no-files-found: error
-          retention-days: 3
-
-  macos-universal:
-    name: Assemble macOS universal2 runtime
-    needs: runtime
-    runs-on: macos-26
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout_ref || github.sha }}
-
-      - name: Download thin runtimes
-        uses: actions/download-artifact@v8
-        with:
-          pattern: lupine-runtime-macosx-*
-          path: thin
-          merge-multiple: false
-
-      - name: Lipo universal runtime
-        run: |
-          set -euo pipefail
-          mkdir -p universal
-          lipo -create \
-            thin/lupine-runtime-macosx-arm64/libcudart.dylib \
-            thin/lupine-runtime-macosx-x86_64/libcudart.dylib \
-            -output universal/libcudart.dylib
-
-      - name: Upload universal runtime
-        uses: actions/upload-artifact@v7
-        with:
-          name: lupine-runtime-macosx-universal2
-          path: universal
-          if-no-files-found: error
-          retention-days: 3
+  clients:
+    name: Build native clients
+    uses: ./.github/workflows/native-clients.yml
+    with:
+      checkout_ref: ${{ inputs.checkout_ref || github.sha }}
 
   package:
     name: Assemble and test wheels
-    needs: [runtime, macos-universal]
+    needs: clients
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -229,22 +46,29 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Download runtime stubs
+      - name: Download native clients
         uses: actions/download-artifact@v8
         with:
-          pattern: lupine-runtime-*
-          path: runtimes
+          pattern: lupine-client-*
+          path: clients
           merge-multiple: false
 
       - name: Stage runtime stubs
         run: |
           set -euo pipefail
           mkdir -p python/lupine/_libs
-          for dir in runtimes/lupine-runtime-*; do
-            tag="${dir##*/lupine-runtime-}"
+          for dir in clients/lupine-client-*; do
+            tag="${dir##*/lupine-client-}"
             # Thin macOS slices only feed the lipo job.
             case "$tag" in macosx-arm64|macosx-x86_64) continue ;; esac
-            cp -R "$dir" "python/lupine/_libs/$tag"
+            case "$tag" in
+              linux-*) runtime=libcudart.so.13 ;;
+              macosx-*) runtime=libcudart.dylib ;;
+              win-*) runtime=cudart64_13.dll ;;
+              *) echo "unknown client platform: $tag" >&2; exit 1 ;;
+            esac
+            mkdir -p "python/lupine/_libs/$tag"
+            cp "$dir/$runtime" "python/lupine/_libs/$tag/"
           done
 
       - name: Run Python tests

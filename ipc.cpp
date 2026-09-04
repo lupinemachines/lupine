@@ -30,9 +30,8 @@ extern "C" int lupine_ipc_broker_parent_handle(int) { return -1; }
 #include <unordered_map>
 
 #include <fcntl.h>
-#include <sys/mman.h>
 #if !defined(__APPLE__)
-#include <sys/random.h>
+#include <sys/syscall.h>
 #endif
 #include <sys/socket.h>
 #include <unistd.h>
@@ -71,6 +70,64 @@ std::string lupine_ipc_key(uint32_t kind, const lupine_ipc_token &token) {
   std::string key(reinterpret_cast<const char *>(&kind), sizeof(kind));
   key.append(reinterpret_cast<const char *>(token.bytes), sizeof(token.bytes));
   return key;
+}
+
+int lupine_random_bytes(unsigned char *bytes, size_t size) {
+#if !defined(__APPLE__) && defined(SYS_getrandom)
+  size_t syscall_done = 0;
+  while (syscall_done < size) {
+    ssize_t n =
+        syscall(SYS_getrandom, bytes + syscall_done, size - syscall_done, 0);
+    if (n > 0) {
+      syscall_done += static_cast<size_t>(n);
+      continue;
+    }
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (syscall_done != 0 || (n < 0 && errno != ENOSYS)) {
+      return -1;
+    }
+    break;
+  }
+  if (syscall_done == size) {
+    return 0;
+  }
+#endif
+
+  int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return -1;
+  }
+  size_t done = 0;
+  while (done < size) {
+    ssize_t n = read(fd, bytes + done, size - done);
+    if (n > 0) {
+      done += static_cast<size_t>(n);
+    } else if (n < 0 && errno == EINTR) {
+      continue;
+    } else {
+      close(fd);
+      return -1;
+    }
+  }
+  return close(fd) == 0 ? 0 : -1;
+}
+
+int lupine_temporary_proxy_fd() {
+#if !defined(__APPLE__) && defined(SYS_memfd_create)
+  int memfd =
+      static_cast<int>(syscall(SYS_memfd_create, "lupine-ipc-proxy", 0));
+  if (memfd >= 0) {
+    return memfd;
+  }
+#endif
+  char path[] = "/tmp/lupine-ipc-proxy.XXXXXX";
+  int fd = mkstemp(path);
+  if (fd >= 0) {
+    unlink(path);
+  }
+  return fd;
 }
 
 int lupine_send_broker_msg(int sock, const lupine_ipc_broker_msg &msg, int fd) {
@@ -149,18 +206,7 @@ extern "C" int lupine_ipc_make_token(lupine_ipc_token *token) {
   arc4random_buf(token->bytes, sizeof(token->bytes));
   return 0;
 #else
-  size_t done = 0;
-  while (done < sizeof(token->bytes)) {
-    ssize_t n = getrandom(token->bytes + done, sizeof(token->bytes) - done, 0);
-    if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      return -1;
-    }
-    done += static_cast<size_t>(n);
-  }
-  return 0;
+  return lupine_random_bytes(token->bytes, sizeof(token->bytes));
 #endif
 }
 
@@ -170,15 +216,7 @@ extern "C" int lupine_ipc_create_proxy_fd(uint32_t kind,
   if (token == nullptr || out_fd == nullptr) {
     return -1;
   }
-#if defined(__APPLE__)
-  char path[] = "/tmp/lupine-ipc-proxy.XXXXXX";
-  int fd = mkstemp(path);
-  if (fd >= 0) {
-    unlink(path);
-  }
-#else
-  int fd = memfd_create("lupine-ipc-proxy", 0);
-#endif
+  int fd = lupine_temporary_proxy_fd();
   if (fd < 0) {
     return -1;
   }
