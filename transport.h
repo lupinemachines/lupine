@@ -31,6 +31,7 @@ struct lupine_client_transport_config {
   void *(*dispatch)(void *conn) = nullptr;
   void (*connection_opened)(conn_t *conn) = nullptr;
   void (*connection_closed)(conn_t *conn) = nullptr;
+  const char *connection_kind = nullptr;
   intptr_t w_offset = 0;
 };
 

@@ -7,10 +7,9 @@
 // RPC/non-RPC split is decided by the request route, not the HTTP version:
 // this file only detects the framing.
 //
-// Reads block without an application deadline. Dispatch runs inside the
-// per-connection child, so a stalled peer only occupies its own child until
-// the keepalive options from lupine_socket_apply_transport_options declare
-// the peer dead and recv fails.
+// Protocol detection blocks until enough bytes arrive to classify the
+// connection. Once classified as HTTP/1.x, reads and writes use a short
+// application deadline so a stalled scrape only occupies its own child briefly.
 
 #include "dispatch.h"
 
@@ -92,13 +91,28 @@ std::string http1_headers(int status, const char *reason,
 std::string http1_response(int status, const char *reason,
                            const std::string &body, bool include_body,
                            const rpc_http2_server_metadata *metadata,
-                           const std::vector<http_header> &headers = {}) {
+                           const std::vector<http_header> &headers = {},
+                           const char *content_type = "text/plain") {
   std::string response = http1_headers(status, reason, body.size(),
-                                       "text/plain", headers, metadata);
+                                       content_type, headers, metadata);
   if (include_body) {
     response += body;
   }
   return response;
+}
+
+void set_http_timeout(lupine_socket_t fd) {
+#ifdef _WIN32
+  DWORD timeout = 2000;
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+             reinterpret_cast<const char *>(&timeout), sizeof(timeout));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+             reinterpret_cast<const char *>(&timeout), sizeof(timeout));
+#else
+  timeval timeout = {2, 0};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#endif
 }
 
 bool send_bundle(lupine_socket_t fd,
@@ -198,7 +212,9 @@ int serve_client_bundle(lupine_socket_t fd, const std::string &method,
   return head || send_bundle(fd, *bundle) ? 1 : -1;
 }
 
-int serve_http1(lupine_socket_t fd, const rpc_http2_server_metadata *metadata) {
+int serve_http1(lupine_socket_t fd, const rpc_http2_server_metadata *metadata,
+                lupine_metrics_handler metrics) {
+  set_http_timeout(fd);
   std::string request;
   while (request.find("\r\n\r\n") == std::string::npos) {
     if (request.size() >= kMaxHttp1RequestBytes) {
@@ -240,6 +256,10 @@ int serve_http1(lupine_socket_t fd, const rpc_http2_server_metadata *metadata) {
   bool head = method == "HEAD";
   if (path == "/" && (head || method == "GET")) {
     send_all(fd, http1_response(200, "OK", "lupine\n", !head, metadata));
+  } else if (metrics != nullptr && method == "GET" &&
+             (path == "/metrics" || path.rfind("/metrics?", 0) == 0)) {
+    send_all(fd, http1_response(200, "OK", metrics(), true, metadata, {},
+                                "text/plain; version=0.0.4; charset=utf-8"));
   } else {
     send_all(fd,
              http1_response(404, "Not Found", "not found\n", !head, metadata));
@@ -258,7 +278,8 @@ int lupine_h2_preface_check(const unsigned char *data, size_t len) {
 }
 
 int lupine_connection_dispatch(lupine_socket_t connfd,
-                               const rpc_http2_server_metadata *metadata) {
+                               const rpc_http2_server_metadata *metadata,
+                               lupine_metrics_handler metrics) {
   for (;;) {
     unsigned char data[kH2PrefaceLength];
     ssize_t received = peek_bytes(connfd, data, sizeof(data));
@@ -273,7 +294,7 @@ int lupine_connection_dispatch(lupine_socket_t connfd,
       return 0;
     }
     if (verdict < 0) {
-      return serve_http1(connfd, metadata);
+      return serve_http1(connfd, metadata, metrics);
     }
     // A preface prefix shorter than 24 bytes: the bytes stay queued because
     // of MSG_PEEK, so another blocking peek returns immediately. Sleep

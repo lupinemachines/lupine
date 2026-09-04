@@ -324,7 +324,8 @@ if(WIN32)
 endif()
 
 add_library(lupine_client_transport STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/transport.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/transport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/monitor_client.cpp)
 lupine_internal_target(lupine_client_transport)
 target_include_directories(lupine_client_transport PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
@@ -470,6 +471,10 @@ if(LUPINE_BUILD_SERVER)
             ${CUDAToolkit_INCLUDE_DIRS})
         target_compile_definitions(lupine_cuda_server PRIVATE
             LUPINE_RPC_SERVER)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_NVML)
+            target_compile_definitions(lupine_cuda_server PRIVATE
+                LUPINE_MONITORING_ENABLED)
+        endif()
         if(MSVC)
             target_compile_options(lupine_cuda_server PRIVATE /wd4996)
         else()
@@ -483,7 +488,8 @@ if(LUPINE_BUILD_SERVER)
 
     if(LUPINE_BUILD_NVML)
         add_library(lupine_nvml_server STATIC
-            ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/nvml_server.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nvml_runtime.cpp)
         lupine_internal_target(lupine_nvml_server)
         target_include_directories(lupine_nvml_server PRIVATE
             ${CUDAToolkit_INCLUDE_DIRS})
@@ -504,6 +510,13 @@ if(LUPINE_BUILD_SERVER)
     add_executable(lupine_driver_server
         ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/registry.cpp)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_CUDA AND
+       LUPINE_BUILD_NVML)
+        target_sources(lupine_driver_server PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/monitor_server.cpp)
+        target_compile_definitions(lupine_driver_server PRIVATE
+            LUPINE_MONITORING_ENABLED)
+    endif()
     target_include_directories(lupine_driver_server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen
@@ -608,7 +621,9 @@ endif()
 # through on Windows (issue #656, in test_rpc_write_queue_grows), so it stays
 # off that platform until the transport difference behind that is understood.
 if(BUILD_TESTING AND NOT WIN32)
-    add_executable(h2_test ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp)
+    add_executable(h2_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/monitor_client.cpp)
     target_include_directories(h2_test PRIVATE ${NGHTTP2_INCLUDE_DIR})
     if(CUDAToolkit_VERSION)
         target_compile_definitions(h2_test PRIVATE

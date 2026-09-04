@@ -45,6 +45,7 @@
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
+#include "monitoring.h"
 #include "rpc.h"
 
 #ifdef _WIN32
@@ -4444,7 +4445,9 @@ int handle_cuCtxCreate_v2(conn_t *conn) {
 
   CUcontext context = nullptr;
   lupine_server_begin_lifecycle_transaction(conn);
+  lupine_monitoring_begin_context_create(device);
   CUresult result = cuCtxCreate_v2(&context, flags, device);
+  lupine_monitoring_end_context_create(result == CUDA_SUCCESS);
   lupine_server_note_created_context(conn, context, result);
   lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4467,7 +4470,9 @@ int handle_cuDevicePrimaryCtxRetain(conn_t *conn) {
 
   CUcontext context = nullptr;
   lupine_server_begin_lifecycle_transaction(conn);
+  lupine_monitoring_begin_context_create(device);
   CUresult result = cuDevicePrimaryCtxRetain(&context, device);
+  lupine_monitoring_end_context_create(result == CUDA_SUCCESS);
   lupine_server_note_primary_context(conn, device, context, result);
   lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
