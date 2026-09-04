@@ -181,6 +181,22 @@ function(lupine_internal_target target)
     )
 endfunction()
 
+# Client shims are loaded into applications whose C++ runtime can be older
+# than the compiler used to build Lupine. Keep that implementation detail out
+# of their ELF dependencies. Published Linux clients additionally link their
+# protocol and TLS dependencies statically in the manylinux2014 builder.
+function(lupine_link_linux_client_runtime target)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+       CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        set(private_archives
+            "libcrypto.a:libgcc.a:libgcc_eh.a:libnghttp2.a:libssl.a:libstdc++.a")
+        target_link_options(${target} PRIVATE
+            -static-libgcc
+            -static-libstdc++
+            "LINKER:--exclude-libs,${private_archives}")
+    endif()
+endfunction()
+
 function(lupine_apply_sanitizer target)
     if(LUPINE_SANITIZE)
         target_compile_options(${target} PRIVATE
@@ -288,6 +304,7 @@ if(LUPINE_BUILD_CUDA)
         ${CMAKE_DL_LIBS})
     set_target_properties(lupine_cuda_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
+    lupine_link_linux_client_runtime(lupine_cuda_client)
     if(WIN32)
         target_compile_definitions(lupine_cuda_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS
@@ -302,7 +319,6 @@ if(LUPINE_BUILD_CUDA)
             -Wno-deprecated-declarations)
         set_target_properties(lupine_cuda_client PROPERTIES OUTPUT_NAME cuda)
         if(NOT APPLE)
-            target_link_libraries(lupine_cuda_client PRIVATE stdc++)
             target_link_options(lupine_cuda_client PRIVATE
                 "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports")
             set_target_properties(lupine_cuda_client PROPERTIES
@@ -322,6 +338,7 @@ if(LUPINE_BUILD_NVML)
     target_link_libraries(lupine_nvml_client PRIVATE lupine_client_transport)
     set_target_properties(lupine_nvml_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
+    lupine_link_linux_client_runtime(lupine_nvml_client)
     if(WIN32)
         target_compile_definitions(lupine_nvml_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS
@@ -337,7 +354,6 @@ if(LUPINE_BUILD_NVML)
         set_target_properties(lupine_nvml_client PROPERTIES
             OUTPUT_NAME nvidia-ml)
         if(NOT APPLE)
-            target_link_libraries(lupine_nvml_client PRIVATE stdc++)
             target_link_options(lupine_nvml_client PRIVATE
                 "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/nvml.exports")
             set_target_properties(lupine_nvml_client PROPERTIES
@@ -360,6 +376,7 @@ if(NOT WIN32 AND LUPINE_BUILD_HIP)
     target_link_libraries(lupine_hip_client PRIVATE lupine_client_transport)
     target_link_options(lupine_hip_client PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/hip.exports")
+    lupine_link_linux_client_runtime(lupine_hip_client)
     set_target_properties(lupine_hip_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         OUTPUT_NAME amdhip64

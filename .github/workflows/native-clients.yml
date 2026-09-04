@@ -21,8 +21,10 @@ jobs:
         include:
           - runner: ubuntu-24.04
             tag: linux-x86_64
+            manylinux_image: quay.io/pypa/manylinux2014_x86_64@sha256:f6077fab327d7823d7cee287b93ef63efe3af0e234add7503121247c1475ebec
           - runner: ubuntu-24.04-arm
             tag: linux-aarch64
+            manylinux_image: quay.io/pypa/manylinux2014_aarch64@sha256:a0e2c77d2f0c2c2245bcacaf4024b2e19fa39257c172d6d7e33393aa0c3285ec
           - runner: macos-26
             tag: macosx-arm64
           - runner: macos-26-intel
@@ -35,19 +37,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install build dependencies (Linux)
+      - name: Build manylinux2014 client environment
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y libnghttp2-dev ninja-build
+          docker build \
+            -f .github/manylinux2014-client.Dockerfile \
+            --build-arg 'MANYLINUX_IMAGE=${{ matrix.manylinux_image }}' \
+            -t lupine-manylinux2014-client \
+            .github
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install libnghttp2 ninja
 
-      - name: Download CUDA headers (non-Windows)
-        if: runner.os != 'Windows'
+      - name: Download CUDA headers (macOS)
+        if: runner.os == 'macOS'
         run: |
           set -euo pipefail
           python3 -m pip download \
@@ -97,8 +102,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path cuda-sdk/include | Out-Null
           Copy-Item (Join-Path $cudaHeader.DirectoryName '*') cuda-sdk/include -Recurse -Force
 
-      - name: Build complete client (non-Windows)
-        if: runner.os != 'Windows'
+      - name: Build complete client (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            lupine-manylinux2014-client \
+            cmake/build_manylinux2014_client.sh complete
+
+      - name: Build complete client (macOS)
+        if: runner.os == 'macOS'
         run: |
           set -euo pipefail
           cmake -S . -B build -G Ninja \
@@ -155,6 +170,25 @@ jobs:
                 build/libnvidia-ml.so.1 complete-client/
               ;;
           esac
+
+      - name: Smoke test on Ubuntu 22.04
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/complete-client:/client:ro" \
+            ubuntu:22.04 \
+            bash -c '
+              set -euo pipefail
+              export LD_LIBRARY_PATH=/client
+              for library in /client/libcuda.so.1 /client/libcudart.so.13 /client/libnvidia-ml.so.1; do
+                output="$(ldd -r "$library" 2>&1)"
+                echo "$output"
+                if grep -Eq "not found|undefined symbol|version .* not found" <<<"$output"; then
+                  exit 1
+                fi
+              done
+            '
 
       - uses: actions/upload-artifact@v7
         with:
