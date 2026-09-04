@@ -6,6 +6,11 @@ concurrency:
 
 on:
   workflow_call:
+    inputs:
+      checkout_ref:
+        description: Exact source revision to build
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -36,6 +41,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
@@ -100,7 +107,34 @@ jobs:
             -v "$PWD:/workspace" \
             -w /workspace \
             '${{ matrix.manylinux_image }}' \
-            cmake/build_manylinux2014_client.sh complete
+            bash -lc '
+              set -euo pipefail
+              yum -q install -y perl-core
+              export PATH="/opt/python/cp312-cp312/bin:$PATH"
+
+              cmake -E remove_directory cuda-sdk
+              cmake -E remove_directory build
+              cmake -E remove_directory build-cudart
+              python3 -m pip install --quiet \
+                --target cuda-sdk \
+                --no-deps \
+                nvidia-cuda-runtime \
+                nvidia-nvml-dev
+
+              cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DLUPINE_BUILD_SERVER=OFF \
+                -DLUPINE_BUILD_HIP=OFF \
+                -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
+              cmake --build build --parallel \
+                --target lupine_cuda_client lupine_nvml
+
+              cmake -S python/cudart -B build-cudart \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DLUPINE_CUDA_INCLUDE_DIR="$PWD/cuda-sdk/nvidia/cu13/include" \
+                -DLUPINE_CLIENT_DIR="$PWD/build"
+              cmake --build build-cudart --parallel
+            '
 
       - name: Build complete client (macOS)
         if: runner.os == 'macOS'

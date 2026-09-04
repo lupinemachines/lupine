@@ -34,9 +34,87 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
 find_package(Threads REQUIRED)
-find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
-find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
-find_package(OpenSSL QUIET)
+
+set(LUPINE_MANYLINUX2014 OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   "$ENV{AUDITWHEEL_POLICY}" STREQUAL "manylinux2014")
+    set(LUPINE_MANYLINUX2014 ON)
+    include(ExternalProject)
+    include(FetchContent)
+    include(ProcessorCount)
+    if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW)
+    endif()
+    find_package(Perl REQUIRED)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_program(LUPINE_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
+
+    ProcessorCount(LUPINE_BUILD_JOBS)
+    if(NOT LUPINE_BUILD_JOBS)
+        set(LUPINE_BUILD_JOBS 2)
+    endif()
+
+    set(LUPINE_OPENSSL_PREFIX
+        "${CMAKE_BINARY_DIR}/manylinux2014/openssl")
+    file(MAKE_DIRECTORY "${LUPINE_OPENSSL_PREFIX}/include")
+
+    function(lupine_add_manylinux_nghttp2)
+        set(BUILD_SHARED_LIBS OFF)
+        set(BUILD_STATIC_LIBS ON)
+        set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+        set(ENABLE_LIB_ONLY ON)
+        FetchContent_Declare(lupine_manylinux_nghttp2
+        URL
+            https://github.com/nghttp2/nghttp2/releases/download/v1.70.0/nghttp2-1.70.0.tar.gz
+        URL_HASH
+            SHA256=aa317e2cf9dca6afa0aed68f8fad6ff303ec6982e25a78c75c0b65e2b9b3ded5)
+        FetchContent_MakeAvailable(lupine_manylinux_nghttp2)
+    endfunction()
+    lupine_add_manylinux_nghttp2()
+    set(NGHTTP2_INCLUDE_DIR "")
+    set(NGHTTP2_LIBRARY nghttp2_static)
+
+    ExternalProject_Add(lupine_manylinux_openssl_external
+        URL
+            https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz
+        URL_HASH
+            SHA256=a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
+        BUILD_IN_SOURCE TRUE
+        CONFIGURE_COMMAND
+            ${PERL_EXECUTABLE} <SOURCE_DIR>/Configure
+            --prefix=${LUPINE_OPENSSL_PREFIX}
+            --openssldir=/etc/ssl
+            --libdir=lib
+            no-module
+            no-shared
+            no-tests
+            no-zlib
+            -fPIC
+        BUILD_COMMAND
+            ${LUPINE_MAKE_EXECUTABLE} -j${LUPINE_BUILD_JOBS}
+        INSTALL_COMMAND ${LUPINE_MAKE_EXECUTABLE} install_sw
+        BUILD_BYPRODUCTS
+            ${LUPINE_OPENSSL_PREFIX}/lib/libcrypto.a
+            ${LUPINE_OPENSSL_PREFIX}/lib/libssl.a)
+
+    add_library(OpenSSL::Crypto STATIC IMPORTED GLOBAL)
+    set_target_properties(OpenSSL::Crypto PROPERTIES
+        IMPORTED_LOCATION "${LUPINE_OPENSSL_PREFIX}/lib/libcrypto.a"
+        INTERFACE_INCLUDE_DIRECTORIES "${LUPINE_OPENSSL_PREFIX}/include"
+        INTERFACE_LINK_LIBRARIES "Threads::Threads;${CMAKE_DL_LIBS}")
+    add_dependencies(OpenSSL::Crypto lupine_manylinux_openssl_external)
+    add_library(OpenSSL::SSL STATIC IMPORTED GLOBAL)
+    set_target_properties(OpenSSL::SSL PROPERTIES
+        IMPORTED_LOCATION "${LUPINE_OPENSSL_PREFIX}/lib/libssl.a"
+        INTERFACE_INCLUDE_DIRECTORIES "${LUPINE_OPENSSL_PREFIX}/include"
+        INTERFACE_LINK_LIBRARIES OpenSSL::Crypto)
+    add_dependencies(OpenSSL::SSL lupine_manylinux_openssl_external)
+    set(OpenSSL_FOUND TRUE)
+else()
+    find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
+    find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
+    find_package(OpenSSL QUIET)
+endif()
 
 set(MIN_CUDA_VERSION 11.0)
 if(LUPINE_BUILD_CUDA OR LUPINE_BUILD_NVML)
@@ -181,6 +259,20 @@ function(lupine_internal_target target)
     )
 endfunction()
 
+function(lupine_manylinux2014_client target)
+    if(LUPINE_MANYLINUX2014)
+        target_link_options(${target} PRIVATE
+            -static-libgcc
+            -static-libstdc++
+            "LINKER:--exclude-libs,libcrypto.a:libgcc.a:libgcc_eh.a:libnghttp2.a:libssl.a:libstdc++.a")
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/cmake/verify_manylinux2014.py
+                $<TARGET_FILE:${target}>
+            VERBATIM)
+    endif()
+endfunction()
+
 function(lupine_apply_sanitizer target)
     if(LUPINE_SANITIZE)
         target_compile_options(${target} PRIVATE
@@ -226,6 +318,9 @@ target_include_directories(lupine_rpc_core
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
     Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
+if(LUPINE_MANYLINUX2014)
+    add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
+endif()
 if(OpenSSL_FOUND)
     target_compile_definitions(lupine_rpc_core PRIVATE LUPINE_TLS_OPENSSL)
     target_link_libraries(lupine_rpc_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
@@ -288,6 +383,7 @@ if(LUPINE_BUILD_CUDA)
         ${CMAKE_DL_LIBS})
     set_target_properties(lupine_cuda_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_cuda_client)
     if(WIN32)
         target_compile_definitions(lupine_cuda_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS
@@ -321,6 +417,7 @@ if(LUPINE_BUILD_NVML)
     target_link_libraries(lupine_nvml_client PRIVATE lupine_client_transport)
     set_target_properties(lupine_nvml_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_nvml_client)
     if(WIN32)
         target_compile_definitions(lupine_nvml_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS
