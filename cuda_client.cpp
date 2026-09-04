@@ -4422,8 +4422,11 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   }
   lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
+  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuEventRecord) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuEventRecord, &async_sequence) <
+          0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -4449,8 +4452,11 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
   }
   lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
+  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuEventRecordWithFlags) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuEventRecordWithFlags,
+                                    &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 || rpc_write_end(conn) < 0) {
@@ -5266,9 +5272,13 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
        lupine_managed_kernel_requires_launch_sync(route_function) ||
        lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
-  // Fire-and-forget; launch errors are sticky and surface at the next sync.
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
+  if (lupine_prepare_rpc(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  uint64_t async_sequence = 0;
+  if (rpc_write_start_async_request(conn, RPC_cuLaunchKernel, &async_sequence) <
+          0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -5347,14 +5357,13 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
        lupine_managed_kernel_requires_launch_sync(route_function) ||
        lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
-  // Attribute-free launches are fire-and-forget like cuLaunchKernel; launch
-  // errors are sticky and surface at the next sync. Launches carrying
-  // attributes stay synchronous so attribute validation errors (e.g. invalid
-  // cluster dimensions) are reported from the launch itself. The server
-  // applies the same numAttrs rule when deciding whether to respond.
-  bool fire_and_forget = config->numAttrs == 0;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
+  if (lupine_prepare_rpc(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  uint64_t async_sequence = 0;
+  if (rpc_write_start_async_request(conn, RPC_cuLaunchKernelEx,
+                                    &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, config, sizeof(*config)) < 0 ||
       rpc_write(conn, config->attrs,
                 config->numAttrs * sizeof(*config->attrs)) < 0 ||
@@ -5365,7 +5374,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (fire_and_forget) {
+  if (config->numAttrs == 0) {
     if (rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
@@ -5427,8 +5436,13 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernel) < 0 ||
+  if (lupine_prepare_rpc(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  uint64_t async_sequence = 0;
+  if (rpc_write_start_async_request(conn, RPC_cuLaunchCooperativeKernel,
+                                    &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
