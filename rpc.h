@@ -116,7 +116,11 @@ struct conn_t {
   int32_t write_stream_id;
 
   pthread_t read_thread;
-  pthread_mutex_t write_mutex, call_mutex;
+  pthread_mutex_t write_mutex, call_mutex, async_mutex;
+  pthread_cond_t async_cond;
+  uint64_t issued_async_sequence;
+  uint64_t serving_async_sequence;
+  int async_sync_initialized;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
   int host_allocation_writes_pending;
@@ -184,6 +188,11 @@ extern int rpc_wait_for_response(conn_t *conn);
 // remote server) or a closed conn fails here, so callers surface their
 // unavailable-server result without per-call-site null checks.
 extern int rpc_write_start_request(conn_t *conn, const int op);
+// Starts a request and allocates its async-submission ticket while the normal
+// request lock is held. The caller writes the ticket into the request payload;
+// this adds no server acknowledgement or round trip.
+extern int rpc_write_start_async_request(conn_t *conn, const int op,
+                                         uint64_t *sequence);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
@@ -208,6 +217,10 @@ extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
 extern int rpc_write_end(conn_t *conn);
+// Server handlers wait only after receiving the complete async request, then
+// hold the turn through the native API submission.
+extern int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence);
+extern void rpc_async_sequence_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
 // Owners use this before joining workers that may be blocked on the transport.

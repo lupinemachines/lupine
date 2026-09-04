@@ -2096,8 +2096,12 @@ def main():
             if metadata.async_fire_forget:
                 error_return = error_const(function.return_type.format())
                 f.write(
+                    "    uint64_t async_sequence = 0;\n"
                     "    if (lupine_prepare_rpc(conn) < 0 ||\n"
-                    "        rpc_write_start_request(conn, RPC_{name}) < 0 ||\n".format(
+                    "        rpc_write_start_async_request(\n"
+                    "            conn, RPC_{name}, &async_sequence) < 0 ||\n"
+                    "        rpc_write(conn, &async_sequence, "
+                    "sizeof(async_sequence)) < 0 ||\n".format(
                         name=function.name.format()
                     )
                 )
@@ -2315,6 +2319,8 @@ def main():
             for operation in operations:
                 f.write(operation.server_declaration)
 
+            if metadata.async_fire_forget:
+                f.write("    uint64_t async_sequence = 0;\n")
             f.write("    int request_id;\n")
 
             # we only generate return from non-void types
@@ -2330,6 +2336,11 @@ def main():
                 f.write("    void* lupine_intercept_result;\n")
 
             f.write("    if (\n")
+            if metadata.async_fire_forget:
+                f.write(
+                    "        rpc_read(conn, &async_sequence, "
+                    "sizeof(async_sequence)) < 0 ||\n"
+                )
             for operation in operations:
                 if owned_buffer := operation.server_rpc_read(f):
                     owned_buffers.append(owned_buffer)
@@ -2349,6 +2360,12 @@ def main():
                     f"    {node} = lupine_htod_graph_exec_node({graph_exec}, {node});\n"
                 )
 
+            if metadata.async_fire_forget:
+                f.write(
+                    "    if (rpc_async_sequence_begin(conn, async_sequence) < 0)\n"
+                    "        goto ERROR_0;\n\n"
+                )
+
             params: list[str] = []
             # these need to be in function param order, not operation order.
             for param in function.parameters:
@@ -2363,6 +2380,8 @@ def main():
                         params=", ".join(params),
                     )
                 )
+                if metadata.async_fire_forget:
+                    f.write("    rpc_async_sequence_end(conn);\n\n")
             else:
                 f.write(
                     "    lupine_intercept_result = {name}({params});\n\n".format(
