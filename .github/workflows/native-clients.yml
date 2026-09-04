@@ -37,16 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Build manylinux2014 client environment
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          docker build \
-            -f .github/manylinux2014-client.Dockerfile \
-            --build-arg 'MANYLINUX_IMAGE=${{ matrix.manylinux_image }}' \
-            -t lupine-manylinux2014-client \
-            .github
-
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install libnghttp2 ninja
@@ -109,7 +99,7 @@ jobs:
           docker run --rm \
             -v "$PWD:/workspace" \
             -w /workspace \
-            lupine-manylinux2014-client \
+            '${{ matrix.manylinux_image }}' \
             cmake/build_manylinux2014_client.sh complete
 
       - name: Build complete client (macOS)

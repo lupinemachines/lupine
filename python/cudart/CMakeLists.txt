@@ -70,8 +70,6 @@ else()
     set_property(TARGET lupine_cudart PROPERTY VERSION 13)
     set_property(TARGET lupine_cudart PROPERTY SOVERSION 13)
     target_link_options(lupine_cudart PRIVATE
-      -static-libgcc
-      -static-libstdc++
       "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cudart.exports")
   endif()
   target_link_libraries(lupine_cudart PRIVATE ${LUPINE_CLIENT_LIB} pthread)
