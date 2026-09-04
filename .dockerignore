@@ -2,6 +2,7 @@
 .github/
 .claude/
 .vscode/
+gha-creds-*.json
 
 build/
 build-*/
