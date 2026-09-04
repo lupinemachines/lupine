@@ -2,38 +2,45 @@
 # requires-python = ">=3.10"
 # dependencies = ["cxxheaderparser"]
 # ///
+import argparse
 import os
 
 from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
 from cxxheaderparser.types import Type, Pointer, Array
 
+from codegen import ANNOTATION_FILES, find_header_file
 
-def main():
-    options = ParserOptions(preprocessor=make_gcc_preprocessor(defines=["CUBLASAPI="]))
+# The SDK header whose declarations seed each target's annotation file.
+TARGET_HEADERS = {
+    "cuda": "cuda.h",
+    "nvml": "nvml.h",
+    "hip": "hip_runtime_api.h",
+}
 
-    nvml_ast: ParsedData = parse_file("/usr/include/nvml.h", options=options)
-    cudnn_graph_ast: ParsedData = parse_file("/usr/include/cudnn_graph.h", options=options)
-    cudnn_ops_ast: ParsedData = parse_file("/usr/include/cudnn_ops.h", options=options)
-    cuda_ast: ParsedData = parse_file("/usr/include/cuda.h", options=options)
-    cublas_ast: ParsedData = parse_file("/usr/include/cublas_api.h", options=options)
-    cudart_ast: ParsedData = parse_file(
-        "/usr/include/cuda_runtime_api.h", options=options
+
+def main(target: str):
+    header = find_header_file(TARGET_HEADERS[target])
+    annotations_path = ANNOTATION_FILES[target]
+    options = ParserOptions(
+        preprocessor=make_gcc_preprocessor(
+            defines=["__HIP_PLATFORM_AMD__"],
+            # HIP declarations are included as <hip/...>, so search the
+            # header's parent directory as well as its own.
+            include_paths=[
+                os.path.dirname(header),
+                os.path.dirname(os.path.dirname(header)),
+            ],
+        )
     )
-    annotations: ParsedData = parse_file("annotations.h", options=options)
 
-    functions = (
-        nvml_ast.namespace.functions
-        + cuda_ast.namespace.functions
-        + cudart_ast.namespace.functions
-        + cudnn_graph_ast.namespace.functions
-        + cudnn_ops_ast.namespace.functions
-        + cublas_ast.namespace.functions
-    )
+    header_ast: ParsedData = parse_file(header, options=options)
+    annotations: ParsedData = parse_file(annotations_path, options=options)
+    annotated = {f.name.format() for f in annotations.namespace.functions}
 
-    with open("annotations.h", "a") as f:
-        for function in functions:
-            if any(f.name == function.name for f in annotations.namespace.functions):
+    with open(annotations_path, "a") as f:
+        for function in header_ast.namespace.functions:
+            if function.name.format() in annotated:
                 continue
             # produce some best-guess annotations
             f.write("/**\n")
@@ -90,6 +97,9 @@ def main():
 
 
 if __name__ == "__main__":
-    # annotations.h is read and appended to CWD-relative.
+    parser = argparse.ArgumentParser()
+    parser.add_argument("target", choices=sorted(TARGET_HEADERS))
+    args = parser.parse_args()
+    # Annotation files are read and appended to CWD-relative.
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    main()
+    main(args.target)
