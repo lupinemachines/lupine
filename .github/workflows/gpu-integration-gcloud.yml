@@ -4,14 +4,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Expected repository variables:
-#   GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+# The Google Cloud project, Workload Identity Provider, and service account
+# identifiers are intentionally committed here. They are public resource names,
+# not credentials, and fork pull_request workflows cannot read repository
+# variables. Google still issues short-lived credentials only when the provider's
+# repository, workflow, event, and actor conditions match.
 # The dedicated integration binary cache is:
 #   gs://kevmo314-lupine-gpu-integration-cache
 #
 # Keep GCP_SERVICE_ACCOUNT on a custom role rather than project Owner/Editor.
-# It should be bound through a Workload Identity Provider condition restricted
-# to this repository's numeric GitHub IDs, this workflow path, and trusted refs.
+# Bind it through a Workload Identity Provider condition restricted to this
+# repository's numeric GitHub IDs, this workflow path, trusted events/refs, and
+# maintainer actors.
 # The service account has bucket-scoped Storage Admin access to the dedicated
 # cache bucket, and this workflow owns that bucket's lifecycle configuration.
 
@@ -64,7 +68,9 @@ jobs:
             server_ld_library_path: ""
 
     env:
-      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_PROJECT_ID: kevmo314
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/272419586516/locations/global/workloadIdentityPools/lupine-github/providers/github
+      GCP_SERVICE_ACCOUNT: lupine-gpu-ci@kevmo314.iam.gserviceaccount.com
       GCP_BUILD_CACHE_BUCKET: kevmo314-lupine-gpu-integration-cache
       INTEGRATION_BINARY_CACHE_VERSION: v1
       GCP_ZONE: us-central1-a
@@ -103,13 +109,33 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      # google-github-actions/auth writes its generated ADC file into the
+      # workspace. Move it before Docker packages the pull request checkout so
+      # fork-controlled .dockerignore changes cannot add the credential file to
+      # the remote build context.
+      - name: Move Google Cloud credentials outside the build context
+        run: |
+          set -euo pipefail
+          credentials_path="${GOOGLE_GHA_CREDS_PATH:?Google auth did not create credentials}"
+          relocated_path="$RUNNER_TEMP/$(basename "$credentials_path")"
+          mv "$credentials_path" "$relocated_path"
+          chmod 600 "$relocated_path"
+          {
+            echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=$relocated_path"
+            echo "GOOGLE_APPLICATION_CREDENTIALS=$relocated_path"
+            echo "GOOGLE_GHA_CREDS_PATH=$relocated_path"
+            echo "LUPINE_GCP_CREDS_PATH=$relocated_path"
+          } >> "$GITHUB_ENV"
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
@@ -687,9 +713,9 @@ jobs:
         if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
         uses: google-github-actions/auth@v3
         with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
       - name: Save integration binary cache to GCS
         if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
@@ -759,9 +785,9 @@ jobs:
         if: always()
         uses: google-github-actions/auth@v3
         with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
       - name: Tear down GCE resources
         if: always()
@@ -814,3 +840,7 @@ jobs:
           done
 
           exit "$leftovers"
+
+      - name: Remove relocated Google Cloud credentials
+        if: always()
+        run: rm -f -- "$LUPINE_GCP_CREDS_PATH"
