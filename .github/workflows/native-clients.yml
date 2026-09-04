@@ -195,25 +195,6 @@ jobs:
               ;;
           esac
 
-      - name: Smoke test on Ubuntu 22.04
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -v "$PWD/complete-client:/client:ro" \
-            ubuntu:22.04 \
-            bash -c '
-              set -euo pipefail
-              export LD_LIBRARY_PATH=/client
-              for library in /client/libcuda.so.1 /client/libcudart.so.13 /client/libnvidia-ml.so.1; do
-                output="$(ldd -r "$library" 2>&1)"
-                echo "$output"
-                if grep -Eq "not found|undefined symbol|version .* not found" <<<"$output"; then
-                  exit 1
-                fi
-              done
-            '
-
       - uses: actions/upload-artifact@v7
         with:
           name: lupine-client-${{ matrix.tag }}

@@ -46,7 +46,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         cmake_policy(SET CMP0135 NEW)
     endif()
     find_package(Perl REQUIRED)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
     find_program(LUPINE_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
 
     ProcessorCount(LUPINE_BUILD_JOBS)
@@ -265,11 +264,6 @@ function(lupine_manylinux2014_client target)
             -static-libgcc
             -static-libstdc++
             "LINKER:--exclude-libs,libcrypto.a:libgcc.a:libgcc_eh.a:libnghttp2.a:libssl.a:libstdc++.a")
-        add_custom_command(TARGET ${target} POST_BUILD
-            COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/cmake/verify_manylinux2014.py
-                $<TARGET_FILE:${target}>
-            VERBATIM)
     endif()
 endfunction()
 

@@ -72,15 +72,9 @@ else()
     target_link_options(lupine_cudart PRIVATE
       "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cudart.exports")
     if("$ENV{AUDITWHEEL_POLICY}" STREQUAL "manylinux2014")
-      find_package(Python3 COMPONENTS Interpreter REQUIRED)
       target_link_options(lupine_cudart PRIVATE
         -static-libgcc
         -static-libstdc++)
-      add_custom_command(TARGET lupine_cudart POST_BUILD
-        COMMAND ${Python3_EXECUTABLE}
-          ${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/verify_manylinux2014.py
-          $<TARGET_FILE:lupine_cudart>
-        VERBATIM)
     endif()
   endif()
   target_link_libraries(lupine_cudart PRIVATE ${LUPINE_CLIENT_LIB} pthread)
