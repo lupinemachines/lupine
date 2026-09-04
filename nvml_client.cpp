@@ -97,7 +97,7 @@ void nvml_retire_thread_lane(uint64_t lane_id) {
 pthread_once_t nvml_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
 void nvml_install_rpc_lifecycle_hooks() {
-  const rpc_lifecycle_hooks hooks = {nullptr, nvml_retire_thread_lane};
+  const rpc_lifecycle_hooks hooks = {nullptr, nvml_retire_thread_lane, nullptr};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install NVML RPC lifecycle hooks");
   }

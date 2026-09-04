@@ -407,9 +407,11 @@ namespace {
 
 using rpc_connection_closed_hook = void (*)(conn_t *);
 using rpc_thread_lane_destroyed_hook = void (*)(uint64_t);
+using rpc_response_completed_hook = void (*)(conn_t *, int32_t);
 
 std::atomic<rpc_connection_closed_hook> connection_closed_hook{nullptr};
 std::atomic<rpc_thread_lane_destroyed_hook> thread_lane_destroyed_hook{nullptr};
+std::atomic<rpc_response_completed_hook> response_completed_hook{nullptr};
 std::atomic_flag lifecycle_hooks_set = ATOMIC_FLAG_INIT;
 
 } // namespace
@@ -423,6 +425,8 @@ int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks) {
                                std::memory_order_release);
   thread_lane_destroyed_hook.store(hooks->thread_lane_destroyed,
                                    std::memory_order_release);
+  response_completed_hook.store(hooks->response_completed,
+                                std::memory_order_release);
   return 0;
 }
 
@@ -454,6 +458,7 @@ static thread_local rpc_thread_lane rpc_tls_lane;
 struct rpc_read_frame {
   int32_t stream_id = -1;
   int request_id = 0;
+  int op = 0;
 };
 
 struct rpc_response_route {
@@ -535,7 +540,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id};
+  rpc_tls_io.read = {stream_id, request_id, op};
   return op;
 }
 
@@ -564,7 +569,7 @@ int rpc_read_start(conn_t *conn, int write_id) {
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id};
+  rpc_tls_io.read = {stream_id, request_id, op};
   return 0;
 }
 
@@ -671,9 +676,17 @@ int rpc_drain(conn_t *conn, size_t size) {
 int rpc_read_end(conn_t *conn) {
   if (rpc_tls_io.read_conn == conn) {
     int read_id = rpc_tls_io.read.request_id;
+    int32_t stream_id = rpc_tls_io.read.stream_id;
+    bool completed_response = rpc_tls_io.read.op == -1;
     rpc_tls_io.read_conn = nullptr;
     rpc_tls_io.read = {};
     rpc_release_held_call_lock(conn);
+    if (completed_response) {
+      auto hook = response_completed_hook.load(std::memory_order_acquire);
+      if (hook != nullptr) {
+        hook(conn, stream_id);
+      }
+    }
     return read_id;
   }
   rpc_release_held_call_lock(conn);

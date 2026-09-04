@@ -163,6 +163,8 @@ extern bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
 struct rpc_lifecycle_hooks {
   void (*connection_closed)(conn_t *conn);
   void (*thread_lane_destroyed)(uint64_t lane_id);
+  // Runs on the RPC caller after a complete response has been consumed.
+  void (*response_completed)(conn_t *conn, int32_t stream_id);
 };
 extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
 

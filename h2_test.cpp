@@ -74,6 +74,23 @@ void require(bool condition, const char *message) {
   }
 }
 
+thread_local bool expect_response_completed_hook = false;
+thread_local bool response_payload_consumed = false;
+thread_local conn_t *expected_response_conn = nullptr;
+thread_local int response_completed_hook_calls = 0;
+
+void test_response_completed_hook(conn_t *conn, int32_t stream_id) {
+  if (!expect_response_completed_hook) {
+    return;
+  }
+  require(conn == expected_response_conn,
+          "response-completed hook received the wrong connection");
+  require(stream_id >= 0, "response-completed hook received an invalid stream");
+  require(response_payload_consumed,
+          "response-completed hook ran before the payload was consumed");
+  ++response_completed_hook_calls;
+}
+
 void init_pair_sockets(h2_pair *pair);
 void exchange_settings(h2_pair *pair);
 
@@ -1543,6 +1560,53 @@ void test_rpc_repeated_responses_on_lane() {
   server.join();
 }
 
+void test_rpc_response_completed_hook() {
+  h2_pair pair = make_pair();
+  constexpr int kOp = 97;
+  constexpr int kResponse = 1234;
+
+  std::thread server([&] {
+    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
+            "response-hook stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kOp,
+            "response-hook dispatch failed");
+    int request_id = rpc_read_end(&pair.server);
+    require(request_id > 0, "response-hook request end failed");
+    require(rpc_write_start_response(&pair.server, request_id) == 0,
+            "response-hook response start failed");
+    require(rpc_write(&pair.server, &kResponse, sizeof(kResponse)) == 0,
+            "response-hook payload write failed");
+    require(rpc_write_end(&pair.server) == request_id,
+            "response-hook response end failed");
+    rpc_unbind_http2_stream(&pair.server);
+  });
+
+  require(rpc_write_start_request(&pair.client, kOp) == 0,
+          "response-hook request start failed");
+  int request_id = rpc_write_end(&pair.client);
+  require(request_id > 0, "response-hook request write failed");
+  require(rpc_read_start(&pair.client, request_id) == 0,
+          "response-hook response start failed");
+  int response = 0;
+  require(rpc_read(&pair.client, &response, sizeof(response)) ==
+              sizeof(response),
+          "response-hook payload read failed");
+  require(response == kResponse, "response-hook payload mismatch");
+
+  expected_response_conn = &pair.client;
+  response_payload_consumed = true;
+  expect_response_completed_hook = true;
+  require(rpc_read_end(&pair.client) == request_id,
+          "response-hook response end failed");
+  expect_response_completed_hook = false;
+  require(response_completed_hook_calls == 1,
+          "response-completed hook did not run exactly once");
+  expected_response_conn = nullptr;
+  response_payload_consumed = false;
+  server.join();
+}
+
 // Handlers start request chains without their own null checks; an unreachable
 // server (null route conn) or a failed connection must fail the chain here
 // instead of dereferencing the conn.
@@ -1639,6 +1703,10 @@ void test_rpc_read_uses_w_offset() {
 } // namespace
 
 int main() {
+  const rpc_lifecycle_hooks hooks = {nullptr, nullptr,
+                                     test_response_completed_hook};
+  require(rpc_set_lifecycle_hooks(&hooks) == 0,
+          "failed to install RPC test lifecycle hooks");
   RUN_CASE(test_server_rejects_request_without_lz4_encoding());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
@@ -1650,6 +1718,7 @@ int main() {
   RUN_CASE(test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy());
   RUN_CASE(test_rpc_small_payload_round_trip());
   RUN_CASE(test_rpc_repeated_responses_on_lane());
+  RUN_CASE(test_rpc_response_completed_hook());
   RUN_CASE(test_response_wait_sends_transport_heartbeat());
   RUN_CASE(test_data_provider_frame_sizing());
   RUN_CASE(test_client_to_server());

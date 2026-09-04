@@ -94,15 +94,21 @@ void rpc_destroy_thread_lane(uint64_t lane_id) {
   lupine_client_transport_retire_lane(lane_id);
 }
 
-static void lupine_rpc_connection_closed(conn_t *) {
+static void lupine_discard_pending_log_callbacks(conn_t *conn);
+static void lupine_complete_pending_log_callbacks(conn_t *conn,
+                                                  int32_t stream_id);
+
+static void lupine_rpc_connection_closed(conn_t *conn) {
   lupine_invalidate_current_context_cache();
+  lupine_discard_pending_log_callbacks(conn);
 }
 
 static pthread_once_t lupine_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
 static void lupine_install_rpc_lifecycle_hooks() {
   const rpc_lifecycle_hooks hooks = {lupine_rpc_connection_closed,
-                                     rpc_destroy_thread_lane};
+                                     rpc_destroy_thread_lane,
+                                     lupine_complete_pending_log_callbacks};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
@@ -6656,11 +6662,75 @@ struct lupine_logs_callback_route {
   CUlogsCallbackHandle server_callback = nullptr;
 };
 
+struct lupine_pending_log_callback {
+  int32_t stream_id = -1;
+  CUlogLevel level = CU_LOG_LEVEL_ERROR;
+  CUlogsCallback callback = nullptr;
+  void *user_data = nullptr;
+  size_t length = 0;
+  std::vector<char> message;
+};
+
 static std::unordered_map<CUlogsCallbackHandle, lupine_logs_callback_route> &
 lupine_logs_callback_routes() {
   static auto *routes = new std::unordered_map<CUlogsCallbackHandle,
                                                lupine_logs_callback_route>();
   return *routes;
+}
+
+static std::unordered_map<
+    conn_t *,
+    std::unordered_map<int32_t, std::vector<lupine_pending_log_callback>>> &
+lupine_pending_log_callbacks() {
+  static auto *callbacks = new std::unordered_map<
+      conn_t *,
+      std::unordered_map<int32_t, std::vector<lupine_pending_log_callback>>>();
+  return *callbacks;
+}
+
+static bool lupine_queue_log_callback(conn_t *conn,
+                                      lupine_pending_log_callback &&callback) {
+  try {
+    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+    int32_t stream_id = callback.stream_id;
+    lupine_pending_log_callbacks()[conn][stream_id].push_back(
+        std::move(callback));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+static void lupine_complete_pending_log_callbacks(conn_t *conn,
+                                                  int32_t stream_id) {
+  std::vector<lupine_pending_log_callback> ready;
+  {
+    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+    auto conn_it = lupine_pending_log_callbacks().find(conn);
+    if (conn_it == lupine_pending_log_callbacks().end()) {
+      return;
+    }
+    auto stream_it = conn_it->second.find(stream_id);
+    if (stream_it == conn_it->second.end()) {
+      return;
+    }
+    ready = std::move(stream_it->second);
+    conn_it->second.erase(stream_it);
+    if (conn_it->second.empty()) {
+      lupine_pending_log_callbacks().erase(conn_it);
+    }
+  }
+  for (auto &callback : ready) {
+    if (callback.callback != nullptr) {
+      callback.callback(callback.user_data, callback.level,
+                        callback.message.data(), callback.length);
+    }
+  }
+}
+
+static void lupine_discard_pending_log_callbacks(conn_t *conn) {
+  std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
+  lupine_pending_log_callbacks().erase(conn);
 }
 
 extern "C" CUresult cuLogsRegisterCallback(CUlogsCallback callbackFunc,
@@ -6749,6 +6819,10 @@ extern "C" CUresult cuLogsUnregisterCallback(CUlogsCallbackHandle callback) {
   }
   return return_value;
 }
+#else
+static void lupine_complete_pending_log_callbacks(conn_t *, int32_t) {}
+
+static void lupine_discard_pending_log_callbacks(conn_t *) {}
 #endif
 
 static bool lupine_is_writable_user_pointer(const void *ptr, size_t size) {
@@ -8270,10 +8344,12 @@ void *rpc_client_dispatch_thread(void *arg) {
     } else if (op == LUPINE_SIDE_EFFECT_LOG_CALLBACK) {
 #if CUDA_VERSION >= 12090
       CUlogLevel level = CU_LOG_LEVEL_ERROR;
+      int32_t origin_stream_id = -1;
       size_t length = 0;
       CUlogsCallback callback = nullptr;
       void *user_data = nullptr;
       if (rpc_read(conn, &level, sizeof(level)) < 0 ||
+          rpc_read(conn, &origin_stream_id, sizeof(origin_stream_id)) < 0 ||
           rpc_read(conn, &length, sizeof(length)) < 0) {
         LUPINE_LOG_ERROR("Failed to read log callback metadata.");
         break;
@@ -8297,13 +8373,25 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
       message[length] = '\0';
 
+      int32_t callback_stream_id = rpc_current_http2_stream(conn);
       int request_id = rpc_read_end(conn);
       if (request_id < 0) {
         break;
       }
 
-      if (callback != nullptr) {
+      // CUDA invokes log callbacks inline. Preserve that caller-thread
+      // behavior for application RPC lanes because clients such as PyTorch
+      // keep callback state in thread-local storage. Unbound callbacks retain
+      // the dispatch-thread fallback.
+      if ((origin_stream_id < 0 || origin_stream_id == callback_stream_id) &&
+          callback != nullptr) {
         callback(user_data, level, message.data(), length);
+      } else if (callback != nullptr &&
+                 !lupine_queue_log_callback(conn, {origin_stream_id, level,
+                                                   callback, user_data, length,
+                                                   std::move(message)})) {
+        LUPINE_LOG_ERROR("Failed to queue log callback.");
+        break;
       }
 
       void *res = nullptr;

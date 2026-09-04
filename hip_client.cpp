@@ -71,7 +71,7 @@ pthread_once_t hip_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
 void install_rpc_lifecycle_hooks() {
   const rpc_lifecycle_hooks hooks = {hip_connection_closed,
-                                     hip_retire_thread_lane};
+                                     hip_retire_thread_lane, nullptr};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install HIP RPC lifecycle hooks");
   }

@@ -2513,8 +2513,10 @@ static void CUDA_CB lupine_logs_callback(void *user_data, CUlogLevel level,
   }
 
   void *response = nullptr;
+  int32_t origin_stream_id = rpc_current_http2_stream(conn);
   if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_LOG_CALLBACK) >= 0 &&
       rpc_write(conn, &level, sizeof(level)) >= 0 &&
+      rpc_write(conn, &origin_stream_id, sizeof(origin_stream_id)) >= 0 &&
       rpc_write(conn, &length, sizeof(length)) >= 0 &&
       (length == 0 || rpc_write(conn, message, length) >= 0) &&
       rpc_write(conn, &client_callback, sizeof(client_callback)) >= 0 &&
