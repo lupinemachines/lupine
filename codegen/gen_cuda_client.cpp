@@ -6819,6 +6819,111 @@ CUresult cuStreamGetDevResource(CUstream hStream, CUdevResource *resource,
 
 #endif
 
+#if CUDA_VERSION >= 12090
+CUresult cuLogsCurrent(CUlogIterator *iterator_out, unsigned int flags) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuLogsCurrent", iterator_out, flags);
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUlogIterator *iterator_out_null_check;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLogsCurrent) < 0 ||
+      rpc_write(conn, &iterator_out, sizeof(CUlogIterator *)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &iterator_out_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_out_null_check &&
+       rpc_read(conn, iterator_out, sizeof(CUlogIterator)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12090
+CUresult cuLogsDumpToFile(CUlogIterator *iterator, const char *pathToFile,
+                          unsigned int flags) {
+  lupine_route route = lupine_route_for_default();
+  if (pathToFile == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuLogsDumpToFile", iterator, pathToFile,
+                                    flags);
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUlogIterator *iterator_null_check;
+  std::size_t pathToFile_len = std::strlen(pathToFile) + 1;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLogsDumpToFile) < 0 ||
+      rpc_write(conn, &iterator, sizeof(CUlogIterator *)) < 0 ||
+      (iterator != nullptr &&
+       rpc_write(conn, iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_write(conn, &pathToFile_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, pathToFile, pathToFile_len) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_null_check &&
+       rpc_read(conn, iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12090
+CUresult cuLogsDumpToMemory(CUlogIterator *iterator, char *buffer, size_t *size,
+                            unsigned int flags) {
+  lupine_route route = lupine_route_for_default();
+  if (size == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  size_t buffer_capacity = *size;
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn("cuLogsDumpToMemory", iterator,
+                                            buffer, size, flags);
+    if (return_value == CUDA_SUCCESS && buffer != nullptr &&
+        buffer_capacity > *size)
+      buffer[*size] = '\0';
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  size_t size_requested = (buffer != nullptr) ? *size : 0;
+  uint8_t buffer_null = buffer == nullptr ? 1 : 0;
+  CUlogIterator *iterator_null_check;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLogsDumpToMemory) < 0 ||
+      rpc_write(conn, &iterator, sizeof(CUlogIterator *)) < 0 ||
+      (iterator != nullptr &&
+       rpc_write(conn, iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_write(conn, &size_requested, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &buffer_null, sizeof(uint8_t)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
+      (iterator_null_check &&
+       rpc_read(conn, iterator, sizeof(CUlogIterator)) < 0) ||
+      rpc_read(conn, size, sizeof(size_t)) < 0 ||
+      (buffer != nullptr && size_requested != 0 && *size != 0 &&
+       rpc_read(conn, buffer,
+                (*size < size_requested ? *size : size_requested) *
+                    sizeof(char)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && buffer != nullptr &&
+      buffer_capacity > *size)
+    buffer[*size] = '\0';
+  return return_value;
+}
+
+#endif
+
 CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
                                CUgraphNode *phErrorNode, char *logBuffer,
                                size_t bufferSize) {
@@ -7670,6 +7775,15 @@ std::unordered_map<std::string, void *> functionMap = {
 #endif
 #if CUDA_VERSION >= 13010
     {"cuStreamGetDevResource", (void *)cuStreamGetDevResource},
+#endif
+#if CUDA_VERSION >= 12090
+    {"cuLogsCurrent", (void *)cuLogsCurrent},
+#endif
+#if CUDA_VERSION >= 12090
+    {"cuLogsDumpToFile", (void *)cuLogsDumpToFile},
+#endif
+#if CUDA_VERSION >= 12090
+    {"cuLogsDumpToMemory", (void *)cuLogsDumpToMemory},
 #endif
     {"cuGraphInstantiate_v2", (void *)cuGraphInstantiate_v2},
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate},

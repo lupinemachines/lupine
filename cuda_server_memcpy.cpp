@@ -1841,6 +1841,7 @@ void lupine_server_finish_context_detach(conn_t *conn, CUcontext context,
 }
 
 void lupine_server_cleanup_connection(conn_t *conn) {
+  lupine_server_cleanup_log_callbacks(conn);
   std::unique_ptr<lupine_staging_state> owned_state;
   if (!lupine_staging_states().erase_fn(
           conn, [&owned_state](std::unique_ptr<lupine_staging_state> &state) {

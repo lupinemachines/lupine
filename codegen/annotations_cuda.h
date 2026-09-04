@@ -3347,6 +3347,56 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
                                   CUgraphicsResource *resources,
                                   CUstream hStream);
 /**
+ * @guard CUDA_VERSION >= 12090
+ * @disabled - manual persistent callback forwarding and handle routing
+ * @server CUDA
+ */
+CUresult cuLogsRegisterCallback(CUlogsCallback callbackFunc, void *userData,
+                                CUlogsCallbackHandle *callback_out);
+/**
+ * @guard CUDA_VERSION >= 12090
+ * @disabled - manual callback handle routing and lifecycle management
+ * @server CUDA
+ */
+CUresult cuLogsUnregisterCallback(CUlogsCallbackHandle callback);
+/**
+ * @guard CUDA_VERSION >= 12090
+ * @param iterator_out RECV_ONLY NULLABLE
+ * @param flags SEND_ONLY
+ */
+CUresult cuLogsCurrent(CUlogIterator *iterator_out, unsigned int flags);
+/**
+ * @guard CUDA_VERSION >= 12090
+ * @param iterator SEND_RECV NULLABLE
+ * @param pathToFile SEND_ONLY NULL_TERMINATED
+ * @param flags SEND_ONLY
+ */
+CUresult cuLogsDumpToFile(CUlogIterator *iterator, const char *pathToFile,
+                          unsigned int flags) {
+  if (pathToFile == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
+/**
+ * @guard CUDA_VERSION >= 12090
+ * @param iterator SEND_RECV NULLABLE
+ * @param size SEND_RECV
+ * @param buffer RECV_ONLY NULLABLE LENGTH:size
+ * @param flags SEND_ONLY
+ */
+CUresult cuLogsDumpToMemory(CUlogIterator *iterator, char *buffer, size_t *size,
+                            unsigned int flags) {
+  if (size == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  size_t buffer_capacity = *size;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && buffer != nullptr &&
+      buffer_capacity > *size)
+    buffer[*size] = '\0';
+  return return_value;
+}
+/**
  * @disabled
  * @param symbol SEND_RECV
  * @param pfn SEND_RECV

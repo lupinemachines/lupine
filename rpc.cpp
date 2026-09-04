@@ -10,6 +10,7 @@
 #include <new>
 #include <string.h>
 #include <thread>
+#include <utility>
 
 #ifndef _WIN32
 #include <netdb.h>
@@ -407,9 +408,11 @@ namespace {
 
 using rpc_connection_closed_hook = void (*)(conn_t *);
 using rpc_thread_lane_destroyed_hook = void (*)(uint64_t);
+using rpc_response_completed_hook = void (*)(conn_t *, int32_t);
 
 std::atomic<rpc_connection_closed_hook> connection_closed_hook{nullptr};
 std::atomic<rpc_thread_lane_destroyed_hook> thread_lane_destroyed_hook{nullptr};
+std::atomic<rpc_response_completed_hook> response_completed_hook{nullptr};
 std::atomic_flag lifecycle_hooks_set = ATOMIC_FLAG_INIT;
 
 } // namespace
@@ -423,6 +426,8 @@ int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks) {
                                std::memory_order_release);
   thread_lane_destroyed_hook.store(hooks->thread_lane_destroyed,
                                    std::memory_order_release);
+  response_completed_hook.store(hooks->response_completed,
+                                std::memory_order_release);
   return 0;
 }
 
@@ -454,6 +459,7 @@ static thread_local rpc_thread_lane rpc_tls_lane;
 struct rpc_read_frame {
   int32_t stream_id = -1;
   int request_id = 0;
+  int op = 0;
 };
 
 struct rpc_response_route {
@@ -461,17 +467,67 @@ struct rpc_response_route {
   int32_t stream_id = -1;
 };
 
+struct rpc_nested_write_frame {
+  conn_t *conn = nullptr;
+  int write_id = 0;
+  int write_op = 0;
+  int32_t write_stream_id = -1;
+  std::vector<rpc_write_cursor> write_queue;
+  unsigned char *write_copy_buffer = nullptr;
+  size_t write_copy_capacity = 0;
+  size_t write_copy_offset = 0;
+};
+
 struct rpc_thread_io {
   conn_t *bound_conn = nullptr;
   int32_t bound_stream = -1;
   conn_t *read_conn = nullptr;
   rpc_read_frame read;
+  conn_t *write_conn = nullptr;
+  rpc_nested_write_frame nested_write;
   conn_t *response_conn = nullptr;
   rpc_response_route response;
   conn_t *held_call_lock = nullptr;
 };
 
 static thread_local rpc_thread_io rpc_tls_io;
+
+void rpc_save_outer_response(conn_t *conn) {
+  rpc_nested_write_frame &frame = rpc_tls_io.nested_write;
+  frame.conn = conn;
+  frame.write_id = conn->write_id;
+  frame.write_op = conn->write_op;
+  frame.write_stream_id = conn->write_stream_id;
+  frame.write_queue = std::move(conn->write_queue);
+  frame.write_copy_buffer = conn->write_copy_buffer;
+  frame.write_copy_capacity = conn->write_copy_capacity;
+  frame.write_copy_offset = conn->write_copy_offset;
+  conn->write_copy_buffer = nullptr;
+  conn->write_copy_capacity = 0;
+  conn->write_copy_offset = 0;
+}
+
+void rpc_restore_outer_response(conn_t *conn) {
+  rpc_nested_write_frame &frame = rpc_tls_io.nested_write;
+  conn->write_id = frame.write_id;
+  conn->write_op = frame.write_op;
+  conn->write_stream_id = frame.write_stream_id;
+  conn->write_queue = std::move(frame.write_queue);
+  conn->write_copy_buffer = frame.write_copy_buffer;
+  conn->write_copy_capacity = frame.write_copy_capacity;
+  conn->write_copy_offset = frame.write_copy_offset;
+  frame = {};
+}
+
+void rpc_release_write_builder(conn_t *conn, bool request_nested_in_response) {
+  rpc_write_buffer_release(conn);
+  if (request_nested_in_response) {
+    rpc_restore_outer_response(conn);
+    return;
+  }
+  rpc_tls_io.write_conn = nullptr;
+  pthread_mutex_unlock(&conn->write_mutex);
+}
 
 void rpc_release_held_call_lock(conn_t *conn) {
   if (rpc_tls_io.held_call_lock == conn) {
@@ -535,7 +591,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id};
+  rpc_tls_io.read = {stream_id, request_id, op};
   return op;
 }
 
@@ -564,7 +620,7 @@ int rpc_read_start(conn_t *conn, int write_id) {
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id};
+  rpc_tls_io.read = {stream_id, request_id, op};
   return 0;
 }
 
@@ -671,9 +727,17 @@ int rpc_drain(conn_t *conn, size_t size) {
 int rpc_read_end(conn_t *conn) {
   if (rpc_tls_io.read_conn == conn) {
     int read_id = rpc_tls_io.read.request_id;
+    int32_t stream_id = rpc_tls_io.read.stream_id;
+    bool completed_response = rpc_tls_io.read.op == -1;
     rpc_tls_io.read_conn = nullptr;
     rpc_tls_io.read = {};
     rpc_release_held_call_lock(conn);
+    if (completed_response) {
+      auto hook = response_completed_hook.load(std::memory_order_acquire);
+      if (hook != nullptr) {
+        hook(conn, stream_id);
+      }
+    }
     return read_id;
   }
   rpc_release_held_call_lock(conn);
@@ -768,14 +832,30 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (conn == nullptr || conn->closed) {
     return -1;
   }
-  if (pthread_mutex_lock(&conn->call_mutex) < 0) {
+  bool request_nested_in_response = rpc_tls_io.write_conn == conn &&
+                                    rpc_tls_io.nested_write.conn == nullptr &&
+                                    conn->write_op == -1;
+  if (rpc_tls_io.write_conn != nullptr && !request_nested_in_response) {
+    return -1;
+  }
+  int call_lock_result = 0;
+  if (request_nested_in_response) {
+    // Never wait for a call that may itself be waiting for this response's
+    // write lock. A failed side effect is preferable to a lock-order deadlock.
+    call_lock_result = pthread_mutex_trylock(&conn->call_mutex);
+  } else {
+    call_lock_result = pthread_mutex_lock(&conn->call_mutex);
+  }
+  if (call_lock_result != 0) {
     return -1;
   }
   if (conn->closed) {
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
-  if (pthread_mutex_lock(&conn->write_mutex) < 0) {
+  if (request_nested_in_response) {
+    rpc_save_outer_response(conn);
+  } else if (pthread_mutex_lock(&conn->write_mutex) != 0) {
 #ifdef VERBOSE
     std::cerr << "rpc_write_start failed due to rpc_open() < 0 || "
                  "conns[index].write_mutex lock"
@@ -783,10 +863,12 @@ int rpc_write_start_request(conn_t *conn, const int op) {
 #endif
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
+  } else {
+    rpc_tls_io.write_conn = conn;
   }
 
   if (rpc_write_queue_reset(conn, 2) < 0) {
-    pthread_mutex_unlock(&conn->write_mutex);
+    rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
@@ -795,7 +877,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->write_op = op;
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
-    pthread_mutex_unlock(&conn->write_mutex);
+    rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
@@ -820,10 +902,10 @@ int rpc_write_start_async_request(conn_t *conn, const int op,
 // only one request can be active at a time, so this function will take the
 // request lock from the connection.
 int rpc_write_start_response(conn_t *conn, const int read_id) {
-  if (conn->closed) {
+  if (conn == nullptr || conn->closed || rpc_tls_io.write_conn != nullptr) {
     return -1;
   }
-  if (pthread_mutex_lock(&conn->write_mutex) < 0) {
+  if (pthread_mutex_lock(&conn->write_mutex) != 0) {
 #ifdef VERBOSE
     std::cerr << "rpc_write_start failed due to rpc_open() < 0 || "
                  "conns[index].write_mutex lock"
@@ -831,8 +913,10 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 #endif
     return -1;
   }
+  rpc_tls_io.write_conn = conn;
 
   if (rpc_write_queue_reset(conn, 2) < 0) {
+    rpc_tls_io.write_conn = nullptr;
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
@@ -840,6 +924,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
   conn->write_op = -1;
   conn->write_stream_id = rpc_current_http2_stream(conn);
   if (conn->write_stream_id < 0) {
+    rpc_tls_io.write_conn = nullptr;
     pthread_mutex_unlock(&conn->write_mutex);
     return -1;
   }
@@ -936,10 +1021,13 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 // the request lock is released after the request is sent and the function
 // returns the request id which can be used to wait for a response.
 int rpc_write_end(conn_t *conn) {
+  if (conn == nullptr || rpc_tls_io.write_conn != conn) {
+    return -1;
+  }
   bool request = conn->write_op != -1;
+  bool request_nested_in_response = rpc_tls_io.nested_write.conn == conn;
   if (conn->closed) {
-    rpc_write_buffer_release(conn);
-    pthread_mutex_unlock(&conn->write_mutex);
+    rpc_release_write_builder(conn, request_nested_in_response);
     if (request) {
       pthread_mutex_unlock(&conn->call_mutex);
     }
@@ -955,8 +1043,7 @@ int rpc_write_end(conn_t *conn) {
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
   }
-  rpc_write_buffer_release(conn);
-  pthread_mutex_unlock(&conn->write_mutex);
+  rpc_release_write_builder(conn, request_nested_in_response);
   if (request) {
     if (result == 0) {
       rpc_tls_io.response_conn = conn;
