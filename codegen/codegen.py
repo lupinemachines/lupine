@@ -216,6 +216,7 @@ NVML_RPC_FUNCTIONS = [
 
 HIP_MANUAL_REMAPPINGS = [
     ("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),
+    ("hipChooseDevice", "hipChooseDeviceR0600"),
 ]
 
 PRIVATE_RPC_FUNCTIONS = [
@@ -1106,7 +1107,12 @@ def write_rpc_ids(
                 )
             seen_rpc_ids[value] = operation_name
             emitted_macros.add(macro_name)
-            f.write(f"#define {macro_name} {value}\n")
+            line = f"#define {macro_name} {value}"
+            if len(line) > 80:
+                # Wrapped the way clang-format wraps a long macro, so the
+                # format check accepts the generated file.
+                line = f"#define {macro_name}".ljust(79) + f"\\\n  {value}"
+            f.write(line + "\n")
 
         for function, _, _, _ in functions_with_annotations:
             name = function.name.format()
