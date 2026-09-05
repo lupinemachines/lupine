@@ -963,8 +963,10 @@ class ScalarOperation:
     on the device (a cuBLAS alpha, beta, or result). The client decides per
     call: in host mode the value travels by copy, in device mode the address
     travels unchanged. The width leads on the wire, and zero means an address
-    follows. `mode` is the handle whose pointer mode decides; `width` is a C++
-    expression for the value's size, or None for the pointee's sizeof.
+    follows. `mode` is the handle or descriptor whose pointer mode decides,
+    asked as `scalar_on_host(mode, "<name>")` since a mode may place alpha and
+    beta differently; `width` is a C++ expression for the value's size, or None
+    for the pointee's sizeof.
     """
 
     send: bool
@@ -981,7 +983,7 @@ class ScalarOperation:
         name = self.parameter.name
         return (
             f"    uint32_t {name}_width = {name} != nullptr && "
-            f"scalar_on_host({self.mode.name}) ? "
+            f'scalar_on_host({self.mode.name}, "{name}") ? '
             f"static_cast<uint32_t>({self.width_expr()}) : 0;\n"
         )
 
@@ -1006,12 +1008,22 @@ class ScalarOperation:
             f"        ({name}_width != 0 && rpc_read(conn, {name}, {name}_width) < 0) ||\n"
         )
 
+    # The value lands in an inline slot, or on the heap when wider (a grouped
+    # GEMM's one-scalar-per-group alpha).
+    def server_slot(self) -> str:
+        name = self.parameter.name
+        return (
+            f"lupine_scalar_slot({name}_heap, {name}_value, "
+            f"sizeof({name}_value), {name}_width)"
+        )
+
     @property
     def server_declaration(self) -> str:
         name = self.parameter.name
         return (
             f"    uint32_t {name}_width;\n"
             f"    alignas(16) unsigned char {name}_value[64];\n"
+            f"    std::vector<unsigned char> {name}_heap;\n"
             f"    {self.ptr.format()} {name} = nullptr;\n"
         )
 
@@ -1020,20 +1032,19 @@ class ScalarOperation:
         f.write(
             f"        rpc_read(conn, &{name}_width, sizeof({name}_width)) < 0 ||\n"
         )
-        f.write(f"        {name}_width > sizeof({name}_value) ||\n")
         f.write(
             f"        ({name}_width == 0 && rpc_read(conn, &{name}, sizeof({name})) < 0) ||\n"
         )
         if self.send:
             f.write(
-                f"        ({name}_width != 0 && rpc_read(conn, {name}_value, {name}_width) < 0) ||\n"
+                f"        ({name}_width != 0 && rpc_read(conn, {self.server_slot()}, {name}_width) < 0) ||\n"
             )
 
     @property
     def server_reference(self) -> str:
         name = self.parameter.name
         return (
-            f"{name}_width != 0 ? reinterpret_cast<{self.ptr.format()}>({name}_value) : {name}"
+            f"{name}_width != 0 ? reinterpret_cast<{self.ptr.format()}>({self.server_slot()}) : {name}"
         )
 
     def server_rpc_write(self, f):
@@ -1041,7 +1052,7 @@ class ScalarOperation:
             return
         name = self.parameter.name
         f.write(
-            f"        ({name}_width != 0 && rpc_write(conn, {name}_value, {name}_width) < 0) ||\n"
+            f"        ({name}_width != 0 && rpc_write(conn, {self.server_slot()}, {name}_width) < 0) ||\n"
         )
 
 

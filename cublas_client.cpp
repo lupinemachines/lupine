@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "codegen/gen_rpc_ids.h"
+#include "cublas_scalar.h"
 #include "cuda_client_rpc.h"
 
 namespace {
@@ -59,7 +60,15 @@ struct handle_state {
 std::mutex handles_mutex;
 std::unordered_map<cublasHandle_t, handle_state> handles;
 
-conn_t *connection() { return lupine_cudart_connection(); }
+// A call without a handle goes to the runtime's current device, which the
+// runtime shim answers locally.
+conn_t *connection() {
+  int device = 0;
+  if (cudaGetDevice(&device) != cudaSuccess) {
+    return nullptr;
+  }
+  return lupine_rpc_conn_for_device(&device);
+}
 
 conn_t *connection_for_handle(cublasHandle_t handle) {
   std::lock_guard<std::mutex> lock(handles_mutex);
@@ -76,7 +85,23 @@ void note_handle_owner(conn_t *conn, cublasHandle_t handle) {
   handles[handle] = {conn, true};
 }
 
-bool scalar_on_host(cublasHandle_t handle) {
+void note_pointer_mode(cublasHandle_t handle, cublasPointerMode_t mode) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  auto it = handles.find(handle);
+  if (it != handles.end()) {
+    it->second.host_pointers = mode == CUBLAS_POINTER_MODE_HOST;
+  }
+}
+
+// A destroyed handle's address may come back from a later cublasCreate,
+// which records it afresh.
+void forget_handle(cublasHandle_t handle) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  handles.erase(handle);
+}
+
+// cuBLAS places alpha and beta together, so the scalar's name is unused.
+bool scalar_on_host(cublasHandle_t handle, const char *) {
   std::lock_guard<std::mutex> lock(handles_mutex);
   auto it = handles.find(handle);
   return it == handles.end() || it->second.host_pointers;
@@ -85,41 +110,6 @@ bool scalar_on_host(cublasHandle_t handle) {
 // ---------------------------------------------------------------------------
 // Scalar widths
 // ---------------------------------------------------------------------------
-
-// The width of a `void` scalar an Ex call names by data type. A type the
-// library does not accept for a scalar is sent at the widest width so that the
-// bytes, never a client address, travel.
-size_t data_type_width(cudaDataType type) {
-  switch (type) {
-  case CUDA_R_8I:
-  case CUDA_R_8U:
-    return 1;
-  case CUDA_R_16F:
-  case CUDA_R_16BF:
-  case CUDA_R_16I:
-  case CUDA_R_16U:
-  case CUDA_C_8I:
-  case CUDA_C_8U:
-    return 2;
-  case CUDA_R_32F:
-  case CUDA_R_32I:
-  case CUDA_R_32U:
-  case CUDA_C_16F:
-  case CUDA_C_16BF:
-  case CUDA_C_16I:
-  case CUDA_C_16U:
-    return 4;
-  case CUDA_R_64F:
-  case CUDA_R_64I:
-  case CUDA_R_64U:
-  case CUDA_C_32F:
-  case CUDA_C_32I:
-  case CUDA_C_32U:
-    return 8;
-  default:
-    return sizeof(cuDoubleComplex);
-  }
-}
 
 // GemmEx scales in the compute type, complex when C is.
 size_t compute_scalar_width(cublasComputeType_t compute, cudaDataType c_type) {
@@ -143,34 +133,7 @@ size_t compute_scalar_width(cublasComputeType_t compute, cudaDataType c_type) {
 #include "codegen/gen_cublas_client.inc"
 
 // ---------------------------------------------------------------------------
-// Handle state the client mirrors
-// ---------------------------------------------------------------------------
-
-extern "C" cublasStatus_t cublasSetPointerMode_v2(cublasHandle_t handle,
-                                                  cublasPointerMode_t mode) {
-  conn_t *conn = connection_for_handle(handle);
-  cublasStatus_t status =
-      lupine_rpc_cublasSetPointerMode_v2(conn, handle, mode);
-  if (status == CUBLAS_STATUS_SUCCESS) {
-    std::lock_guard<std::mutex> lock(handles_mutex);
-    auto it = handles.find(handle);
-    if (it != handles.end()) {
-      it->second.host_pointers = mode == CUBLAS_POINTER_MODE_HOST;
-    }
-  }
-  return status;
-}
-
-extern "C" cublasStatus_t cublasDestroy_v2(cublasHandle_t handle) {
-  conn_t *conn = connection_for_handle(handle);
-  cublasStatus_t status = lupine_rpc_cublasDestroy_v2(conn, handle);
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  handles.erase(handle);
-  return status;
-}
-
-// ---------------------------------------------------------------------------
-// Results that are not a status
+// Static strings
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -216,18 +179,6 @@ extern "C" const char *cublasGetStatusString(cublasStatus_t status) {
   return status_text(RPC_cublasGetStatusString, status);
 }
 
-extern "C" size_t cublasGetCudartVersion(void) {
-  conn_t *conn = connection();
-  size_t version = 0;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cublasGetCudartVersion) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &version, sizeof(version)) < 0 || rpc_read_end(conn) < 0) {
-    return 0;
-  }
-  return version;
-}
-
 extern "C" cublasStatus_t cublasLoggerConfigure(int logIsOn, int logToStdOut,
                                                 int logToStdErr,
                                                 const char *logFileName) {
@@ -246,9 +197,9 @@ extern "C" cublasStatus_t cublasLoggerConfigure(int logIsOn, int logToStdOut,
       (length != 0 && rpc_write(conn, logFileName, length) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
+    return record(rpc_error());
   }
-  return status;
+  return record(status);
 }
 
 extern "C" void cublasXerbla(const char *srName, int info) {
@@ -272,7 +223,7 @@ cublasStatus_t set_vector(int op, Index n, Index elemSize, const void *x,
                           Index incx, void *devicePtr, Index incy,
                           const cudaStream_t *stream) {
   if (n < 0 || elemSize <= 0 || incx <= 0 || incy <= 0) {
-    return CUBLAS_STATUS_INVALID_VALUE;
+    return record(CUBLAS_STATUS_INVALID_VALUE);
   }
   const size_t width = static_cast<size_t>(elemSize);
   const size_t bytes = static_cast<size_t>(n) * width;
@@ -298,9 +249,9 @@ cublasStatus_t set_vector(int op, Index n, Index elemSize, const void *x,
       (bytes != 0 && rpc_write(conn, payload, bytes) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
+    return record(rpc_error());
   }
-  return status;
+  return record(status);
 }
 
 template <typename Index>
@@ -308,7 +259,7 @@ cublasStatus_t get_vector(int op, Index n, Index elemSize, const void *x,
                           Index incx, void *y, Index incy,
                           const cudaStream_t *stream) {
   if (n < 0 || elemSize <= 0 || incx <= 0 || incy <= 0) {
-    return CUBLAS_STATUS_INVALID_VALUE;
+    return record(CUBLAS_STATUS_INVALID_VALUE);
   }
   const size_t width = static_cast<size_t>(elemSize);
   const size_t bytes = static_cast<size_t>(n) * width;
@@ -328,7 +279,7 @@ cublasStatus_t get_vector(int op, Index n, Index elemSize, const void *x,
       (status == CUBLAS_STATUS_SUCCESS && bytes != 0 &&
        rpc_read(conn, payload, bytes) < 0) ||
       rpc_read_end(conn) < 0) {
-    return rpc_error();
+    return record(rpc_error());
   }
   if (incy != 1 && status == CUBLAS_STATUS_SUCCESS) {
     for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
@@ -336,7 +287,7 @@ cublasStatus_t get_vector(int op, Index n, Index elemSize, const void *x,
              packed.data() + i * width, width);
     }
   }
-  return status;
+  return record(status);
 }
 
 template <typename Index>
@@ -344,7 +295,7 @@ cublasStatus_t set_matrix(int op, Index rows, Index cols, Index elemSize,
                           const void *A, Index lda, void *B, Index ldb,
                           const cudaStream_t *stream) {
   if (rows < 0 || cols < 0 || elemSize <= 0 || lda <= 0 || ldb <= 0) {
-    return CUBLAS_STATUS_INVALID_VALUE;
+    return record(CUBLAS_STATUS_INVALID_VALUE);
   }
   const size_t column = static_cast<size_t>(rows) * elemSize;
   const size_t bytes = column * static_cast<size_t>(cols);
@@ -372,9 +323,9 @@ cublasStatus_t set_matrix(int op, Index rows, Index cols, Index elemSize,
       (bytes != 0 && rpc_write(conn, payload, bytes) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
+    return record(rpc_error());
   }
-  return status;
+  return record(status);
 }
 
 template <typename Index>
@@ -382,7 +333,7 @@ cublasStatus_t get_matrix(int op, Index rows, Index cols, Index elemSize,
                           const void *A, Index lda, void *B, Index ldb,
                           const cudaStream_t *stream) {
   if (rows < 0 || cols < 0 || elemSize <= 0 || lda <= 0 || ldb <= 0) {
-    return CUBLAS_STATUS_INVALID_VALUE;
+    return record(CUBLAS_STATUS_INVALID_VALUE);
   }
   const size_t column = static_cast<size_t>(rows) * elemSize;
   const size_t bytes = column * static_cast<size_t>(cols);
@@ -403,7 +354,7 @@ cublasStatus_t get_matrix(int op, Index rows, Index cols, Index elemSize,
       (status == CUBLAS_STATUS_SUCCESS && bytes != 0 &&
        rpc_read(conn, payload, bytes) < 0) ||
       rpc_read_end(conn) < 0) {
-    return rpc_error();
+    return record(rpc_error());
   }
   if (ldb != rows && status == CUBLAS_STATUS_SUCCESS) {
     for (size_t j = 0; j < static_cast<size_t>(cols); ++j) {
@@ -411,7 +362,7 @@ cublasStatus_t get_matrix(int op, Index rows, Index cols, Index elemSize,
              packed.data() + j * column, column);
     }
   }
-  return status;
+  return record(status);
 }
 
 } // namespace

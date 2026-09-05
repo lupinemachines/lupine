@@ -14,4 +14,7 @@ codegen/gen_cudart_server.inc linguist-generated=true
 codegen/gen_cublas_client.inc linguist-generated=true
 codegen/gen_cublas_server.h linguist-generated=true
 codegen/gen_cublas_server.inc linguist-generated=true
+codegen/gen_cublaslt_client.inc linguist-generated=true
+codegen/gen_cublaslt_server.h linguist-generated=true
+codegen/gen_cublaslt_server.inc linguist-generated=true
 codegen/registry.cpp linguist-generated=true

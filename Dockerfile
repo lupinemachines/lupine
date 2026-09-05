@@ -71,7 +71,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 FROM builder AS client-build
 
 RUN cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_nvml_client lupine_hip_client
+      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_nvml_client lupine_hip_client
 
 FROM builder AS server-build
 
@@ -91,7 +91,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -136,12 +136,14 @@ RUN set -eux; \
 COPY --from=client-build /opt/lupine/build/libcuda.so.1 /opt/lupine/lib/libcuda.so.1
 COPY --from=client-build /opt/lupine/build/libcudart.so.* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcublas.so.* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcublasLt.so.* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
 
 RUN ln -sf /opt/lupine/lib/libcuda.so.1 /opt/lupine/lib/libcuda.so \
     && ln -sf "$(basename /opt/lupine/lib/libcudart.so.*)" /opt/lupine/lib/libcudart.so \
     && ln -sf "$(basename /opt/lupine/lib/libcublas.so.*)" /opt/lupine/lib/libcublas.so \
+    && ln -sf "$(basename /opt/lupine/lib/libcublasLt.so.*)" /opt/lupine/lib/libcublasLt.so \
     && ln -sf /opt/lupine/lib/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so \
     && ln -sf /opt/lupine/lib/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so
 

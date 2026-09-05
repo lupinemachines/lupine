@@ -4,7 +4,6 @@ libcudart.so.@LUPINE_CUDART_SOVERSION@ {
   global:
     cuda*;
     __cuda*;
-    lupine_cudart_*;
   local:
     *;
 };

@@ -115,7 +115,7 @@ trap cleanup EXIT
 arch_arg="-arch=all"
 [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
 "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
-  "$src" -o "$exe" -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs"
+  "$src" -o "$exe" -lcuda -lcublas -lcublasLt -L"$CUDA_HOME/lib64/stubs"
 
 start_remote_server "$pidfile" "$server_log" "$port"
 env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \

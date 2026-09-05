@@ -520,6 +520,49 @@ if(LUPINE_BUILD_CUBLAS)
         endif()
     endif()
     add_custom_target(lupine_cublas DEPENDS lupine_cublas_client)
+
+    # libcublasLt ships with libcublas and follows the same naming
+    # (libcublasLt.so.13, cublasLt64_13.dll).
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cublaslt.exports.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/cublaslt.exports @ONLY)
+    add_library(lupine_cublaslt_client SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/cublaslt_client.cpp)
+    if(NOT LUPINE_CUDA_CRT_INCLUDE_DIR)
+        target_include_directories(lupine_cublaslt_client BEFORE PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/cudart_stubs)
+    endif()
+    target_include_directories(lupine_cublaslt_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(lupine_cublaslt_client PRIVATE
+        lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_cublaslt_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    if(WIN32)
+        target_compile_options(lupine_cublaslt_client PRIVATE /wd4996)
+        set_target_properties(lupine_cublaslt_client PROPERTIES
+            OUTPUT_NAME cublasLt64_${LUPINE_CUBLAS_SOVERSION}
+            PREFIX ""
+            WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cublaslt_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cublaslt_client PROPERTIES
+            OUTPUT_NAME cublasLt)
+        if(APPLE)
+            set_target_properties(lupine_cublaslt_client PROPERTIES
+                BUILD_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_cublaslt_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cublaslt.exports")
+            set_target_properties(lupine_cublaslt_client PROPERTIES
+                BUILD_RPATH "$ORIGIN"
+                VERSION ${LUPINE_CUBLAS_SOVERSION}
+                SOVERSION ${LUPINE_CUBLAS_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_cublaslt DEPENDS lupine_cublaslt_client)
 endif()
 
 if(LUPINE_BUILD_NVML)
@@ -617,7 +660,8 @@ if(LUPINE_BUILD_SERVER)
 
         if(LUPINE_BUILD_CUBLAS)
             add_library(lupine_cublas_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/cublas_server.cpp)
+                ${CMAKE_CURRENT_SOURCE_DIR}/cublas_server.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/cublaslt_server.cpp)
             lupine_internal_target(lupine_cublas_server)
             target_include_directories(lupine_cublas_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
@@ -895,7 +939,7 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(TARGET lupine_cublas_client)
         add_test(NAME cublas_exports
             COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q lupine_cudart_connection")
+                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmul && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmulDescCreate")
     endif()
 
     if(TARGET lupine_nvml_client)
@@ -916,7 +960,7 @@ if(TARGET lupine_cudart_client)
 endif()
 if(TARGET lupine_cublas_client)
     message(STATUS
-        "Building cuBLAS client: lupine_cublas_client (libcublas.so.${LUPINE_CUBLAS_SOVERSION})")
+        "Building cuBLAS clients: lupine_cublas_client (libcublas.so.${LUPINE_CUBLAS_SOVERSION}), lupine_cublaslt_client (libcublasLt.so.${LUPINE_CUBLAS_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

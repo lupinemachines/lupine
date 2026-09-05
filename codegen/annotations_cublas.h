@@ -20,9 +20,8 @@
 //
 // The `_64` entry points arrived with cuBLAS 12.0, emulation strategy with
 // 12.9 and the fixed-point emulation controls with 13.1, so each carries the
-// matching @guard. The grouped batched GEMMs take host arrays sized by a sum
-// over another host array, which the marshalling cannot describe, so they are
-// left to the stubs.
+// matching @guard. A grouped batched GEMM's per-group arrays are host memory
+// sized by group_count, and its alpha and beta hold one scalar per group.
 
 /**
  * @param handle SEND_ONLY
@@ -2550,10 +2549,15 @@ cublasStatus_t cublasDdot_v2_64(cublasHandle_t handle, int64_t n,
                                 int64_t incy, double *result);
 #endif
 /**
- * @disabled client forwards
  * @param handle SEND_ONLY
  */
-cublasStatus_t cublasDestroy_v2(cublasHandle_t handle);
+// clang-format off
+cublasStatus_t cublasDestroy_v2(cublasHandle_t handle) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  forget_handle(handle);
+  return return_value;
+}
+// clang-format on
 /**
  * @param handle SEND_ONLY
  * @param trans SEND_ONLY
@@ -2711,6 +2715,64 @@ cublasStatus_t cublasDgemmBatched_64(cublasHandle_t handle,
                                      const double *const *Barray, int64_t ldb,
                                      const double *beta, double *const *Carray,
                                      int64_t ldc, int64_t batchCount);
+#endif
+#if CUBLAS_VERSION >= 120500
+/**
+ * @guard CUBLAS_VERSION >= 120500
+ * @param handle SEND_ONLY
+ * @param transa_array SEND_ONLY LENGTH:group_count
+ * @param transb_array SEND_ONLY LENGTH:group_count
+ * @param m_array SEND_ONLY LENGTH:group_count
+ * @param n_array SEND_ONLY LENGTH:group_count
+ * @param k_array SEND_ONLY LENGTH:group_count
+ * @param alpha_array SEND_ONLY SCALAR SIZE:group_count*sizeof(double)
+ * @param Aarray SEND_ONLY
+ * @param lda_array SEND_ONLY LENGTH:group_count
+ * @param Barray SEND_ONLY
+ * @param ldb_array SEND_ONLY LENGTH:group_count
+ * @param beta_array SEND_ONLY SCALAR SIZE:group_count*sizeof(double)
+ * @param Carray SEND_ONLY
+ * @param ldc_array SEND_ONLY LENGTH:group_count
+ * @param group_count SEND_ONLY
+ * @param group_size SEND_ONLY LENGTH:group_count
+ */
+cublasStatus_t cublasDgemmGroupedBatched(
+    cublasHandle_t handle, const cublasOperation_t *transa_array,
+    const cublasOperation_t *transb_array, const int *m_array,
+    const int *n_array, const int *k_array, const double *alpha_array,
+    const double *const *Aarray, const int *lda_array,
+    const double *const *Barray, const int *ldb_array, const double *beta_array,
+    double *const *Carray, const int *ldc_array, int group_count,
+    const int *group_size);
+#endif
+#if CUBLAS_VERSION >= 120500
+/**
+ * @guard CUBLAS_VERSION >= 120500
+ * @param handle SEND_ONLY
+ * @param transa_array SEND_ONLY LENGTH:group_count
+ * @param transb_array SEND_ONLY LENGTH:group_count
+ * @param m_array SEND_ONLY LENGTH:group_count
+ * @param n_array SEND_ONLY LENGTH:group_count
+ * @param k_array SEND_ONLY LENGTH:group_count
+ * @param alpha_array SEND_ONLY SCALAR SIZE:group_count*sizeof(double)
+ * @param Aarray SEND_ONLY
+ * @param lda_array SEND_ONLY LENGTH:group_count
+ * @param Barray SEND_ONLY
+ * @param ldb_array SEND_ONLY LENGTH:group_count
+ * @param beta_array SEND_ONLY SCALAR SIZE:group_count*sizeof(double)
+ * @param Carray SEND_ONLY
+ * @param ldc_array SEND_ONLY LENGTH:group_count
+ * @param group_count SEND_ONLY
+ * @param group_size SEND_ONLY LENGTH:group_count
+ */
+cublasStatus_t cublasDgemmGroupedBatched_64(
+    cublasHandle_t handle, const cublasOperation_t *transa_array,
+    const cublasOperation_t *transb_array, const int64_t *m_array,
+    const int64_t *n_array, const int64_t *k_array, const double *alpha_array,
+    const double *const *Aarray, const int64_t *lda_array,
+    const double *const *Barray, const int64_t *ldb_array,
+    const double *beta_array, double *const *Carray, const int64_t *ldc_array,
+    int64_t group_count, const int64_t *group_size);
 #endif
 /**
  * @param handle SEND_ONLY
@@ -4195,6 +4257,78 @@ cublasStatus_t cublasGemmEx_64(cublasHandle_t handle, cublasOperation_t transa,
                                int64_t ldc, cublasComputeType_t computeType,
                                cublasGemmAlgo_t algo);
 #endif
+#if CUBLAS_VERSION >= 120500
+// clang-format off
+/**
+ * @guard CUBLAS_VERSION >= 120500
+ * @param handle SEND_ONLY
+ * @param transa_array SEND_ONLY LENGTH:group_count
+ * @param transb_array SEND_ONLY LENGTH:group_count
+ * @param m_array SEND_ONLY LENGTH:group_count
+ * @param n_array SEND_ONLY LENGTH:group_count
+ * @param k_array SEND_ONLY LENGTH:group_count
+ * @param alpha_array SEND_ONLY SCALAR SIZE:group_count*compute_scalar_width(computeType,Ctype)
+ * @param Aarray SEND_ONLY
+ * @param Atype SEND_ONLY
+ * @param lda_array SEND_ONLY LENGTH:group_count
+ * @param Barray SEND_ONLY
+ * @param Btype SEND_ONLY
+ * @param ldb_array SEND_ONLY LENGTH:group_count
+ * @param beta_array SEND_ONLY SCALAR SIZE:group_count*compute_scalar_width(computeType,Ctype)
+ * @param Carray SEND_ONLY
+ * @param Ctype SEND_ONLY
+ * @param ldc_array SEND_ONLY LENGTH:group_count
+ * @param group_count SEND_ONLY
+ * @param group_size SEND_ONLY LENGTH:group_count
+ * @param computeType SEND_ONLY
+ */
+// clang-format on
+cublasStatus_t cublasGemmGroupedBatchedEx(
+    cublasHandle_t handle, const cublasOperation_t *transa_array,
+    const cublasOperation_t *transb_array, const int *m_array,
+    const int *n_array, const int *k_array, const void *alpha_array,
+    const void *const *Aarray, cudaDataType_t Atype, const int *lda_array,
+    const void *const *Barray, cudaDataType_t Btype, const int *ldb_array,
+    const void *beta_array, void *const *Carray, cudaDataType_t Ctype,
+    const int *ldc_array, int group_count, const int *group_size,
+    cublasComputeType_t computeType);
+#endif
+#if CUBLAS_VERSION >= 120500
+// clang-format off
+/**
+ * @guard CUBLAS_VERSION >= 120500
+ * @param handle SEND_ONLY
+ * @param transa_array SEND_ONLY LENGTH:group_count
+ * @param transb_array SEND_ONLY LENGTH:group_count
+ * @param m_array SEND_ONLY LENGTH:group_count
+ * @param n_array SEND_ONLY LENGTH:group_count
+ * @param k_array SEND_ONLY LENGTH:group_count
+ * @param alpha_array SEND_ONLY SCALAR SIZE:group_count*compute_scalar_width(computeType,Ctype)
+ * @param Aarray SEND_ONLY
+ * @param Atype SEND_ONLY
+ * @param lda_array SEND_ONLY LENGTH:group_count
+ * @param Barray SEND_ONLY
+ * @param Btype SEND_ONLY
+ * @param ldb_array SEND_ONLY LENGTH:group_count
+ * @param beta_array SEND_ONLY SCALAR SIZE:group_count*compute_scalar_width(computeType,Ctype)
+ * @param Carray SEND_ONLY
+ * @param Ctype SEND_ONLY
+ * @param ldc_array SEND_ONLY LENGTH:group_count
+ * @param group_count SEND_ONLY
+ * @param group_size SEND_ONLY LENGTH:group_count
+ * @param computeType SEND_ONLY
+ */
+// clang-format on
+cublasStatus_t cublasGemmGroupedBatchedEx_64(
+    cublasHandle_t handle, const cublasOperation_t *transa_array,
+    const cublasOperation_t *transb_array, const int64_t *m_array,
+    const int64_t *n_array, const int64_t *k_array, const void *alpha_array,
+    const void *const *Aarray, cudaDataType_t Atype, const int64_t *lda_array,
+    const void *const *Barray, cudaDataType_t Btype, const int64_t *ldb_array,
+    const void *beta_array, void *const *Carray, cudaDataType_t Ctype,
+    const int64_t *ldc_array, int64_t group_count, const int64_t *group_size,
+    cublasComputeType_t computeType);
+#endif
 /**
  * @param handle SEND_ONLY
  * @param transa SEND_ONLY
@@ -4268,9 +4402,6 @@ cublasStatus_t cublasGemmStridedBatchedEx_64(
  */
 cublasStatus_t cublasGetAtomicsMode(cublasHandle_t handle,
                                     cublasAtomicsMode_t *mode);
-/**
- * @disabled
- */
 size_t cublasGetCudartVersion();
 #if CUBLAS_VERSION >= 130100
 /**
@@ -5451,12 +5582,19 @@ cublasStatus_t cublasSetMatrix_64(int64_t rows, int64_t cols, int64_t elemSize,
                                   int64_t ldb);
 #endif
 /**
- * @disabled client forwards
  * @param handle SEND_ONLY
  * @param mode SEND_ONLY
  */
+// clang-format off
 cublasStatus_t cublasSetPointerMode_v2(cublasHandle_t handle,
-                                       cublasPointerMode_t mode);
+    cublasPointerMode_t mode) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    note_pointer_mode(handle, mode);
+  }
+  return return_value;
+}
+// clang-format on
 /**
  * @param handle SEND_ONLY
  * @param smCountTarget SEND_ONLY
@@ -5713,6 +5851,64 @@ cublasStatus_t cublasSgemmEx_64(cublasHandle_t handle, cublasOperation_t transa,
                                 cudaDataType Btype, int64_t ldb,
                                 const float *beta, void *C, cudaDataType Ctype,
                                 int64_t ldc);
+#endif
+#if CUBLAS_VERSION >= 120500
+/**
+ * @guard CUBLAS_VERSION >= 120500
+ * @param handle SEND_ONLY
+ * @param transa_array SEND_ONLY LENGTH:group_count
+ * @param transb_array SEND_ONLY LENGTH:group_count
+ * @param m_array SEND_ONLY LENGTH:group_count
+ * @param n_array SEND_ONLY LENGTH:group_count
+ * @param k_array SEND_ONLY LENGTH:group_count
+ * @param alpha_array SEND_ONLY SCALAR SIZE:group_count*sizeof(float)
+ * @param Aarray SEND_ONLY
+ * @param lda_array SEND_ONLY LENGTH:group_count
+ * @param Barray SEND_ONLY
+ * @param ldb_array SEND_ONLY LENGTH:group_count
+ * @param beta_array SEND_ONLY SCALAR SIZE:group_count*sizeof(float)
+ * @param Carray SEND_ONLY
+ * @param ldc_array SEND_ONLY LENGTH:group_count
+ * @param group_count SEND_ONLY
+ * @param group_size SEND_ONLY LENGTH:group_count
+ */
+cublasStatus_t cublasSgemmGroupedBatched(
+    cublasHandle_t handle, const cublasOperation_t *transa_array,
+    const cublasOperation_t *transb_array, const int *m_array,
+    const int *n_array, const int *k_array, const float *alpha_array,
+    const float *const *Aarray, const int *lda_array,
+    const float *const *Barray, const int *ldb_array, const float *beta_array,
+    float *const *Carray, const int *ldc_array, int group_count,
+    const int *group_size);
+#endif
+#if CUBLAS_VERSION >= 120500
+/**
+ * @guard CUBLAS_VERSION >= 120500
+ * @param handle SEND_ONLY
+ * @param transa_array SEND_ONLY LENGTH:group_count
+ * @param transb_array SEND_ONLY LENGTH:group_count
+ * @param m_array SEND_ONLY LENGTH:group_count
+ * @param n_array SEND_ONLY LENGTH:group_count
+ * @param k_array SEND_ONLY LENGTH:group_count
+ * @param alpha_array SEND_ONLY SCALAR SIZE:group_count*sizeof(float)
+ * @param Aarray SEND_ONLY
+ * @param lda_array SEND_ONLY LENGTH:group_count
+ * @param Barray SEND_ONLY
+ * @param ldb_array SEND_ONLY LENGTH:group_count
+ * @param beta_array SEND_ONLY SCALAR SIZE:group_count*sizeof(float)
+ * @param Carray SEND_ONLY
+ * @param ldc_array SEND_ONLY LENGTH:group_count
+ * @param group_count SEND_ONLY
+ * @param group_size SEND_ONLY LENGTH:group_count
+ */
+cublasStatus_t cublasSgemmGroupedBatched_64(
+    cublasHandle_t handle, const cublasOperation_t *transa_array,
+    const cublasOperation_t *transb_array, const int64_t *m_array,
+    const int64_t *n_array, const int64_t *k_array, const float *alpha_array,
+    const float *const *Aarray, const int64_t *lda_array,
+    const float *const *Barray, const int64_t *ldb_array,
+    const float *beta_array, float *const *Carray, const int64_t *ldc_array,
+    int64_t group_count, const int64_t *group_size);
 #endif
 /**
  * @param handle SEND_ONLY

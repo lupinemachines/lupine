@@ -347,6 +347,14 @@ int handle_cublasDgemmBatched(conn_t *conn);
 int handle_cublasDgemmBatched_64(conn_t *conn);
 #endif
 
+#if CUBLAS_VERSION >= 120500
+int handle_cublasDgemmGroupedBatched(conn_t *conn);
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasDgemmGroupedBatched_64(conn_t *conn);
+#endif
+
 int handle_cublasDgemmStridedBatched(conn_t *conn);
 #if CUBLAS_VERSION >= 120000
 int handle_cublasDgemmStridedBatched_64(conn_t *conn);
@@ -541,12 +549,21 @@ int handle_cublasGemmEx(conn_t *conn);
 int handle_cublasGemmEx_64(conn_t *conn);
 #endif
 
+#if CUBLAS_VERSION >= 120500
+int handle_cublasGemmGroupedBatchedEx(conn_t *conn);
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasGemmGroupedBatchedEx_64(conn_t *conn);
+#endif
+
 int handle_cublasGemmStridedBatchedEx(conn_t *conn);
 #if CUBLAS_VERSION >= 120000
 int handle_cublasGemmStridedBatchedEx_64(conn_t *conn);
 #endif
 
 int handle_cublasGetAtomicsMode(conn_t *conn);
+int handle_cublasGetCudartVersion(conn_t *conn);
 #if CUBLAS_VERSION >= 130100
 int handle_cublasGetEmulationSpecialValuesSupport(conn_t *conn);
 #endif
@@ -768,6 +785,14 @@ int handle_cublasSgemmBatched_64(conn_t *conn);
 int handle_cublasSgemmEx(conn_t *conn);
 #if CUBLAS_VERSION >= 120000
 int handle_cublasSgemmEx_64(conn_t *conn);
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasSgemmGroupedBatched(conn_t *conn);
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasSgemmGroupedBatched_64(conn_t *conn);
 #endif
 
 int handle_cublasSgemmStridedBatched(conn_t *conn);

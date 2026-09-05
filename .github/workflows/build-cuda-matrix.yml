@@ -89,6 +89,7 @@ jobs:
               test -e /opt/lupine/lib/libcuda.so.1
               test -e /opt/lupine/lib/libcudart.so
               test -e /opt/lupine/lib/libcublas.so
+              test -e /opt/lupine/lib/libcublasLt.so
               test -e /opt/lupine/lib/libnvidia-ml.so.1
               test -e /opt/lupine/lib/libamdhip64.so.1
               test -x /usr/bin/nvidia-smi
@@ -104,6 +105,7 @@ jobs:
               test -e /usr/local/cuda/compat/libcuda.so.1
               ls /usr/local/cuda/lib64/libcudart.so.[0-9]* >/dev/null
               ls /usr/local/cuda/lib64/libcublas.so.[0-9]* >/dev/null
+              ls /usr/local/cuda/lib64/libcublasLt.so.[0-9]* >/dev/null
               test -e /opt/rocm/lib/libamdhip64.so
               ! ldd /opt/lupine/bin/lupine_driver_server | grep -q "not found"
             '
@@ -126,14 +128,16 @@ jobs:
           cuda_major="${cuda_major%%.*}"
           docker cp "$container:/opt/lupine/lib/libcudart.so.${cuda_major}" "$out/libcudart.so.${cuda_major}"
           docker cp "$container:/opt/lupine/lib/libcublas.so.${cuda_major}" "$out/libcublas.so.${cuda_major}"
+          docker cp "$container:/opt/lupine/lib/libcublasLt.so.${cuda_major}" "$out/libcublasLt.so.${cuda_major}"
           docker cp "$container:/opt/lupine/lib/libnvidia-ml.so.1" "$out/libnvidia-ml.so.1"
           docker cp "$container:/opt/lupine/lib/libamdhip64.so.1" "$out/libamdhip64.so.1"
           cp "$out/libcuda.so.1" "$out/libcuda.so"
           cp "$out/libcudart.so.${cuda_major}" "$out/libcudart.so"
           cp "$out/libcublas.so.${cuda_major}" "$out/libcublas.so"
+          cp "$out/libcublasLt.so.${cuda_major}" "$out/libcublasLt.so"
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           cp "$out/libamdhip64.so.1" "$out/libamdhip64.so"
-          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "libcudart.so.${cuda_major}" libcublas.so "libcublas.so.${cuda_major}" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
+          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "libcudart.so.${cuda_major}" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts

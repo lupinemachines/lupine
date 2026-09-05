@@ -3,6 +3,18 @@
 #define LUPINE_SYMBOL_NAME_(name) #name
 #define LUPINE_SYMBOL_NAME(name) LUPINE_SYMBOL_NAME_(name)
 
+// A pointer-mode scalar's value lands in the handler's inline slot,
+// or on the heap when it is wider.
+static unsigned char *lupine_scalar_slot(std::vector<unsigned char> &heap,
+                                         unsigned char *slot, size_t size,
+                                         uint32_t width) {
+  if (width <= size) {
+    return slot;
+  }
+  heap.resize(width);
+  return heap.data();
+}
+
 int handle_cublasAsumEx(conn_t *conn) {
   cublasHandle_t handle;
   int n;
@@ -11,6 +23,7 @@ int handle_cublasAsumEx(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executiontype;
@@ -26,7 +39,6 @@ int handle_cublasAsumEx(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
@@ -37,15 +49,22 @@ int handle_cublasAsumEx(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasAsumEx));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executiontype);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -63,6 +82,7 @@ int handle_cublasAsumEx_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executiontype;
@@ -78,7 +98,6 @@ int handle_cublasAsumEx_64(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
@@ -89,15 +108,22 @@ int handle_cublasAsumEx_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasAsumEx_64));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executiontype);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -113,6 +139,7 @@ int handle_cublasAxpyEx(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   cudaDataType alphaType;
   const void *x;
@@ -131,9 +158,12 @@ int handle_cublasAxpyEx(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &alphaType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &x, sizeof(const void *)) < 0 ||
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -153,8 +183,11 @@ int handle_cublasAxpyEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                alphaType, x, xType, incx, y, yType, incy, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -172,6 +205,7 @@ int handle_cublasAxpyEx_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   cudaDataType alphaType;
   const void *x;
@@ -190,9 +224,12 @@ int handle_cublasAxpyEx_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &alphaType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &x, sizeof(const void *)) < 0 ||
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -212,8 +249,11 @@ int handle_cublasAxpyEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                alphaType, x, xType, incx, y, yType, incy, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -232,6 +272,7 @@ int handle_cublasCaxpy_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -245,9 +286,12 @@ int handle_cublasCaxpy_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
@@ -259,13 +303,16 @@ int handle_cublasCaxpy_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCaxpy_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -282,6 +329,7 @@ int handle_cublasCaxpy_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -296,9 +344,12 @@ int handle_cublasCaxpy_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
@@ -310,13 +361,16 @@ int handle_cublasCaxpy_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCaxpy_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -512,6 +566,7 @@ int handle_cublasCdotc_v2(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -525,7 +580,6 @@ int handle_cublasCdotc_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -536,14 +590,20 @@ int handle_cublasCdotc_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCdotc_v2));
   return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<cuComplex *>(result_value)
-                                 : result);
+      fn == nullptr ? function_not_found()
+                    : fn(handle, n, x, incx, y, incy,
+                         result_width != 0
+                             ? reinterpret_cast<cuComplex *>(lupine_scalar_slot(
+                                   result_heap, result_value,
+                                   sizeof(result_value), result_width))
+                             : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -562,6 +622,7 @@ int handle_cublasCdotc_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -576,7 +637,6 @@ int handle_cublasCdotc_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -587,14 +647,20 @@ int handle_cublasCdotc_v2_64(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCdotc_v2_64));
   return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<cuComplex *>(result_value)
-                                 : result);
+      fn == nullptr ? function_not_found()
+                    : fn(handle, n, x, incx, y, incy,
+                         result_width != 0
+                             ? reinterpret_cast<cuComplex *>(lupine_scalar_slot(
+                                   result_heap, result_value,
+                                   sizeof(result_value), result_width))
+                             : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -614,6 +680,7 @@ int handle_cublasCdotu_v2(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -627,7 +694,6 @@ int handle_cublasCdotu_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -638,14 +704,20 @@ int handle_cublasCdotu_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCdotu_v2));
   return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<cuComplex *>(result_value)
-                                 : result);
+      fn == nullptr ? function_not_found()
+                    : fn(handle, n, x, incx, y, incy,
+                         result_width != 0
+                             ? reinterpret_cast<cuComplex *>(lupine_scalar_slot(
+                                   result_heap, result_value,
+                                   sizeof(result_value), result_width))
+                             : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -664,6 +736,7 @@ int handle_cublasCdotu_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -678,7 +751,6 @@ int handle_cublasCdotu_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -689,14 +761,20 @@ int handle_cublasCdotu_v2_64(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCdotu_v2_64));
   return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<cuComplex *>(result_value)
-                                 : result);
+      fn == nullptr ? function_not_found()
+                    : fn(handle, n, x, incx, y, incy,
+                         result_width != 0
+                             ? reinterpret_cast<cuComplex *>(lupine_scalar_slot(
+                                   result_heap, result_value,
+                                   sizeof(result_value), result_width))
+                             : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -716,6 +794,7 @@ int handle_cublasCgbmv_v2(conn_t *conn) {
   int ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -723,6 +802,7 @@ int handle_cublasCgbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int incy;
@@ -740,17 +820,23 @@ int handle_cublasCgbmv_v2(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int)) < 0 ||
       rpc_read(conn, &ku, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -765,11 +851,15 @@ int handle_cublasCgbmv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -791,6 +881,7 @@ int handle_cublasCgbmv_v2_64(conn_t *conn) {
   int64_t ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -798,6 +889,7 @@ int handle_cublasCgbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int64_t incy;
@@ -815,17 +907,23 @@ int handle_cublasCgbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &ku, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -840,11 +938,15 @@ int handle_cublasCgbmv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -866,11 +968,13 @@ int handle_cublasCgeam(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   const cuComplex *B;
   int ldb;
@@ -889,15 +993,21 @@ int handle_cublasCgeam(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
@@ -914,11 +1024,15 @@ int handle_cublasCgeam(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -939,11 +1053,13 @@ int handle_cublasCgeam_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   const cuComplex *B;
   int64_t ldb;
@@ -962,15 +1078,21 @@ int handle_cublasCgeam_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
@@ -987,11 +1109,15 @@ int handle_cublasCgeam_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1067,6 +1193,7 @@ int handle_cublasCgemm3m(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -1074,6 +1201,7 @@ int handle_cublasCgemm3m(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -1091,17 +1219,23 @@ int handle_cublasCgemm3m(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -1116,11 +1250,15 @@ int handle_cublasCgemm3m(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1141,6 +1279,7 @@ int handle_cublasCgemm3mBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *Aarray;
   int lda;
@@ -1148,6 +1287,7 @@ int handle_cublasCgemm3mBatched(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *const *Carray;
   int ldc;
@@ -1167,17 +1307,23 @@ int handle_cublasCgemm3mBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -1193,11 +1339,15 @@ int handle_cublasCgemm3mBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1219,6 +1369,7 @@ int handle_cublasCgemm3mBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *Aarray;
   int64_t lda;
@@ -1226,6 +1377,7 @@ int handle_cublasCgemm3mBatched_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *const *Carray;
   int64_t ldc;
@@ -1245,17 +1397,23 @@ int handle_cublasCgemm3mBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -1271,11 +1429,15 @@ int handle_cublasCgemm3mBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1298,6 +1460,7 @@ int handle_cublasCgemm3mEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -1307,6 +1470,7 @@ int handle_cublasCgemm3mEx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -1325,9 +1489,12 @@ int handle_cublasCgemm3mEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
@@ -1335,9 +1502,12 @@ int handle_cublasCgemm3mEx(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
@@ -1353,11 +1523,15 @@ int handle_cublasCgemm3mEx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1379,6 +1553,7 @@ int handle_cublasCgemm3mEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -1388,6 +1563,7 @@ int handle_cublasCgemm3mEx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -1407,9 +1583,12 @@ int handle_cublasCgemm3mEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
@@ -1417,9 +1596,12 @@ int handle_cublasCgemm3mEx_64(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
@@ -1435,11 +1617,15 @@ int handle_cublasCgemm3mEx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1462,6 +1648,7 @@ int handle_cublasCgemm3mStridedBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -1471,6 +1658,7 @@ int handle_cublasCgemm3mStridedBatched(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -1491,9 +1679,12 @@ int handle_cublasCgemm3mStridedBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -1501,9 +1692,12 @@ int handle_cublasCgemm3mStridedBatched(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -1520,11 +1714,15 @@ int handle_cublasCgemm3mStridedBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1546,6 +1744,7 @@ int handle_cublasCgemm3mStridedBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -1555,6 +1754,7 @@ int handle_cublasCgemm3mStridedBatched_64(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -1575,9 +1775,12 @@ int handle_cublasCgemm3mStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -1585,9 +1788,12 @@ int handle_cublasCgemm3mStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -1604,11 +1810,15 @@ int handle_cublasCgemm3mStridedBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1632,6 +1842,7 @@ int handle_cublasCgemm3m_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -1639,6 +1850,7 @@ int handle_cublasCgemm3m_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -1656,17 +1868,23 @@ int handle_cublasCgemm3m_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -1681,11 +1899,15 @@ int handle_cublasCgemm3m_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1708,6 +1930,7 @@ int handle_cublasCgemmBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *Aarray;
   int lda;
@@ -1715,6 +1938,7 @@ int handle_cublasCgemmBatched(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *const *Carray;
   int ldc;
@@ -1734,17 +1958,23 @@ int handle_cublasCgemmBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -1760,11 +1990,15 @@ int handle_cublasCgemmBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1786,6 +2020,7 @@ int handle_cublasCgemmBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *Aarray;
   int64_t lda;
@@ -1793,6 +2028,7 @@ int handle_cublasCgemmBatched_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *const *Carray;
   int64_t ldc;
@@ -1812,17 +2048,23 @@ int handle_cublasCgemmBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(cuComplex *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -1838,11 +2080,15 @@ int handle_cublasCgemmBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1865,6 +2111,7 @@ int handle_cublasCgemmEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -1874,6 +2121,7 @@ int handle_cublasCgemmEx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -1892,9 +2140,12 @@ int handle_cublasCgemmEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
@@ -1902,9 +2153,12 @@ int handle_cublasCgemmEx(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
@@ -1920,11 +2174,15 @@ int handle_cublasCgemmEx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1946,6 +2204,7 @@ int handle_cublasCgemmEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -1955,6 +2214,7 @@ int handle_cublasCgemmEx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -1974,9 +2234,12 @@ int handle_cublasCgemmEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
@@ -1984,9 +2247,12 @@ int handle_cublasCgemmEx_64(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
@@ -2002,11 +2268,15 @@ int handle_cublasCgemmEx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2029,6 +2299,7 @@ int handle_cublasCgemmStridedBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -2038,6 +2309,7 @@ int handle_cublasCgemmStridedBatched(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -2058,9 +2330,12 @@ int handle_cublasCgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -2068,9 +2343,12 @@ int handle_cublasCgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -2087,11 +2365,15 @@ int handle_cublasCgemmStridedBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2113,6 +2395,7 @@ int handle_cublasCgemmStridedBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -2122,6 +2405,7 @@ int handle_cublasCgemmStridedBatched_64(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -2142,9 +2426,12 @@ int handle_cublasCgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -2152,9 +2439,12 @@ int handle_cublasCgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -2171,11 +2461,15 @@ int handle_cublasCgemmStridedBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2198,6 +2492,7 @@ int handle_cublasCgemm_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -2205,6 +2500,7 @@ int handle_cublasCgemm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -2222,17 +2518,23 @@ int handle_cublasCgemm_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -2247,11 +2549,15 @@ int handle_cublasCgemm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2273,6 +2579,7 @@ int handle_cublasCgemm_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -2280,6 +2587,7 @@ int handle_cublasCgemm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -2297,17 +2605,23 @@ int handle_cublasCgemm_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -2322,11 +2636,15 @@ int handle_cublasCgemm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2347,6 +2665,7 @@ int handle_cublasCgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *Aarray;
   int lda;
@@ -2354,6 +2673,7 @@ int handle_cublasCgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *const *yarray;
   int incy;
@@ -2370,17 +2690,23 @@ int handle_cublasCgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(cuComplex *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -2396,11 +2722,15 @@ int handle_cublasCgemvBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2420,6 +2750,7 @@ int handle_cublasCgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *Aarray;
   int64_t lda;
@@ -2427,6 +2758,7 @@ int handle_cublasCgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *const *yarray;
   int64_t incy;
@@ -2443,17 +2775,23 @@ int handle_cublasCgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(cuComplex *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -2469,11 +2807,15 @@ int handle_cublasCgemvBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2494,6 +2836,7 @@ int handle_cublasCgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -2503,6 +2846,7 @@ int handle_cublasCgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int incy;
@@ -2520,9 +2864,12 @@ int handle_cublasCgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -2530,9 +2877,12 @@ int handle_cublasCgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -2549,11 +2899,15 @@ int handle_cublasCgemvStridedBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2573,6 +2927,7 @@ int handle_cublasCgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -2582,6 +2937,7 @@ int handle_cublasCgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int64_t incy;
@@ -2600,9 +2956,12 @@ int handle_cublasCgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -2610,9 +2969,12 @@ int handle_cublasCgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -2629,11 +2991,15 @@ int handle_cublasCgemvStridedBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2654,6 +3020,7 @@ int handle_cublasCgemv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -2661,6 +3028,7 @@ int handle_cublasCgemv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int incy;
@@ -2676,17 +3044,23 @@ int handle_cublasCgemv_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -2701,11 +3075,15 @@ int handle_cublasCgemv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2725,6 +3103,7 @@ int handle_cublasCgemv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -2732,6 +3111,7 @@ int handle_cublasCgemv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int64_t incy;
@@ -2747,17 +3127,23 @@ int handle_cublasCgemv_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -2772,11 +3158,15 @@ int handle_cublasCgemv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2839,6 +3229,7 @@ int handle_cublasCgerc_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -2856,9 +3247,12 @@ int handle_cublasCgerc_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -2872,13 +3266,16 @@ int handle_cublasCgerc_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCgerc_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -2896,6 +3293,7 @@ int handle_cublasCgerc_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -2913,9 +3311,12 @@ int handle_cublasCgerc_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -2929,13 +3330,16 @@ int handle_cublasCgerc_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCgerc_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -2954,6 +3358,7 @@ int handle_cublasCgeru_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -2971,9 +3376,12 @@ int handle_cublasCgeru_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -2987,13 +3395,16 @@ int handle_cublasCgeru_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCgeru_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3011,6 +3422,7 @@ int handle_cublasCgeru_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -3028,9 +3440,12 @@ int handle_cublasCgeru_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -3044,13 +3459,16 @@ int handle_cublasCgeru_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCgeru_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3204,6 +3622,7 @@ int handle_cublasChbmv_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -3211,6 +3630,7 @@ int handle_cublasChbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int incy;
@@ -3226,17 +3646,23 @@ int handle_cublasChbmv_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -3251,11 +3677,15 @@ int handle_cublasChbmv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3275,6 +3705,7 @@ int handle_cublasChbmv_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -3282,6 +3713,7 @@ int handle_cublasChbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int64_t incy;
@@ -3297,17 +3729,23 @@ int handle_cublasChbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -3322,11 +3760,15 @@ int handle_cublasChbmv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3348,6 +3790,7 @@ int handle_cublasChemm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -3355,6 +3798,7 @@ int handle_cublasChemm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -3371,17 +3815,23 @@ int handle_cublasChemm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -3396,11 +3846,15 @@ int handle_cublasChemm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3421,6 +3875,7 @@ int handle_cublasChemm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -3428,6 +3883,7 @@ int handle_cublasChemm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -3444,17 +3900,23 @@ int handle_cublasChemm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -3469,11 +3931,15 @@ int handle_cublasChemm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3493,6 +3959,7 @@ int handle_cublasChemv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -3500,6 +3967,7 @@ int handle_cublasChemv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int incy;
@@ -3514,17 +3982,23 @@ int handle_cublasChemv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -3539,11 +4013,15 @@ int handle_cublasChemv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3562,6 +4040,7 @@ int handle_cublasChemv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -3569,6 +4048,7 @@ int handle_cublasChemv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int64_t incy;
@@ -3583,17 +4063,23 @@ int handle_cublasChemv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -3608,11 +4094,15 @@ int handle_cublasChemv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3632,6 +4122,7 @@ int handle_cublasCher2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -3649,9 +4140,12 @@ int handle_cublasCher2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -3665,13 +4159,16 @@ int handle_cublasCher2_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCher2_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3689,6 +4186,7 @@ int handle_cublasCher2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -3707,9 +4205,12 @@ int handle_cublasCher2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -3723,13 +4224,16 @@ int handle_cublasCher2_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCher2_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3750,6 +4254,7 @@ int handle_cublasCher2k_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -3757,6 +4262,7 @@ int handle_cublasCher2k_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -3773,17 +4279,23 @@ int handle_cublasCher2k_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -3798,11 +4310,15 @@ int handle_cublasCher2k_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3823,6 +4339,7 @@ int handle_cublasCher2k_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -3830,6 +4347,7 @@ int handle_cublasCher2k_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -3846,17 +4364,23 @@ int handle_cublasCher2k_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -3871,11 +4395,15 @@ int handle_cublasCher2k_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3895,6 +4423,7 @@ int handle_cublasCher_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -3910,9 +4439,12 @@ int handle_cublasCher_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &A, sizeof(cuComplex *)) < 0 ||
@@ -3928,8 +4460,11 @@ int handle_cublasCher_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3948,6 +4483,7 @@ int handle_cublasCher_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -3963,9 +4499,12 @@ int handle_cublasCher_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &A, sizeof(cuComplex *)) < 0 ||
@@ -3981,8 +4520,11 @@ int handle_cublasCher_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4004,12 +4546,14 @@ int handle_cublasCherk3mEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -4027,16 +4571,22 @@ int handle_cublasCherk3mEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
@@ -4051,11 +4601,16 @@ int handle_cublasCherk3mEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4076,12 +4631,14 @@ int handle_cublasCherk3mEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -4099,16 +4656,22 @@ int handle_cublasCherk3mEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
@@ -4123,11 +4686,16 @@ int handle_cublasCherk3mEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4149,12 +4717,14 @@ int handle_cublasCherkEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -4172,16 +4742,22 @@ int handle_cublasCherkEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
@@ -4196,11 +4772,16 @@ int handle_cublasCherkEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4221,12 +4802,14 @@ int handle_cublasCherkEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -4244,16 +4827,22 @@ int handle_cublasCherkEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
@@ -4268,11 +4857,16 @@ int handle_cublasCherkEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4294,11 +4888,13 @@ int handle_cublasCherk_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const cuComplex *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -4314,15 +4910,21 @@ int handle_cublasCherk_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -4336,11 +4938,16 @@ int handle_cublasCherk_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4361,11 +4968,13 @@ int handle_cublasCherk_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -4382,15 +4991,21 @@ int handle_cublasCherk_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -4404,11 +5019,16 @@ int handle_cublasCherk_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4430,6 +5050,7 @@ int handle_cublasCherkx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -4437,6 +5058,7 @@ int handle_cublasCherkx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -4453,17 +5075,23 @@ int handle_cublasCherkx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -4478,11 +5106,15 @@ int handle_cublasCherkx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4503,6 +5135,7 @@ int handle_cublasCherkx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -4510,6 +5143,7 @@ int handle_cublasCherkx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -4526,17 +5160,23 @@ int handle_cublasCherkx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -4551,11 +5191,15 @@ int handle_cublasCherkx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4575,12 +5219,14 @@ int handle_cublasChpmv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *AP;
   const cuComplex *x;
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int incy;
@@ -4595,16 +5241,22 @@ int handle_cublasChpmv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -4619,11 +5271,15 @@ int handle_cublasChpmv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                AP, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4642,12 +5298,14 @@ int handle_cublasChpmv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *AP;
   const cuComplex *x;
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int64_t incy;
@@ -4662,16 +5320,22 @@ int handle_cublasChpmv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -4686,11 +5350,15 @@ int handle_cublasChpmv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                AP, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4710,6 +5378,7 @@ int handle_cublasChpr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -4726,9 +5395,12 @@ int handle_cublasChpr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -4741,13 +5413,16 @@ int handle_cublasChpr2_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasChpr2_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, AP);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -4765,6 +5440,7 @@ int handle_cublasChpr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -4781,9 +5457,12 @@ int handle_cublasChpr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -4796,13 +5475,16 @@ int handle_cublasChpr2_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasChpr2_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, AP);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -4821,6 +5503,7 @@ int handle_cublasChpr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -4835,9 +5518,12 @@ int handle_cublasChpr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &AP, sizeof(cuComplex *)) < 0 || false)
@@ -4852,8 +5538,11 @@ int handle_cublasChpr_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4872,6 +5561,7 @@ int handle_cublasChpr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -4886,9 +5576,12 @@ int handle_cublasChpr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &AP, sizeof(cuComplex *)) < 0 || false)
@@ -4903,8 +5596,11 @@ int handle_cublasChpr_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5082,9 +5778,11 @@ int handle_cublasCrot_v2(conn_t *conn) {
   int incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const cuComplex *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -5099,13 +5797,18 @@ int handle_cublasCrot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5117,8 +5820,14 @@ int handle_cublasCrot_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const cuComplex *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5139,9 +5848,11 @@ int handle_cublasCrot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const cuComplex *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -5156,13 +5867,18 @@ int handle_cublasCrot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5174,8 +5890,14 @@ int handle_cublasCrot_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const cuComplex *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5192,15 +5914,19 @@ int handle_cublasCrotg_v2(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t a_width;
   alignas(16) unsigned char a_value[64];
+  std::vector<unsigned char> a_heap;
   cuComplex *a = nullptr;
   uint32_t b_width;
   alignas(16) unsigned char b_value[64];
+  std::vector<unsigned char> b_heap;
   cuComplex *b = nullptr;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   cuComplex *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -5209,18 +5935,20 @@ int handle_cublasCrotg_v2(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &a_width, sizeof(a_width)) < 0 ||
-      a_width > sizeof(a_value) ||
       (a_width == 0 && rpc_read(conn, &a, sizeof(a)) < 0) ||
-      (a_width != 0 && rpc_read(conn, a_value, a_width) < 0) ||
+      (a_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                a_width) < 0) ||
       rpc_read(conn, &b_width, sizeof(b_width)) < 0 ||
-      b_width > sizeof(b_value) ||
       (b_width == 0 && rpc_read(conn, &b, sizeof(b)) < 0) ||
-      (b_width != 0 && rpc_read(conn, b_value, b_width) < 0) ||
+      (b_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                b_width) < 0) ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) || false)
     goto ERROR_0;
 
@@ -5233,16 +5961,36 @@ int handle_cublasCrotg_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle,
-               a_width != 0 ? reinterpret_cast<cuComplex *>(a_value) : a,
-               b_width != 0 ? reinterpret_cast<cuComplex *>(b_value) : b,
-               c_width != 0 ? reinterpret_cast<float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<cuComplex *>(s_value) : s);
+               a_width != 0 ? reinterpret_cast<cuComplex *>(lupine_scalar_slot(
+                                  a_heap, a_value, sizeof(a_value), a_width))
+                            : a,
+               b_width != 0 ? reinterpret_cast<cuComplex *>(lupine_scalar_slot(
+                                  b_heap, b_value, sizeof(b_value), b_width))
+                            : b,
+               c_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                  c_heap, c_value, sizeof(c_value), c_width))
+                            : c,
+               s_width != 0 ? reinterpret_cast<cuComplex *>(lupine_scalar_slot(
+                                  s_heap, s_value, sizeof(s_value), s_width))
+                            : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (a_width != 0 && rpc_write(conn, a_value, a_width) < 0) ||
-      (b_width != 0 && rpc_write(conn, b_value, b_width) < 0) ||
-      (c_width != 0 && rpc_write(conn, c_value, c_width) < 0) ||
-      (s_width != 0 && rpc_write(conn, s_value, s_width) < 0) ||
+      (a_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                 a_width) < 0) ||
+      (b_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                 b_width) < 0) ||
+      (c_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                 c_width) < 0) ||
+      (s_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                 s_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -5256,6 +6004,7 @@ int handle_cublasCscal_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   cuComplex *x;
   int incx;
@@ -5267,9 +6016,12 @@ int handle_cublasCscal_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -5279,13 +6031,16 @@ int handle_cublasCscal_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCscal_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5302,6 +6057,7 @@ int handle_cublasCscal_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   cuComplex *x;
   int64_t incx;
@@ -5313,9 +6069,12 @@ int handle_cublasCscal_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -5325,13 +6084,16 @@ int handle_cublasCscal_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCscal_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5353,9 +6115,11 @@ int handle_cublasCsrot_v2(conn_t *conn) {
   int incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const float *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -5370,13 +6134,18 @@ int handle_cublasCsrot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5388,8 +6157,14 @@ int handle_cublasCsrot_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const float *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5410,9 +6185,11 @@ int handle_cublasCsrot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const float *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -5427,13 +6204,18 @@ int handle_cublasCsrot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5445,8 +6227,14 @@ int handle_cublasCsrot_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const float *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5464,6 +6252,7 @@ int handle_cublasCsscal_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   cuComplex *x;
   int incx;
@@ -5475,9 +6264,12 @@ int handle_cublasCsscal_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -5491,8 +6283,11 @@ int handle_cublasCsscal_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5510,6 +6305,7 @@ int handle_cublasCsscal_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   cuComplex *x;
   int64_t incx;
@@ -5521,9 +6317,12 @@ int handle_cublasCsscal_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -5537,8 +6336,11 @@ int handle_cublasCsscal_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5637,6 +6439,7 @@ int handle_cublasCsymm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -5644,6 +6447,7 @@ int handle_cublasCsymm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -5660,17 +6464,23 @@ int handle_cublasCsymm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -5685,11 +6495,15 @@ int handle_cublasCsymm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5710,6 +6524,7 @@ int handle_cublasCsymm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -5717,6 +6532,7 @@ int handle_cublasCsymm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -5733,17 +6549,23 @@ int handle_cublasCsymm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -5758,11 +6580,15 @@ int handle_cublasCsymm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5782,6 +6608,7 @@ int handle_cublasCsymv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -5789,6 +6616,7 @@ int handle_cublasCsymv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int incy;
@@ -5803,17 +6631,23 @@ int handle_cublasCsymv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -5828,11 +6662,15 @@ int handle_cublasCsymv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5851,6 +6689,7 @@ int handle_cublasCsymv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -5858,6 +6697,7 @@ int handle_cublasCsymv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *y;
   int64_t incy;
@@ -5872,17 +6712,23 @@ int handle_cublasCsymv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -5897,11 +6743,15 @@ int handle_cublasCsymv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5921,6 +6771,7 @@ int handle_cublasCsyr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -5938,9 +6789,12 @@ int handle_cublasCsyr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -5954,13 +6808,16 @@ int handle_cublasCsyr2_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCsyr2_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5978,6 +6835,7 @@ int handle_cublasCsyr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -5996,9 +6854,12 @@ int handle_cublasCsyr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
@@ -6012,13 +6873,16 @@ int handle_cublasCsyr2_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCsyr2_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, y, incy, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -6039,6 +6903,7 @@ int handle_cublasCsyr2k_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -6046,6 +6911,7 @@ int handle_cublasCsyr2k_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -6062,17 +6928,23 @@ int handle_cublasCsyr2k_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -6087,11 +6959,15 @@ int handle_cublasCsyr2k_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6112,6 +6988,7 @@ int handle_cublasCsyr2k_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -6119,6 +6996,7 @@ int handle_cublasCsyr2k_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -6135,17 +7013,23 @@ int handle_cublasCsyr2k_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -6160,11 +7044,15 @@ int handle_cublasCsyr2k_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6184,6 +7072,7 @@ int handle_cublasCsyr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int incx;
@@ -6199,9 +7088,12 @@ int handle_cublasCsyr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &A, sizeof(cuComplex *)) < 0 ||
@@ -6213,13 +7105,16 @@ int handle_cublasCsyr_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCsyr_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -6237,6 +7132,7 @@ int handle_cublasCsyr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *x;
   int64_t incx;
@@ -6252,9 +7148,12 @@ int handle_cublasCsyr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &A, sizeof(cuComplex *)) < 0 ||
@@ -6266,13 +7165,16 @@ int handle_cublasCsyr_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCsyr_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, uplo, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          x, incx, A, lda);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -6293,12 +7195,14 @@ int handle_cublasCsyrk3mEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -6316,16 +7220,22 @@ int handle_cublasCsyrk3mEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
@@ -6341,11 +7251,15 @@ int handle_cublasCsyrk3mEx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6366,12 +7280,14 @@ int handle_cublasCsyrk3mEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -6389,16 +7305,22 @@ int handle_cublasCsyrk3mEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
@@ -6414,11 +7336,15 @@ int handle_cublasCsyrk3mEx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6440,12 +7366,14 @@ int handle_cublasCsyrkEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -6463,16 +7391,22 @@ int handle_cublasCsyrkEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
@@ -6488,11 +7422,15 @@ int handle_cublasCsyrkEx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6513,12 +7451,14 @@ int handle_cublasCsyrkEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -6536,16 +7476,22 @@ int handle_cublasCsyrkEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
@@ -6561,11 +7507,15 @@ int handle_cublasCsyrkEx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, Atype, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6587,11 +7537,13 @@ int handle_cublasCsyrk_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -6608,15 +7560,21 @@ int handle_cublasCsyrk_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -6631,11 +7589,15 @@ int handle_cublasCsyrk_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6656,11 +7618,13 @@ int handle_cublasCsyrk_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -6677,15 +7641,21 @@ int handle_cublasCsyrk_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -6700,11 +7670,15 @@ int handle_cublasCsyrk_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6726,6 +7700,7 @@ int handle_cublasCsyrkx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -6733,6 +7708,7 @@ int handle_cublasCsyrkx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int ldc;
@@ -6749,17 +7725,23 @@ int handle_cublasCsyrkx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -6774,11 +7756,15 @@ int handle_cublasCsyrkx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6799,6 +7785,7 @@ int handle_cublasCsyrkx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -6806,6 +7793,7 @@ int handle_cublasCsyrkx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuComplex *beta = nullptr;
   cuComplex *C;
   int64_t ldc;
@@ -6822,17 +7810,23 @@ int handle_cublasCsyrkx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -6847,11 +7841,15 @@ int handle_cublasCsyrkx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const cuComplex *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -7280,6 +8278,7 @@ int handle_cublasCtrmm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -7302,9 +8301,12 @@ int handle_cublasCtrmm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
@@ -7318,13 +8320,16 @@ int handle_cublasCtrmm_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCtrmm_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, side, uplo, trans, diag, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          A, lda, B, ldb, C, ldc);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7346,6 +8351,7 @@ int handle_cublasCtrmm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -7368,9 +8374,12 @@ int handle_cublasCtrmm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
@@ -7384,13 +8393,16 @@ int handle_cublasCtrmm_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCtrmm_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, side, uplo, trans, diag, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          A, lda, B, ldb, C, ldc);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7506,6 +8518,7 @@ int handle_cublasCtrsmBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *A;
   int lda;
@@ -7527,9 +8540,12 @@ int handle_cublasCtrsmBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(cuComplex *const *)) < 0 ||
@@ -7542,13 +8558,16 @@ int handle_cublasCtrsmBatched(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCtrsmBatched));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, side, uplo, trans, diag, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          A, lda, B, ldb, batchCount);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, B, ldb, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7570,6 +8589,7 @@ int handle_cublasCtrsmBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *const *A;
   int64_t lda;
@@ -7591,9 +8611,12 @@ int handle_cublasCtrsmBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(cuComplex *const *)) < 0 ||
@@ -7606,13 +8629,16 @@ int handle_cublasCtrsmBatched_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCtrsmBatched_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, side, uplo, trans, diag, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          A, lda, B, ldb, batchCount);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, B, ldb, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7635,6 +8661,7 @@ int handle_cublasCtrsm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int lda;
@@ -7655,9 +8682,12 @@ int handle_cublasCtrsm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(cuComplex *)) < 0 ||
@@ -7669,13 +8699,16 @@ int handle_cublasCtrsm_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCtrsm_v2));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, side, uplo, trans, diag, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          A, lda, B, ldb);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, B, ldb);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7697,6 +8730,7 @@ int handle_cublasCtrsm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuComplex *alpha = nullptr;
   const cuComplex *A;
   int64_t lda;
@@ -7717,9 +8751,12 @@ int handle_cublasCtrsm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(cuComplex *)) < 0 ||
@@ -7731,13 +8768,16 @@ int handle_cublasCtrsm_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasCtrsm_v2_64));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(handle, side, uplo, trans, diag, m, n,
-                          alpha_width != 0
-                              ? reinterpret_cast<const cuComplex *>(alpha_value)
-                              : alpha,
-                          A, lda, B, ldb);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, B, ldb);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7887,6 +8927,7 @@ int handle_cublasDasum_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -7898,7 +8939,6 @@ int handle_cublasDasum_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -7908,15 +8948,21 @@ int handle_cublasDasum_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDasum_v2));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7933,6 +8979,7 @@ int handle_cublasDasum_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -7944,7 +8991,6 @@ int handle_cublasDasum_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -7954,15 +9000,21 @@ int handle_cublasDasum_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDasum_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7978,6 +9030,7 @@ int handle_cublasDaxpy_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int incx;
@@ -7991,9 +9044,12 @@ int handle_cublasDaxpy_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
@@ -8009,8 +9065,11 @@ int handle_cublasDaxpy_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8028,6 +9087,7 @@ int handle_cublasDaxpy_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int64_t incx;
@@ -8041,9 +9101,12 @@ int handle_cublasDaxpy_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
@@ -8059,8 +9122,11 @@ int handle_cublasDaxpy_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8257,6 +9323,7 @@ int handle_cublasDdot_v2(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -8270,7 +9337,6 @@ int handle_cublasDdot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -8280,15 +9346,21 @@ int handle_cublasDdot_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDdot_v2));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx, y, incy,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -8307,6 +9379,7 @@ int handle_cublasDdot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -8320,7 +9393,6 @@ int handle_cublasDdot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -8330,15 +9402,21 @@ int handle_cublasDdot_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDdot_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx, y, incy,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -8383,6 +9461,7 @@ int handle_cublasDgbmv_v2(conn_t *conn) {
   int ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -8390,6 +9469,7 @@ int handle_cublasDgbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int incy;
@@ -8406,17 +9486,23 @@ int handle_cublasDgbmv_v2(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int)) < 0 ||
       rpc_read(conn, &ku, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -8430,11 +9516,16 @@ int handle_cublasDgbmv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8456,6 +9547,7 @@ int handle_cublasDgbmv_v2_64(conn_t *conn) {
   int64_t ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -8463,6 +9555,7 @@ int handle_cublasDgbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int64_t incy;
@@ -8480,17 +9573,23 @@ int handle_cublasDgbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &ku, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -8504,11 +9603,16 @@ int handle_cublasDgbmv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8530,11 +9634,13 @@ int handle_cublasDgeam(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   const double *B;
   int ldb;
@@ -8553,15 +9659,21 @@ int handle_cublasDgeam(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
@@ -8577,11 +9689,16 @@ int handle_cublasDgeam(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8602,11 +9719,13 @@ int handle_cublasDgeam_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   const double *B;
   int64_t ldb;
@@ -8625,15 +9744,21 @@ int handle_cublasDgeam_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
@@ -8649,11 +9774,16 @@ int handle_cublasDgeam_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8729,6 +9859,7 @@ int handle_cublasDgemmBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *const *Aarray;
   int lda;
@@ -8736,6 +9867,7 @@ int handle_cublasDgemmBatched(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *const *Carray;
   int ldc;
@@ -8754,17 +9886,23 @@ int handle_cublasDgemmBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(double *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -8779,11 +9917,16 @@ int handle_cublasDgemmBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8805,6 +9948,7 @@ int handle_cublasDgemmBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *const *Aarray;
   int64_t lda;
@@ -8812,6 +9956,7 @@ int handle_cublasDgemmBatched_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *const *Carray;
   int64_t ldc;
@@ -8831,17 +9976,23 @@ int handle_cublasDgemmBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(double *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -8856,11 +10007,16 @@ int handle_cublasDgemmBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8869,6 +10025,397 @@ int handle_cublasDgemmBatched_64(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasDgemmGroupedBatched(conn_t *conn) {
+  cublasHandle_t handle;
+  int group_count;
+  cublasOperation_t *transa_array = nullptr;
+  size_t transa_array_size;
+  cublasOperation_t *transb_array = nullptr;
+  size_t transb_array_size;
+  int *m_array = nullptr;
+  size_t m_array_size;
+  int *n_array = nullptr;
+  size_t n_array_size;
+  int *k_array = nullptr;
+  size_t k_array_size;
+  uint32_t alpha_array_width;
+  alignas(16) unsigned char alpha_array_value[64];
+  std::vector<unsigned char> alpha_array_heap;
+  const double *alpha_array = nullptr;
+  const double *const *Aarray;
+  int *lda_array = nullptr;
+  size_t lda_array_size;
+  const double *const *Barray;
+  int *ldb_array = nullptr;
+  size_t ldb_array_size;
+  uint32_t beta_array_width;
+  alignas(16) unsigned char beta_array_value[64];
+  std::vector<unsigned char> beta_array_heap;
+  const double *beta_array = nullptr;
+  double *const *Carray;
+  int *ldc_array = nullptr;
+  size_t ldc_array_size;
+  int *group_size = nullptr;
+  size_t group_size_size;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasHandle_t, const cublasOperation_t *, const cublasOperation_t *,
+      const int *, const int *, const int *, const double *,
+      const double *const *, const int *, const double *const *, const int *,
+      const double *, double *const *, const int *, int, const int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_read(conn, &group_count, sizeof(int)) < 0 || group_count < 0 || false)
+    goto ERROR_0;
+  transa_array_size = group_count * sizeof(const cublasOperation_t);
+  transa_array = (cublasOperation_t *)malloc(transa_array_size);
+  if (transa_array_size != 0 && transa_array == nullptr)
+    goto ERROR_0;
+  if ((transa_array_size != 0 &&
+       rpc_read(conn, transa_array, transa_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  transb_array_size = group_count * sizeof(const cublasOperation_t);
+  transb_array = (cublasOperation_t *)malloc(transb_array_size);
+  if (transb_array_size != 0 && transb_array == nullptr)
+    goto ERROR_0;
+  if ((transb_array_size != 0 &&
+       rpc_read(conn, transb_array, transb_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  m_array_size = group_count * sizeof(const int);
+  m_array = (int *)malloc(m_array_size);
+  if (m_array_size != 0 && m_array == nullptr)
+    goto ERROR_0;
+  if ((m_array_size != 0 && rpc_read(conn, m_array, m_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  n_array_size = group_count * sizeof(const int);
+  n_array = (int *)malloc(n_array_size);
+  if (n_array_size != 0 && n_array == nullptr)
+    goto ERROR_0;
+  if ((n_array_size != 0 && rpc_read(conn, n_array, n_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  k_array_size = group_count * sizeof(const int);
+  k_array = (int *)malloc(k_array_size);
+  if (k_array_size != 0 && k_array == nullptr)
+    goto ERROR_0;
+  if ((k_array_size != 0 && rpc_read(conn, k_array, k_array_size) < 0) ||
+      rpc_read(conn, &alpha_array_width, sizeof(alpha_array_width)) < 0 ||
+      (alpha_array_width == 0 &&
+       rpc_read(conn, &alpha_array, sizeof(alpha_array)) < 0) ||
+      (alpha_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_array_heap, alpha_array_value,
+                                   sizeof(alpha_array_value),
+                                   alpha_array_width),
+                alpha_array_width) < 0) ||
+      rpc_read(conn, &Aarray, sizeof(const double *const *)) < 0 ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  lda_array_size = group_count * sizeof(const int);
+  lda_array = (int *)malloc(lda_array_size);
+  if (lda_array_size != 0 && lda_array == nullptr)
+    goto ERROR_0;
+  if ((lda_array_size != 0 && rpc_read(conn, lda_array, lda_array_size) < 0) ||
+      rpc_read(conn, &Barray, sizeof(const double *const *)) < 0 ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  ldb_array_size = group_count * sizeof(const int);
+  ldb_array = (int *)malloc(ldb_array_size);
+  if (ldb_array_size != 0 && ldb_array == nullptr)
+    goto ERROR_0;
+  if ((ldb_array_size != 0 && rpc_read(conn, ldb_array, ldb_array_size) < 0) ||
+      rpc_read(conn, &beta_array_width, sizeof(beta_array_width)) < 0 ||
+      (beta_array_width == 0 &&
+       rpc_read(conn, &beta_array, sizeof(beta_array)) < 0) ||
+      (beta_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_array_heap, beta_array_value,
+                                   sizeof(beta_array_value), beta_array_width),
+                beta_array_width) < 0) ||
+      rpc_read(conn, &Carray, sizeof(double *const *)) < 0 || group_count < 0 ||
+      false)
+    goto ERROR_0;
+  ldc_array_size = group_count * sizeof(const int);
+  ldc_array = (int *)malloc(ldc_array_size);
+  if (ldc_array_size != 0 && ldc_array == nullptr)
+    goto ERROR_0;
+  if ((ldc_array_size != 0 && rpc_read(conn, ldc_array, ldc_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  group_size_size = group_count * sizeof(const int);
+  group_size = (int *)malloc(group_size_size);
+  if (group_size_size != 0 && group_size == nullptr)
+    goto ERROR_0;
+  if ((group_size_size != 0 &&
+       rpc_read(conn, group_size, group_size_size) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDgemmGroupedBatched));
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle,
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transa_array),
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transb_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : m_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : n_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : k_array),
+               alpha_array_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         alpha_array_heap, alpha_array_value,
+                         sizeof(alpha_array_value), alpha_array_width))
+                   : alpha_array,
+               Aarray,
+               (group_count * sizeof(const int) == 0 ? nullptr : lda_array),
+               Barray,
+               (group_count * sizeof(const int) == 0 ? nullptr : ldb_array),
+               beta_array_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_array_heap, beta_array_value,
+                         sizeof(beta_array_value), beta_array_width))
+                   : beta_array,
+               Carray,
+               (group_count * sizeof(const int) == 0 ? nullptr : ldc_array),
+               group_count,
+               (group_count * sizeof(const int) == 0 ? nullptr : group_size));
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return 0;
+ERROR_0:
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return -1;
+}
+
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasDgemmGroupedBatched_64(conn_t *conn) {
+  cublasHandle_t handle;
+  int64_t group_count;
+  cublasOperation_t *transa_array = nullptr;
+  size_t transa_array_size;
+  cublasOperation_t *transb_array = nullptr;
+  size_t transb_array_size;
+  int64_t *m_array = nullptr;
+  size_t m_array_size;
+  int64_t *n_array = nullptr;
+  size_t n_array_size;
+  int64_t *k_array = nullptr;
+  size_t k_array_size;
+  uint32_t alpha_array_width;
+  alignas(16) unsigned char alpha_array_value[64];
+  std::vector<unsigned char> alpha_array_heap;
+  const double *alpha_array = nullptr;
+  const double *const *Aarray;
+  int64_t *lda_array = nullptr;
+  size_t lda_array_size;
+  const double *const *Barray;
+  int64_t *ldb_array = nullptr;
+  size_t ldb_array_size;
+  uint32_t beta_array_width;
+  alignas(16) unsigned char beta_array_value[64];
+  std::vector<unsigned char> beta_array_heap;
+  const double *beta_array = nullptr;
+  double *const *Carray;
+  int64_t *ldc_array = nullptr;
+  size_t ldc_array_size;
+  int64_t *group_size = nullptr;
+  size_t group_size_size;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasHandle_t, const cublasOperation_t *, const cublasOperation_t *,
+      const int64_t *, const int64_t *, const int64_t *, const double *,
+      const double *const *, const int64_t *, const double *const *,
+      const int64_t *, const double *, double *const *, const int64_t *,
+      int64_t, const int64_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_read(conn, &group_count, sizeof(int64_t)) < 0 || false)
+    goto ERROR_0;
+  transa_array_size = group_count * sizeof(const cublasOperation_t);
+  transa_array = (cublasOperation_t *)malloc(transa_array_size);
+  if (transa_array_size != 0 && transa_array == nullptr)
+    goto ERROR_0;
+  if ((transa_array_size != 0 &&
+       rpc_read(conn, transa_array, transa_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  transb_array_size = group_count * sizeof(const cublasOperation_t);
+  transb_array = (cublasOperation_t *)malloc(transb_array_size);
+  if (transb_array_size != 0 && transb_array == nullptr)
+    goto ERROR_0;
+  if ((transb_array_size != 0 &&
+       rpc_read(conn, transb_array, transb_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  m_array_size = group_count * sizeof(const int64_t);
+  m_array = (int64_t *)malloc(m_array_size);
+  if (m_array_size != 0 && m_array == nullptr)
+    goto ERROR_0;
+  if ((m_array_size != 0 && rpc_read(conn, m_array, m_array_size) < 0) || false)
+    goto ERROR_0;
+  n_array_size = group_count * sizeof(const int64_t);
+  n_array = (int64_t *)malloc(n_array_size);
+  if (n_array_size != 0 && n_array == nullptr)
+    goto ERROR_0;
+  if ((n_array_size != 0 && rpc_read(conn, n_array, n_array_size) < 0) || false)
+    goto ERROR_0;
+  k_array_size = group_count * sizeof(const int64_t);
+  k_array = (int64_t *)malloc(k_array_size);
+  if (k_array_size != 0 && k_array == nullptr)
+    goto ERROR_0;
+  if ((k_array_size != 0 && rpc_read(conn, k_array, k_array_size) < 0) ||
+      rpc_read(conn, &alpha_array_width, sizeof(alpha_array_width)) < 0 ||
+      (alpha_array_width == 0 &&
+       rpc_read(conn, &alpha_array, sizeof(alpha_array)) < 0) ||
+      (alpha_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_array_heap, alpha_array_value,
+                                   sizeof(alpha_array_value),
+                                   alpha_array_width),
+                alpha_array_width) < 0) ||
+      rpc_read(conn, &Aarray, sizeof(const double *const *)) < 0 || false)
+    goto ERROR_0;
+  lda_array_size = group_count * sizeof(const int64_t);
+  lda_array = (int64_t *)malloc(lda_array_size);
+  if (lda_array_size != 0 && lda_array == nullptr)
+    goto ERROR_0;
+  if ((lda_array_size != 0 && rpc_read(conn, lda_array, lda_array_size) < 0) ||
+      rpc_read(conn, &Barray, sizeof(const double *const *)) < 0 || false)
+    goto ERROR_0;
+  ldb_array_size = group_count * sizeof(const int64_t);
+  ldb_array = (int64_t *)malloc(ldb_array_size);
+  if (ldb_array_size != 0 && ldb_array == nullptr)
+    goto ERROR_0;
+  if ((ldb_array_size != 0 && rpc_read(conn, ldb_array, ldb_array_size) < 0) ||
+      rpc_read(conn, &beta_array_width, sizeof(beta_array_width)) < 0 ||
+      (beta_array_width == 0 &&
+       rpc_read(conn, &beta_array, sizeof(beta_array)) < 0) ||
+      (beta_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_array_heap, beta_array_value,
+                                   sizeof(beta_array_value), beta_array_width),
+                beta_array_width) < 0) ||
+      rpc_read(conn, &Carray, sizeof(double *const *)) < 0 || false)
+    goto ERROR_0;
+  ldc_array_size = group_count * sizeof(const int64_t);
+  ldc_array = (int64_t *)malloc(ldc_array_size);
+  if (ldc_array_size != 0 && ldc_array == nullptr)
+    goto ERROR_0;
+  if ((ldc_array_size != 0 && rpc_read(conn, ldc_array, ldc_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  group_size_size = group_count * sizeof(const int64_t);
+  group_size = (int64_t *)malloc(group_size_size);
+  if (group_size_size != 0 && group_size == nullptr)
+    goto ERROR_0;
+  if ((group_size_size != 0 &&
+       rpc_read(conn, group_size, group_size_size) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDgemmGroupedBatched_64));
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle,
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transa_array),
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transb_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : m_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : n_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : k_array),
+               alpha_array_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         alpha_array_heap, alpha_array_value,
+                         sizeof(alpha_array_value), alpha_array_width))
+                   : alpha_array,
+               Aarray,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : lda_array),
+               Barray,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : ldb_array),
+               beta_array_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_array_heap, beta_array_value,
+                         sizeof(beta_array_value), beta_array_width))
+                   : beta_array,
+               Carray,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : ldc_array),
+               group_count,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr
+                                                         : group_size));
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return 0;
+ERROR_0:
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
   return -1;
 }
 
@@ -8883,6 +10430,7 @@ int handle_cublasDgemmStridedBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -8892,6 +10440,7 @@ int handle_cublasDgemmStridedBatched(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int ldc;
@@ -8911,9 +10460,12 @@ int handle_cublasDgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -8921,9 +10473,12 @@ int handle_cublasDgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -8939,11 +10494,16 @@ int handle_cublasDgemmStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8965,6 +10525,7 @@ int handle_cublasDgemmStridedBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -8974,6 +10535,7 @@ int handle_cublasDgemmStridedBatched_64(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int64_t ldc;
@@ -8994,9 +10556,12 @@ int handle_cublasDgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -9004,9 +10569,12 @@ int handle_cublasDgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -9022,11 +10590,16 @@ int handle_cublasDgemmStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9049,6 +10622,7 @@ int handle_cublasDgemm_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -9056,6 +10630,7 @@ int handle_cublasDgemm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int ldc;
@@ -9073,17 +10648,23 @@ int handle_cublasDgemm_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -9097,11 +10678,16 @@ int handle_cublasDgemm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9123,6 +10709,7 @@ int handle_cublasDgemm_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -9130,6 +10717,7 @@ int handle_cublasDgemm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int64_t ldc;
@@ -9147,17 +10735,23 @@ int handle_cublasDgemm_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -9171,11 +10765,16 @@ int handle_cublasDgemm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9196,6 +10795,7 @@ int handle_cublasDgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *const *Aarray;
   int lda;
@@ -9203,6 +10803,7 @@ int handle_cublasDgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *const *yarray;
   int incy;
@@ -9219,17 +10820,23 @@ int handle_cublasDgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(double *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -9244,11 +10851,16 @@ int handle_cublasDgemvBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9268,6 +10880,7 @@ int handle_cublasDgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *const *Aarray;
   int64_t lda;
@@ -9275,6 +10888,7 @@ int handle_cublasDgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *const *yarray;
   int64_t incy;
@@ -9291,17 +10905,23 @@ int handle_cublasDgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(double *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -9316,11 +10936,16 @@ int handle_cublasDgemvBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9341,6 +10966,7 @@ int handle_cublasDgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -9350,6 +10976,7 @@ int handle_cublasDgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int incy;
@@ -9367,9 +10994,12 @@ int handle_cublasDgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -9377,9 +11007,12 @@ int handle_cublasDgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -9395,11 +11028,16 @@ int handle_cublasDgemvStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9419,6 +11057,7 @@ int handle_cublasDgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -9428,6 +11067,7 @@ int handle_cublasDgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int64_t incy;
@@ -9445,9 +11085,12 @@ int handle_cublasDgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -9455,9 +11098,12 @@ int handle_cublasDgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -9473,11 +11119,16 @@ int handle_cublasDgemvStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9498,6 +11149,7 @@ int handle_cublasDgemv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -9505,6 +11157,7 @@ int handle_cublasDgemv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int incy;
@@ -9519,17 +11172,23 @@ int handle_cublasDgemv_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -9543,11 +11202,16 @@ int handle_cublasDgemv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9567,6 +11231,7 @@ int handle_cublasDgemv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -9574,6 +11239,7 @@ int handle_cublasDgemv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int64_t incy;
@@ -9589,17 +11255,23 @@ int handle_cublasDgemv_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -9613,11 +11285,16 @@ int handle_cublasDgemv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9680,6 +11357,7 @@ int handle_cublasDger_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int incx;
@@ -9697,9 +11375,12 @@ int handle_cublasDger_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
@@ -9717,8 +11398,11 @@ int handle_cublasDger_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9737,6 +11421,7 @@ int handle_cublasDger_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int64_t incx;
@@ -9754,9 +11439,12 @@ int handle_cublasDger_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
@@ -9774,8 +11462,11 @@ int handle_cublasDger_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9972,6 +11663,7 @@ int handle_cublasDnrm2_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -9983,7 +11675,6 @@ int handle_cublasDnrm2_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -9993,15 +11684,21 @@ int handle_cublasDnrm2_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDnrm2_v2));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10018,6 +11715,7 @@ int handle_cublasDnrm2_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -10029,7 +11727,6 @@ int handle_cublasDnrm2_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -10039,15 +11736,21 @@ int handle_cublasDnrm2_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDnrm2_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10069,6 +11772,7 @@ int handle_cublasDotEx(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executionType;
@@ -10087,7 +11791,6 @@ int handle_cublasDotEx(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executionType, sizeof(cudaDataType)) < 0 || false)
@@ -10098,15 +11801,22 @@ int handle_cublasDotEx(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDotEx));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx, y, yType, incy,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executionType);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx, y, yType, incy,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10127,6 +11837,7 @@ int handle_cublasDotEx_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executionType;
@@ -10145,7 +11856,6 @@ int handle_cublasDotEx_64(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executionType, sizeof(cudaDataType)) < 0 || false)
@@ -10156,15 +11866,22 @@ int handle_cublasDotEx_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDotEx_64));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx, y, yType, incy,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executionType);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx, y, yType, incy,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10186,6 +11903,7 @@ int handle_cublasDotcEx(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executionType;
@@ -10204,7 +11922,6 @@ int handle_cublasDotcEx(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executionType, sizeof(cudaDataType)) < 0 || false)
@@ -10215,15 +11932,22 @@ int handle_cublasDotcEx(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDotcEx));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx, y, yType, incy,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executionType);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx, y, yType, incy,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10244,6 +11968,7 @@ int handle_cublasDotcEx_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executionType;
@@ -10262,7 +11987,6 @@ int handle_cublasDotcEx_64(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executionType, sizeof(cudaDataType)) < 0 || false)
@@ -10273,15 +11997,22 @@ int handle_cublasDotcEx_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDotcEx_64));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx, y, yType, incy,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executionType);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx, y, yType, incy,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10301,9 +12032,11 @@ int handle_cublasDrot_v2(conn_t *conn) {
   int incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const double *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -10317,13 +12050,18 @@ int handle_cublasDrot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -10335,8 +12073,14 @@ int handle_cublasDrot_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const double *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -10357,9 +12101,11 @@ int handle_cublasDrot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const double *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -10374,13 +12120,18 @@ int handle_cublasDrot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -10392,8 +12143,14 @@ int handle_cublasDrot_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const double *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -10410,15 +12167,19 @@ int handle_cublasDrotg_v2(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t a_width;
   alignas(16) unsigned char a_value[64];
+  std::vector<unsigned char> a_heap;
   double *a = nullptr;
   uint32_t b_width;
   alignas(16) unsigned char b_value[64];
+  std::vector<unsigned char> b_heap;
   double *b = nullptr;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   double *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -10427,18 +12188,20 @@ int handle_cublasDrotg_v2(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &a_width, sizeof(a_width)) < 0 ||
-      a_width > sizeof(a_value) ||
       (a_width == 0 && rpc_read(conn, &a, sizeof(a)) < 0) ||
-      (a_width != 0 && rpc_read(conn, a_value, a_width) < 0) ||
+      (a_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                a_width) < 0) ||
       rpc_read(conn, &b_width, sizeof(b_width)) < 0 ||
-      b_width > sizeof(b_value) ||
       (b_width == 0 && rpc_read(conn, &b, sizeof(b)) < 0) ||
-      (b_width != 0 && rpc_read(conn, b_value, b_width) < 0) ||
+      (b_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                b_width) < 0) ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) || false)
     goto ERROR_0;
 
@@ -10450,16 +12213,37 @@ int handle_cublasDrotg_v2(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(handle, a_width != 0 ? reinterpret_cast<double *>(a_value) : a,
-               b_width != 0 ? reinterpret_cast<double *>(b_value) : b,
-               c_width != 0 ? reinterpret_cast<double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<double *>(s_value) : s);
+          : fn(handle,
+               a_width != 0 ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                  a_heap, a_value, sizeof(a_value), a_width))
+                            : a,
+               b_width != 0 ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                  b_heap, b_value, sizeof(b_value), b_width))
+                            : b,
+               c_width != 0 ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                  c_heap, c_value, sizeof(c_value), c_width))
+                            : c,
+               s_width != 0 ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                  s_heap, s_value, sizeof(s_value), s_width))
+                            : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (a_width != 0 && rpc_write(conn, a_value, a_width) < 0) ||
-      (b_width != 0 && rpc_write(conn, b_value, b_width) < 0) ||
-      (c_width != 0 && rpc_write(conn, c_value, c_width) < 0) ||
-      (s_width != 0 && rpc_write(conn, s_value, s_width) < 0) ||
+      (a_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                 a_width) < 0) ||
+      (b_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                 b_width) < 0) ||
+      (c_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                 c_width) < 0) ||
+      (s_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                 s_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10477,6 +12261,7 @@ int handle_cublasDrotm_v2(conn_t *conn) {
   int incy;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   const double *param = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -10490,9 +12275,12 @@ int handle_cublasDrotm_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) ||
-      (param_width != 0 && rpc_read(conn, param_value, param_width) < 0) ||
+      (param_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(param_heap, param_value, sizeof(param_value),
+                                   param_width),
+                param_width) < 0) ||
       false)
     goto ERROR_0;
 
@@ -10505,8 +12293,11 @@ int handle_cublasDrotm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               param_width != 0 ? reinterpret_cast<const double *>(param_value)
-                                : param);
+               param_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(param_heap, param_value,
+                                            sizeof(param_value), param_width))
+                   : param);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -10527,6 +12318,7 @@ int handle_cublasDrotm_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   const double *param = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -10540,9 +12332,12 @@ int handle_cublasDrotm_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) ||
-      (param_width != 0 && rpc_read(conn, param_value, param_width) < 0) ||
+      (param_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(param_heap, param_value, sizeof(param_value),
+                                   param_width),
+                param_width) < 0) ||
       false)
     goto ERROR_0;
 
@@ -10555,8 +12350,11 @@ int handle_cublasDrotm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               param_width != 0 ? reinterpret_cast<const double *>(param_value)
-                                : param);
+               param_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(param_heap, param_value,
+                                            sizeof(param_value), param_width))
+                   : param);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -10573,18 +12371,23 @@ int handle_cublasDrotmg_v2(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t d1_width;
   alignas(16) unsigned char d1_value[64];
+  std::vector<unsigned char> d1_heap;
   double *d1 = nullptr;
   uint32_t d2_width;
   alignas(16) unsigned char d2_value[64];
+  std::vector<unsigned char> d2_heap;
   double *d2 = nullptr;
   uint32_t x1_width;
   alignas(16) unsigned char x1_value[64];
+  std::vector<unsigned char> x1_heap;
   double *x1 = nullptr;
   uint32_t y1_width;
   alignas(16) unsigned char y1_value[64];
+  std::vector<unsigned char> y1_heap;
   const double *y1 = nullptr;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   double *param = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -10593,23 +12396,30 @@ int handle_cublasDrotmg_v2(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &d1_width, sizeof(d1_width)) < 0 ||
-      d1_width > sizeof(d1_value) ||
       (d1_width == 0 && rpc_read(conn, &d1, sizeof(d1)) < 0) ||
-      (d1_width != 0 && rpc_read(conn, d1_value, d1_width) < 0) ||
+      (d1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(d1_heap, d1_value,
+                                                    sizeof(d1_value), d1_width),
+                                 d1_width) < 0) ||
       rpc_read(conn, &d2_width, sizeof(d2_width)) < 0 ||
-      d2_width > sizeof(d2_value) ||
       (d2_width == 0 && rpc_read(conn, &d2, sizeof(d2)) < 0) ||
-      (d2_width != 0 && rpc_read(conn, d2_value, d2_width) < 0) ||
+      (d2_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(d2_heap, d2_value,
+                                                    sizeof(d2_value), d2_width),
+                                 d2_width) < 0) ||
       rpc_read(conn, &x1_width, sizeof(x1_width)) < 0 ||
-      x1_width > sizeof(x1_value) ||
       (x1_width == 0 && rpc_read(conn, &x1, sizeof(x1)) < 0) ||
-      (x1_width != 0 && rpc_read(conn, x1_value, x1_width) < 0) ||
+      (x1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(x1_heap, x1_value,
+                                                    sizeof(x1_value), x1_width),
+                                 x1_width) < 0) ||
       rpc_read(conn, &y1_width, sizeof(y1_width)) < 0 ||
-      y1_width > sizeof(y1_value) ||
       (y1_width == 0 && rpc_read(conn, &y1, sizeof(y1)) < 0) ||
-      (y1_width != 0 && rpc_read(conn, y1_value, y1_width) < 0) ||
+      (y1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(y1_heap, y1_value,
+                                                    sizeof(y1_value), y1_width),
+                                 y1_width) < 0) ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) || false)
     goto ERROR_0;
 
@@ -10622,18 +12432,48 @@ int handle_cublasDrotmg_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle,
-               d1_width != 0 ? reinterpret_cast<double *>(d1_value) : d1,
-               d2_width != 0 ? reinterpret_cast<double *>(d2_value) : d2,
-               x1_width != 0 ? reinterpret_cast<double *>(x1_value) : x1,
-               y1_width != 0 ? reinterpret_cast<const double *>(y1_value) : y1,
-               param_width != 0 ? reinterpret_cast<double *>(param_value)
+               d1_width != 0
+                   ? reinterpret_cast<double *>(lupine_scalar_slot(
+                         d1_heap, d1_value, sizeof(d1_value), d1_width))
+                   : d1,
+               d2_width != 0
+                   ? reinterpret_cast<double *>(lupine_scalar_slot(
+                         d2_heap, d2_value, sizeof(d2_value), d2_width))
+                   : d2,
+               x1_width != 0
+                   ? reinterpret_cast<double *>(lupine_scalar_slot(
+                         x1_heap, x1_value, sizeof(x1_value), x1_width))
+                   : x1,
+               y1_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         y1_heap, y1_value, sizeof(y1_value), y1_width))
+                   : y1,
+               param_width != 0 ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                      param_heap, param_value,
+                                      sizeof(param_value), param_width))
                                 : param);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (d1_width != 0 && rpc_write(conn, d1_value, d1_width) < 0) ||
-      (d2_width != 0 && rpc_write(conn, d2_value, d2_width) < 0) ||
-      (x1_width != 0 && rpc_write(conn, x1_value, x1_width) < 0) ||
-      (param_width != 0 && rpc_write(conn, param_value, param_width) < 0) ||
+      (d1_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(d1_heap, d1_value, sizeof(d1_value), d1_width),
+           d1_width) < 0) ||
+      (d2_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(d2_heap, d2_value, sizeof(d2_value), d2_width),
+           d2_width) < 0) ||
+      (x1_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(x1_heap, x1_value, sizeof(x1_value), x1_width),
+           x1_width) < 0) ||
+      (param_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(param_heap, param_value,
+                                    sizeof(param_value), param_width),
+                 param_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -10649,6 +12489,7 @@ int handle_cublasDsbmv_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -10656,6 +12497,7 @@ int handle_cublasDsbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int incy;
@@ -10670,17 +12512,23 @@ int handle_cublasDsbmv_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -10694,11 +12542,16 @@ int handle_cublasDsbmv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -10718,6 +12571,7 @@ int handle_cublasDsbmv_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -10725,6 +12579,7 @@ int handle_cublasDsbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int64_t incy;
@@ -10740,17 +12595,23 @@ int handle_cublasDsbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -10764,11 +12625,16 @@ int handle_cublasDsbmv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -10787,6 +12653,7 @@ int handle_cublasDscal_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   double *x;
   int incx;
@@ -10798,9 +12665,12 @@ int handle_cublasDscal_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -10814,8 +12684,11 @@ int handle_cublasDscal_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -10833,6 +12706,7 @@ int handle_cublasDscal_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   double *x;
   int64_t incx;
@@ -10844,9 +12718,12 @@ int handle_cublasDscal_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -10860,8 +12737,11 @@ int handle_cublasDscal_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -10881,12 +12761,14 @@ int handle_cublasDspmv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *AP;
   const double *x;
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int incy;
@@ -10900,16 +12782,22 @@ int handle_cublasDspmv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const double *)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -10923,11 +12811,16 @@ int handle_cublasDspmv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                AP, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -10946,12 +12839,14 @@ int handle_cublasDspmv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *AP;
   const double *x;
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int64_t incy;
@@ -10965,16 +12860,22 @@ int handle_cublasDspmv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const double *)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -10988,11 +12889,16 @@ int handle_cublasDspmv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                AP, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11012,6 +12918,7 @@ int handle_cublasDspr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int incx;
@@ -11028,9 +12935,12 @@ int handle_cublasDspr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
@@ -11047,8 +12957,11 @@ int handle_cublasDspr2_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11067,6 +12980,7 @@ int handle_cublasDspr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int64_t incx;
@@ -11083,9 +12997,12 @@ int handle_cublasDspr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
@@ -11102,8 +13019,11 @@ int handle_cublasDspr2_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11123,6 +13043,7 @@ int handle_cublasDspr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int incx;
@@ -11137,9 +13058,12 @@ int handle_cublasDspr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &AP, sizeof(double *)) < 0 || false)
@@ -11154,8 +13078,11 @@ int handle_cublasDspr_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11174,6 +13101,7 @@ int handle_cublasDspr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int64_t incx;
@@ -11188,9 +13116,12 @@ int handle_cublasDspr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &AP, sizeof(double *)) < 0 || false)
@@ -11205,8 +13136,11 @@ int handle_cublasDspr_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11305,6 +13239,7 @@ int handle_cublasDsymm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -11312,6 +13247,7 @@ int handle_cublasDsymm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int ldc;
@@ -11328,17 +13264,23 @@ int handle_cublasDsymm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -11352,11 +13294,16 @@ int handle_cublasDsymm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11377,6 +13324,7 @@ int handle_cublasDsymm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -11384,6 +13332,7 @@ int handle_cublasDsymm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int64_t ldc;
@@ -11400,17 +13349,23 @@ int handle_cublasDsymm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -11424,11 +13379,16 @@ int handle_cublasDsymm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11448,6 +13408,7 @@ int handle_cublasDsymv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -11455,6 +13416,7 @@ int handle_cublasDsymv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int incy;
@@ -11468,17 +13430,23 @@ int handle_cublasDsymv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -11492,11 +13460,16 @@ int handle_cublasDsymv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11515,6 +13488,7 @@ int handle_cublasDsymv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -11522,6 +13496,7 @@ int handle_cublasDsymv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *y;
   int64_t incy;
@@ -11535,17 +13510,23 @@ int handle_cublasDsymv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(double *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -11559,11 +13540,16 @@ int handle_cublasDsymv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11583,6 +13569,7 @@ int handle_cublasDsyr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int incx;
@@ -11600,9 +13587,12 @@ int handle_cublasDsyr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
@@ -11620,8 +13610,11 @@ int handle_cublasDsyr2_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11640,6 +13633,7 @@ int handle_cublasDsyr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int64_t incx;
@@ -11657,9 +13651,12 @@ int handle_cublasDsyr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const double *)) < 0 ||
@@ -11677,8 +13674,11 @@ int handle_cublasDsyr2_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11700,6 +13700,7 @@ int handle_cublasDsyr2k_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -11707,6 +13708,7 @@ int handle_cublasDsyr2k_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int ldc;
@@ -11723,17 +13725,23 @@ int handle_cublasDsyr2k_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -11747,11 +13755,16 @@ int handle_cublasDsyr2k_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11772,6 +13785,7 @@ int handle_cublasDsyr2k_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -11779,6 +13793,7 @@ int handle_cublasDsyr2k_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int64_t ldc;
@@ -11795,17 +13810,23 @@ int handle_cublasDsyr2k_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -11819,11 +13840,16 @@ int handle_cublasDsyr2k_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11843,6 +13869,7 @@ int handle_cublasDsyr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int incx;
@@ -11858,9 +13885,12 @@ int handle_cublasDsyr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &A, sizeof(double *)) < 0 ||
@@ -11876,8 +13906,11 @@ int handle_cublasDsyr_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11896,6 +13929,7 @@ int handle_cublasDsyr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *x;
   int64_t incx;
@@ -11911,9 +13945,12 @@ int handle_cublasDsyr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &A, sizeof(double *)) < 0 ||
@@ -11929,8 +13966,11 @@ int handle_cublasDsyr_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -11952,11 +13992,13 @@ int handle_cublasDsyrk_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int ldc;
@@ -11972,15 +14014,21 @@ int handle_cublasDsyrk_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -11994,11 +14042,16 @@ int handle_cublasDsyrk_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12019,11 +14072,13 @@ int handle_cublasDsyrk_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int64_t ldc;
@@ -12040,15 +14095,21 @@ int handle_cublasDsyrk_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -12062,11 +14123,16 @@ int handle_cublasDsyrk_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12088,6 +14154,7 @@ int handle_cublasDsyrkx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -12095,6 +14162,7 @@ int handle_cublasDsyrkx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int ldc;
@@ -12111,17 +14179,23 @@ int handle_cublasDsyrkx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -12135,11 +14209,16 @@ int handle_cublasDsyrkx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12160,6 +14239,7 @@ int handle_cublasDsyrkx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -12167,6 +14247,7 @@ int handle_cublasDsyrkx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   double *C;
   int64_t ldc;
@@ -12183,17 +14264,23 @@ int handle_cublasDsyrkx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(double *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -12207,11 +14294,16 @@ int handle_cublasDsyrkx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12640,6 +14732,7 @@ int handle_cublasDtrmm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -12662,9 +14755,12 @@ int handle_cublasDtrmm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
@@ -12682,8 +14778,11 @@ int handle_cublasDtrmm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12706,6 +14805,7 @@ int handle_cublasDtrmm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -12728,9 +14828,12 @@ int handle_cublasDtrmm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const double *)) < 0 ||
@@ -12748,8 +14851,11 @@ int handle_cublasDtrmm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12866,6 +14972,7 @@ int handle_cublasDtrsmBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *const *A;
   int lda;
@@ -12887,9 +14994,12 @@ int handle_cublasDtrsmBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(double *const *)) < 0 ||
@@ -12906,8 +15016,11 @@ int handle_cublasDtrsmBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12930,6 +15043,7 @@ int handle_cublasDtrsmBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *const *A;
   int64_t lda;
@@ -12951,9 +15065,12 @@ int handle_cublasDtrsmBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(double *const *)) < 0 ||
@@ -12970,8 +15087,11 @@ int handle_cublasDtrsmBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -12995,6 +15115,7 @@ int handle_cublasDtrsm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int lda;
@@ -13015,9 +15136,12 @@ int handle_cublasDtrsm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(double *)) < 0 ||
@@ -13033,8 +15157,11 @@ int handle_cublasDtrsm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13057,6 +15184,7 @@ int handle_cublasDtrsm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const double *A;
   int64_t lda;
@@ -13077,9 +15205,12 @@ int handle_cublasDtrsm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const double *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(double *)) < 0 ||
@@ -13095,8 +15226,11 @@ int handle_cublasDtrsm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13247,6 +15381,7 @@ int handle_cublasDzasum_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -13258,7 +15393,6 @@ int handle_cublasDzasum_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -13268,15 +15402,21 @@ int handle_cublasDzasum_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDzasum_v2));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -13293,6 +15433,7 @@ int handle_cublasDzasum_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -13304,7 +15445,6 @@ int handle_cublasDzasum_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -13314,15 +15454,21 @@ int handle_cublasDzasum_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDzasum_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -13340,6 +15486,7 @@ int handle_cublasDznrm2_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -13351,7 +15498,6 @@ int handle_cublasDznrm2_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -13361,15 +15507,21 @@ int handle_cublasDznrm2_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDznrm2_v2));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -13386,6 +15538,7 @@ int handle_cublasDznrm2_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   double *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -13397,7 +15550,6 @@ int handle_cublasDznrm2_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -13407,15 +15559,21 @@ int handle_cublasDznrm2_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasDznrm2_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<double *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -13435,6 +15593,7 @@ int handle_cublasGemmBatchedEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   const void *const *Aarray;
   cudaDataType Atype;
@@ -13444,6 +15603,7 @@ int handle_cublasGemmBatchedEx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const void *beta = nullptr;
   void *const *Carray;
   cudaDataType Ctype;
@@ -13466,9 +15626,12 @@ int handle_cublasGemmBatchedEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const void *const *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
@@ -13476,9 +15639,12 @@ int handle_cublasGemmBatchedEx(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(void *const *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
@@ -13496,11 +15662,16 @@ int handle_cublasGemmBatchedEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, Atype, lda, Barray, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const void *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, Ctype, ldc, batchCount, computeType, algo);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13522,6 +15693,7 @@ int handle_cublasGemmBatchedEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   const void *const *Aarray;
   cudaDataType Atype;
@@ -13531,6 +15703,7 @@ int handle_cublasGemmBatchedEx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const void *beta = nullptr;
   void *const *Carray;
   cudaDataType Ctype;
@@ -13553,9 +15726,12 @@ int handle_cublasGemmBatchedEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const void *const *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
@@ -13563,9 +15739,12 @@ int handle_cublasGemmBatchedEx_64(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(void *const *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
@@ -13583,11 +15762,16 @@ int handle_cublasGemmBatchedEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, Atype, lda, Barray, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const void *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, Ctype, ldc, batchCount, computeType, algo);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13610,6 +15794,7 @@ int handle_cublasGemmEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -13619,6 +15804,7 @@ int handle_cublasGemmEx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const void *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -13640,9 +15826,12 @@ int handle_cublasGemmEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
@@ -13650,9 +15839,12 @@ int handle_cublasGemmEx(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
@@ -13669,11 +15861,16 @@ int handle_cublasGemmEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const void *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc, computeType, algo);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13695,6 +15892,7 @@ int handle_cublasGemmEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -13704,6 +15902,7 @@ int handle_cublasGemmEx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const void *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -13725,9 +15924,12 @@ int handle_cublasGemmEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
@@ -13735,9 +15937,12 @@ int handle_cublasGemmEx_64(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
@@ -13754,11 +15959,16 @@ int handle_cublasGemmEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const void *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc, computeType, algo);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13767,6 +15977,415 @@ int handle_cublasGemmEx_64(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasGemmGroupedBatchedEx(conn_t *conn) {
+  cublasHandle_t handle;
+  int group_count;
+  cublasOperation_t *transa_array = nullptr;
+  size_t transa_array_size;
+  cublasOperation_t *transb_array = nullptr;
+  size_t transb_array_size;
+  int *m_array = nullptr;
+  size_t m_array_size;
+  int *n_array = nullptr;
+  size_t n_array_size;
+  int *k_array = nullptr;
+  size_t k_array_size;
+  uint32_t alpha_array_width;
+  alignas(16) unsigned char alpha_array_value[64];
+  std::vector<unsigned char> alpha_array_heap;
+  const void *alpha_array = nullptr;
+  const void *const *Aarray;
+  cudaDataType_t Atype;
+  int *lda_array = nullptr;
+  size_t lda_array_size;
+  const void *const *Barray;
+  cudaDataType_t Btype;
+  int *ldb_array = nullptr;
+  size_t ldb_array_size;
+  uint32_t beta_array_width;
+  alignas(16) unsigned char beta_array_value[64];
+  std::vector<unsigned char> beta_array_heap;
+  const void *beta_array = nullptr;
+  void *const *Carray;
+  cudaDataType_t Ctype;
+  int *ldc_array = nullptr;
+  size_t ldc_array_size;
+  int *group_size = nullptr;
+  size_t group_size_size;
+  cublasComputeType_t computeType;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasHandle_t, const cublasOperation_t *, const cublasOperation_t *,
+      const int *, const int *, const int *, const void *, const void *const *,
+      cudaDataType_t, const int *, const void *const *, cudaDataType_t,
+      const int *, const void *, void *const *, cudaDataType_t, const int *,
+      int, const int *, cublasComputeType_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_read(conn, &group_count, sizeof(int)) < 0 || group_count < 0 || false)
+    goto ERROR_0;
+  transa_array_size = group_count * sizeof(const cublasOperation_t);
+  transa_array = (cublasOperation_t *)malloc(transa_array_size);
+  if (transa_array_size != 0 && transa_array == nullptr)
+    goto ERROR_0;
+  if ((transa_array_size != 0 &&
+       rpc_read(conn, transa_array, transa_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  transb_array_size = group_count * sizeof(const cublasOperation_t);
+  transb_array = (cublasOperation_t *)malloc(transb_array_size);
+  if (transb_array_size != 0 && transb_array == nullptr)
+    goto ERROR_0;
+  if ((transb_array_size != 0 &&
+       rpc_read(conn, transb_array, transb_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  m_array_size = group_count * sizeof(const int);
+  m_array = (int *)malloc(m_array_size);
+  if (m_array_size != 0 && m_array == nullptr)
+    goto ERROR_0;
+  if ((m_array_size != 0 && rpc_read(conn, m_array, m_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  n_array_size = group_count * sizeof(const int);
+  n_array = (int *)malloc(n_array_size);
+  if (n_array_size != 0 && n_array == nullptr)
+    goto ERROR_0;
+  if ((n_array_size != 0 && rpc_read(conn, n_array, n_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  k_array_size = group_count * sizeof(const int);
+  k_array = (int *)malloc(k_array_size);
+  if (k_array_size != 0 && k_array == nullptr)
+    goto ERROR_0;
+  if ((k_array_size != 0 && rpc_read(conn, k_array, k_array_size) < 0) ||
+      rpc_read(conn, &alpha_array_width, sizeof(alpha_array_width)) < 0 ||
+      (alpha_array_width == 0 &&
+       rpc_read(conn, &alpha_array, sizeof(alpha_array)) < 0) ||
+      (alpha_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_array_heap, alpha_array_value,
+                                   sizeof(alpha_array_value),
+                                   alpha_array_width),
+                alpha_array_width) < 0) ||
+      rpc_read(conn, &Aarray, sizeof(const void *const *)) < 0 ||
+      rpc_read(conn, &Atype, sizeof(cudaDataType_t)) < 0 || group_count < 0 ||
+      false)
+    goto ERROR_0;
+  lda_array_size = group_count * sizeof(const int);
+  lda_array = (int *)malloc(lda_array_size);
+  if (lda_array_size != 0 && lda_array == nullptr)
+    goto ERROR_0;
+  if ((lda_array_size != 0 && rpc_read(conn, lda_array, lda_array_size) < 0) ||
+      rpc_read(conn, &Barray, sizeof(const void *const *)) < 0 ||
+      rpc_read(conn, &Btype, sizeof(cudaDataType_t)) < 0 || group_count < 0 ||
+      false)
+    goto ERROR_0;
+  ldb_array_size = group_count * sizeof(const int);
+  ldb_array = (int *)malloc(ldb_array_size);
+  if (ldb_array_size != 0 && ldb_array == nullptr)
+    goto ERROR_0;
+  if ((ldb_array_size != 0 && rpc_read(conn, ldb_array, ldb_array_size) < 0) ||
+      rpc_read(conn, &beta_array_width, sizeof(beta_array_width)) < 0 ||
+      (beta_array_width == 0 &&
+       rpc_read(conn, &beta_array, sizeof(beta_array)) < 0) ||
+      (beta_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_array_heap, beta_array_value,
+                                   sizeof(beta_array_value), beta_array_width),
+                beta_array_width) < 0) ||
+      rpc_read(conn, &Carray, sizeof(void *const *)) < 0 ||
+      rpc_read(conn, &Ctype, sizeof(cudaDataType_t)) < 0 || group_count < 0 ||
+      false)
+    goto ERROR_0;
+  ldc_array_size = group_count * sizeof(const int);
+  ldc_array = (int *)malloc(ldc_array_size);
+  if (ldc_array_size != 0 && ldc_array == nullptr)
+    goto ERROR_0;
+  if ((ldc_array_size != 0 && rpc_read(conn, ldc_array, ldc_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  group_size_size = group_count * sizeof(const int);
+  group_size = (int *)malloc(group_size_size);
+  if (group_size_size != 0 && group_size == nullptr)
+    goto ERROR_0;
+  if ((group_size_size != 0 &&
+       rpc_read(conn, group_size, group_size_size) < 0) ||
+      rpc_read(conn, &computeType, sizeof(cublasComputeType_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasGemmGroupedBatchedEx));
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle,
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transa_array),
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transb_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : m_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : n_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : k_array),
+               alpha_array_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         alpha_array_heap, alpha_array_value,
+                         sizeof(alpha_array_value), alpha_array_width))
+                   : alpha_array,
+               Aarray, Atype,
+               (group_count * sizeof(const int) == 0 ? nullptr : lda_array),
+               Barray, Btype,
+               (group_count * sizeof(const int) == 0 ? nullptr : ldb_array),
+               beta_array_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_array_heap, beta_array_value,
+                         sizeof(beta_array_value), beta_array_width))
+                   : beta_array,
+               Carray, Ctype,
+               (group_count * sizeof(const int) == 0 ? nullptr : ldc_array),
+               group_count,
+               (group_count * sizeof(const int) == 0 ? nullptr : group_size),
+               computeType);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return 0;
+ERROR_0:
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return -1;
+}
+
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasGemmGroupedBatchedEx_64(conn_t *conn) {
+  cublasHandle_t handle;
+  int64_t group_count;
+  cublasOperation_t *transa_array = nullptr;
+  size_t transa_array_size;
+  cublasOperation_t *transb_array = nullptr;
+  size_t transb_array_size;
+  int64_t *m_array = nullptr;
+  size_t m_array_size;
+  int64_t *n_array = nullptr;
+  size_t n_array_size;
+  int64_t *k_array = nullptr;
+  size_t k_array_size;
+  uint32_t alpha_array_width;
+  alignas(16) unsigned char alpha_array_value[64];
+  std::vector<unsigned char> alpha_array_heap;
+  const void *alpha_array = nullptr;
+  const void *const *Aarray;
+  cudaDataType_t Atype;
+  int64_t *lda_array = nullptr;
+  size_t lda_array_size;
+  const void *const *Barray;
+  cudaDataType_t Btype;
+  int64_t *ldb_array = nullptr;
+  size_t ldb_array_size;
+  uint32_t beta_array_width;
+  alignas(16) unsigned char beta_array_value[64];
+  std::vector<unsigned char> beta_array_heap;
+  const void *beta_array = nullptr;
+  void *const *Carray;
+  cudaDataType_t Ctype;
+  int64_t *ldc_array = nullptr;
+  size_t ldc_array_size;
+  int64_t *group_size = nullptr;
+  size_t group_size_size;
+  cublasComputeType_t computeType;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasHandle_t, const cublasOperation_t *, const cublasOperation_t *,
+      const int64_t *, const int64_t *, const int64_t *, const void *,
+      const void *const *, cudaDataType_t, const int64_t *, const void *const *,
+      cudaDataType_t, const int64_t *, const void *, void *const *,
+      cudaDataType_t, const int64_t *, int64_t, const int64_t *,
+      cublasComputeType_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_read(conn, &group_count, sizeof(int64_t)) < 0 || false)
+    goto ERROR_0;
+  transa_array_size = group_count * sizeof(const cublasOperation_t);
+  transa_array = (cublasOperation_t *)malloc(transa_array_size);
+  if (transa_array_size != 0 && transa_array == nullptr)
+    goto ERROR_0;
+  if ((transa_array_size != 0 &&
+       rpc_read(conn, transa_array, transa_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  transb_array_size = group_count * sizeof(const cublasOperation_t);
+  transb_array = (cublasOperation_t *)malloc(transb_array_size);
+  if (transb_array_size != 0 && transb_array == nullptr)
+    goto ERROR_0;
+  if ((transb_array_size != 0 &&
+       rpc_read(conn, transb_array, transb_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  m_array_size = group_count * sizeof(const int64_t);
+  m_array = (int64_t *)malloc(m_array_size);
+  if (m_array_size != 0 && m_array == nullptr)
+    goto ERROR_0;
+  if ((m_array_size != 0 && rpc_read(conn, m_array, m_array_size) < 0) || false)
+    goto ERROR_0;
+  n_array_size = group_count * sizeof(const int64_t);
+  n_array = (int64_t *)malloc(n_array_size);
+  if (n_array_size != 0 && n_array == nullptr)
+    goto ERROR_0;
+  if ((n_array_size != 0 && rpc_read(conn, n_array, n_array_size) < 0) || false)
+    goto ERROR_0;
+  k_array_size = group_count * sizeof(const int64_t);
+  k_array = (int64_t *)malloc(k_array_size);
+  if (k_array_size != 0 && k_array == nullptr)
+    goto ERROR_0;
+  if ((k_array_size != 0 && rpc_read(conn, k_array, k_array_size) < 0) ||
+      rpc_read(conn, &alpha_array_width, sizeof(alpha_array_width)) < 0 ||
+      (alpha_array_width == 0 &&
+       rpc_read(conn, &alpha_array, sizeof(alpha_array)) < 0) ||
+      (alpha_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_array_heap, alpha_array_value,
+                                   sizeof(alpha_array_value),
+                                   alpha_array_width),
+                alpha_array_width) < 0) ||
+      rpc_read(conn, &Aarray, sizeof(const void *const *)) < 0 ||
+      rpc_read(conn, &Atype, sizeof(cudaDataType_t)) < 0 || false)
+    goto ERROR_0;
+  lda_array_size = group_count * sizeof(const int64_t);
+  lda_array = (int64_t *)malloc(lda_array_size);
+  if (lda_array_size != 0 && lda_array == nullptr)
+    goto ERROR_0;
+  if ((lda_array_size != 0 && rpc_read(conn, lda_array, lda_array_size) < 0) ||
+      rpc_read(conn, &Barray, sizeof(const void *const *)) < 0 ||
+      rpc_read(conn, &Btype, sizeof(cudaDataType_t)) < 0 || false)
+    goto ERROR_0;
+  ldb_array_size = group_count * sizeof(const int64_t);
+  ldb_array = (int64_t *)malloc(ldb_array_size);
+  if (ldb_array_size != 0 && ldb_array == nullptr)
+    goto ERROR_0;
+  if ((ldb_array_size != 0 && rpc_read(conn, ldb_array, ldb_array_size) < 0) ||
+      rpc_read(conn, &beta_array_width, sizeof(beta_array_width)) < 0 ||
+      (beta_array_width == 0 &&
+       rpc_read(conn, &beta_array, sizeof(beta_array)) < 0) ||
+      (beta_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_array_heap, beta_array_value,
+                                   sizeof(beta_array_value), beta_array_width),
+                beta_array_width) < 0) ||
+      rpc_read(conn, &Carray, sizeof(void *const *)) < 0 ||
+      rpc_read(conn, &Ctype, sizeof(cudaDataType_t)) < 0 || false)
+    goto ERROR_0;
+  ldc_array_size = group_count * sizeof(const int64_t);
+  ldc_array = (int64_t *)malloc(ldc_array_size);
+  if (ldc_array_size != 0 && ldc_array == nullptr)
+    goto ERROR_0;
+  if ((ldc_array_size != 0 && rpc_read(conn, ldc_array, ldc_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  group_size_size = group_count * sizeof(const int64_t);
+  group_size = (int64_t *)malloc(group_size_size);
+  if (group_size_size != 0 && group_size == nullptr)
+    goto ERROR_0;
+  if ((group_size_size != 0 &&
+       rpc_read(conn, group_size, group_size_size) < 0) ||
+      rpc_read(conn, &computeType, sizeof(cublasComputeType_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasGemmGroupedBatchedEx_64));
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle,
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transa_array),
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transb_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : m_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : n_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : k_array),
+               alpha_array_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         alpha_array_heap, alpha_array_value,
+                         sizeof(alpha_array_value), alpha_array_width))
+                   : alpha_array,
+               Aarray, Atype,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : lda_array),
+               Barray, Btype,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : ldb_array),
+               beta_array_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_array_heap, beta_array_value,
+                         sizeof(beta_array_value), beta_array_width))
+                   : beta_array,
+               Carray, Ctype,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : ldc_array),
+               group_count,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr
+                                                         : group_size),
+               computeType);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return 0;
+ERROR_0:
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
   return -1;
 }
 
@@ -13781,6 +16400,7 @@ int handle_cublasGemmStridedBatchedEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -13792,6 +16412,7 @@ int handle_cublasGemmStridedBatchedEx(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const void *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -13816,9 +16437,12 @@ int handle_cublasGemmStridedBatchedEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
@@ -13828,9 +16452,12 @@ int handle_cublasGemmStridedBatchedEx(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
@@ -13849,11 +16476,16 @@ int handle_cublasGemmStridedBatchedEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda, strideA, B, Btype, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const void *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc, strideC, batchCount, computeType, algo);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13875,6 +16507,7 @@ int handle_cublasGemmStridedBatchedEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -13886,6 +16519,7 @@ int handle_cublasGemmStridedBatchedEx_64(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const void *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -13910,9 +16544,12 @@ int handle_cublasGemmStridedBatchedEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
@@ -13922,9 +16559,12 @@ int handle_cublasGemmStridedBatchedEx_64(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
@@ -13943,11 +16583,16 @@ int handle_cublasGemmStridedBatchedEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda, strideA, B, Btype, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const void *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc, strideC, batchCount, computeType, algo);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -13982,6 +16627,35 @@ int handle_cublasGetAtomicsMode(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasAtomicsMode_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasGetCudartVersion(conn_t *conn) {
+  int request_id;
+  size_t return_value = {};
+  cublasStatus_t rpc_status = CUBLAS_STATUS_SUCCESS;
+  using fn_t = size_t (*)();
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasGetCudartVersion));
+  if (fn == nullptr)
+    rpc_status = function_not_found();
+  else
+    return_value = fn();
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &rpc_status, sizeof(rpc_status)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -14365,6 +17039,7 @@ int handle_cublasHSHgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *const *Aarray;
   int lda;
@@ -14372,6 +17047,7 @@ int handle_cublasHSHgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __half *const *yarray;
   int incy;
@@ -14388,17 +17064,23 @@ int handle_cublasHSHgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(__half *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -14413,11 +17095,16 @@ int handle_cublasHSHgemvBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14437,6 +17124,7 @@ int handle_cublasHSHgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *const *Aarray;
   int64_t lda;
@@ -14444,6 +17132,7 @@ int handle_cublasHSHgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __half *const *yarray;
   int64_t incy;
@@ -14460,17 +17149,23 @@ int handle_cublasHSHgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(__half *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -14485,11 +17180,16 @@ int handle_cublasHSHgemvBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14510,6 +17210,7 @@ int handle_cublasHSHgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *A;
   int lda;
@@ -14519,6 +17220,7 @@ int handle_cublasHSHgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __half *y;
   int incy;
@@ -14536,9 +17238,12 @@ int handle_cublasHSHgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -14546,9 +17251,12 @@ int handle_cublasHSHgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(__half *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -14564,11 +17272,16 @@ int handle_cublasHSHgemvStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14588,6 +17301,7 @@ int handle_cublasHSHgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *A;
   int64_t lda;
@@ -14597,6 +17311,7 @@ int handle_cublasHSHgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __half *y;
   int64_t incy;
@@ -14614,9 +17329,12 @@ int handle_cublasHSHgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -14624,9 +17342,12 @@ int handle_cublasHSHgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(__half *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -14642,11 +17363,16 @@ int handle_cublasHSHgemvStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14667,6 +17393,7 @@ int handle_cublasHSSgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *const *Aarray;
   int lda;
@@ -14674,6 +17401,7 @@ int handle_cublasHSSgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *yarray;
   int incy;
@@ -14690,17 +17418,23 @@ int handle_cublasHSSgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -14715,11 +17449,16 @@ int handle_cublasHSSgemvBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14739,6 +17478,7 @@ int handle_cublasHSSgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *const *Aarray;
   int64_t lda;
@@ -14746,6 +17486,7 @@ int handle_cublasHSSgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *yarray;
   int64_t incy;
@@ -14762,17 +17503,23 @@ int handle_cublasHSSgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -14787,11 +17534,16 @@ int handle_cublasHSSgemvBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14812,6 +17564,7 @@ int handle_cublasHSSgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *A;
   int lda;
@@ -14821,6 +17574,7 @@ int handle_cublasHSSgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -14838,9 +17592,12 @@ int handle_cublasHSSgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -14848,9 +17605,12 @@ int handle_cublasHSSgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -14866,11 +17626,16 @@ int handle_cublasHSSgemvStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14890,6 +17655,7 @@ int handle_cublasHSSgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __half *A;
   int64_t lda;
@@ -14899,6 +17665,7 @@ int handle_cublasHSSgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -14916,9 +17683,12 @@ int handle_cublasHSSgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -14926,9 +17696,12 @@ int handle_cublasHSSgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -14944,11 +17717,16 @@ int handle_cublasHSSgemvStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -14971,6 +17749,7 @@ int handle_cublasHgemm(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const __half *alpha = nullptr;
   const __half *A;
   int lda;
@@ -14978,6 +17757,7 @@ int handle_cublasHgemm(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const __half *beta = nullptr;
   __half *C;
   int ldc;
@@ -14995,17 +17775,23 @@ int handle_cublasHgemm(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(__half *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -15019,11 +17805,16 @@ int handle_cublasHgemm(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const __half *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const __half *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const __half *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const __half *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -15044,6 +17835,7 @@ int handle_cublasHgemmBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const __half *alpha = nullptr;
   const __half *const *Aarray;
   int lda;
@@ -15051,6 +17843,7 @@ int handle_cublasHgemmBatched(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const __half *beta = nullptr;
   __half *const *Carray;
   int ldc;
@@ -15069,17 +17862,23 @@ int handle_cublasHgemmBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(__half *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -15094,11 +17893,16 @@ int handle_cublasHgemmBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const __half *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const __half *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const __half *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const __half *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -15120,6 +17924,7 @@ int handle_cublasHgemmBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const __half *alpha = nullptr;
   const __half *const *Aarray;
   int64_t lda;
@@ -15127,6 +17932,7 @@ int handle_cublasHgemmBatched_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const __half *beta = nullptr;
   __half *const *Carray;
   int64_t ldc;
@@ -15146,17 +17952,23 @@ int handle_cublasHgemmBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const __half *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(__half *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -15171,11 +17983,16 @@ int handle_cublasHgemmBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const __half *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const __half *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const __half *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const __half *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -15198,6 +18015,7 @@ int handle_cublasHgemmStridedBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const __half *alpha = nullptr;
   const __half *A;
   int lda;
@@ -15207,6 +18025,7 @@ int handle_cublasHgemmStridedBatched(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const __half *beta = nullptr;
   __half *C;
   int ldc;
@@ -15226,9 +18045,12 @@ int handle_cublasHgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -15236,9 +18058,12 @@ int handle_cublasHgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(__half *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -15254,11 +18079,16 @@ int handle_cublasHgemmStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const __half *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const __half *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const __half *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const __half *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -15280,6 +18110,7 @@ int handle_cublasHgemmStridedBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const __half *alpha = nullptr;
   const __half *A;
   int64_t lda;
@@ -15289,6 +18120,7 @@ int handle_cublasHgemmStridedBatched_64(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const __half *beta = nullptr;
   __half *C;
   int64_t ldc;
@@ -15309,9 +18141,12 @@ int handle_cublasHgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -15319,9 +18154,12 @@ int handle_cublasHgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(__half *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -15337,11 +18175,16 @@ int handle_cublasHgemmStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const __half *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const __half *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const __half *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const __half *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -15365,6 +18208,7 @@ int handle_cublasHgemm_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const __half *alpha = nullptr;
   const __half *A;
   int64_t lda;
@@ -15372,6 +18216,7 @@ int handle_cublasHgemm_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const __half *beta = nullptr;
   __half *C;
   int64_t ldc;
@@ -15389,17 +18234,23 @@ int handle_cublasHgemm_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const __half *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(__half *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -15413,11 +18264,16 @@ int handle_cublasHgemm_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const __half *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const __half *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const __half *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const __half *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -15439,6 +18295,7 @@ int handle_cublasIamaxEx(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15451,7 +18308,6 @@ int handle_cublasIamaxEx(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15461,14 +18317,21 @@ int handle_cublasIamaxEx(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIamaxEx));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15486,6 +18349,7 @@ int handle_cublasIamaxEx_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15498,7 +18362,6 @@ int handle_cublasIamaxEx_64(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15508,15 +18371,21 @@ int handle_cublasIamaxEx_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIamaxEx_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, xType, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, xType, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15535,6 +18404,7 @@ int handle_cublasIaminEx(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15547,7 +18417,6 @@ int handle_cublasIaminEx(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15557,14 +18426,21 @@ int handle_cublasIaminEx(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIaminEx));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15582,6 +18458,7 @@ int handle_cublasIaminEx_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15594,7 +18471,6 @@ int handle_cublasIaminEx_64(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15604,15 +18480,21 @@ int handle_cublasIaminEx_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIaminEx_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, xType, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, xType, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15630,6 +18512,7 @@ int handle_cublasIcamax_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15641,7 +18524,6 @@ int handle_cublasIcamax_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15651,14 +18533,21 @@ int handle_cublasIcamax_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIcamax_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15675,6 +18564,7 @@ int handle_cublasIcamax_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15686,7 +18576,6 @@ int handle_cublasIcamax_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15696,15 +18585,21 @@ int handle_cublasIcamax_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIcamax_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15722,6 +18617,7 @@ int handle_cublasIcamin_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15733,7 +18629,6 @@ int handle_cublasIcamin_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15743,14 +18638,21 @@ int handle_cublasIcamin_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIcamin_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15767,6 +18669,7 @@ int handle_cublasIcamin_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15778,7 +18681,6 @@ int handle_cublasIcamin_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15788,15 +18690,21 @@ int handle_cublasIcamin_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIcamin_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15814,6 +18722,7 @@ int handle_cublasIdamax_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15825,7 +18734,6 @@ int handle_cublasIdamax_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15835,14 +18743,21 @@ int handle_cublasIdamax_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIdamax_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15859,6 +18774,7 @@ int handle_cublasIdamax_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15870,7 +18786,6 @@ int handle_cublasIdamax_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15880,15 +18795,21 @@ int handle_cublasIdamax_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIdamax_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15906,6 +18827,7 @@ int handle_cublasIdamin_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15917,7 +18839,6 @@ int handle_cublasIdamin_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15927,14 +18848,21 @@ int handle_cublasIdamin_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIdamin_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15951,6 +18879,7 @@ int handle_cublasIdamin_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -15962,7 +18891,6 @@ int handle_cublasIdamin_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const double *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -15972,15 +18900,21 @@ int handle_cublasIdamin_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIdamin_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -15998,6 +18932,7 @@ int handle_cublasIsamax_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16009,7 +18944,6 @@ int handle_cublasIsamax_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16019,14 +18953,21 @@ int handle_cublasIsamax_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIsamax_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16043,6 +18984,7 @@ int handle_cublasIsamax_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16054,7 +18996,6 @@ int handle_cublasIsamax_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16064,15 +19005,21 @@ int handle_cublasIsamax_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIsamax_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16090,6 +19037,7 @@ int handle_cublasIsamin_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16101,7 +19049,6 @@ int handle_cublasIsamin_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16111,14 +19058,21 @@ int handle_cublasIsamin_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIsamin_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16135,6 +19089,7 @@ int handle_cublasIsamin_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16146,7 +19101,6 @@ int handle_cublasIsamin_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16156,15 +19110,21 @@ int handle_cublasIsamin_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIsamin_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16182,6 +19142,7 @@ int handle_cublasIzamax_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16193,7 +19154,6 @@ int handle_cublasIzamax_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16203,14 +19163,21 @@ int handle_cublasIzamax_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIzamax_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16227,6 +19194,7 @@ int handle_cublasIzamax_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16238,7 +19206,6 @@ int handle_cublasIzamax_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16248,15 +19215,21 @@ int handle_cublasIzamax_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIzamax_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16274,6 +19247,7 @@ int handle_cublasIzamin_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16285,7 +19259,6 @@ int handle_cublasIzamin_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16295,14 +19268,21 @@ int handle_cublasIzamin_v2(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIzamin_v2));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<int *>(result_value)
-                                        : result);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx,
+               result_width != 0 ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16319,6 +19299,7 @@ int handle_cublasIzamin_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   int64_t *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16330,7 +19311,6 @@ int handle_cublasIzamin_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16340,15 +19320,21 @@ int handle_cublasIzamin_v2_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasIzamin_v2_64));
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<int64_t *>(result_value)
-                                 : result);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, n, x, incx,
+                          result_width != 0
+                              ? reinterpret_cast<int64_t *>(lupine_scalar_slot(
+                                    result_heap, result_value,
+                                    sizeof(result_value), result_width))
+                              : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16367,6 +19353,7 @@ int handle_cublasNrm2Ex(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executionType;
@@ -16382,7 +19369,6 @@ int handle_cublasNrm2Ex(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executionType, sizeof(cudaDataType)) < 0 || false)
@@ -16393,15 +19379,22 @@ int handle_cublasNrm2Ex(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasNrm2Ex));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executionType);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16419,6 +19412,7 @@ int handle_cublasNrm2Ex_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   void *result = nullptr;
   cudaDataType resultType;
   cudaDataType executionType;
@@ -16434,7 +19428,6 @@ int handle_cublasNrm2Ex_64(conn_t *conn) {
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       rpc_read(conn, &resultType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executionType, sizeof(cudaDataType)) < 0 || false)
@@ -16445,15 +19438,22 @@ int handle_cublasNrm2Ex_64(conn_t *conn) {
     goto ERROR_0;
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasNrm2Ex_64));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(handle, n, x, xType, incx,
-                                    result_width != 0
-                                        ? reinterpret_cast<void *>(result_value)
-                                        : result,
-                                    resultType, executionType);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, xType, incx,
+               result_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
+                                 : result,
+               resultType, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16475,9 +19475,11 @@ int handle_cublasRotEx(conn_t *conn) {
   int incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const void *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const void *s = nullptr;
   cudaDataType csType;
   cudaDataType executiontype;
@@ -16496,13 +19498,17 @@ int handle_cublasRotEx(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) ||
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
       rpc_read(conn, &csType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
     goto ERROR_0;
@@ -16516,8 +19522,12 @@ int handle_cublasRotEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, xType, incx, y, yType, incy,
-               c_width != 0 ? reinterpret_cast<const void *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const void *>(s_value) : s,
+               c_width != 0 ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                                  c_heap, c_value, sizeof(c_value), c_width))
+                            : c,
+               s_width != 0 ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                                  s_heap, s_value, sizeof(s_value), s_width))
+                            : s,
                csType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -16541,9 +19551,11 @@ int handle_cublasRotEx_64(conn_t *conn) {
   int64_t incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const void *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const void *s = nullptr;
   cudaDataType csType;
   cudaDataType executiontype;
@@ -16563,13 +19575,17 @@ int handle_cublasRotEx_64(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) ||
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
       rpc_read(conn, &csType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
     goto ERROR_0;
@@ -16583,8 +19599,12 @@ int handle_cublasRotEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, xType, incx, y, yType, incy,
-               c_width != 0 ? reinterpret_cast<const void *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const void *>(s_value) : s,
+               c_width != 0 ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                                  c_heap, c_value, sizeof(c_value), c_width))
+                            : c,
+               s_width != 0 ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                                  s_heap, s_value, sizeof(s_value), s_width))
+                            : s,
                csType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -16602,16 +19622,20 @@ int handle_cublasRotgEx(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t a_width;
   alignas(16) unsigned char a_value[64];
+  std::vector<unsigned char> a_heap;
   void *a = nullptr;
   uint32_t b_width;
   alignas(16) unsigned char b_value[64];
+  std::vector<unsigned char> b_heap;
   void *b = nullptr;
   cudaDataType abType;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   void *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   void *s = nullptr;
   cudaDataType csType;
   cudaDataType executiontype;
@@ -16622,19 +19646,21 @@ int handle_cublasRotgEx(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &a_width, sizeof(a_width)) < 0 ||
-      a_width > sizeof(a_value) ||
       (a_width == 0 && rpc_read(conn, &a, sizeof(a)) < 0) ||
-      (a_width != 0 && rpc_read(conn, a_value, a_width) < 0) ||
+      (a_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                a_width) < 0) ||
       rpc_read(conn, &b_width, sizeof(b_width)) < 0 ||
-      b_width > sizeof(b_value) ||
       (b_width == 0 && rpc_read(conn, &b, sizeof(b)) < 0) ||
-      (b_width != 0 && rpc_read(conn, b_value, b_width) < 0) ||
+      (b_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                b_width) < 0) ||
       rpc_read(conn, &abType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
       rpc_read(conn, &csType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
@@ -16648,17 +19674,39 @@ int handle_cublasRotgEx(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(handle, a_width != 0 ? reinterpret_cast<void *>(a_value) : a,
-               b_width != 0 ? reinterpret_cast<void *>(b_value) : b, abType,
-               c_width != 0 ? reinterpret_cast<void *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<void *>(s_value) : s, csType,
-               executiontype);
+          : fn(handle,
+               a_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                  a_heap, a_value, sizeof(a_value), a_width))
+                            : a,
+               b_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                  b_heap, b_value, sizeof(b_value), b_width))
+                            : b,
+               abType,
+               c_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                  c_heap, c_value, sizeof(c_value), c_width))
+                            : c,
+               s_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                  s_heap, s_value, sizeof(s_value), s_width))
+                            : s,
+               csType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (a_width != 0 && rpc_write(conn, a_value, a_width) < 0) ||
-      (b_width != 0 && rpc_write(conn, b_value, b_width) < 0) ||
-      (c_width != 0 && rpc_write(conn, c_value, c_width) < 0) ||
-      (s_width != 0 && rpc_write(conn, s_value, s_width) < 0) ||
+      (a_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                 a_width) < 0) ||
+      (b_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                 b_width) < 0) ||
+      (c_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                 c_width) < 0) ||
+      (s_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                 s_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16678,6 +19726,7 @@ int handle_cublasRotmEx(conn_t *conn) {
   int incy;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   const void *param = nullptr;
   cudaDataType paramType;
   cudaDataType executiontype;
@@ -16696,9 +19745,12 @@ int handle_cublasRotmEx(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) ||
-      (param_width != 0 && rpc_read(conn, param_value, param_width) < 0) ||
+      (param_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(param_heap, param_value, sizeof(param_value),
+                                   param_width),
+                param_width) < 0) ||
       rpc_read(conn, &paramType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
     goto ERROR_0;
@@ -16712,8 +19764,11 @@ int handle_cublasRotmEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, xType, incx, y, yType, incy,
-               param_width != 0 ? reinterpret_cast<const void *>(param_value)
-                                : param,
+               param_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(param_heap, param_value,
+                                            sizeof(param_value), param_width))
+                   : param,
                paramType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -16737,6 +19792,7 @@ int handle_cublasRotmEx_64(conn_t *conn) {
   int64_t incy;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   const void *param = nullptr;
   cudaDataType paramType;
   cudaDataType executiontype;
@@ -16755,9 +19811,12 @@ int handle_cublasRotmEx_64(conn_t *conn) {
       rpc_read(conn, &yType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) ||
-      (param_width != 0 && rpc_read(conn, param_value, param_width) < 0) ||
+      (param_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(param_heap, param_value, sizeof(param_value),
+                                   param_width),
+                param_width) < 0) ||
       rpc_read(conn, &paramType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
     goto ERROR_0;
@@ -16771,8 +19830,11 @@ int handle_cublasRotmEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, xType, incx, y, yType, incy,
-               param_width != 0 ? reinterpret_cast<const void *>(param_value)
-                                : param,
+               param_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(param_heap, param_value,
+                                            sizeof(param_value), param_width))
+                   : param,
                paramType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -16790,22 +19852,27 @@ int handle_cublasRotmgEx(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t d1_width;
   alignas(16) unsigned char d1_value[64];
+  std::vector<unsigned char> d1_heap;
   void *d1 = nullptr;
   cudaDataType d1Type;
   uint32_t d2_width;
   alignas(16) unsigned char d2_value[64];
+  std::vector<unsigned char> d2_heap;
   void *d2 = nullptr;
   cudaDataType d2Type;
   uint32_t x1_width;
   alignas(16) unsigned char x1_value[64];
+  std::vector<unsigned char> x1_heap;
   void *x1 = nullptr;
   cudaDataType x1Type;
   uint32_t y1_width;
   alignas(16) unsigned char y1_value[64];
+  std::vector<unsigned char> y1_heap;
   const void *y1 = nullptr;
   cudaDataType y1Type;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   void *param = nullptr;
   cudaDataType paramType;
   cudaDataType executiontype;
@@ -16818,27 +19885,34 @@ int handle_cublasRotmgEx(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &d1_width, sizeof(d1_width)) < 0 ||
-      d1_width > sizeof(d1_value) ||
       (d1_width == 0 && rpc_read(conn, &d1, sizeof(d1)) < 0) ||
-      (d1_width != 0 && rpc_read(conn, d1_value, d1_width) < 0) ||
+      (d1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(d1_heap, d1_value,
+                                                    sizeof(d1_value), d1_width),
+                                 d1_width) < 0) ||
       rpc_read(conn, &d1Type, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &d2_width, sizeof(d2_width)) < 0 ||
-      d2_width > sizeof(d2_value) ||
       (d2_width == 0 && rpc_read(conn, &d2, sizeof(d2)) < 0) ||
-      (d2_width != 0 && rpc_read(conn, d2_value, d2_width) < 0) ||
+      (d2_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(d2_heap, d2_value,
+                                                    sizeof(d2_value), d2_width),
+                                 d2_width) < 0) ||
       rpc_read(conn, &d2Type, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &x1_width, sizeof(x1_width)) < 0 ||
-      x1_width > sizeof(x1_value) ||
       (x1_width == 0 && rpc_read(conn, &x1, sizeof(x1)) < 0) ||
-      (x1_width != 0 && rpc_read(conn, x1_value, x1_width) < 0) ||
+      (x1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(x1_heap, x1_value,
+                                                    sizeof(x1_value), x1_width),
+                                 x1_width) < 0) ||
       rpc_read(conn, &x1Type, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &y1_width, sizeof(y1_width)) < 0 ||
-      y1_width > sizeof(y1_value) ||
       (y1_width == 0 && rpc_read(conn, &y1, sizeof(y1)) < 0) ||
-      (y1_width != 0 && rpc_read(conn, y1_value, y1_width) < 0) ||
+      (y1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(y1_heap, y1_value,
+                                                    sizeof(y1_value), y1_width),
+                                 y1_width) < 0) ||
       rpc_read(conn, &y1Type, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) ||
       rpc_read(conn, &paramType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
@@ -16852,20 +19926,54 @@ int handle_cublasRotmgEx(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(handle, d1_width != 0 ? reinterpret_cast<void *>(d1_value) : d1,
-               d1Type, d2_width != 0 ? reinterpret_cast<void *>(d2_value) : d2,
-               d2Type, x1_width != 0 ? reinterpret_cast<void *>(x1_value) : x1,
+          : fn(handle,
+               d1_width != 0
+                   ? reinterpret_cast<void *>(lupine_scalar_slot(
+                         d1_heap, d1_value, sizeof(d1_value), d1_width))
+                   : d1,
+               d1Type,
+               d2_width != 0
+                   ? reinterpret_cast<void *>(lupine_scalar_slot(
+                         d2_heap, d2_value, sizeof(d2_value), d2_width))
+                   : d2,
+               d2Type,
+               x1_width != 0
+                   ? reinterpret_cast<void *>(lupine_scalar_slot(
+                         x1_heap, x1_value, sizeof(x1_value), x1_width))
+                   : x1,
                x1Type,
-               y1_width != 0 ? reinterpret_cast<const void *>(y1_value) : y1,
+               y1_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         y1_heap, y1_value, sizeof(y1_value), y1_width))
+                   : y1,
                y1Type,
-               param_width != 0 ? reinterpret_cast<void *>(param_value) : param,
+               param_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
+                                      param_heap, param_value,
+                                      sizeof(param_value), param_width))
+                                : param,
                paramType, executiontype);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (d1_width != 0 && rpc_write(conn, d1_value, d1_width) < 0) ||
-      (d2_width != 0 && rpc_write(conn, d2_value, d2_width) < 0) ||
-      (x1_width != 0 && rpc_write(conn, x1_value, x1_width) < 0) ||
-      (param_width != 0 && rpc_write(conn, param_value, param_width) < 0) ||
+      (d1_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(d1_heap, d1_value, sizeof(d1_value), d1_width),
+           d1_width) < 0) ||
+      (d2_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(d2_heap, d2_value, sizeof(d2_value), d2_width),
+           d2_width) < 0) ||
+      (x1_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(x1_heap, x1_value, sizeof(x1_value), x1_width),
+           x1_width) < 0) ||
+      (param_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(param_heap, param_value,
+                                    sizeof(param_value), param_width),
+                 param_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16881,6 +19989,7 @@ int handle_cublasSasum_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16892,7 +20001,6 @@ int handle_cublasSasum_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16906,11 +20014,17 @@ int handle_cublasSasum_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16927,6 +20041,7 @@ int handle_cublasSasum_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -16938,7 +20053,6 @@ int handle_cublasSasum_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -16952,11 +20066,17 @@ int handle_cublasSasum_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -16972,6 +20092,7 @@ int handle_cublasSaxpy_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int incx;
@@ -16985,9 +20106,12 @@ int handle_cublasSaxpy_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
@@ -17003,8 +20127,11 @@ int handle_cublasSaxpy_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -17022,6 +20149,7 @@ int handle_cublasSaxpy_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int64_t incx;
@@ -17035,9 +20163,12 @@ int handle_cublasSaxpy_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
@@ -17053,8 +20184,11 @@ int handle_cublasSaxpy_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -17073,6 +20207,7 @@ int handle_cublasScalEx(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   cudaDataType alphaType;
   void *x;
@@ -17088,9 +20223,12 @@ int handle_cublasScalEx(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &alphaType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &x, sizeof(void *)) < 0 ||
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -17107,8 +20245,11 @@ int handle_cublasScalEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                alphaType, x, xType, incx, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -17126,6 +20267,7 @@ int handle_cublasScalEx_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const void *alpha = nullptr;
   cudaDataType alphaType;
   void *x;
@@ -17141,9 +20283,12 @@ int handle_cublasScalEx_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &alphaType, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &x, sizeof(void *)) < 0 ||
       rpc_read(conn, &xType, sizeof(cudaDataType)) < 0 ||
@@ -17160,8 +20305,11 @@ int handle_cublasScalEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const void *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                alphaType, x, xType, incx, executionType);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -17182,6 +20330,7 @@ int handle_cublasScasum_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -17193,7 +20342,6 @@ int handle_cublasScasum_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -17207,11 +20355,17 @@ int handle_cublasScasum_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -17228,6 +20382,7 @@ int handle_cublasScasum_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -17239,7 +20394,6 @@ int handle_cublasScasum_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -17253,11 +20407,17 @@ int handle_cublasScasum_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -17275,6 +20435,7 @@ int handle_cublasScnrm2_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -17286,7 +20447,6 @@ int handle_cublasScnrm2_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -17300,11 +20460,17 @@ int handle_cublasScnrm2_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -17321,6 +20487,7 @@ int handle_cublasScnrm2_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -17332,7 +20499,6 @@ int handle_cublasScnrm2_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const cuComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -17346,11 +20512,17 @@ int handle_cublasScnrm2_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -17544,6 +20716,7 @@ int handle_cublasSdot_v2(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -17557,7 +20730,6 @@ int handle_cublasSdot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -17571,11 +20743,17 @@ int handle_cublasSdot_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -17594,6 +20772,7 @@ int handle_cublasSdot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -17607,7 +20786,6 @@ int handle_cublasSdot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -17621,11 +20799,17 @@ int handle_cublasSdot_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -18007,6 +21191,7 @@ int handle_cublasSgbmv_v2(conn_t *conn) {
   int ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -18014,6 +21199,7 @@ int handle_cublasSgbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -18030,17 +21216,23 @@ int handle_cublasSgbmv_v2(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int)) < 0 ||
       rpc_read(conn, &ku, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -18054,11 +21246,16 @@ int handle_cublasSgbmv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18080,6 +21277,7 @@ int handle_cublasSgbmv_v2_64(conn_t *conn) {
   int64_t ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -18087,6 +21285,7 @@ int handle_cublasSgbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -18104,17 +21303,23 @@ int handle_cublasSgbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &ku, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -18128,11 +21333,16 @@ int handle_cublasSgbmv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18154,11 +21364,13 @@ int handle_cublasSgeam(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   const float *B;
   int ldb;
@@ -18177,15 +21389,21 @@ int handle_cublasSgeam(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
@@ -18201,11 +21419,16 @@ int handle_cublasSgeam(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18226,11 +21449,13 @@ int handle_cublasSgeam_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   const float *B;
   int64_t ldb;
@@ -18249,15 +21474,21 @@ int handle_cublasSgeam_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
@@ -18273,11 +21504,16 @@ int handle_cublasSgeam_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18353,6 +21589,7 @@ int handle_cublasSgemmBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *const *Aarray;
   int lda;
@@ -18360,6 +21597,7 @@ int handle_cublasSgemmBatched(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *Carray;
   int ldc;
@@ -18378,17 +21616,23 @@ int handle_cublasSgemmBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -18403,11 +21647,16 @@ int handle_cublasSgemmBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18429,6 +21678,7 @@ int handle_cublasSgemmBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *const *Aarray;
   int64_t lda;
@@ -18436,6 +21686,7 @@ int handle_cublasSgemmBatched_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *Carray;
   int64_t ldc;
@@ -18455,17 +21706,23 @@ int handle_cublasSgemmBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -18480,11 +21737,16 @@ int handle_cublasSgemmBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, Barray, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                Carray, ldc, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18507,6 +21769,7 @@ int handle_cublasSgemmEx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -18516,6 +21779,7 @@ int handle_cublasSgemmEx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -18534,9 +21798,12 @@ int handle_cublasSgemmEx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
@@ -18544,9 +21811,12 @@ int handle_cublasSgemmEx(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
@@ -18561,11 +21831,16 @@ int handle_cublasSgemmEx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18587,6 +21862,7 @@ int handle_cublasSgemmEx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const void *A;
   cudaDataType Atype;
@@ -18596,6 +21872,7 @@ int handle_cublasSgemmEx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   void *C;
   cudaDataType Ctype;
@@ -18614,9 +21891,12 @@ int handle_cublasSgemmEx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const void *)) < 0 ||
       rpc_read(conn, &Atype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
@@ -18624,9 +21904,12 @@ int handle_cublasSgemmEx_64(conn_t *conn) {
       rpc_read(conn, &Btype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(void *)) < 0 ||
       rpc_read(conn, &Ctype, sizeof(cudaDataType)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
@@ -18641,11 +21924,16 @@ int handle_cublasSgemmEx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, Atype, lda, B, Btype, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, Ctype, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18654,6 +21942,397 @@ int handle_cublasSgemmEx_64(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasSgemmGroupedBatched(conn_t *conn) {
+  cublasHandle_t handle;
+  int group_count;
+  cublasOperation_t *transa_array = nullptr;
+  size_t transa_array_size;
+  cublasOperation_t *transb_array = nullptr;
+  size_t transb_array_size;
+  int *m_array = nullptr;
+  size_t m_array_size;
+  int *n_array = nullptr;
+  size_t n_array_size;
+  int *k_array = nullptr;
+  size_t k_array_size;
+  uint32_t alpha_array_width;
+  alignas(16) unsigned char alpha_array_value[64];
+  std::vector<unsigned char> alpha_array_heap;
+  const float *alpha_array = nullptr;
+  const float *const *Aarray;
+  int *lda_array = nullptr;
+  size_t lda_array_size;
+  const float *const *Barray;
+  int *ldb_array = nullptr;
+  size_t ldb_array_size;
+  uint32_t beta_array_width;
+  alignas(16) unsigned char beta_array_value[64];
+  std::vector<unsigned char> beta_array_heap;
+  const float *beta_array = nullptr;
+  float *const *Carray;
+  int *ldc_array = nullptr;
+  size_t ldc_array_size;
+  int *group_size = nullptr;
+  size_t group_size_size;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasHandle_t, const cublasOperation_t *, const cublasOperation_t *,
+      const int *, const int *, const int *, const float *,
+      const float *const *, const int *, const float *const *, const int *,
+      const float *, float *const *, const int *, int, const int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_read(conn, &group_count, sizeof(int)) < 0 || group_count < 0 || false)
+    goto ERROR_0;
+  transa_array_size = group_count * sizeof(const cublasOperation_t);
+  transa_array = (cublasOperation_t *)malloc(transa_array_size);
+  if (transa_array_size != 0 && transa_array == nullptr)
+    goto ERROR_0;
+  if ((transa_array_size != 0 &&
+       rpc_read(conn, transa_array, transa_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  transb_array_size = group_count * sizeof(const cublasOperation_t);
+  transb_array = (cublasOperation_t *)malloc(transb_array_size);
+  if (transb_array_size != 0 && transb_array == nullptr)
+    goto ERROR_0;
+  if ((transb_array_size != 0 &&
+       rpc_read(conn, transb_array, transb_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  m_array_size = group_count * sizeof(const int);
+  m_array = (int *)malloc(m_array_size);
+  if (m_array_size != 0 && m_array == nullptr)
+    goto ERROR_0;
+  if ((m_array_size != 0 && rpc_read(conn, m_array, m_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  n_array_size = group_count * sizeof(const int);
+  n_array = (int *)malloc(n_array_size);
+  if (n_array_size != 0 && n_array == nullptr)
+    goto ERROR_0;
+  if ((n_array_size != 0 && rpc_read(conn, n_array, n_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  k_array_size = group_count * sizeof(const int);
+  k_array = (int *)malloc(k_array_size);
+  if (k_array_size != 0 && k_array == nullptr)
+    goto ERROR_0;
+  if ((k_array_size != 0 && rpc_read(conn, k_array, k_array_size) < 0) ||
+      rpc_read(conn, &alpha_array_width, sizeof(alpha_array_width)) < 0 ||
+      (alpha_array_width == 0 &&
+       rpc_read(conn, &alpha_array, sizeof(alpha_array)) < 0) ||
+      (alpha_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_array_heap, alpha_array_value,
+                                   sizeof(alpha_array_value),
+                                   alpha_array_width),
+                alpha_array_width) < 0) ||
+      rpc_read(conn, &Aarray, sizeof(const float *const *)) < 0 ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  lda_array_size = group_count * sizeof(const int);
+  lda_array = (int *)malloc(lda_array_size);
+  if (lda_array_size != 0 && lda_array == nullptr)
+    goto ERROR_0;
+  if ((lda_array_size != 0 && rpc_read(conn, lda_array, lda_array_size) < 0) ||
+      rpc_read(conn, &Barray, sizeof(const float *const *)) < 0 ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  ldb_array_size = group_count * sizeof(const int);
+  ldb_array = (int *)malloc(ldb_array_size);
+  if (ldb_array_size != 0 && ldb_array == nullptr)
+    goto ERROR_0;
+  if ((ldb_array_size != 0 && rpc_read(conn, ldb_array, ldb_array_size) < 0) ||
+      rpc_read(conn, &beta_array_width, sizeof(beta_array_width)) < 0 ||
+      (beta_array_width == 0 &&
+       rpc_read(conn, &beta_array, sizeof(beta_array)) < 0) ||
+      (beta_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_array_heap, beta_array_value,
+                                   sizeof(beta_array_value), beta_array_width),
+                beta_array_width) < 0) ||
+      rpc_read(conn, &Carray, sizeof(float *const *)) < 0 || group_count < 0 ||
+      false)
+    goto ERROR_0;
+  ldc_array_size = group_count * sizeof(const int);
+  ldc_array = (int *)malloc(ldc_array_size);
+  if (ldc_array_size != 0 && ldc_array == nullptr)
+    goto ERROR_0;
+  if ((ldc_array_size != 0 && rpc_read(conn, ldc_array, ldc_array_size) < 0) ||
+      group_count < 0 || false)
+    goto ERROR_0;
+  group_size_size = group_count * sizeof(const int);
+  group_size = (int *)malloc(group_size_size);
+  if (group_size_size != 0 && group_size == nullptr)
+    goto ERROR_0;
+  if ((group_size_size != 0 &&
+       rpc_read(conn, group_size, group_size_size) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasSgemmGroupedBatched));
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle,
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transa_array),
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transb_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : m_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : n_array),
+               (group_count * sizeof(const int) == 0 ? nullptr : k_array),
+               alpha_array_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         alpha_array_heap, alpha_array_value,
+                         sizeof(alpha_array_value), alpha_array_width))
+                   : alpha_array,
+               Aarray,
+               (group_count * sizeof(const int) == 0 ? nullptr : lda_array),
+               Barray,
+               (group_count * sizeof(const int) == 0 ? nullptr : ldb_array),
+               beta_array_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_array_heap, beta_array_value,
+                         sizeof(beta_array_value), beta_array_width))
+                   : beta_array,
+               Carray,
+               (group_count * sizeof(const int) == 0 ? nullptr : ldc_array),
+               group_count,
+               (group_count * sizeof(const int) == 0 ? nullptr : group_size));
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return 0;
+ERROR_0:
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return -1;
+}
+
+#endif
+
+#if CUBLAS_VERSION >= 120500
+int handle_cublasSgemmGroupedBatched_64(conn_t *conn) {
+  cublasHandle_t handle;
+  int64_t group_count;
+  cublasOperation_t *transa_array = nullptr;
+  size_t transa_array_size;
+  cublasOperation_t *transb_array = nullptr;
+  size_t transb_array_size;
+  int64_t *m_array = nullptr;
+  size_t m_array_size;
+  int64_t *n_array = nullptr;
+  size_t n_array_size;
+  int64_t *k_array = nullptr;
+  size_t k_array_size;
+  uint32_t alpha_array_width;
+  alignas(16) unsigned char alpha_array_value[64];
+  std::vector<unsigned char> alpha_array_heap;
+  const float *alpha_array = nullptr;
+  const float *const *Aarray;
+  int64_t *lda_array = nullptr;
+  size_t lda_array_size;
+  const float *const *Barray;
+  int64_t *ldb_array = nullptr;
+  size_t ldb_array_size;
+  uint32_t beta_array_width;
+  alignas(16) unsigned char beta_array_value[64];
+  std::vector<unsigned char> beta_array_heap;
+  const float *beta_array = nullptr;
+  float *const *Carray;
+  int64_t *ldc_array = nullptr;
+  size_t ldc_array_size;
+  int64_t *group_size = nullptr;
+  size_t group_size_size;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasHandle_t, const cublasOperation_t *, const cublasOperation_t *,
+      const int64_t *, const int64_t *, const int64_t *, const float *,
+      const float *const *, const int64_t *, const float *const *,
+      const int64_t *, const float *, float *const *, const int64_t *, int64_t,
+      const int64_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_read(conn, &group_count, sizeof(int64_t)) < 0 || false)
+    goto ERROR_0;
+  transa_array_size = group_count * sizeof(const cublasOperation_t);
+  transa_array = (cublasOperation_t *)malloc(transa_array_size);
+  if (transa_array_size != 0 && transa_array == nullptr)
+    goto ERROR_0;
+  if ((transa_array_size != 0 &&
+       rpc_read(conn, transa_array, transa_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  transb_array_size = group_count * sizeof(const cublasOperation_t);
+  transb_array = (cublasOperation_t *)malloc(transb_array_size);
+  if (transb_array_size != 0 && transb_array == nullptr)
+    goto ERROR_0;
+  if ((transb_array_size != 0 &&
+       rpc_read(conn, transb_array, transb_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  m_array_size = group_count * sizeof(const int64_t);
+  m_array = (int64_t *)malloc(m_array_size);
+  if (m_array_size != 0 && m_array == nullptr)
+    goto ERROR_0;
+  if ((m_array_size != 0 && rpc_read(conn, m_array, m_array_size) < 0) || false)
+    goto ERROR_0;
+  n_array_size = group_count * sizeof(const int64_t);
+  n_array = (int64_t *)malloc(n_array_size);
+  if (n_array_size != 0 && n_array == nullptr)
+    goto ERROR_0;
+  if ((n_array_size != 0 && rpc_read(conn, n_array, n_array_size) < 0) || false)
+    goto ERROR_0;
+  k_array_size = group_count * sizeof(const int64_t);
+  k_array = (int64_t *)malloc(k_array_size);
+  if (k_array_size != 0 && k_array == nullptr)
+    goto ERROR_0;
+  if ((k_array_size != 0 && rpc_read(conn, k_array, k_array_size) < 0) ||
+      rpc_read(conn, &alpha_array_width, sizeof(alpha_array_width)) < 0 ||
+      (alpha_array_width == 0 &&
+       rpc_read(conn, &alpha_array, sizeof(alpha_array)) < 0) ||
+      (alpha_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_array_heap, alpha_array_value,
+                                   sizeof(alpha_array_value),
+                                   alpha_array_width),
+                alpha_array_width) < 0) ||
+      rpc_read(conn, &Aarray, sizeof(const float *const *)) < 0 || false)
+    goto ERROR_0;
+  lda_array_size = group_count * sizeof(const int64_t);
+  lda_array = (int64_t *)malloc(lda_array_size);
+  if (lda_array_size != 0 && lda_array == nullptr)
+    goto ERROR_0;
+  if ((lda_array_size != 0 && rpc_read(conn, lda_array, lda_array_size) < 0) ||
+      rpc_read(conn, &Barray, sizeof(const float *const *)) < 0 || false)
+    goto ERROR_0;
+  ldb_array_size = group_count * sizeof(const int64_t);
+  ldb_array = (int64_t *)malloc(ldb_array_size);
+  if (ldb_array_size != 0 && ldb_array == nullptr)
+    goto ERROR_0;
+  if ((ldb_array_size != 0 && rpc_read(conn, ldb_array, ldb_array_size) < 0) ||
+      rpc_read(conn, &beta_array_width, sizeof(beta_array_width)) < 0 ||
+      (beta_array_width == 0 &&
+       rpc_read(conn, &beta_array, sizeof(beta_array)) < 0) ||
+      (beta_array_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_array_heap, beta_array_value,
+                                   sizeof(beta_array_value), beta_array_width),
+                beta_array_width) < 0) ||
+      rpc_read(conn, &Carray, sizeof(float *const *)) < 0 || false)
+    goto ERROR_0;
+  ldc_array_size = group_count * sizeof(const int64_t);
+  ldc_array = (int64_t *)malloc(ldc_array_size);
+  if (ldc_array_size != 0 && ldc_array == nullptr)
+    goto ERROR_0;
+  if ((ldc_array_size != 0 && rpc_read(conn, ldc_array, ldc_array_size) < 0) ||
+      false)
+    goto ERROR_0;
+  group_size_size = group_count * sizeof(const int64_t);
+  group_size = (int64_t *)malloc(group_size_size);
+  if (group_size_size != 0 && group_size == nullptr)
+    goto ERROR_0;
+  if ((group_size_size != 0 &&
+       rpc_read(conn, group_size, group_size_size) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasSgemmGroupedBatched_64));
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle,
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transa_array),
+               (group_count * sizeof(const cublasOperation_t) == 0
+                    ? nullptr
+                    : transb_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : m_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : n_array),
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : k_array),
+               alpha_array_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         alpha_array_heap, alpha_array_value,
+                         sizeof(alpha_array_value), alpha_array_width))
+                   : alpha_array,
+               Aarray,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : lda_array),
+               Barray,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : ldb_array),
+               beta_array_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_array_heap, beta_array_value,
+                         sizeof(beta_array_value), beta_array_width))
+                   : beta_array,
+               Carray,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr : ldc_array),
+               group_count,
+               (group_count * sizeof(const int64_t) == 0 ? nullptr
+                                                         : group_size));
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
+  return 0;
+ERROR_0:
+  free((void *)group_size);
+  free((void *)ldc_array);
+  free((void *)ldb_array);
+  free((void *)lda_array);
+  free((void *)k_array);
+  free((void *)n_array);
+  free((void *)m_array);
+  free((void *)transb_array);
+  free((void *)transa_array);
   return -1;
 }
 
@@ -18668,6 +22347,7 @@ int handle_cublasSgemmStridedBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -18677,6 +22357,7 @@ int handle_cublasSgemmStridedBatched(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int ldc;
@@ -18696,9 +22377,12 @@ int handle_cublasSgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -18706,9 +22390,12 @@ int handle_cublasSgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -18724,11 +22411,16 @@ int handle_cublasSgemmStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18750,6 +22442,7 @@ int handle_cublasSgemmStridedBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -18759,6 +22452,7 @@ int handle_cublasSgemmStridedBatched_64(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int64_t ldc;
@@ -18779,9 +22473,12 @@ int handle_cublasSgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -18789,9 +22486,12 @@ int handle_cublasSgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -18807,11 +22507,16 @@ int handle_cublasSgemmStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, B, ldb, strideB,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc, strideC, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18834,6 +22539,7 @@ int handle_cublasSgemm_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -18841,6 +22547,7 @@ int handle_cublasSgemm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int ldc;
@@ -18858,17 +22565,23 @@ int handle_cublasSgemm_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -18882,11 +22595,16 @@ int handle_cublasSgemm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18908,6 +22626,7 @@ int handle_cublasSgemm_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -18915,6 +22634,7 @@ int handle_cublasSgemm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int64_t ldc;
@@ -18932,17 +22652,23 @@ int handle_cublasSgemm_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -18956,11 +22682,16 @@ int handle_cublasSgemm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -18981,6 +22712,7 @@ int handle_cublasSgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *const *Aarray;
   int lda;
@@ -18988,6 +22720,7 @@ int handle_cublasSgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *yarray;
   int incy;
@@ -19004,17 +22737,23 @@ int handle_cublasSgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -19029,11 +22768,16 @@ int handle_cublasSgemvBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19053,6 +22797,7 @@ int handle_cublasSgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *const *Aarray;
   int64_t lda;
@@ -19060,6 +22805,7 @@ int handle_cublasSgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *yarray;
   int64_t incy;
@@ -19076,17 +22822,23 @@ int handle_cublasSgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -19101,11 +22853,16 @@ int handle_cublasSgemvBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19126,6 +22883,7 @@ int handle_cublasSgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -19135,6 +22893,7 @@ int handle_cublasSgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -19152,9 +22911,12 @@ int handle_cublasSgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -19162,9 +22924,12 @@ int handle_cublasSgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -19180,11 +22945,16 @@ int handle_cublasSgemvStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19204,6 +22974,7 @@ int handle_cublasSgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -19213,6 +22984,7 @@ int handle_cublasSgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -19230,9 +23002,12 @@ int handle_cublasSgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -19240,9 +23015,12 @@ int handle_cublasSgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -19258,11 +23036,16 @@ int handle_cublasSgemvStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19283,6 +23066,7 @@ int handle_cublasSgemv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -19290,6 +23074,7 @@ int handle_cublasSgemv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -19304,17 +23089,23 @@ int handle_cublasSgemv_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -19328,11 +23119,16 @@ int handle_cublasSgemv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19352,6 +23148,7 @@ int handle_cublasSgemv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -19359,6 +23156,7 @@ int handle_cublasSgemv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -19374,17 +23172,23 @@ int handle_cublasSgemv_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -19398,11 +23202,16 @@ int handle_cublasSgemv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19465,6 +23274,7 @@ int handle_cublasSger_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int incx;
@@ -19482,9 +23292,12 @@ int handle_cublasSger_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
@@ -19502,8 +23315,11 @@ int handle_cublasSger_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19522,6 +23338,7 @@ int handle_cublasSger_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int64_t incx;
@@ -19539,9 +23356,12 @@ int handle_cublasSger_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
@@ -19559,8 +23379,11 @@ int handle_cublasSger_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -19757,6 +23580,7 @@ int handle_cublasSnrm2_v2(conn_t *conn) {
   int incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -19768,7 +23592,6 @@ int handle_cublasSnrm2_v2(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -19782,11 +23605,17 @@ int handle_cublasSnrm2_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -19803,6 +23632,7 @@ int handle_cublasSnrm2_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   float *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -19814,7 +23644,6 @@ int handle_cublasSnrm2_v2_64(conn_t *conn) {
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -19828,11 +23657,17 @@ int handle_cublasSnrm2_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx,
-               result_width != 0 ? reinterpret_cast<float *>(result_value)
+               result_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                       result_heap, result_value,
+                                       sizeof(result_value), result_width))
                                  : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -19852,9 +23687,11 @@ int handle_cublasSrot_v2(conn_t *conn) {
   int incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const float *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -19868,13 +23705,18 @@ int handle_cublasSrot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -19886,8 +23728,14 @@ int handle_cublasSrot_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const float *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -19908,9 +23756,11 @@ int handle_cublasSrot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const float *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -19925,13 +23775,18 @@ int handle_cublasSrot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -19943,8 +23798,14 @@ int handle_cublasSrot_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const float *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -19961,15 +23822,19 @@ int handle_cublasSrotg_v2(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t a_width;
   alignas(16) unsigned char a_value[64];
+  std::vector<unsigned char> a_heap;
   float *a = nullptr;
   uint32_t b_width;
   alignas(16) unsigned char b_value[64];
+  std::vector<unsigned char> b_heap;
   float *b = nullptr;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   float *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   float *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -19978,18 +23843,20 @@ int handle_cublasSrotg_v2(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &a_width, sizeof(a_width)) < 0 ||
-      a_width > sizeof(a_value) ||
       (a_width == 0 && rpc_read(conn, &a, sizeof(a)) < 0) ||
-      (a_width != 0 && rpc_read(conn, a_value, a_width) < 0) ||
+      (a_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                a_width) < 0) ||
       rpc_read(conn, &b_width, sizeof(b_width)) < 0 ||
-      b_width > sizeof(b_value) ||
       (b_width == 0 && rpc_read(conn, &b, sizeof(b)) < 0) ||
-      (b_width != 0 && rpc_read(conn, b_value, b_width) < 0) ||
+      (b_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                b_width) < 0) ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) || false)
     goto ERROR_0;
 
@@ -20001,16 +23868,37 @@ int handle_cublasSrotg_v2(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(handle, a_width != 0 ? reinterpret_cast<float *>(a_value) : a,
-               b_width != 0 ? reinterpret_cast<float *>(b_value) : b,
-               c_width != 0 ? reinterpret_cast<float *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<float *>(s_value) : s);
+          : fn(handle,
+               a_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                  a_heap, a_value, sizeof(a_value), a_width))
+                            : a,
+               b_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                  b_heap, b_value, sizeof(b_value), b_width))
+                            : b,
+               c_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                  c_heap, c_value, sizeof(c_value), c_width))
+                            : c,
+               s_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                  s_heap, s_value, sizeof(s_value), s_width))
+                            : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (a_width != 0 && rpc_write(conn, a_value, a_width) < 0) ||
-      (b_width != 0 && rpc_write(conn, b_value, b_width) < 0) ||
-      (c_width != 0 && rpc_write(conn, c_value, c_width) < 0) ||
-      (s_width != 0 && rpc_write(conn, s_value, s_width) < 0) ||
+      (a_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                 a_width) < 0) ||
+      (b_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                 b_width) < 0) ||
+      (c_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                 c_width) < 0) ||
+      (s_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                 s_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -20028,6 +23916,7 @@ int handle_cublasSrotm_v2(conn_t *conn) {
   int incy;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   const float *param = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -20041,9 +23930,12 @@ int handle_cublasSrotm_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) ||
-      (param_width != 0 && rpc_read(conn, param_value, param_width) < 0) ||
+      (param_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(param_heap, param_value, sizeof(param_value),
+                                   param_width),
+                param_width) < 0) ||
       false)
     goto ERROR_0;
 
@@ -20056,8 +23948,11 @@ int handle_cublasSrotm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               param_width != 0 ? reinterpret_cast<const float *>(param_value)
-                                : param);
+               param_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(param_heap, param_value,
+                                            sizeof(param_value), param_width))
+                   : param);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -20078,6 +23973,7 @@ int handle_cublasSrotm_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   const float *param = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -20091,9 +23987,12 @@ int handle_cublasSrotm_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) ||
-      (param_width != 0 && rpc_read(conn, param_value, param_width) < 0) ||
+      (param_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(param_heap, param_value, sizeof(param_value),
+                                   param_width),
+                param_width) < 0) ||
       false)
     goto ERROR_0;
 
@@ -20106,8 +24005,11 @@ int handle_cublasSrotm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               param_width != 0 ? reinterpret_cast<const float *>(param_value)
-                                : param);
+               param_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(param_heap, param_value,
+                                            sizeof(param_value), param_width))
+                   : param);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -20124,18 +24026,23 @@ int handle_cublasSrotmg_v2(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t d1_width;
   alignas(16) unsigned char d1_value[64];
+  std::vector<unsigned char> d1_heap;
   float *d1 = nullptr;
   uint32_t d2_width;
   alignas(16) unsigned char d2_value[64];
+  std::vector<unsigned char> d2_heap;
   float *d2 = nullptr;
   uint32_t x1_width;
   alignas(16) unsigned char x1_value[64];
+  std::vector<unsigned char> x1_heap;
   float *x1 = nullptr;
   uint32_t y1_width;
   alignas(16) unsigned char y1_value[64];
+  std::vector<unsigned char> y1_heap;
   const float *y1 = nullptr;
   uint32_t param_width;
   alignas(16) unsigned char param_value[64];
+  std::vector<unsigned char> param_heap;
   float *param = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -20144,23 +24051,30 @@ int handle_cublasSrotmg_v2(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &d1_width, sizeof(d1_width)) < 0 ||
-      d1_width > sizeof(d1_value) ||
       (d1_width == 0 && rpc_read(conn, &d1, sizeof(d1)) < 0) ||
-      (d1_width != 0 && rpc_read(conn, d1_value, d1_width) < 0) ||
+      (d1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(d1_heap, d1_value,
+                                                    sizeof(d1_value), d1_width),
+                                 d1_width) < 0) ||
       rpc_read(conn, &d2_width, sizeof(d2_width)) < 0 ||
-      d2_width > sizeof(d2_value) ||
       (d2_width == 0 && rpc_read(conn, &d2, sizeof(d2)) < 0) ||
-      (d2_width != 0 && rpc_read(conn, d2_value, d2_width) < 0) ||
+      (d2_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(d2_heap, d2_value,
+                                                    sizeof(d2_value), d2_width),
+                                 d2_width) < 0) ||
       rpc_read(conn, &x1_width, sizeof(x1_width)) < 0 ||
-      x1_width > sizeof(x1_value) ||
       (x1_width == 0 && rpc_read(conn, &x1, sizeof(x1)) < 0) ||
-      (x1_width != 0 && rpc_read(conn, x1_value, x1_width) < 0) ||
+      (x1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(x1_heap, x1_value,
+                                                    sizeof(x1_value), x1_width),
+                                 x1_width) < 0) ||
       rpc_read(conn, &y1_width, sizeof(y1_width)) < 0 ||
-      y1_width > sizeof(y1_value) ||
       (y1_width == 0 && rpc_read(conn, &y1, sizeof(y1)) < 0) ||
-      (y1_width != 0 && rpc_read(conn, y1_value, y1_width) < 0) ||
+      (y1_width != 0 && rpc_read(conn,
+                                 lupine_scalar_slot(y1_heap, y1_value,
+                                                    sizeof(y1_value), y1_width),
+                                 y1_width) < 0) ||
       rpc_read(conn, &param_width, sizeof(param_width)) < 0 ||
-      param_width > sizeof(param_value) ||
       (param_width == 0 && rpc_read(conn, &param, sizeof(param)) < 0) || false)
     goto ERROR_0;
 
@@ -20172,18 +24086,49 @@ int handle_cublasSrotmg_v2(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(handle, d1_width != 0 ? reinterpret_cast<float *>(d1_value) : d1,
-               d2_width != 0 ? reinterpret_cast<float *>(d2_value) : d2,
-               x1_width != 0 ? reinterpret_cast<float *>(x1_value) : x1,
-               y1_width != 0 ? reinterpret_cast<const float *>(y1_value) : y1,
-               param_width != 0 ? reinterpret_cast<float *>(param_value)
+          : fn(handle,
+               d1_width != 0
+                   ? reinterpret_cast<float *>(lupine_scalar_slot(
+                         d1_heap, d1_value, sizeof(d1_value), d1_width))
+                   : d1,
+               d2_width != 0
+                   ? reinterpret_cast<float *>(lupine_scalar_slot(
+                         d2_heap, d2_value, sizeof(d2_value), d2_width))
+                   : d2,
+               x1_width != 0
+                   ? reinterpret_cast<float *>(lupine_scalar_slot(
+                         x1_heap, x1_value, sizeof(x1_value), x1_width))
+                   : x1,
+               y1_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         y1_heap, y1_value, sizeof(y1_value), y1_width))
+                   : y1,
+               param_width != 0 ? reinterpret_cast<float *>(lupine_scalar_slot(
+                                      param_heap, param_value,
+                                      sizeof(param_value), param_width))
                                 : param);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (d1_width != 0 && rpc_write(conn, d1_value, d1_width) < 0) ||
-      (d2_width != 0 && rpc_write(conn, d2_value, d2_width) < 0) ||
-      (x1_width != 0 && rpc_write(conn, x1_value, x1_width) < 0) ||
-      (param_width != 0 && rpc_write(conn, param_value, param_width) < 0) ||
+      (d1_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(d1_heap, d1_value, sizeof(d1_value), d1_width),
+           d1_width) < 0) ||
+      (d2_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(d2_heap, d2_value, sizeof(d2_value), d2_width),
+           d2_width) < 0) ||
+      (x1_width != 0 &&
+       rpc_write(
+           conn,
+           lupine_scalar_slot(x1_heap, x1_value, sizeof(x1_value), x1_width),
+           x1_width) < 0) ||
+      (param_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(param_heap, param_value,
+                                    sizeof(param_value), param_width),
+                 param_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -20199,6 +24144,7 @@ int handle_cublasSsbmv_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -20206,6 +24152,7 @@ int handle_cublasSsbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -20220,17 +24167,23 @@ int handle_cublasSsbmv_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -20244,11 +24197,16 @@ int handle_cublasSsbmv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20268,6 +24226,7 @@ int handle_cublasSsbmv_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -20275,6 +24234,7 @@ int handle_cublasSsbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -20290,17 +24250,23 @@ int handle_cublasSsbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -20314,11 +24280,16 @@ int handle_cublasSsbmv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20337,6 +24308,7 @@ int handle_cublasSscal_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   float *x;
   int incx;
@@ -20348,9 +24320,12 @@ int handle_cublasSscal_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -20364,8 +24339,11 @@ int handle_cublasSscal_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20383,6 +24361,7 @@ int handle_cublasSscal_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   float *x;
   int64_t incx;
@@ -20394,9 +24373,12 @@ int handle_cublasSscal_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -20410,8 +24392,11 @@ int handle_cublasSscal_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20431,12 +24416,14 @@ int handle_cublasSspmv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *AP;
   const float *x;
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -20450,16 +24437,22 @@ int handle_cublasSspmv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const float *)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -20473,11 +24466,16 @@ int handle_cublasSspmv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                AP, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20496,12 +24494,14 @@ int handle_cublasSspmv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *AP;
   const float *x;
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -20515,16 +24515,22 @@ int handle_cublasSspmv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const float *)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -20538,11 +24544,16 @@ int handle_cublasSspmv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                AP, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20562,6 +24573,7 @@ int handle_cublasSspr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int incx;
@@ -20578,9 +24590,12 @@ int handle_cublasSspr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
@@ -20597,8 +24612,11 @@ int handle_cublasSspr2_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20617,6 +24635,7 @@ int handle_cublasSspr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int64_t incx;
@@ -20633,9 +24652,12 @@ int handle_cublasSspr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
@@ -20652,8 +24674,11 @@ int handle_cublasSspr2_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20673,6 +24698,7 @@ int handle_cublasSspr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int incx;
@@ -20686,9 +24712,12 @@ int handle_cublasSspr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &AP, sizeof(float *)) < 0 || false)
@@ -20703,8 +24732,11 @@ int handle_cublasSspr_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20723,6 +24755,7 @@ int handle_cublasSspr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int64_t incx;
@@ -20737,9 +24770,12 @@ int handle_cublasSspr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &AP, sizeof(float *)) < 0 || false)
@@ -20754,8 +24790,11 @@ int handle_cublasSspr_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20854,6 +24893,7 @@ int handle_cublasSsymm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -20861,6 +24901,7 @@ int handle_cublasSsymm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int ldc;
@@ -20877,17 +24918,23 @@ int handle_cublasSsymm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -20901,11 +24948,16 @@ int handle_cublasSsymm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20926,6 +24978,7 @@ int handle_cublasSsymm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -20933,6 +24986,7 @@ int handle_cublasSsymm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int64_t ldc;
@@ -20949,17 +25003,23 @@ int handle_cublasSsymm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -20973,11 +25033,16 @@ int handle_cublasSsymm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -20997,6 +25062,7 @@ int handle_cublasSsymv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -21004,6 +25070,7 @@ int handle_cublasSsymv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -21017,17 +25084,23 @@ int handle_cublasSsymv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -21041,11 +25114,16 @@ int handle_cublasSsymv_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21064,6 +25142,7 @@ int handle_cublasSsymv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -21071,6 +25150,7 @@ int handle_cublasSsymv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -21084,17 +25164,23 @@ int handle_cublasSsymv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -21108,11 +25194,16 @@ int handle_cublasSsymv_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, x, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21132,6 +25223,7 @@ int handle_cublasSsyr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int incx;
@@ -21149,9 +25241,12 @@ int handle_cublasSsyr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
@@ -21169,8 +25264,11 @@ int handle_cublasSsyr2_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21189,6 +25287,7 @@ int handle_cublasSsyr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int64_t incx;
@@ -21206,9 +25305,12 @@ int handle_cublasSsyr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const float *)) < 0 ||
@@ -21226,8 +25328,11 @@ int handle_cublasSsyr2_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, y, incy, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21249,6 +25354,7 @@ int handle_cublasSsyr2k_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -21256,6 +25362,7 @@ int handle_cublasSsyr2k_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int ldc;
@@ -21272,17 +25379,23 @@ int handle_cublasSsyr2k_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -21296,11 +25409,16 @@ int handle_cublasSsyr2k_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21321,6 +25439,7 @@ int handle_cublasSsyr2k_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -21328,6 +25447,7 @@ int handle_cublasSsyr2k_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int64_t ldc;
@@ -21344,17 +25464,23 @@ int handle_cublasSsyr2k_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -21368,11 +25494,16 @@ int handle_cublasSsyr2k_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21392,6 +25523,7 @@ int handle_cublasSsyr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int incx;
@@ -21407,9 +25539,12 @@ int handle_cublasSsyr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &A, sizeof(float *)) < 0 ||
@@ -21425,8 +25560,11 @@ int handle_cublasSsyr_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21445,6 +25583,7 @@ int handle_cublasSsyr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *x;
   int64_t incx;
@@ -21460,9 +25599,12 @@ int handle_cublasSsyr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const float *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &A, sizeof(float *)) < 0 ||
@@ -21478,8 +25620,11 @@ int handle_cublasSsyr_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21501,11 +25646,13 @@ int handle_cublasSsyrk_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int ldc;
@@ -21521,15 +25668,21 @@ int handle_cublasSsyrk_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -21543,11 +25696,16 @@ int handle_cublasSsyrk_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21568,11 +25726,13 @@ int handle_cublasSsyrk_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int64_t ldc;
@@ -21588,15 +25748,21 @@ int handle_cublasSsyrk_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -21610,11 +25776,16 @@ int handle_cublasSsyrk_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21636,6 +25807,7 @@ int handle_cublasSsyrkx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -21643,6 +25815,7 @@ int handle_cublasSsyrkx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int ldc;
@@ -21659,17 +25832,23 @@ int handle_cublasSsyrkx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -21683,11 +25862,16 @@ int handle_cublasSsyrkx(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -21708,6 +25892,7 @@ int handle_cublasSsyrkx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -21715,6 +25900,7 @@ int handle_cublasSsyrkx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *C;
   int64_t ldc;
@@ -21731,17 +25917,23 @@ int handle_cublasSsyrkx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(float *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -21755,11 +25947,16 @@ int handle_cublasSsyrkx_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22188,6 +26385,7 @@ int handle_cublasStrmm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -22210,9 +26408,12 @@ int handle_cublasStrmm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
@@ -22230,8 +26431,11 @@ int handle_cublasStrmm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22254,6 +26458,7 @@ int handle_cublasStrmm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -22276,9 +26481,12 @@ int handle_cublasStrmm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const float *)) < 0 ||
@@ -22296,8 +26504,11 @@ int handle_cublasStrmm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22414,6 +26625,7 @@ int handle_cublasStrsmBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *const *A;
   int lda;
@@ -22435,9 +26647,12 @@ int handle_cublasStrsmBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(float *const *)) < 0 ||
@@ -22454,8 +26669,11 @@ int handle_cublasStrsmBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22478,6 +26696,7 @@ int handle_cublasStrsmBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *const *A;
   int64_t lda;
@@ -22499,9 +26718,12 @@ int handle_cublasStrsmBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(float *const *)) < 0 ||
@@ -22518,8 +26740,11 @@ int handle_cublasStrsmBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22543,6 +26768,7 @@ int handle_cublasStrsm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int lda;
@@ -22563,9 +26789,12 @@ int handle_cublasStrsm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(float *)) < 0 ||
@@ -22581,8 +26810,11 @@ int handle_cublasStrsm_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22605,6 +26837,7 @@ int handle_cublasStrsm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const float *A;
   int64_t lda;
@@ -22625,9 +26858,12 @@ int handle_cublasStrsm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const float *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(float *)) < 0 ||
@@ -22643,8 +26879,11 @@ int handle_cublasStrsm_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, B, ldb);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22880,6 +27119,7 @@ int handle_cublasTSSgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *const *Aarray;
   int lda;
@@ -22887,6 +27127,7 @@ int handle_cublasTSSgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *yarray;
   int incy;
@@ -22903,17 +27144,23 @@ int handle_cublasTSSgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -22928,11 +27175,16 @@ int handle_cublasTSSgemvBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -22952,6 +27204,7 @@ int handle_cublasTSSgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *const *Aarray;
   int64_t lda;
@@ -22959,6 +27212,7 @@ int handle_cublasTSSgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *const *yarray;
   int64_t incy;
@@ -22975,17 +27229,23 @@ int handle_cublasTSSgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(float *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -23000,11 +27260,16 @@ int handle_cublasTSSgemvBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -23025,6 +27290,7 @@ int handle_cublasTSSgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *A;
   int lda;
@@ -23034,6 +27300,7 @@ int handle_cublasTSSgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int incy;
@@ -23051,9 +27318,12 @@ int handle_cublasTSSgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __nv_bfloat16 *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -23061,9 +27331,12 @@ int handle_cublasTSSgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -23079,11 +27352,16 @@ int handle_cublasTSSgemvStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -23103,6 +27381,7 @@ int handle_cublasTSSgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *A;
   int64_t lda;
@@ -23112,6 +27391,7 @@ int handle_cublasTSSgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   float *y;
   int64_t incy;
@@ -23130,9 +27410,12 @@ int handle_cublasTSSgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __nv_bfloat16 *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -23140,9 +27423,12 @@ int handle_cublasTSSgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(float *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -23158,11 +27444,16 @@ int handle_cublasTSSgemvStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -23183,6 +27474,7 @@ int handle_cublasTSTgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *const *Aarray;
   int lda;
@@ -23190,6 +27482,7 @@ int handle_cublasTSTgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __nv_bfloat16 *const *yarray;
   int incy;
@@ -23206,17 +27499,23 @@ int handle_cublasTSTgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(__nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -23231,11 +27530,16 @@ int handle_cublasTSTgemvBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -23255,6 +27559,7 @@ int handle_cublasTSTgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *const *Aarray;
   int64_t lda;
@@ -23262,6 +27567,7 @@ int handle_cublasTSTgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __nv_bfloat16 *const *yarray;
   int64_t incy;
@@ -23278,17 +27584,23 @@ int handle_cublasTSTgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const __nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(__nv_bfloat16 *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -23303,11 +27615,16 @@ int handle_cublasTSTgemvBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                Aarray, lda, xarray, incx,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                yarray, incy, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -23328,6 +27645,7 @@ int handle_cublasTSTgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *A;
   int lda;
@@ -23337,6 +27655,7 @@ int handle_cublasTSTgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __nv_bfloat16 *y;
   int incy;
@@ -23354,9 +27673,12 @@ int handle_cublasTSTgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __nv_bfloat16 *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -23364,9 +27686,12 @@ int handle_cublasTSTgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(__nv_bfloat16 *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -23382,11 +27707,16 @@ int handle_cublasTSTgemvStridedBatched(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -23406,6 +27736,7 @@ int handle_cublasTSTgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const float *alpha = nullptr;
   const __nv_bfloat16 *A;
   int64_t lda;
@@ -23415,6 +27746,7 @@ int handle_cublasTSTgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const float *beta = nullptr;
   __nv_bfloat16 *y;
   int64_t incy;
@@ -23433,9 +27765,12 @@ int handle_cublasTSTgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const __nv_bfloat16 *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -23443,9 +27778,12 @@ int handle_cublasTSTgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(__nv_bfloat16 *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -23461,11 +27799,16 @@ int handle_cublasTSTgemvStridedBatched_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, trans, m, n,
-               alpha_width != 0 ? reinterpret_cast<const float *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda, strideA, x, incx, stridex,
-               beta_width != 0 ? reinterpret_cast<const float *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                y, incy, stridey, batchCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -23549,6 +27892,7 @@ int handle_cublasZaxpy_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -23563,9 +27907,12 @@ int handle_cublasZaxpy_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
@@ -23582,7 +27929,9 @@ int handle_cublasZaxpy_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy);
 
@@ -23601,6 +27950,7 @@ int handle_cublasZaxpy_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -23615,9 +27965,12 @@ int handle_cublasZaxpy_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
@@ -23634,7 +27987,9 @@ int handle_cublasZaxpy_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy);
 
@@ -23834,6 +28189,7 @@ int handle_cublasZdotc_v2(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuDoubleComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -23848,7 +28204,6 @@ int handle_cublasZdotc_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -23859,14 +28214,21 @@ int handle_cublasZdotc_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasZdotc_v2));
   return_value =
-      fn == nullptr ? function_not_found()
-                    : fn(handle, n, x, incx, y, incy,
-                         result_width != 0
-                             ? reinterpret_cast<cuDoubleComplex *>(result_value)
-                             : result);
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx, y, incy,
+               result_width != 0
+                   ? reinterpret_cast<cuDoubleComplex *>(
+                         lupine_scalar_slot(result_heap, result_value,
+                                            sizeof(result_value), result_width))
+                   : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -23885,6 +28247,7 @@ int handle_cublasZdotc_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuDoubleComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -23899,7 +28262,6 @@ int handle_cublasZdotc_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -23910,14 +28272,21 @@ int handle_cublasZdotc_v2_64(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasZdotc_v2_64));
   return_value =
-      fn == nullptr ? function_not_found()
-                    : fn(handle, n, x, incx, y, incy,
-                         result_width != 0
-                             ? reinterpret_cast<cuDoubleComplex *>(result_value)
-                             : result);
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx, y, incy,
+               result_width != 0
+                   ? reinterpret_cast<cuDoubleComplex *>(
+                         lupine_scalar_slot(result_heap, result_value,
+                                            sizeof(result_value), result_width))
+                   : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -23937,6 +28306,7 @@ int handle_cublasZdotu_v2(conn_t *conn) {
   int incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuDoubleComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -23951,7 +28321,6 @@ int handle_cublasZdotu_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -23962,14 +28331,21 @@ int handle_cublasZdotu_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasZdotu_v2));
   return_value =
-      fn == nullptr ? function_not_found()
-                    : fn(handle, n, x, incx, y, incy,
-                         result_width != 0
-                             ? reinterpret_cast<cuDoubleComplex *>(result_value)
-                             : result);
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx, y, incy,
+               result_width != 0
+                   ? reinterpret_cast<cuDoubleComplex *>(
+                         lupine_scalar_slot(result_heap, result_value,
+                                            sizeof(result_value), result_width))
+                   : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -23988,6 +28364,7 @@ int handle_cublasZdotu_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t result_width;
   alignas(16) unsigned char result_value[64];
+  std::vector<unsigned char> result_heap;
   cuDoubleComplex *result = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -24002,7 +28379,6 @@ int handle_cublasZdotu_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &result_width, sizeof(result_width)) < 0 ||
-      result_width > sizeof(result_value) ||
       (result_width == 0 && rpc_read(conn, &result, sizeof(result)) < 0) ||
       false)
     goto ERROR_0;
@@ -24013,14 +28389,21 @@ int handle_cublasZdotu_v2_64(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>(LUPINE_SYMBOL_NAME(cublasZdotu_v2_64));
   return_value =
-      fn == nullptr ? function_not_found()
-                    : fn(handle, n, x, incx, y, incy,
-                         result_width != 0
-                             ? reinterpret_cast<cuDoubleComplex *>(result_value)
-                             : result);
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, n, x, incx, y, incy,
+               result_width != 0
+                   ? reinterpret_cast<cuDoubleComplex *>(
+                         lupine_scalar_slot(result_heap, result_value,
+                                            sizeof(result_value), result_width))
+                   : result);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (result_width != 0 && rpc_write(conn, result_value, result_width) < 0) ||
+      (result_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(result_heap, result_value,
+                                    sizeof(result_value), result_width),
+                 result_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -24040,9 +28423,11 @@ int handle_cublasZdrot_v2(conn_t *conn) {
   int incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const double *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -24057,13 +28442,18 @@ int handle_cublasZdrot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -24075,8 +28465,14 @@ int handle_cublasZdrot_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const double *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24097,9 +28493,11 @@ int handle_cublasZdrot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const double *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -24114,13 +28512,18 @@ int handle_cublasZdrot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -24132,8 +28535,14 @@ int handle_cublasZdrot_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const double *>(s_value) : s);
+               c_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24151,6 +28560,7 @@ int handle_cublasZdscal_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   cuDoubleComplex *x;
   int incx;
@@ -24162,9 +28572,12 @@ int handle_cublasZdscal_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -24178,8 +28591,11 @@ int handle_cublasZdscal_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -24197,6 +28613,7 @@ int handle_cublasZdscal_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   cuDoubleComplex *x;
   int64_t incx;
@@ -24208,9 +28625,12 @@ int handle_cublasZdscal_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -24224,8 +28644,11 @@ int handle_cublasZdscal_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -24248,6 +28671,7 @@ int handle_cublasZgbmv_v2(conn_t *conn) {
   int ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -24255,6 +28679,7 @@ int handle_cublasZgbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int incy;
@@ -24273,17 +28698,23 @@ int handle_cublasZgbmv_v2(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int)) < 0 ||
       rpc_read(conn, &ku, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -24298,11 +28729,15 @@ int handle_cublasZgbmv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -24325,6 +28760,7 @@ int handle_cublasZgbmv_v2_64(conn_t *conn) {
   int64_t ku;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -24332,6 +28768,7 @@ int handle_cublasZgbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int64_t incy;
@@ -24350,17 +28787,23 @@ int handle_cublasZgbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &kl, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &ku, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -24375,11 +28818,15 @@ int handle_cublasZgbmv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n, kl, ku,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -24402,11 +28849,13 @@ int handle_cublasZgeam(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   const cuDoubleComplex *B;
   int ldb;
@@ -24426,15 +28875,21 @@ int handle_cublasZgeam(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
@@ -24451,11 +28906,15 @@ int handle_cublasZgeam(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                B, ldb, C, ldc);
 
@@ -24477,11 +28936,13 @@ int handle_cublasZgeam_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   const cuDoubleComplex *B;
   int64_t ldb;
@@ -24501,15 +28962,21 @@ int handle_cublasZgeam_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
@@ -24526,11 +28993,15 @@ int handle_cublasZgeam_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                B, ldb, C, ldc);
 
@@ -24608,6 +29079,7 @@ int handle_cublasZgemm3m(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -24615,6 +29087,7 @@ int handle_cublasZgemm3m(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -24633,17 +29106,23 @@ int handle_cublasZgemm3m(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -24658,11 +29137,15 @@ int handle_cublasZgemm3m(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -24685,6 +29168,7 @@ int handle_cublasZgemm3m_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -24692,6 +29176,7 @@ int handle_cublasZgemm3m_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -24710,17 +29195,23 @@ int handle_cublasZgemm3m_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -24735,11 +29226,15 @@ int handle_cublasZgemm3m_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -24763,6 +29258,7 @@ int handle_cublasZgemmBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *const *Aarray;
   int lda;
@@ -24770,6 +29266,7 @@ int handle_cublasZgemmBatched(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *const *Carray;
   int ldc;
@@ -24789,17 +29286,23 @@ int handle_cublasZgemmBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -24815,11 +29318,15 @@ int handle_cublasZgemmBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, Barray, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
 
@@ -24842,6 +29349,7 @@ int handle_cublasZgemmBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *const *Aarray;
   int64_t lda;
@@ -24849,6 +29357,7 @@ int handle_cublasZgemmBatched_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *const *Carray;
   int64_t ldc;
@@ -24868,17 +29377,23 @@ int handle_cublasZgemmBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &Barray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &Carray, sizeof(cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -24894,11 +29409,15 @@ int handle_cublasZgemmBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, Barray, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
 
@@ -24922,6 +29441,7 @@ int handle_cublasZgemmStridedBatched(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -24931,6 +29451,7 @@ int handle_cublasZgemmStridedBatched(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -24951,9 +29472,12 @@ int handle_cublasZgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -24961,9 +29485,12 @@ int handle_cublasZgemmStridedBatched(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -24980,11 +29507,15 @@ int handle_cublasZgemmStridedBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, B, ldb, strideB,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc, strideC, batchCount);
 
@@ -25007,6 +29538,7 @@ int handle_cublasZgemmStridedBatched_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -25016,6 +29548,7 @@ int handle_cublasZgemmStridedBatched_64(conn_t *conn) {
   long long int strideB;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -25037,9 +29570,12 @@ int handle_cublasZgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -25047,9 +29583,12 @@ int handle_cublasZgemmStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideB, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideC, sizeof(long long int)) < 0 ||
@@ -25066,11 +29605,15 @@ int handle_cublasZgemmStridedBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, B, ldb, strideB,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc, strideC, batchCount);
 
@@ -25094,6 +29637,7 @@ int handle_cublasZgemm_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -25101,6 +29645,7 @@ int handle_cublasZgemm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -25119,17 +29664,23 @@ int handle_cublasZgemm_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -25144,11 +29695,15 @@ int handle_cublasZgemm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -25171,6 +29726,7 @@ int handle_cublasZgemm_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -25178,6 +29734,7 @@ int handle_cublasZgemm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -25196,17 +29753,23 @@ int handle_cublasZgemm_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -25221,11 +29784,15 @@ int handle_cublasZgemm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, transa, transb, m, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -25247,6 +29814,7 @@ int handle_cublasZgemvBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *const *Aarray;
   int lda;
@@ -25254,6 +29822,7 @@ int handle_cublasZgemvBatched(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *const *yarray;
   int incy;
@@ -25270,17 +29839,23 @@ int handle_cublasZgemvBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
@@ -25296,11 +29871,15 @@ int handle_cublasZgemvBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, xarray, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
 
@@ -25321,6 +29900,7 @@ int handle_cublasZgemvBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *const *Aarray;
   int64_t lda;
@@ -25328,6 +29908,7 @@ int handle_cublasZgemvBatched_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *const *yarray;
   int64_t incy;
@@ -25345,17 +29926,23 @@ int handle_cublasZgemvBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &Aarray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &xarray, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &yarray, sizeof(cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &batchCount, sizeof(int64_t)) < 0 || false)
@@ -25371,11 +29958,15 @@ int handle_cublasZgemvBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                Aarray, lda, xarray, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
 
@@ -25397,6 +29988,7 @@ int handle_cublasZgemvStridedBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -25406,6 +29998,7 @@ int handle_cublasZgemvStridedBatched(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int incy;
@@ -25424,9 +30017,12 @@ int handle_cublasZgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -25434,9 +30030,12 @@ int handle_cublasZgemvStridedBatched(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -25453,11 +30052,15 @@ int handle_cublasZgemvStridedBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, x, incx, stridex,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy, stridey, batchCount);
 
@@ -25478,6 +30081,7 @@ int handle_cublasZgemvStridedBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -25487,6 +30091,7 @@ int handle_cublasZgemvStridedBatched_64(conn_t *conn) {
   long long int stridex;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int64_t incy;
@@ -25505,9 +30110,12 @@ int handle_cublasZgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &strideA, sizeof(long long int)) < 0 ||
@@ -25515,9 +30123,12 @@ int handle_cublasZgemvStridedBatched_64(conn_t *conn) {
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridex, sizeof(long long int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &stridey, sizeof(long long int)) < 0 ||
@@ -25534,11 +30145,15 @@ int handle_cublasZgemvStridedBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, strideA, x, incx, stridex,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy, stridey, batchCount);
 
@@ -25560,6 +30175,7 @@ int handle_cublasZgemv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -25567,6 +30183,7 @@ int handle_cublasZgemv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int incy;
@@ -25582,17 +30199,23 @@ int handle_cublasZgemv_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -25607,11 +30230,15 @@ int handle_cublasZgemv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -25632,6 +30259,7 @@ int handle_cublasZgemv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -25639,6 +30267,7 @@ int handle_cublasZgemv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int64_t incy;
@@ -25655,17 +30284,23 @@ int handle_cublasZgemv_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -25680,11 +30315,15 @@ int handle_cublasZgemv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, trans, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -25749,6 +30388,7 @@ int handle_cublasZgerc_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -25767,9 +30407,12 @@ int handle_cublasZgerc_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -25788,7 +30431,9 @@ int handle_cublasZgerc_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -25808,6 +30453,7 @@ int handle_cublasZgerc_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -25826,9 +30472,12 @@ int handle_cublasZgerc_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -25847,7 +30496,9 @@ int handle_cublasZgerc_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -25868,6 +30519,7 @@ int handle_cublasZgeru_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -25886,9 +30538,12 @@ int handle_cublasZgeru_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -25907,7 +30562,9 @@ int handle_cublasZgeru_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -25927,6 +30584,7 @@ int handle_cublasZgeru_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -25945,9 +30603,12 @@ int handle_cublasZgeru_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -25966,7 +30627,9 @@ int handle_cublasZgeru_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -26123,6 +30786,7 @@ int handle_cublasZhbmv_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -26130,6 +30794,7 @@ int handle_cublasZhbmv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int incy;
@@ -26145,17 +30810,23 @@ int handle_cublasZhbmv_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -26170,11 +30841,15 @@ int handle_cublasZhbmv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -26195,6 +30870,7 @@ int handle_cublasZhbmv_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -26202,6 +30878,7 @@ int handle_cublasZhbmv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int64_t incy;
@@ -26218,17 +30895,23 @@ int handle_cublasZhbmv_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -26243,11 +30926,15 @@ int handle_cublasZhbmv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -26270,6 +30957,7 @@ int handle_cublasZhemm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -26277,6 +30965,7 @@ int handle_cublasZhemm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -26294,17 +30983,23 @@ int handle_cublasZhemm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -26319,11 +31014,15 @@ int handle_cublasZhemm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -26345,6 +31044,7 @@ int handle_cublasZhemm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -26352,6 +31052,7 @@ int handle_cublasZhemm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -26369,17 +31070,23 @@ int handle_cublasZhemm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -26394,11 +31101,15 @@ int handle_cublasZhemm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -26419,6 +31130,7 @@ int handle_cublasZhemv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -26426,6 +31138,7 @@ int handle_cublasZhemv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int incy;
@@ -26440,17 +31153,23 @@ int handle_cublasZhemv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -26465,11 +31184,15 @@ int handle_cublasZhemv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -26489,6 +31212,7 @@ int handle_cublasZhemv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -26496,6 +31220,7 @@ int handle_cublasZhemv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int64_t incy;
@@ -26510,17 +31235,23 @@ int handle_cublasZhemv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -26535,11 +31266,15 @@ int handle_cublasZhemv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -26560,6 +31295,7 @@ int handle_cublasZher2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -26578,9 +31314,12 @@ int handle_cublasZher2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -26599,7 +31338,9 @@ int handle_cublasZher2_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -26619,6 +31360,7 @@ int handle_cublasZher2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -26637,9 +31379,12 @@ int handle_cublasZher2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -26658,7 +31403,9 @@ int handle_cublasZher2_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -26681,6 +31428,7 @@ int handle_cublasZher2k_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -26688,6 +31436,7 @@ int handle_cublasZher2k_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -26704,17 +31453,23 @@ int handle_cublasZher2k_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -26729,11 +31484,15 @@ int handle_cublasZher2k_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -26754,6 +31513,7 @@ int handle_cublasZher2k_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -26761,6 +31521,7 @@ int handle_cublasZher2k_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -26778,17 +31539,23 @@ int handle_cublasZher2k_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -26803,11 +31570,15 @@ int handle_cublasZher2k_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -26827,6 +31598,7 @@ int handle_cublasZher_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -26842,9 +31614,12 @@ int handle_cublasZher_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &A, sizeof(cuDoubleComplex *)) < 0 ||
@@ -26860,8 +31635,11 @@ int handle_cublasZher_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -26880,6 +31658,7 @@ int handle_cublasZher_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -26895,9 +31674,12 @@ int handle_cublasZher_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &A, sizeof(cuDoubleComplex *)) < 0 ||
@@ -26913,8 +31695,11 @@ int handle_cublasZher_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, A, lda);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -26936,11 +31721,13 @@ int handle_cublasZherk_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -26957,15 +31744,21 @@ int handle_cublasZherk_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -26979,11 +31772,16 @@ int handle_cublasZherk_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27004,11 +31802,13 @@ int handle_cublasZherk_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -27025,15 +31825,21 @@ int handle_cublasZherk_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -27047,11 +31853,16 @@ int handle_cublasZherk_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                A, lda,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27073,6 +31884,7 @@ int handle_cublasZherkx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -27080,6 +31892,7 @@ int handle_cublasZherkx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -27096,17 +31909,23 @@ int handle_cublasZherkx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -27121,11 +31940,15 @@ int handle_cublasZherkx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27146,6 +31969,7 @@ int handle_cublasZherkx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -27153,6 +31977,7 @@ int handle_cublasZherkx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const double *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -27170,17 +31995,23 @@ int handle_cublasZherkx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -27195,11 +32026,15 @@ int handle_cublasZherkx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
-               beta_width != 0 ? reinterpret_cast<const double *>(beta_value)
-                               : beta,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
                C, ldc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27219,12 +32054,14 @@ int handle_cublasZhpmv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *AP;
   const cuDoubleComplex *x;
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int incy;
@@ -27239,16 +32076,22 @@ int handle_cublasZhpmv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -27263,11 +32106,15 @@ int handle_cublasZhpmv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                AP, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -27287,12 +32134,14 @@ int handle_cublasZhpmv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *AP;
   const cuDoubleComplex *x;
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int64_t incy;
@@ -27307,16 +32156,22 @@ int handle_cublasZhpmv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &AP, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -27331,11 +32186,15 @@ int handle_cublasZhpmv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                AP, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -27356,6 +32215,7 @@ int handle_cublasZhpr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -27373,9 +32233,12 @@ int handle_cublasZhpr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -27393,7 +32256,9 @@ int handle_cublasZhpr2_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, AP);
 
@@ -27413,6 +32278,7 @@ int handle_cublasZhpr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -27430,9 +32296,12 @@ int handle_cublasZhpr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -27450,7 +32319,9 @@ int handle_cublasZhpr2_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, AP);
 
@@ -27471,6 +32342,7 @@ int handle_cublasZhpr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -27485,9 +32357,12 @@ int handle_cublasZhpr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &AP, sizeof(cuDoubleComplex *)) < 0 || false)
@@ -27502,8 +32377,11 @@ int handle_cublasZhpr_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27522,6 +32400,7 @@ int handle_cublasZhpr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const double *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -27536,9 +32415,12 @@ int handle_cublasZhpr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &AP, sizeof(cuDoubleComplex *)) < 0 || false)
@@ -27553,8 +32435,11 @@ int handle_cublasZhpr_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, uplo, n,
-               alpha_width != 0 ? reinterpret_cast<const double *>(alpha_value)
-                                : alpha,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
                x, incx, AP);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27620,9 +32505,11 @@ int handle_cublasZrot_v2(conn_t *conn) {
   int incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const cuDoubleComplex *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -27637,13 +32524,18 @@ int handle_cublasZrot_v2(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -27655,8 +32547,13 @@ int handle_cublasZrot_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const cuDoubleComplex *>(s_value)
+               c_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0 ? reinterpret_cast<const cuDoubleComplex *>(
+                                  lupine_scalar_slot(s_heap, s_value,
+                                                     sizeof(s_value), s_width))
                             : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27678,9 +32575,11 @@ int handle_cublasZrot_v2_64(conn_t *conn) {
   int64_t incy;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   const double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   const cuDoubleComplex *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -27695,13 +32594,18 @@ int handle_cublasZrot_v2_64(conn_t *conn) {
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
-      (c_width != 0 && rpc_read(conn, c_value, c_width) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
-      (s_width != 0 && rpc_read(conn, s_value, s_width) < 0) || false)
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -27713,8 +32617,13 @@ int handle_cublasZrot_v2_64(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle, n, x, incx, y, incy,
-               c_width != 0 ? reinterpret_cast<const double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<const cuDoubleComplex *>(s_value)
+               c_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0 ? reinterpret_cast<const cuDoubleComplex *>(
+                                  lupine_scalar_slot(s_heap, s_value,
+                                                     sizeof(s_value), s_width))
                             : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -27732,15 +32641,19 @@ int handle_cublasZrotg_v2(conn_t *conn) {
   cublasHandle_t handle;
   uint32_t a_width;
   alignas(16) unsigned char a_value[64];
+  std::vector<unsigned char> a_heap;
   cuDoubleComplex *a = nullptr;
   uint32_t b_width;
   alignas(16) unsigned char b_value[64];
+  std::vector<unsigned char> b_heap;
   cuDoubleComplex *b = nullptr;
   uint32_t c_width;
   alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
   double *c = nullptr;
   uint32_t s_width;
   alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
   cuDoubleComplex *s = nullptr;
   int request_id;
   cublasStatus_t return_value;
@@ -27750,18 +32663,20 @@ int handle_cublasZrotg_v2(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &a_width, sizeof(a_width)) < 0 ||
-      a_width > sizeof(a_value) ||
       (a_width == 0 && rpc_read(conn, &a, sizeof(a)) < 0) ||
-      (a_width != 0 && rpc_read(conn, a_value, a_width) < 0) ||
+      (a_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                a_width) < 0) ||
       rpc_read(conn, &b_width, sizeof(b_width)) < 0 ||
-      b_width > sizeof(b_value) ||
       (b_width == 0 && rpc_read(conn, &b, sizeof(b)) < 0) ||
-      (b_width != 0 && rpc_read(conn, b_value, b_width) < 0) ||
+      (b_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                b_width) < 0) ||
       rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
-      c_width > sizeof(c_value) ||
       (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
       rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
-      s_width > sizeof(s_value) ||
       (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) || false)
     goto ERROR_0;
 
@@ -27774,16 +32689,39 @@ int handle_cublasZrotg_v2(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(handle,
-               a_width != 0 ? reinterpret_cast<cuDoubleComplex *>(a_value) : a,
-               b_width != 0 ? reinterpret_cast<cuDoubleComplex *>(b_value) : b,
-               c_width != 0 ? reinterpret_cast<double *>(c_value) : c,
-               s_width != 0 ? reinterpret_cast<cuDoubleComplex *>(s_value) : s);
+               a_width != 0
+                   ? reinterpret_cast<cuDoubleComplex *>(lupine_scalar_slot(
+                         a_heap, a_value, sizeof(a_value), a_width))
+                   : a,
+               b_width != 0
+                   ? reinterpret_cast<cuDoubleComplex *>(lupine_scalar_slot(
+                         b_heap, b_value, sizeof(b_value), b_width))
+                   : b,
+               c_width != 0 ? reinterpret_cast<double *>(lupine_scalar_slot(
+                                  c_heap, c_value, sizeof(c_value), c_width))
+                            : c,
+               s_width != 0
+                   ? reinterpret_cast<cuDoubleComplex *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (a_width != 0 && rpc_write(conn, a_value, a_width) < 0) ||
-      (b_width != 0 && rpc_write(conn, b_value, b_width) < 0) ||
-      (c_width != 0 && rpc_write(conn, c_value, c_width) < 0) ||
-      (s_width != 0 && rpc_write(conn, s_value, s_width) < 0) ||
+      (a_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(a_heap, a_value, sizeof(a_value), a_width),
+                 a_width) < 0) ||
+      (b_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(b_heap, b_value, sizeof(b_value), b_width),
+                 b_width) < 0) ||
+      (c_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                 c_width) < 0) ||
+      (s_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                 s_width) < 0) ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -27797,6 +32735,7 @@ int handle_cublasZscal_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   cuDoubleComplex *x;
   int incx;
@@ -27808,9 +32747,12 @@ int handle_cublasZscal_v2(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -27825,7 +32767,9 @@ int handle_cublasZscal_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx);
 
@@ -27844,6 +32788,7 @@ int handle_cublasZscal_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   cuDoubleComplex *x;
   int64_t incx;
@@ -27856,9 +32801,12 @@ int handle_cublasZscal_v2_64(conn_t *conn) {
   if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -27873,7 +32821,9 @@ int handle_cublasZscal_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx);
 
@@ -27973,6 +32923,7 @@ int handle_cublasZsymm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -27980,6 +32931,7 @@ int handle_cublasZsymm_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -27997,17 +32949,23 @@ int handle_cublasZsymm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -28022,11 +32980,15 @@ int handle_cublasZsymm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -28048,6 +33010,7 @@ int handle_cublasZsymm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -28055,6 +33018,7 @@ int handle_cublasZsymm_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -28072,17 +33036,23 @@ int handle_cublasZsymm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -28097,11 +33067,15 @@ int handle_cublasZsymm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -28122,6 +33096,7 @@ int handle_cublasZsymv_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -28129,6 +33104,7 @@ int handle_cublasZsymv_v2(conn_t *conn) {
   int incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int incy;
@@ -28143,17 +33119,23 @@ int handle_cublasZsymv_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -28168,11 +33150,15 @@ int handle_cublasZsymv_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -28192,6 +33178,7 @@ int handle_cublasZsymv_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -28199,6 +33186,7 @@ int handle_cublasZsymv_v2_64(conn_t *conn) {
   int64_t incx;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *y;
   int64_t incy;
@@ -28213,17 +33201,23 @@ int handle_cublasZsymv_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incy, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -28238,11 +33232,15 @@ int handle_cublasZsymv_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, x, incx,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
 
@@ -28263,6 +33261,7 @@ int handle_cublasZsyr2_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -28281,9 +33280,12 @@ int handle_cublasZsyr2_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -28302,7 +33304,9 @@ int handle_cublasZsyr2_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -28322,6 +33326,7 @@ int handle_cublasZsyr2_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -28340,9 +33345,12 @@ int handle_cublasZsyr2_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -28361,7 +33369,9 @@ int handle_cublasZsyr2_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
 
@@ -28384,6 +33394,7 @@ int handle_cublasZsyr2k_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -28391,6 +33402,7 @@ int handle_cublasZsyr2k_v2(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -28408,17 +33420,23 @@ int handle_cublasZsyr2k_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -28433,11 +33451,15 @@ int handle_cublasZsyr2k_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -28459,6 +33481,7 @@ int handle_cublasZsyr2k_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -28466,6 +33489,7 @@ int handle_cublasZsyr2k_v2_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -28483,17 +33507,23 @@ int handle_cublasZsyr2k_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -28508,11 +33538,15 @@ int handle_cublasZsyr2k_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -28533,6 +33567,7 @@ int handle_cublasZsyr_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int incx;
@@ -28548,9 +33583,12 @@ int handle_cublasZsyr_v2(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int)) < 0 ||
       rpc_read(conn, &A, sizeof(cuDoubleComplex *)) < 0 ||
@@ -28567,7 +33605,9 @@ int handle_cublasZsyr_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
 
@@ -28587,6 +33627,7 @@ int handle_cublasZsyr_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *x;
   int64_t incx;
@@ -28602,9 +33643,12 @@ int handle_cublasZsyr_v2_64(conn_t *conn) {
       rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &x, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &incx, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &A, sizeof(cuDoubleComplex *)) < 0 ||
@@ -28621,7 +33665,9 @@ int handle_cublasZsyr_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
 
@@ -28644,11 +33690,13 @@ int handle_cublasZsyrk_v2(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -28665,15 +33713,21 @@ int handle_cublasZsyrk_v2(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -28688,11 +33742,15 @@ int handle_cublasZsyrk_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -28714,11 +33772,13 @@ int handle_cublasZsyrk_v2_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -28735,15 +33795,21 @@ int handle_cublasZsyrk_v2_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -28758,11 +33824,15 @@ int handle_cublasZsyrk_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -28785,6 +33855,7 @@ int handle_cublasZsyrkx(conn_t *conn) {
   int k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -28792,6 +33863,7 @@ int handle_cublasZsyrkx(conn_t *conn) {
   int ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int ldc;
@@ -28809,17 +33881,23 @@ int handle_cublasZsyrkx(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &k, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -28834,11 +33912,15 @@ int handle_cublasZsyrkx(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -28860,6 +33942,7 @@ int handle_cublasZsyrkx_64(conn_t *conn) {
   int64_t k;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -28867,6 +33950,7 @@ int handle_cublasZsyrkx_64(conn_t *conn) {
   int64_t ldb;
   uint32_t beta_width;
   alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
   const cuDoubleComplex *beta = nullptr;
   cuDoubleComplex *C;
   int64_t ldc;
@@ -28884,17 +33968,23 @@ int handle_cublasZsyrkx_64(conn_t *conn) {
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &k, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldb, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
-      beta_width > sizeof(beta_value) ||
       (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
-      (beta_width != 0 && rpc_read(conn, beta_value, beta_width) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
       rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &ldc, sizeof(int64_t)) < 0 || false)
     goto ERROR_0;
@@ -28909,11 +33999,15 @@ int handle_cublasZsyrkx_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, uplo, trans, n, k,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb,
                beta_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(beta_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
 
@@ -29346,6 +34440,7 @@ int handle_cublasZtrmm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -29369,9 +34464,12 @@ int handle_cublasZtrmm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -29390,7 +34488,9 @@ int handle_cublasZtrmm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, C, ldc);
 
@@ -29414,6 +34514,7 @@ int handle_cublasZtrmm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -29437,9 +34538,12 @@ int handle_cublasZtrmm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
@@ -29458,7 +34562,9 @@ int handle_cublasZtrmm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, C, ldc);
 
@@ -29576,6 +34682,7 @@ int handle_cublasZtrsmBatched(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *const *A;
   int lda;
@@ -29597,9 +34704,12 @@ int handle_cublasZtrsmBatched(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(cuDoubleComplex *const *)) < 0 ||
@@ -29617,7 +34727,9 @@ int handle_cublasZtrsmBatched(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, batchCount);
 
@@ -29641,6 +34753,7 @@ int handle_cublasZtrsmBatched_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *const *A;
   int64_t lda;
@@ -29663,9 +34776,12 @@ int handle_cublasZtrsmBatched_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *const *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(cuDoubleComplex *const *)) < 0 ||
@@ -29683,7 +34799,9 @@ int handle_cublasZtrsmBatched_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, batchCount);
 
@@ -29708,6 +34826,7 @@ int handle_cublasZtrsm_v2(conn_t *conn) {
   int n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int lda;
@@ -29728,9 +34847,12 @@ int handle_cublasZtrsm_v2(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int)) < 0 ||
       rpc_read(conn, &n, sizeof(int)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int)) < 0 ||
       rpc_read(conn, &B, sizeof(cuDoubleComplex *)) < 0 ||
@@ -29747,7 +34869,9 @@ int handle_cublasZtrsm_v2(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb);
 
@@ -29771,6 +34895,7 @@ int handle_cublasZtrsm_v2_64(conn_t *conn) {
   int64_t n;
   uint32_t alpha_width;
   alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
   const cuDoubleComplex *alpha = nullptr;
   const cuDoubleComplex *A;
   int64_t lda;
@@ -29791,9 +34916,12 @@ int handle_cublasZtrsm_v2_64(conn_t *conn) {
       rpc_read(conn, &m, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &n, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
-      alpha_width > sizeof(alpha_value) ||
       (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
-      (alpha_width != 0 && rpc_read(conn, alpha_value, alpha_width) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
       rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
       rpc_read(conn, &lda, sizeof(int64_t)) < 0 ||
       rpc_read(conn, &B, sizeof(cuDoubleComplex *)) < 0 ||
@@ -29810,7 +34938,9 @@ int handle_cublasZtrsm_v2_64(conn_t *conn) {
           ? function_not_found()
           : fn(handle, side, uplo, trans, diag, m, n,
                alpha_width != 0
-                   ? reinterpret_cast<const cuDoubleComplex *>(alpha_value)
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb);
 

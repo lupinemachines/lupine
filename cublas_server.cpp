@@ -91,22 +91,6 @@ int handle_cublasGetStatusString(conn_t *conn) {
   return handle_status_text(conn, "cublasGetStatusString");
 }
 
-int handle_cublasGetCudartVersion(conn_t *conn) {
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  using fn_t = size_t (*)(void);
-  fn_t fn = cublas_symbol<fn_t>("cublasGetCudartVersion");
-  size_t version = fn == nullptr ? 0 : fn();
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &version, sizeof(version)) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_cublasLoggerConfigure(conn_t *conn) {
   int logIsOn, logToStdOut, logToStdErr;
   uint8_t has_name;

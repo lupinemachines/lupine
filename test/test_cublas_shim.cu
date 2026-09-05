@@ -237,6 +237,33 @@ int main() {
     return 1;
   }
 
+#if CUBLAS_VERSION >= 120500
+  // Grouped: two groups of one problem each, the second scaled by 2, with the
+  // per-group host arrays and device pointer arrays the call takes.
+  {
+    const cublasOperation_t ops[2] = {CUBLAS_OP_N, CUBLAS_OP_N};
+    const int ms[2] = {m, m}, ns[2] = {n, n}, ks[2] = {k, k};
+    const int ldas[2] = {m, m}, ldbs[2] = {k, k}, ldcs[2] = {m, m};
+    const float alphas[2] = {1.0f, 2.0f}, betas[2] = {0.0f, 0.0f};
+    const int sizes[2] = {1, 1};
+    CHECK_CUDA(cudaMemset(device_c, 0, 2 * m * n * sizeof(float)));
+    CHECK_CUBLAS(cublasSgemmGroupedBatched(
+        handle, ops, ops, ms, ns, ks, alphas, device_a_pointers, ldas,
+        device_b_pointers, ldbs, betas, device_c_pointers, ldcs, 2, sizes));
+    CHECK_CUDA(cudaMemcpy(host_c_packed.data(), device_c,
+                          2 * m * n * sizeof(float), cudaMemcpyDeviceToHost));
+    std::vector<float> doubled(c_reference);
+    for (float &value : doubled) {
+      value *= 2.0f;
+    }
+    if (compare(host_c_packed.data(), c_reference, "grouped batch 0") != 0 ||
+        compare(host_c_packed.data() + m * n, doubled, "grouped batch 1") !=
+            0) {
+      return 1;
+    }
+  }
+#endif
+
   // Streams: the handle's stream round-trips, and async host copies land on
   // it.
   cudaStream_t stream;
