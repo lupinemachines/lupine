@@ -6,14 +6,12 @@
  * forwards length-prefixed bytes
  * @param error SEND_ONLY
  * @param pStr SEND_RECV
- * @server CUDA
  */
 CUresult cuGetErrorString(CUresult error, const char **pStr);
 /**
  * @disabled - see cuGetErrorString
  * @param error SEND_ONLY
  * @param pStr SEND_RECV
- * @server CUDA
  */
 CUresult cuGetErrorName(CUresult error, const char **pStr);
 /**
@@ -85,14 +83,6 @@ CUresult cuDeviceGetTexture1DLinearMaxWidth(size_t *maxWidthInElements,
  */
 CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib, CUdevice dev);
 /**
- * @disabled
- * @param nvSciSyncAttrList SEND_RECV
- * @param dev SEND_ONLY
- * @param flags SEND_ONLY
- */
-CUresult cuDeviceGetNvSciSyncAttributes(void *nvSciSyncAttrList, CUdevice dev,
-                                        int flags);
-/**
  * @param dev SEND_ONLY
  * @param pool SEND_ONLY
  */
@@ -134,19 +124,17 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev);
  */
 CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev);
 /**
- * @disabled client - manual client caches primary context state
- * @disabled server - manual server coordinates retained staging lifecycle
+ * @disabled - manual client caches primary context state; manual server
+ * coordinates retained staging lifecycle
  * @recordowner CONTEXT pctx
  * @param pctx RECV_ONLY
  * @param dev SEND_ONLY
- * @server CUDA
  */
 CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
 /**
- * @disabled client - manual client caches primary context state
- * @disabled server - manual server coordinates retained staging lifecycle
+ * @disabled - manual client caches primary context state; manual server
+ * coordinates retained staging lifecycle
  * @param dev SEND_ONLY
- * @server CUDA
  */
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
 /**
@@ -164,10 +152,9 @@ CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
                                     int *active);
 /**
- * @disabled client - manual client caches primary context state
- * @disabled server - manual server coordinates retained staging lifecycle
+ * @disabled - manual client caches primary context state; manual server
+ * coordinates retained staging lifecycle
  * @param dev SEND_ONLY
- * @server CUDA
  */
 CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev);
 /**
@@ -176,7 +163,6 @@ CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev);
  * @param pctx RECV_ONLY
  * @param flags SEND_ONLY
  * @param dev SEND_ONLY
- * @server CUDA
  */
 CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice dev);
 /**
@@ -191,7 +177,6 @@ CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
 /**
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
- * @server CUDA
  */
 CUresult cuCtxDestroy_v2(CUcontext ctx) {
   CUcontext lupine_current_before_destroy = nullptr;
@@ -264,7 +249,6 @@ CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent);
  * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey CURRENT_CONTEXT
- * @server CUDA
  */
 CUresult cuCtxSynchronize();
 /**
@@ -273,7 +257,6 @@ CUresult cuCtxSynchronize();
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey CONTEXT ctx
  * @param ctx SEND_ONLY
- * @server CUDA
  */
 CUresult cuCtxSynchronize_v2(CUcontext ctx);
 /**
@@ -326,13 +309,11 @@ CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param pctx RECV_ONLY
  * @param flags SEND_ONLY
- * @server CUDA
  */
 CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
 /**
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
- * @server CUDA
  */
 CUresult cuCtxDetach(CUcontext ctx) {
   CUresult return_value = LUPINE_GENERATED_CALL();
@@ -344,14 +325,12 @@ CUresult cuCtxDetach(CUcontext ctx) {
  * @disabled - manual client sends mapped file bytes to server
  * @param module RECV_ONLY
  * @param fname SEND_ONLY NULL_TERMINATED
- * @server CUDA
  */
 CUresult cuModuleLoad(CUmodule *module, const char *fname);
 /**
  * @disabled
  * @param module RECV_ONLY
  * @param image SEND_ONLY
- * @server CUDA
  */
 CUresult cuModuleLoadData(CUmodule *module, const void *image);
 /**
@@ -361,17 +340,10 @@ CUresult cuModuleLoadData(CUmodule *module, const void *image);
  * @param numOptions SEND_ONLY
  * @param options SEND_ONLY LENGTH:numOptions
  * @param optionValues SEND_RECV
- * @server CUDA
  */
 CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
                             unsigned int numOptions, CUjit_option *options,
                             void **optionValues);
-/**
- * @disabled
- * @param module SEND_RECV
- * @param fatCubin SEND_RECV
- */
-CUresult cuModuleLoadFatBinary(CUmodule *module, const void *fatCubin);
 /**
  * @routingkey MODULE hmod
  * @release MODULE hmod
@@ -404,7 +376,7 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
  * @param bytes RECV_ONLY NULLABLE
  * @param hmod SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
- * @server CUDA
+ * @disabled server
  */
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name) {
@@ -414,17 +386,16 @@ CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
   return return_value;
 }
 /**
- * @disabled client - manual client handles JIT option values
+ * @disabled - manual client handles JIT option values
  * @param numOptions SEND_ONLY
  * @param options SEND_RECV
  * @param optionValues SEND_RECV
  * @param stateOut SEND_RECV
- * @server CUDA
  */
 CUresult cuLinkCreate_v2(unsigned int numOptions, CUjit_option *options,
                          void **optionValues, CUlinkState *stateOut);
 /**
- * @disabled client - manual client handles JIT option values and input bytes
+ * @disabled - manual client handles JIT option values and input bytes
  * @param state SEND_ONLY
  * @param type SEND_ONLY
  * @param data SEND_ONLY
@@ -433,37 +404,33 @@ CUresult cuLinkCreate_v2(unsigned int numOptions, CUjit_option *options,
  * @param numOptions SEND_ONLY
  * @param options SEND_ONLY LENGTH:numOptions
  * @param optionValues SEND_ONLY LENGTH:numOptions
- * @server CUDA
  */
 CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type, void *data,
                           size_t size, const char *name,
                           unsigned int numOptions, CUjit_option *options,
                           void **optionValues);
 /**
- * @disabled client - manual client handles JIT option values and file bytes
+ * @disabled - manual client handles JIT option values and file bytes
  * @param state SEND_ONLY
  * @param type SEND_ONLY
  * @param path SEND_ONLY NULL_TERMINATED
  * @param numOptions SEND_ONLY
  * @param options SEND_ONLY LENGTH:numOptions
  * @param optionValues SEND_ONLY LENGTH:numOptions
- * @server CUDA
  */
 CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
                           const char *path, unsigned int numOptions,
                           CUjit_option *options, void **optionValues);
 /**
- * @disabled client - manual client owns returned cubin storage
+ * @disabled - manual client owns returned cubin storage
  * @param state SEND_ONLY
  * @param cubinOut RECV_ONLY
  * @param sizeOut RECV_ONLY
- * @server CUDA
  */
 CUresult cuLinkComplete(CUlinkState state, void **cubinOut, size_t *sizeOut);
 /**
- * @disabled client - manual client clears JIT state
+ * @disabled - manual client clears JIT state
  * @param state SEND_ONLY
- * @server CUDA
  */
 CUresult cuLinkDestroy(CUlinkState state);
 /**
@@ -489,7 +456,6 @@ CUresult cuModuleGetSurfRef(CUsurfref *pSurfRef, CUmodule hmod,
  * @param numLibraryOptions SEND_ONLY
  * @param libraryOptions SEND_ONLY LENGTH:numLibraryOptions
  * @param libraryOptionValues SEND_ONLY LENGTH:numLibraryOptions
- * @server CUDA
  */
 CUresult cuLibraryLoadData(CUlibrary *library, const void *code,
                            CUjit_option *jitOptions, void **jitOptionsValues,
@@ -521,7 +487,6 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
  * @routingkey LIBRARY library
  * @release LIBRARY library
  * @param library SEND_ONLY
- * @server CUDA
  */
 CUresult cuLibraryUnload(CUlibrary library) {
   CUresult return_value = LUPINE_GENERATED_CALL();
@@ -544,7 +509,7 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
  * @recordparent LIBRARY pMod library
  * @param pMod RECV_ONLY
  * @param library SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
 /**
@@ -698,10 +663,9 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
   return return_value;
 }
 /**
- * @disabled client - manual client handles managed host alias
- * @disabled server - manual server releases identity-mapped allocations
+ * @disabled - manual client handles managed host alias; manual server releases
+ * identity-mapped allocations
  * @param dptr SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemFree_v2(CUdeviceptr dptr);
 /**
@@ -719,19 +683,17 @@ CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
  */
 CUresult cuMemAllocHost_v2(void **pp, size_t bytesize);
 /**
- * @disabled client - manual client frees the substituted local address
- * @disabled server - manual server releases identity-mapped allocations
+ * @disabled - manual client frees the substituted local address; manual server
+ * releases identity-mapped allocations
  * @param p SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemFreeHost(void *p);
 /**
- * @disabled client - manual client substitutes a local faulting address
- * @disabled server - manual server returns the mapped device alias
+ * @disabled - manual client substitutes a local faulting address; manual server
+ * returns the mapped device alias
  * @param pp SEND_RECV
  * @param bytesize SEND_ONLY
  * @param Flags SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemHostAlloc(void **pp, size_t bytesize, unsigned int Flags);
 /**
@@ -746,16 +708,14 @@ CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
  * @disabled - client-local host allocation
  * @param pFlags SEND_RECV
  * @param p SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemHostGetFlags(unsigned int *pFlags, void *p);
 /**
- * @disabled client - manual client creates managed host alias
- * @disabled server - manual server allocates in the negotiated VA arena
+ * @disabled - manual client creates managed host alias; manual server allocates
+ * in the negotiated VA arena
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  * @param flags SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemAllocManaged(CUdeviceptr *dptr, size_t bytesize,
                            unsigned int flags);
@@ -834,7 +794,6 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
  * @param dstDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
  * @param srcHost SEND_ONLY LENGTH:ByteCount
- * @server CUDA
  */
 CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                          size_t ByteCount);
@@ -844,7 +803,6 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
  * @param dstHost RECV_ONLY LENGTH:ByteCount
- * @server CUDA
  */
 CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
@@ -877,21 +835,11 @@ CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
 CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
                          size_t srcOffset, size_t ByteCount);
 /**
- * @disabled
- * @param dstArray SEND_ONLY
- * @param dstOffset SEND_ONLY
- * @param srcHost SEND_ONLY
- * @param ByteCount SEND_ONLY
- */
-CUresult cuMemcpyHtoA_v2(CUarray dstArray, size_t dstOffset,
-                         const void *srcHost, size_t ByteCount);
-/**
  * @disabled - manual client/server chunk large host-copy responses
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
  * @param ByteCount SEND_ONLY
  * @param dstHost RECV_ONLY LENGTH:ByteCount
- * @server CUDA
  */
 CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray, size_t srcOffset,
                          size_t ByteCount);
@@ -907,36 +855,23 @@ CUresult cuMemcpyAtoA_v2(CUarray dstArray, size_t dstOffset, CUarray srcArray,
 /**
  * @disabled
  * @param pCopy SEND_ONLY DEREF
- * @server CUDA
  */
 CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy);
 /**
  * @disabled
  * @param pCopy SEND_ONLY DEREF
- * @server CUDA
  */
 CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy);
-/**
- * @disabled - manual cudaMemcpyDefault host/device classification
- * @param dst SEND_ONLY
- * @param src SEND_ONLY
- * @param ByteCount SEND_ONLY
- * @param hStream SEND_ONLY
- */
-CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src, size_t ByteCount,
-                       CUstream hStream);
 /**
  * @crossservercopy dstDevice srcDevice ByteCount STREAM:hStream ASYNC
  * @param dstDevice SEND_ONLY
@@ -956,7 +891,6 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
  * @param ByteCount SEND_ONLY
  * @param srcHost SEND_ONLY LENGTH:ByteCount
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
                               size_t ByteCount, CUstream hStream);
@@ -967,7 +901,6 @@ CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
  * @param ByteCount SEND_ONLY
  * @param dstHost RECV_ONLY LENGTH:ByteCount
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
@@ -983,17 +916,6 @@ CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
 CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
 /**
- * @disabled
- * @param dstArray SEND_ONLY
- * @param dstOffset SEND_ONLY
- * @param srcHost SEND_ONLY
- * @param ByteCount SEND_ONLY
- * @param hStream SEND_ONLY
- */
-CUresult cuMemcpyHtoAAsync_v2(CUarray dstArray, size_t dstOffset,
-                              const void *srcHost, size_t ByteCount,
-                              CUstream hStream);
-/**
  * @param dstHost SEND_RECV
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
@@ -1006,21 +928,18 @@ CUresult cuMemcpyAtoHAsync_v2(void *dstHost, CUarray srcArray, size_t srcOffset,
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy, CUstream hStream);
 /**
  * @disabled
  * @param pCopy SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
 /**
@@ -1309,16 +1228,14 @@ CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
 CUresult cuMemGetAccess(unsigned long long *flags,
                         const CUmemLocation *location, CUdeviceptr ptr);
 /**
- * @disabled both - POSIX fds cross the wire via the IPC fd broker
- * @server CUDA
+ * @disabled - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemExportToShareableHandle(void *shareableHandle,
                                       CUmemGenericAllocationHandle handle,
                                       CUmemAllocationHandleType handleType,
                                       unsigned long long flags);
 /**
- * @disabled both - POSIX fds cross the wire via the IPC fd broker
- * @server CUDA
+ * @disabled - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemImportFromShareableHandle(CUmemGenericAllocationHandle *handle,
                                         void *osHandle,
@@ -1377,7 +1294,7 @@ CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep);
  * @param pool SEND_ONLY
  * @param attr SEND_ONLY
  * @param value SEND_RECV
- * @server CUDA
+ * @disabled server
  */
 CUresult cuMemPoolSetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
                                void *value);
@@ -1385,7 +1302,7 @@ CUresult cuMemPoolSetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
  * @param pool SEND_ONLY
  * @param attr SEND_ONLY
  * @param value SEND_RECV
- * @server CUDA
+ * @disabled server
  */
 CUresult cuMemPoolGetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
                                void *value);
@@ -1429,15 +1346,13 @@ CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
   return return_value;
 }
 /**
- * @disabled both - POSIX fds cross the wire via the IPC fd broker
- * @server CUDA
+ * @disabled - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult cuMemPoolExportToShareableHandle(void *handle_out, CUmemoryPool pool,
                                           CUmemAllocationHandleType handleType,
                                           unsigned long long flags);
 /**
- * @disabled both - POSIX fds cross the wire via the IPC fd broker
- * @server CUDA
+ * @disabled - POSIX fds cross the wire via the IPC fd broker
  */
 CUresult
 cuMemPoolImportFromShareableHandle(CUmemoryPool *pool_out, void *handle,
@@ -1460,7 +1375,7 @@ CUresult cuMemPoolImportPointer(CUdeviceptr *ptr_out, CUmemoryPool pool,
  * @param data SEND_RECV
  * @param attribute SEND_ONLY
  * @param ptr SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuPointerGetAttribute(void *data, CUpointer_attribute attribute,
                                CUdeviceptr ptr);
@@ -1523,7 +1438,6 @@ CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
                                 CUdeviceptr devPtr, size_t count);
 /**
  * @disabled - manual client and server marshal each variable-sized result
- * @server CUDA
  * @param data SEND_RECV
  * @param dataSizes SEND_RECV
  * @param attributes SEND_RECV
@@ -1540,17 +1454,15 @@ CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
  * @param value SEND_ONLY
  * @param attribute SEND_ONLY
  * @param ptr SEND_ONLY
- * @server CUDA
  */
 CUresult cuPointerSetAttribute(const void *value, CUpointer_attribute attribute,
                                CUdeviceptr ptr);
 /**
- * @disabled client - manual client handles managed host aliases
+ * @disabled - manual client handles managed host aliases
  * @param numAttributes SEND_ONLY
  * @param attributes SEND_RECV
  * @param data SEND_RECV
  * @param ptr SEND_ONLY
- * @server CUDA
  */
 CUresult cuPointerGetAttributes(unsigned int numAttributes,
                                 CUpointer_attribute *attributes, void **data,
@@ -1747,7 +1659,6 @@ CUresult cuGreenCtxWaitEvent(CUgreenCtx hCtx, CUevent hEvent);
  * @param hStream SEND_ONLY
  * @param hEvent SEND_ONLY
  * @param Flags SEND_ONLY
- * @server CUDA
  */
 CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
                            unsigned int Flags);
@@ -1757,16 +1668,16 @@ CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
  * @param callback SEND_ONLY
  * @param userData SEND_RECV
  * @param flags SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
                              void *userData, unsigned int flags);
 /**
- * @disabled client - manual client coordinates checkpoint capture admission
+ * @disabled handle_cuStreamBeginCapture - manual client coordinates checkpoint
+ * capture admission
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param mode SEND_ONLY
- * @server CUDA handle_cuStreamBeginCapture
  */
 CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
 /**
@@ -1774,12 +1685,11 @@ CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**
- * @disabled client - manual client coordinates checkpoint capture completion
+ * @disabled - manual client coordinates checkpoint capture completion
  * @recordowner GRAPH phGraph
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param phGraph SEND_RECV NULLABLE
- * @server CUDA
  */
 CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph);
 /**
@@ -1790,20 +1700,6 @@ CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph);
  */
 CUresult cuStreamIsCapturing(CUstream hStream,
                              CUstreamCaptureStatus *captureStatus);
-/**
- * @disabled
- * @param hStream SEND_ONLY
- * @param captureStatus_out RECV_ONLY
- * @param id_out RECV_ONLY
- * @param graph_out RECV_ONLY
- * @param numDependencies_out RECV_ONLY
- * @param dependencies_out RECV_ONLY LENGTH:numDependencies_out
- */
-CUresult cuStreamGetCaptureInfo_v2(CUstream hStream,
-                                   CUstreamCaptureStatus *captureStatus_out,
-                                   cuuint64_t *id_out, CUgraph *graph_out,
-                                   const CUgraphNode **dependencies_out,
-                                   size_t *numDependencies_out);
 /**
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
@@ -1836,7 +1732,6 @@ CUresult cuStreamQuery(CUstream hStream);
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
- * @server CUDA
  */
 CUresult cuStreamSynchronize(CUstream hStream);
 /**
@@ -1880,21 +1775,19 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
 CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 /**
  * @async
- * @disabled client - manual client tracks which events have work outstanding
+ * @disabled - manual client tracks which events have work outstanding
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA handle_cuEventRecord
  */
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 /**
  * @async
- * @disabled client - manual client tracks which events have work outstanding
+ * @disabled - manual client tracks which events have work outstanding
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
  * @param flags SEND_ONLY
- * @server CUDA handle_cuEventRecordWithFlags
  */
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags);
@@ -1903,7 +1796,6 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
  * @synchronize DEFERRED_DTOH
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
- * @server CUDA
  */
 CUresult cuEventQuery(CUevent hEvent);
 /**
@@ -1911,15 +1803,12 @@ CUresult cuEventQuery(CUevent hEvent);
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
- * @server CUDA
  */
 CUresult cuEventSynchronize(CUevent hEvent);
 /**
- * @disabled client
- * @disabled server - manual server clears deferred-copy event bookkeeping
+ * @disabled - manual server clears deferred-copy event bookkeeping
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
- * @server CUDA
  */
 CUresult cuEventDestroy_v2(CUevent hEvent);
 /**
@@ -2092,7 +1981,6 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc);
  * @param hStream SEND_ONLY
  * @param kernelParams SEND_ONLY
  * @param extra SEND_ONLY
- * @server CUDA
  */
 CUresult cuLaunchKernel(CUfunction f, unsigned int gridDimX,
                         unsigned int gridDimY, unsigned int gridDimZ,
@@ -2105,12 +1993,11 @@ CUresult cuLaunchKernel(CUfunction f, unsigned int gridDimX,
  * @param f SEND_ONLY
  * @param kernelParams SEND_ONLY
  * @param extra SEND_ONLY
- * @server CUDA
  */
 CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
                           void **kernelParams, void **extra);
 /**
- * @disabled client - manual kernel parameter packing
+ * @disabled - manual kernel parameter packing
  * @param f SEND_ONLY
  * @param gridDimX SEND_ONLY
  * @param gridDimY SEND_ONLY
@@ -2121,7 +2008,6 @@ CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
  * @param sharedMemBytes SEND_ONLY
  * @param hStream SEND_ONLY
  * @param kernelParams SEND_RECV
- * @server CUDA
  */
 CUresult cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
                                    unsigned int gridDimY, unsigned int gridDimZ,
@@ -2144,7 +2030,6 @@ cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
  * @param hStream SEND_ONLY
  * @param fn SEND_ONLY
  * @param userData SEND_RECV
- * @server CUDA
  */
 CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn, void *userData);
 /**
@@ -2215,31 +2100,28 @@ CUresult cuParamSetTexRef(CUfunction hfunc, int texunit, CUtexref hTexRef);
  */
 CUresult cuGraphCreate(CUgraph *phGraph, unsigned int flags);
 /**
- * @disabled both - manual kernel parameter packing
+ * @disabled handle_cuGraphAddKernelNode - manual kernel parameter packing
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
  * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
  * @param nodeParams SEND_RECV
- * @server CUDA handle_cuGraphAddKernelNode
  */
 CUresult cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
                                  const CUgraphNode *dependencies,
                                  size_t numDependencies,
                                  const CUDA_KERNEL_NODE_PARAMS *nodeParams);
 /**
- * @disabled both - manual kernel parameter packing
+ * @disabled handle_cuGraphKernelNodeGetParams - manual kernel parameter packing
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_RECV
- * @server CUDA handle_cuGraphKernelNodeGetParams
  */
 CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
                                        CUDA_KERNEL_NODE_PARAMS *nodeParams);
 /**
- * @disabled both - manual kernel parameter packing
+ * @disabled handle_cuGraphKernelNodeSetParams - manual kernel parameter packing
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
- * @server CUDA handle_cuGraphKernelNodeSetParams
  */
 CUresult
 cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
@@ -2252,7 +2134,6 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
  * @param numDependencies SEND_ONLY
  * @param copyParams SEND_RECV
  * @param ctx SEND_ONLY
- * @server CUDA
  */
 CUresult cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                               const CUgraphNode *dependencies,
@@ -2278,7 +2159,6 @@ CUresult cuGraphMemcpyNodeSetParams(CUgraphNode hNode,
  * @param numDependencies SEND_ONLY
  * @param memsetParams SEND_RECV
  * @param ctx SEND_ONLY
- * @server CUDA
  */
 CUresult cuGraphAddMemsetNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                               const CUgraphNode *dependencies,
@@ -2304,7 +2184,6 @@ CUresult cuGraphMemsetNodeSetParams(CUgraphNode hNode,
  * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
  * @param nodeParams SEND_RECV
- * @server CUDA
  */
 CUresult cuGraphAddHostNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                             const CUgraphNode *dependencies,
@@ -2314,7 +2193,6 @@ CUresult cuGraphAddHostNode(CUgraphNode *phGraphNode, CUgraph hGraph,
  * @disabled - manual host callback trampoline (see cuGraphAddHostNode)
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_RECV
- * @server CUDA
  */
 CUresult cuGraphHostNodeGetParams(CUgraphNode hNode,
                                   CUDA_HOST_NODE_PARAMS *nodeParams);
@@ -2322,7 +2200,6 @@ CUresult cuGraphHostNodeGetParams(CUgraphNode hNode,
  * @disabled - manual host callback trampoline (see cuGraphAddHostNode)
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_RECV
- * @server CUDA
  */
 CUresult cuGraphHostNodeSetParams(CUgraphNode hNode,
                                   const CUDA_HOST_NODE_PARAMS *nodeParams);
@@ -2533,7 +2410,7 @@ CUresult cuDeviceGraphMemTrim(CUdevice device);
  * @param device SEND_ONLY
  * @param attr SEND_ONLY
  * @param value SEND_RECV
- * @server CUDA
+ * @disabled server
  */
 CUresult cuDeviceGetGraphMemAttribute(CUdevice device,
                                       CUgraphMem_attribute attr, void *value);
@@ -2541,7 +2418,7 @@ CUresult cuDeviceGetGraphMemAttribute(CUdevice device,
  * @param device SEND_ONLY
  * @param attr SEND_ONLY
  * @param value SEND_RECV
- * @server CUDA
+ * @disabled server
  */
 CUresult cuDeviceSetGraphMemAttribute(CUdevice device,
                                       CUgraphMem_attribute attr, void *value);
@@ -2549,7 +2426,7 @@ CUresult cuDeviceSetGraphMemAttribute(CUdevice device,
  * @recordowner GRAPH phGraphClone
  * @param phGraphClone SEND_RECV
  * @param originalGraph SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuGraphClone(CUgraph *phGraphClone, CUgraph originalGraph);
 /**
@@ -2668,7 +2545,6 @@ CUresult cuGraphDestroyNode(CUgraphNode hNode);
  * @param phErrorNode RECV_ONLY NULLABLE
  * @param bufferSize SEND_ONLY
  * @param logBuffer RECV_ONLY NULLABLE LENGTH:bufferSize ON_ERROR
- * @server CUDA
  */
 CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
                                CUgraphNode *phErrorNode, char *logBuffer,
@@ -2678,7 +2554,7 @@ CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
  * @param phGraphExec SEND_RECV
  * @param hGraph SEND_ONLY
  * @param flags SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuGraphInstantiateWithFlags(CUgraphExec *phGraphExec, CUgraph hGraph,
                                      unsigned long long flags);
@@ -2687,7 +2563,7 @@ CUresult cuGraphInstantiateWithFlags(CUgraphExec *phGraphExec, CUgraph hGraph,
  * @param phGraphExec SEND_RECV
  * @param hGraph SEND_ONLY
  * @param instantiateParams SEND_RECV
- * @server CUDA
+ * @disabled server
  */
 CUresult
 cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
@@ -2713,11 +2589,11 @@ CUresult cuGraphNodeSetParams(CUgraphNode hNode,
 CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
                                   CUgraphNodeParams *nodeParams);
 /**
- * @disabled both - manual kernel parameter packing
+ * @disabled handle_cuGraphExecKernelNodeSetParams - manual kernel parameter
+ * packing
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
- * @server CUDA handle_cuGraphExecKernelNodeSetParams
  */
 CUresult
 cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -2749,7 +2625,6 @@ cuGraphExecMemsetNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
- * @server CUDA
  */
 CUresult cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
                                       const CUDA_HOST_NODE_PARAMS *nodeParams);
@@ -2824,17 +2699,17 @@ CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream);
 /**
  * @param hGraphExec SEND_ONLY
  * @param hStream SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream);
 /**
  * @param hGraphExec SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
 /**
  * @param hGraph SEND_ONLY
- * @server CUDA
+ * @disabled server
  */
 CUresult cuGraphDestroy(CUgraph hGraph);
 #ifdef cuGraphExecUpdate
@@ -2949,7 +2824,6 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
  * @param blockSizeToDynamicSMemSize SEND_ONLY
  * @param dynamicSMemSize SEND_ONLY
  * @param blockSizeLimit SEND_ONLY
- * @server CUDA handle_cuOccupancyMaxPotentialBlockSize
  */
 CUresult
 cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
@@ -2965,7 +2839,6 @@ cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
  * @param dynamicSMemSize SEND_ONLY
  * @param blockSizeLimit SEND_ONLY
  * @param flags SEND_ONLY
- * @server CUDA handle_cuOccupancyMaxPotentialBlockSizeWithFlags
  */
 CUresult cuOccupancyMaxPotentialBlockSizeWithFlags(
     int *minGridSize, int *blockSize, CUfunction func,
@@ -3214,7 +3087,7 @@ CUresult cuSurfObjectDestroy(CUsurfObject surfObject);
 CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
                                      CUsurfObject surfObject);
 /**
- * @disabled both
+ * @disabled
  * @param tensorMap SEND_RECV
  * @param tensorDataType SEND_ONLY
  * @param tensorRank SEND_ONLY
@@ -3227,7 +3100,6 @@ CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
  * @param swizzle SEND_ONLY
  * @param l2Promotion SEND_ONLY
  * @param oobFill SEND_ONLY
- * @server CUDA
  * @guard CUDA_VERSION >= 12000
  */
 CUresult cuTensorMapEncodeTiled(
@@ -3349,14 +3221,12 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
 /**
  * @guard CUDA_VERSION >= 12090
  * @disabled - manual persistent callback forwarding and handle routing
- * @server CUDA
  */
 CUresult cuLogsRegisterCallback(CUlogsCallback callbackFunc, void *userData,
                                 CUlogsCallbackHandle *callback_out);
 /**
  * @guard CUDA_VERSION >= 12090
  * @disabled - manual callback handle routing and lifecycle management
- * @server CUDA
  */
 CUresult cuLogsUnregisterCallback(CUlogsCallbackHandle callback);
 /**
@@ -3397,17 +3267,6 @@ CUresult cuLogsDumpToMemory(CUlogIterator *iterator, char *buffer, size_t *size,
   return return_value;
 }
 /**
- * @disabled
- * @param symbol SEND_RECV
- * @param pfn SEND_RECV
- * @param cudaVersion SEND_ONLY
- * @param flags SEND_ONLY
- * @param symbolStatus SEND_RECV
- */
-CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
-                             cuuint64_t flags,
-                             CUdriverProcAddressQueryResult *symbolStatus);
-/**
  * @guard CUDA_VERSION >= 12010
  * @param attrib SEND_ONLY
  * @param size SEND_RECV
@@ -3423,43 +3282,36 @@ CUresult cuCoredumpGetAttributeGlobal(CUcoredumpSettings attrib, void *value,
  */
 CUresult cuCoredumpSetAttributeGlobal(CUcoredumpSettings attrib, void *value,
                                       size_t *size);
-/**
- * @disabled
- * @param ppExportTable SEND_RECV
- * @param pExportTableId SEND_RECV
- */
-CUresult cuGetExportTable(const void **ppExportTable,
-                          const CUuuid *pExportTableId);
 
 // Registry-only operations without API declarations above. The code generator
 // reads these annotations directly; the C++ parser intentionally ignores them.
 #if 0
-/** @server CUDA */
+/** @disabled */
 void cuGetExportTableMetadata();
-/** @server CUDA */
+/** @disabled */
 void cuPrivateGetModuleNode();
-/** @server CUDA */
+/** @disabled */
 void lupineFunctionParamLayoutSnapshot();
-/** @server CUDA */
+/** @disabled */
 void lupineFunctionAttributeSnapshot();
-/** @server CUDA */
+/** @disabled */
 void lupineLibrarySnapshot();
-/** @server CUDA */
+/** @disabled */
 void lupineLibraryAttributeSnapshot();
-/** @server CUDA */
+/** @disabled */
 void cuGraphConditionalHandleCreate();
-/** @server CUDA handle_cuGraphAddNode */
+/** @disabled handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
-/** @server CUDA */
+/** @disabled */
 void lupineEventQueryBatch();
-/** @server CUDA */
+/** @disabled */
 void cuStreamBeginCaptureToGraph();
-/** @server CUDA handle_cuStreamUpdateCaptureDependencies */
+/** @disabled handle_cuStreamUpdateCaptureDependencies */
 void cuStreamUpdateCaptureDependencies_v2();
-/** @server CUDA handle_cuStreamGetCaptureInfo */
+/** @disabled handle_cuStreamGetCaptureInfo */
 void cuStreamGetCaptureInfo_v3();
-/** @server CUDA */
+/** @disabled */
 void lupineManagedHostFlush();
-/** @server CUDA */
+/** @disabled */
 void lupineDeviceSnapshot();
 #endif

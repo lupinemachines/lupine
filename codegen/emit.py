@@ -371,8 +371,6 @@ def write_backend(backend: Backend, functions_with_annotations, sdk_functions=()
             if unsupported(function, metadata):
                 write_guarded(f, metadata, lambda: write_stub(f, backend, function))
                 continue
-            if metadata.disabled_server:
-                continue
             if metadata.disabled_client and not metadata.client_forwards:
                 continue
             if not metadata.disabled_client:

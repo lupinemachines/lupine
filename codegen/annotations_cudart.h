@@ -11,9 +11,12 @@
 // with its parameters, gets a stub returning cudaErrorNotSupported, so a
 // consumer linking the whole library still loads.
 //
+// `@disabled client forwards` keeps the generated request builder for a call
+// whose entry point the manual client writes itself.
 //
-// The manual client keeps the sticky error, since calls it answers itself also
-// set it.
+// Every result comes back as a return value, so the manual client keeps the
+// sticky error: calls it answers itself set it, and cudaGetLastError never
+// has to ask the server.
 
 /**
  * @param desc RECV_ONLY
@@ -53,7 +56,7 @@ cudaArrayGetSparseProperties(struct cudaArraySparseProperties *sparseProperties,
  */
 cudaError_t cudaChooseDevice(int *device, const struct cudaDeviceProp *prop);
 /**
- * @disabled - the descriptor is built from its arguments alone
+ * @disabled - the result is a struct, not an error code
  */
 struct cudaChannelFormatDesc
 cudaCreateChannelDesc(int x, int y, int z, int w, enum cudaChannelFormatKind f);
@@ -478,7 +481,7 @@ cudaError_t cudaExternalMemoryGetMappedMipmappedArray(
     cudaMipmappedArray_t *mipmap, cudaExternalMemory_t extMem,
     const struct cudaExternalMemoryMipmappedArrayDesc *mipmapDesc);
 /**
- * @disabled - device allocations are tracked by the driver shim
+ * @param devPtr SEND_ONLY
  */
 cudaError_t cudaFree(void *devPtr);
 /**
@@ -486,11 +489,12 @@ cudaError_t cudaFree(void *devPtr);
  */
 cudaError_t cudaFreeArray(cudaArray_t array);
 /**
- * @disabled - device allocations are tracked by the driver shim
+ * @param devPtr SEND_ONLY
+ * @param hStream SEND_ONLY
  */
 cudaError_t cudaFreeAsync(void *devPtr, cudaStream_t hStream);
 /**
- * @disabled - host memory lives in the client
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaFreeHost(void *ptr);
 /**
@@ -498,39 +502,47 @@ cudaError_t cudaFreeHost(void *ptr);
  */
 cudaError_t cudaFreeMipmappedArray(cudaMipmappedArray_t mipmappedArray);
 /**
- * @disabled - the entry point is a client host address
+ * @param attr RECV_ONLY
+ * @param func SEND_ONLY
  */
 cudaError_t cudaFuncGetAttributes(struct cudaFuncAttributes *attr,
                                   const void *func);
 #if CUDART_VERSION >= 12000
 /**
- * @disabled - the entry point is a client host address
+ * @disabled - the runtime returns a static string; manual client caches a copy
  * @guard CUDART_VERSION >= 12000
  */
 cudaError_t cudaFuncGetName(const char **name, const void *func);
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - the entry point is a client host address
+ * @param func SEND_ONLY
+ * @param paramCount RECV_ONLY
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaFuncGetParamCount(const void *func, size_t *paramCount);
 #endif
 #if CUDART_VERSION >= 12000
 /**
- * @disabled - the entry point is a client host address
+ * @param func SEND_ONLY
+ * @param paramIndex SEND_ONLY
+ * @param paramOffset RECV_ONLY
+ * @param paramSize RECV_ONLY
  * @guard CUDART_VERSION >= 12000
  */
 cudaError_t cudaFuncGetParamInfo(const void *func, size_t paramIndex,
                                  size_t *paramOffset, size_t *paramSize);
 #endif
 /**
- * @disabled - the entry point is a client host address
+ * @param func SEND_ONLY
+ * @param attr SEND_ONLY
+ * @param value SEND_ONLY
  */
 cudaError_t cudaFuncSetAttribute(const void *func, enum cudaFuncAttribute attr,
                                  int value);
 /**
- * @disabled - the entry point is a client host address
+ * @param func SEND_ONLY
+ * @param cacheConfig SEND_ONLY
  */
 cudaError_t cudaFuncSetCacheConfig(const void *func,
                                    enum cudaFuncCache cacheConfig);
@@ -550,11 +562,13 @@ cudaError_t cudaFuncSetSharedMemConfig(const void *func,
 cudaError_t cudaGetChannelDesc(struct cudaChannelFormatDesc *desc,
                                cudaArray_const_t array);
 /**
- * @disabled - the calling thread's device is client state
+ * @disabled client - the virtual device table is client state
+ * @param device RECV_ONLY
  */
 cudaError_t cudaGetDevice(int *device);
 /**
- * @disabled - the driver shim owns the virtual device table
+ * @disabled client - the virtual device table is client state
+ * @param count RECV_ONLY
  */
 cudaError_t cudaGetDeviceCount(int *count);
 /**
@@ -569,7 +583,7 @@ cudaError_t cudaGetDeviceFlags(unsigned int *flags);
 cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device);
 #if CUDART_VERSION < 12000
 /**
- * @disabled - driver entry points resolve to the client shim
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION < 12000
  */
 cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
@@ -577,7 +591,7 @@ cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 #endif
 #if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @disabled - driver entry points resolve to the client shim
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
  */
 cudaError_t
@@ -587,7 +601,7 @@ cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - driver entry points resolve to the client shim
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t
@@ -597,7 +611,7 @@ cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - driver entry points resolve to the client shim
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaGetDriverEntryPointByVersion(
@@ -616,13 +630,14 @@ const char *cudaGetErrorName(cudaError_t error);
  */
 const char *cudaGetErrorString(cudaError_t error);
 /**
- * @disabled - export tables are client-side driver pointers
+ * the result is a pointer into the server's driver
  */
 cudaError_t cudaGetExportTable(const void **ppExportTable,
                                const cudaUUID_t *pExportTableId);
 #if CUDART_VERSION < 12000
 /**
- * @disabled - the entry point is a client host address
+ * @param functionPtr RECV_ONLY
+ * @param symbolPtr SEND_ONLY
  * @guard CUDART_VERSION < 12000
  */
 cudaError_t CUDARTAPI_CDECL cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
@@ -630,7 +645,8 @@ cudaError_t CUDARTAPI_CDECL cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - the entry point is a client host address
+ * @param functionPtr RECV_ONLY
+ * @param symbolPtr SEND_ONLY
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
@@ -638,14 +654,14 @@ cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
 #endif
 #if CUDART_VERSION >= 12000
 /**
- * @disabled - the entry point is a client host address
+ * @param kernelPtr RECV_ONLY
+ * @param entryFuncAddr SEND_ONLY
  * @guard CUDART_VERSION >= 12000
  */
 cudaError_t cudaGetKernel(cudaKernel_t *kernelPtr, const void *entryFuncAddr);
 #endif
 /**
- * @disabled - the sticky error is client state, since calls this shim answers
- * itself also set it
+ * @disabled client - the sticky error is kept on the client
  */
 cudaError_t cudaGetLastError(void);
 /**
@@ -664,11 +680,13 @@ cudaGetMipmappedArrayLevel(cudaArray_t *levelArray,
 cudaError_t cudaGetSurfaceObjectResourceDesc(struct cudaResourceDesc *pResDesc,
                                              cudaSurfaceObject_t surfObject);
 /**
- * @disabled - the symbol is a client host address
+ * @param devPtr RECV_ONLY
+ * @param symbol SEND_ONLY
  */
 cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol);
 /**
- * @disabled - the symbol is a client host address
+ * @param size RECV_ONLY
+ * @param symbol SEND_ONLY
  */
 cudaError_t cudaGetSymbolSize(size_t *size, const void *symbol);
 /**
@@ -714,24 +732,24 @@ cudaError_t cudaGreenCtxCreate(cudaExecutionContext_t *phCtx,
                                unsigned int flags);
 #endif
 /**
- * @disabled - host memory lives in the client
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostAlloc(void **pHost, size_t size, unsigned int flags);
 /**
- * @disabled - host memory lives in the client
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostGetDevicePointer(void **pDevice, void *pHost,
                                      unsigned int flags);
 /**
- * @disabled - host memory lives in the client
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostGetFlags(unsigned int *pFlags, void *pHost);
 /**
- * @disabled - host memory lives in the client
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostRegister(void *ptr, size_t size, unsigned int flags);
 /**
- * @disabled - host memory lives in the client
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostUnregister(void *ptr);
 cudaError_t cudaImportExternalMemory(
@@ -783,7 +801,11 @@ cudaError_t cudaIpcOpenMemHandle(void **devPtr, cudaIpcMemHandle_t handle,
                                  unsigned int flags);
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - a kernel handle is a client entry-point address
+ * @routingkey DEVICE device
+ * @param kernel SEND_ONLY
+ * @param attr SEND_ONLY
+ * @param value SEND_ONLY
+ * @param device SEND_ONLY
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaKernelSetAttributeForDevice(cudaKernel_t kernel,
@@ -791,13 +813,14 @@ cudaError_t cudaKernelSetAttributeForDevice(cudaKernel_t kernel,
                                             int value, int device);
 #endif
 /**
- * @disabled - the entry point is a client host address
+ * @disabled - manual client packs the arguments by the server's parameter
+ * layout
  */
 cudaError_t cudaLaunchCooperativeKernel(const void *func, dim3 gridDim,
                                         dim3 blockDim, void **args,
                                         size_t sharedMem, cudaStream_t stream);
 /**
- * @disabled - the callback runs in the client
+ * the callback is a client function
  */
 cudaError_t cudaLaunchHostFunc(cudaStream_t stream, cudaHostFn_t fn,
                                void *userData);
@@ -809,13 +832,15 @@ cudaError_t cudaLaunchHostFunc_v2(cudaStream_t stream, cudaHostFn_t fn,
                                   void *userData, unsigned int syncMode);
 #endif
 /**
- * @disabled - the entry point is a client host address
+ * @disabled - manual client packs the arguments by the server's parameter
+ * layout
  */
 cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim, dim3 blockDim,
                              void **args, size_t sharedMem,
                              cudaStream_t stream);
 /**
- * @disabled - the entry point is a client host address
+ * @disabled - manual client packs the arguments by the server's parameter
+ * layout
  */
 cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
                                 const void *func, void **args);
@@ -866,7 +891,7 @@ cudaError_t cudaLibraryGetManaged(void **dptr, size_t *bytes,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - the returned pointer is a host address
+ * the result is a host function pointer
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaLibraryGetUnifiedFunction(void **fptr, cudaLibrary_t library,
@@ -874,7 +899,7 @@ cudaError_t cudaLibraryGetUnifiedFunction(void **fptr, cudaLibrary_t library,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - the image is client memory
+ * the image size is not part of the call
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaLibraryLoadData(cudaLibrary_t *library, const void *code,
@@ -887,7 +912,7 @@ cudaError_t cudaLibraryLoadData(cudaLibrary_t *library, const void *code,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled - the file is a client path
+ * the file is a client path
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaLibraryLoadFromFile(
@@ -948,11 +973,13 @@ cudaError_t cudaLogsRegisterCallback(cudaLogsCallback_t callbackFunc,
 cudaError_t cudaLogsUnregisterCallback(cudaLogsCallbackHandle callback);
 #endif
 /**
- * @disabled - device allocations are tracked by the driver shim
+ * @param devPtr RECV_ONLY
+ * @param size SEND_ONLY
  */
 cudaError_t cudaMalloc(void **devPtr, size_t size);
 /**
- * @disabled - device allocations are tracked by the driver shim
+ * @param pitchedDevPtr RECV_ONLY
+ * @param extent SEND_ONLY
  */
 cudaError_t cudaMalloc3D(struct cudaPitchedPtr *pitchedDevPtr,
                          struct cudaExtent extent);
@@ -976,20 +1003,27 @@ cudaError_t cudaMallocArray(cudaArray_t *array,
                             const struct cudaChannelFormatDesc *desc,
                             size_t width, size_t height, unsigned int flags);
 /**
- * @disabled - device allocations are tracked by the driver shim
+ * @param devPtr RECV_ONLY
+ * @param size SEND_ONLY
+ * @param hStream SEND_ONLY
  */
 cudaError_t cudaMallocAsync(void **devPtr, size_t size, cudaStream_t hStream);
 /**
- * @disabled - device allocations are tracked by the driver shim
+ * @param ptr RECV_ONLY
+ * @param size SEND_ONLY
+ * @param memPool SEND_ONLY
+ * @param stream SEND_ONLY
  */
 cudaError_t cudaMallocFromPoolAsync(void **ptr, size_t size,
                                     cudaMemPool_t memPool, cudaStream_t stream);
 /**
- * @disabled - host memory lives in the client
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaMallocHost(void **ptr, size_t size);
 /**
- * @disabled - managed memory is mapped into the client
+ * @param devPtr RECV_ONLY
+ * @param size SEND_ONLY
+ * @param flags SEND_ONLY
  */
 cudaError_t cudaMallocManaged(void **devPtr, size_t size, unsigned int flags);
 /**
@@ -1005,7 +1039,10 @@ cudaError_t cudaMallocMipmappedArray(cudaMipmappedArray_t *mipmappedArray,
                                      unsigned int numLevels,
                                      unsigned int flags);
 /**
- * @disabled - device allocations are tracked by the driver shim
+ * @param devPtr RECV_ONLY
+ * @param pitch RECV_ONLY
+ * @param width SEND_ONLY
+ * @param height SEND_ONLY
  */
 cudaError_t cudaMallocPitch(void **devPtr, size_t *pitch, size_t width,
                             size_t height);
@@ -1203,7 +1240,7 @@ cudaError_t cudaMemRangeGetAttribute(void *data, size_t dataSize,
                                      enum cudaMemRangeAttribute attribute,
                                      const void *devPtr, size_t count);
 /**
- * @disabled - each attribute writes a caller buffer of its own width
+ * each attribute writes a caller buffer of its own width
  */
 cudaError_t cudaMemRangeGetAttributes(void **data, size_t *dataSizes,
                                       enum cudaMemRangeAttribute *attributes,
@@ -1221,28 +1258,28 @@ cudaError_t cudaMemSetMemPool(struct cudaMemLocation *location,
                               cudaMemPool_t memPool);
 #endif
 /**
- * @disabled - the copy may touch client host memory
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
                        enum cudaMemcpyKind kind);
 /**
- * @disabled - the copy may touch client host memory
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpy2D(void *dst, size_t dpitch, const void *src,
                          size_t spitch, size_t width, size_t height,
                          enum cudaMemcpyKind kind);
 /**
- * @disabled - the copy may touch client host memory
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch, const void *src,
                               size_t spitch, size_t width, size_t height,
                               enum cudaMemcpyKind kind, cudaStream_t stream);
 /**
- * @disabled - the copy may touch client host memory
+ * the copy parameters carry host pointers
  */
 cudaError_t cudaMemcpy3D(const struct cudaMemcpy3DParms *p);
 /**
- * @disabled - the copy may touch client host memory
+ * the copy parameters carry host pointers
  */
 cudaError_t cudaMemcpy3DAsync(const struct cudaMemcpy3DParms *p,
                               cudaStream_t stream);
@@ -1256,11 +1293,11 @@ cudaError_t cudaMemcpy3DBatchAsync(size_t numOps,
                                    cudaStream_t stream);
 #endif
 /**
- * @disabled - the copy may touch client host memory
+ * the copy parameters carry host pointers
  */
 cudaError_t cudaMemcpy3DPeer(const struct cudaMemcpy3DPeerParms *p);
 /**
- * @disabled - the copy may touch client host memory
+ * the copy parameters carry host pointers
  */
 cudaError_t cudaMemcpy3DPeerAsync(const struct cudaMemcpy3DPeerParms *p,
                                   cudaStream_t stream);
@@ -1273,7 +1310,7 @@ cudaError_t cudaMemcpy3DWithAttributesAsync(struct cudaMemcpy3DBatchOp *op,
                                             cudaStream_t stream);
 #endif
 /**
- * @disabled - the copy may touch client host memory
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
                             enum cudaMemcpyKind kind, cudaStream_t stream);
@@ -1288,36 +1325,47 @@ cudaError_t cudaMemcpyBatchAsync(void *const *dsts, const void *const *srcs,
                                  cudaStream_t stream);
 #endif
 /**
- * @disabled - the symbol is a client host address
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol, size_t count,
                                  size_t offset, enum cudaMemcpyKind kind);
 /**
- * @disabled - the symbol is a client host address
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
                                       size_t count, size_t offset,
                                       enum cudaMemcpyKind kind,
                                       cudaStream_t stream);
 /**
- * @disabled - the copy may touch client host memory
+ * @disabled client forwards - manual client maps both virtual ordinals
+ * @param dst SEND_ONLY
+ * @param dstDevice SEND_ONLY
+ * @param src SEND_ONLY
+ * @param srcDevice SEND_ONLY
+ * @param count SEND_ONLY
  */
 cudaError_t cudaMemcpyPeer(void *dst, int dstDevice, const void *src,
                            int srcDevice, size_t count);
 /**
- * @disabled - the copy may touch client host memory
+ * @disabled client forwards - manual client maps both virtual ordinals
+ * @param dst SEND_ONLY
+ * @param dstDevice SEND_ONLY
+ * @param src SEND_ONLY
+ * @param srcDevice SEND_ONLY
+ * @param count SEND_ONLY
+ * @param stream SEND_ONLY
  */
 cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice, const void *src,
                                 int srcDevice, size_t count,
                                 cudaStream_t stream);
 /**
- * @disabled - the symbol is a client host address
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
                                size_t count, size_t offset,
                                enum cudaMemcpyKind kind);
 /**
- * @disabled - the symbol is a client host address
+ * @disabled - manual client and server carry the host side of the copy
  */
 cudaError_t cudaMemcpyToSymbolAsync(const void *symbol, const void *src,
                                     size_t count, size_t offset,
@@ -1397,42 +1445,52 @@ cudaError_t cudaMipmappedArrayGetSparseProperties(
     struct cudaArraySparseProperties *sparseProperties,
     cudaMipmappedArray_t mipmap);
 /**
- * @disabled - the entry point is a client host address
+ * @param dynamicSmemSize RECV_ONLY
+ * @param func SEND_ONLY
+ * @param numBlocks SEND_ONLY
+ * @param blockSize SEND_ONLY
  */
 cudaError_t cudaOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize,
                                                       const void *func,
                                                       int numBlocks,
                                                       int blockSize);
 /**
- * @disabled - the entry point is a client host address
+ * @param numBlocks RECV_ONLY
+ * @param func SEND_ONLY
+ * @param blockSize SEND_ONLY
+ * @param dynamicSMemSize SEND_ONLY
  */
 cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessor(
     int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize);
 /**
- * @disabled - the entry point is a client host address
+ * @param numBlocks RECV_ONLY
+ * @param func SEND_ONLY
+ * @param blockSize SEND_ONLY
+ * @param dynamicSMemSize SEND_ONLY
+ * @param flags SEND_ONLY
  */
 cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags);
 /**
- * @disabled - the entry point is a client host address
+ * @disabled - manual client sends the attributes behind the launch config
  */
 cudaError_t
 cudaOccupancyMaxActiveClusters(int *numClusters, const void *func,
                                const cudaLaunchConfig_t *launchConfig);
 /**
- * @disabled - the entry point is a client host address
+ * @disabled - manual client sends the attributes behind the launch config
  */
 cudaError_t
 cudaOccupancyMaxPotentialClusterSize(int *clusterSize, const void *func,
                                      const cudaLaunchConfig_t *launchConfig);
 /**
- * @disabled - the sticky error is client state, since calls this shim answers
- * itself also set it
+ * @disabled client - the sticky error is kept on the client
  */
 cudaError_t cudaPeekAtLastError(void);
 /**
- * @disabled - the pointer may be client host memory
+ * @param attributes RECV_ONLY
+ * @param ptr SEND_ONLY
  */
 cudaError_t cudaPointerGetAttributes(struct cudaPointerAttributes *attributes,
                                      const void *ptr);
@@ -1492,7 +1550,7 @@ cudaError_t cudaSignalExternalSemaphoresAsync_v2(
     unsigned int numExtSems, cudaStream_t stream);
 #endif
 /**
- * @disabled - the callback runs in the client
+ * the callback is a client function
  */
 cudaError_t cudaStreamAddCallback(cudaStream_t stream,
                                   cudaStreamCallback_t callback, void *userData,
@@ -2015,7 +2073,9 @@ cudaError_t cudaGraphConditionalHandleCreate_v2(
  */
 cudaError_t cudaGraphCreate(cudaGraph_t *pGraph, unsigned int flags);
 /**
- * @disabled - the output path is a client path
+ * @param graph SEND_ONLY
+ * @param path SEND_ONLY NULL_TERMINATED
+ * @param flags SEND_ONLY
  */
 cudaError_t cudaGraphDebugDotPrint(cudaGraph_t graph, const char *path,
                                    unsigned int flags);
@@ -2598,8 +2658,28 @@ cudaError_t cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource);
 // Registry-only operations without API declarations above. The code generator
 // reads these annotations directly; the C++ parser intentionally ignores them.
 #if 0
-/** @server CUDART */
-void cudaGetErrorName();
-/** @server CUDART */
-void cudaGetErrorString();
+/** @disabled */
+void __cudaRegisterFatBinary();
+/** @disabled */
+void __cudaRegisterFatBinaryEnd();
+/** @disabled */
+void __cudaUnregisterFatBinary();
+/** @disabled */
+void __cudaRegisterFunction();
+/** @disabled */
+void __cudaRegisterVar();
+/** @disabled */
+void __cudaRegisterManagedVar();
+/**
+ * @disabled
+ * @guard CUDART_VERSION >= 13000
+ */
+void __cudaGetKernel();
+/**
+ * @disabled
+ * @guard CUDART_VERSION >= 13000
+ */
+void __cudaLaunchKernel();
+/** @disabled */
+void lupineCudartFuncParamLayout();
 #endif

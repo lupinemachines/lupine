@@ -1482,6 +1482,23 @@ extern "C" cudaError_t cudaExternalMemoryGetMappedMipmappedArray(
       conn, mipmap, extMem, mipmapDesc));
 }
 
+static cudaError_t lupine_rpc_cudaFree(conn_t *conn, void *devPtr) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cudaFree) < 0 ||
+      rpc_write(conn, &devPtr, sizeof(void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaFree(void *devPtr) {
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaFree(conn, devPtr));
+}
+
 static cudaError_t lupine_rpc_cudaFreeArray(conn_t *conn, cudaArray_t array) {
   cudaError_t return_value = rpc_error();
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cudaFreeArray) < 0 ||
@@ -1497,6 +1514,31 @@ static cudaError_t lupine_rpc_cudaFreeArray(conn_t *conn, cudaArray_t array) {
 extern "C" cudaError_t cudaFreeArray(cudaArray_t array) {
   conn_t *conn = connection();
   return record(lupine_rpc_cudaFreeArray(conn, array));
+}
+
+static cudaError_t lupine_rpc_cudaFreeAsync(conn_t *conn, void *devPtr,
+                                            cudaStream_t hStream) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cudaFreeAsync) < 0 ||
+      rpc_write(conn, &devPtr, sizeof(void *)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(cudaStream_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaFreeAsync(void *devPtr, cudaStream_t hStream) {
+  conn_t *conn = connection_for_stream(hStream);
+  return record(lupine_rpc_cudaFreeAsync(conn, devPtr, hStream));
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaFreeHost(void *ptr) {
+  (void)ptr;
+  return record(cudaErrorNotSupported);
 }
 
 static cudaError_t
@@ -1518,6 +1560,139 @@ extern "C" cudaError_t
 cudaFreeMipmappedArray(cudaMipmappedArray_t mipmappedArray) {
   conn_t *conn = connection();
   return record(lupine_rpc_cudaFreeMipmappedArray(conn, mipmappedArray));
+}
+
+static cudaError_t
+lupine_rpc_cudaFuncGetAttributes(conn_t *conn, struct cudaFuncAttributes *attr,
+                                 const void *func) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaFuncGetAttributes) < 0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, attr, sizeof(struct cudaFuncAttributes)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaFuncGetAttributes(struct cudaFuncAttributes *attr,
+                                             const void *func) {
+  if (attr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaFuncGetAttributes(conn, attr, func));
+}
+
+#if CUDART_VERSION >= 13000
+static cudaError_t lupine_rpc_cudaFuncGetParamCount(conn_t *conn,
+                                                    const void *func,
+                                                    size_t *paramCount) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaFuncGetParamCount) < 0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, paramCount, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaFuncGetParamCount(const void *func,
+                                             size_t *paramCount) {
+  if (paramCount == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaFuncGetParamCount(conn, func, paramCount));
+}
+
+#endif
+
+#if CUDART_VERSION >= 12000
+static cudaError_t lupine_rpc_cudaFuncGetParamInfo(conn_t *conn,
+                                                   const void *func,
+                                                   size_t paramIndex,
+                                                   size_t *paramOffset,
+                                                   size_t *paramSize) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaFuncGetParamInfo) < 0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &paramIndex, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, paramOffset, sizeof(size_t)) < 0 ||
+      rpc_read(conn, paramSize, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaFuncGetParamInfo(const void *func, size_t paramIndex,
+                                            size_t *paramOffset,
+                                            size_t *paramSize) {
+  if (paramOffset == nullptr || paramSize == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaFuncGetParamInfo(conn, func, paramIndex,
+                                                paramOffset, paramSize));
+}
+
+#endif
+
+static cudaError_t lupine_rpc_cudaFuncSetAttribute(conn_t *conn,
+                                                   const void *func,
+                                                   enum cudaFuncAttribute attr,
+                                                   int value) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaFuncSetAttribute) < 0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &attr, sizeof(enum cudaFuncAttribute)) < 0 ||
+      rpc_write(conn, &value, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t
+cudaFuncSetAttribute(const void *func, enum cudaFuncAttribute attr, int value) {
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaFuncSetAttribute(conn, func, attr, value));
+}
+
+static cudaError_t
+lupine_rpc_cudaFuncSetCacheConfig(conn_t *conn, const void *func,
+                                  enum cudaFuncCache cacheConfig) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaFuncSetCacheConfig) < 0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &cacheConfig, sizeof(enum cudaFuncCache)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaFuncSetCacheConfig(const void *func,
+                                              enum cudaFuncCache cacheConfig) {
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaFuncSetCacheConfig(conn, func, cacheConfig));
 }
 
 static cudaError_t
@@ -1592,6 +1767,100 @@ extern "C" cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop,
   return record(lupine_rpc_cudaGetDeviceProperties(conn, prop, device));
 }
 
+#if CUDART_VERSION >= 13000
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t
+cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
+                        unsigned long long flags,
+                        enum cudaDriverEntryPointQueryResult *driverStatus) {
+  (void)symbol;
+  (void)funcPtr;
+  (void)flags;
+  (void)driverStatus;
+  return record(cudaErrorNotSupported);
+}
+
+#endif
+
+#if CUDART_VERSION >= 13000
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaGetDriverEntryPointByVersion(
+    const char *symbol, void **funcPtr, unsigned int cudaVersion,
+    unsigned long long flags,
+    enum cudaDriverEntryPointQueryResult *driverStatus) {
+  (void)symbol;
+  (void)funcPtr;
+  (void)cudaVersion;
+  (void)flags;
+  (void)driverStatus;
+  return record(cudaErrorNotSupported);
+}
+
+#endif
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaGetExportTable(const void **ppExportTable,
+                                          const cudaUUID_t *pExportTableId) {
+  (void)ppExportTable;
+  (void)pExportTableId;
+  return record(cudaErrorNotSupported);
+}
+
+#if CUDART_VERSION >= 13000
+static cudaError_t lupine_rpc_cudaGetFuncBySymbol(conn_t *conn,
+                                                  cudaFunction_t *functionPtr,
+                                                  const void *symbolPtr) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaGetFuncBySymbol) < 0 ||
+      rpc_write(conn, &symbolPtr, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, functionPtr, sizeof(cudaFunction_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
+                                           const void *symbolPtr) {
+  if (functionPtr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaGetFuncBySymbol(conn, functionPtr, symbolPtr));
+}
+
+#endif
+
+#if CUDART_VERSION >= 12000
+static cudaError_t lupine_rpc_cudaGetKernel(conn_t *conn,
+                                            cudaKernel_t *kernelPtr,
+                                            const void *entryFuncAddr) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cudaGetKernel) < 0 ||
+      rpc_write(conn, &entryFuncAddr, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, kernelPtr, sizeof(cudaKernel_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaGetKernel(cudaKernel_t *kernelPtr,
+                                     const void *entryFuncAddr) {
+  if (kernelPtr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaGetKernel(conn, kernelPtr, entryFuncAddr));
+}
+
+#endif
+
 static cudaError_t
 lupine_rpc_cudaGetMipmappedArrayLevel(conn_t *conn, cudaArray_t *levelArray,
                                       cudaMipmappedArray_const_t mipmappedArray,
@@ -1649,6 +1918,52 @@ cudaGetSurfaceObjectResourceDesc(struct cudaResourceDesc *pResDesc,
   conn_t *conn = connection();
   return record(
       lupine_rpc_cudaGetSurfaceObjectResourceDesc(conn, pResDesc, surfObject));
+}
+
+static cudaError_t lupine_rpc_cudaGetSymbolAddress(conn_t *conn, void **devPtr,
+                                                   const void *symbol) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaGetSymbolAddress) < 0 ||
+      rpc_write(conn, &symbol, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, devPtr, sizeof(void *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol) {
+  if (devPtr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaGetSymbolAddress(conn, devPtr, symbol));
+}
+
+static cudaError_t lupine_rpc_cudaGetSymbolSize(conn_t *conn, size_t *size,
+                                                const void *symbol) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaGetSymbolSize) < 0 ||
+      rpc_write(conn, &symbol, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, size, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaGetSymbolSize(size_t *size, const void *symbol) {
+  if (size == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaGetSymbolSize(conn, size, symbol));
 }
 
 static cudaError_t
@@ -1768,6 +2083,46 @@ extern "C" cudaError_t cudaGreenCtxCreate(cudaExecutionContext_t *phCtx,
 }
 
 #endif
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaHostAlloc(void **pHost, size_t size,
+                                     unsigned int flags) {
+  (void)pHost;
+  (void)size;
+  (void)flags;
+  return record(cudaErrorNotSupported);
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaHostGetDevicePointer(void **pDevice, void *pHost,
+                                                unsigned int flags) {
+  (void)pDevice;
+  (void)pHost;
+  (void)flags;
+  return record(cudaErrorNotSupported);
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaHostGetFlags(unsigned int *pFlags, void *pHost) {
+  (void)pFlags;
+  (void)pHost;
+  return record(cudaErrorNotSupported);
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaHostRegister(void *ptr, size_t size,
+                                        unsigned int flags) {
+  (void)ptr;
+  (void)size;
+  (void)flags;
+  return record(cudaErrorNotSupported);
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaHostUnregister(void *ptr) {
+  (void)ptr;
+  return record(cudaErrorNotSupported);
+}
 
 // Not annotated for this backend, so not supported.
 extern "C" cudaError_t cudaImportExternalMemory(
@@ -1933,6 +2288,44 @@ extern "C" cudaError_t cudaIpcOpenMemHandle(void **devPtr,
 }
 
 #if CUDART_VERSION >= 13000
+static cudaError_t
+lupine_rpc_cudaKernelSetAttributeForDevice(conn_t *conn, cudaKernel_t kernel,
+                                           enum cudaFuncAttribute attr,
+                                           int value, int device) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaKernelSetAttributeForDevice) < 0 ||
+      rpc_write(conn, &kernel, sizeof(cudaKernel_t)) < 0 ||
+      rpc_write(conn, &attr, sizeof(enum cudaFuncAttribute)) < 0 ||
+      rpc_write(conn, &value, sizeof(int)) < 0 ||
+      rpc_write(conn, &device, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaKernelSetAttributeForDevice(
+    cudaKernel_t kernel, enum cudaFuncAttribute attr, int value, int device) {
+  conn_t *conn = connection_for_device(&device);
+  return record(lupine_rpc_cudaKernelSetAttributeForDevice(conn, kernel, attr,
+                                                           value, device));
+}
+
+#endif
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaLaunchHostFunc(cudaStream_t stream, cudaHostFn_t fn,
+                                          void *userData) {
+  (void)stream;
+  (void)fn;
+  (void)userData;
+  return record(cudaErrorNotSupported);
+}
+
+#if CUDART_VERSION >= 13000
 // Not annotated for this backend, so not supported.
 extern "C" cudaError_t cudaLaunchHostFunc_v2(cudaStream_t stream,
                                              cudaHostFn_t fn, void *userData,
@@ -2064,6 +2457,59 @@ extern "C" cudaError_t cudaLibraryGetManaged(void **dptr, size_t *bytes,
   conn_t *conn = connection();
   return record(
       lupine_rpc_cudaLibraryGetManaged(conn, dptr, bytes, library, name));
+}
+
+#endif
+
+#if CUDART_VERSION >= 13000
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaLibraryGetUnifiedFunction(void **fptr,
+                                                     cudaLibrary_t library,
+                                                     const char *symbol) {
+  (void)fptr;
+  (void)library;
+  (void)symbol;
+  return record(cudaErrorNotSupported);
+}
+
+#endif
+
+#if CUDART_VERSION >= 13000
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaLibraryLoadData(
+    cudaLibrary_t *library, const void *code, enum cudaJitOption *jitOptions,
+    void **jitOptionsValues, unsigned int numJitOptions,
+    enum cudaLibraryOption *libraryOptions, void **libraryOptionValues,
+    unsigned int numLibraryOptions) {
+  (void)library;
+  (void)code;
+  (void)jitOptions;
+  (void)jitOptionsValues;
+  (void)numJitOptions;
+  (void)libraryOptions;
+  (void)libraryOptionValues;
+  (void)numLibraryOptions;
+  return record(cudaErrorNotSupported);
+}
+
+#endif
+
+#if CUDART_VERSION >= 13000
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaLibraryLoadFromFile(
+    cudaLibrary_t *library, const char *fileName,
+    enum cudaJitOption *jitOptions, void **jitOptionsValues,
+    unsigned int numJitOptions, enum cudaLibraryOption *libraryOptions,
+    void **libraryOptionValues, unsigned int numLibraryOptions) {
+  (void)library;
+  (void)fileName;
+  (void)jitOptions;
+  (void)jitOptionsValues;
+  (void)numJitOptions;
+  (void)libraryOptions;
+  (void)libraryOptionValues;
+  (void)numLibraryOptions;
+  return record(cudaErrorNotSupported);
 }
 
 #endif
@@ -2232,6 +2678,52 @@ cudaLogsUnregisterCallback(cudaLogsCallbackHandle callback) {
 
 #endif
 
+static cudaError_t lupine_rpc_cudaMalloc(conn_t *conn, void **devPtr,
+                                         size_t size) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cudaMalloc) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, devPtr, sizeof(void *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMalloc(void **devPtr, size_t size) {
+  if (devPtr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaMalloc(conn, devPtr, size));
+}
+
+static cudaError_t lupine_rpc_cudaMalloc3D(conn_t *conn,
+                                           struct cudaPitchedPtr *pitchedDevPtr,
+                                           struct cudaExtent extent) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cudaMalloc3D) < 0 ||
+      rpc_write(conn, &extent, sizeof(struct cudaExtent)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pitchedDevPtr, sizeof(struct cudaPitchedPtr)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMalloc3D(struct cudaPitchedPtr *pitchedDevPtr,
+                                    struct cudaExtent extent) {
+  if (pitchedDevPtr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaMalloc3D(conn, pitchedDevPtr, extent));
+}
+
 static cudaError_t
 lupine_rpc_cudaMalloc3DArray(conn_t *conn, cudaArray_t *array,
                              const struct cudaChannelFormatDesc *desc,
@@ -2293,6 +2785,95 @@ extern "C" cudaError_t cudaMallocArray(cudaArray_t *array,
       lupine_rpc_cudaMallocArray(conn, array, desc, width, height, flags));
 }
 
+static cudaError_t lupine_rpc_cudaMallocAsync(conn_t *conn, void **devPtr,
+                                              size_t size,
+                                              cudaStream_t hStream) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaMallocAsync) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(cudaStream_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, devPtr, sizeof(void *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMallocAsync(void **devPtr, size_t size,
+                                       cudaStream_t hStream) {
+  if (devPtr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection_for_stream(hStream);
+  return record(lupine_rpc_cudaMallocAsync(conn, devPtr, size, hStream));
+}
+
+static cudaError_t lupine_rpc_cudaMallocFromPoolAsync(conn_t *conn, void **ptr,
+                                                      size_t size,
+                                                      cudaMemPool_t memPool,
+                                                      cudaStream_t stream) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaMallocFromPoolAsync) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
+      rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, ptr, sizeof(void *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMallocFromPoolAsync(void **ptr, size_t size,
+                                               cudaMemPool_t memPool,
+                                               cudaStream_t stream) {
+  if (ptr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection_for_stream(stream);
+  return record(
+      lupine_rpc_cudaMallocFromPoolAsync(conn, ptr, size, memPool, stream));
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaMallocHost(void **ptr, size_t size) {
+  (void)ptr;
+  (void)size;
+  return record(cudaErrorNotSupported);
+}
+
+static cudaError_t lupine_rpc_cudaMallocManaged(conn_t *conn, void **devPtr,
+                                                size_t size,
+                                                unsigned int flags) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaMallocManaged) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, devPtr, sizeof(void *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMallocManaged(void **devPtr, size_t size,
+                                         unsigned int flags) {
+  if (devPtr == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaMallocManaged(conn, devPtr, size, flags));
+}
+
 static cudaError_t lupine_rpc_cudaMallocMipmappedArray(
     conn_t *conn, cudaMipmappedArray_t *mipmappedArray,
     const struct cudaChannelFormatDesc *desc, struct cudaExtent extent,
@@ -2324,6 +2905,33 @@ cudaMallocMipmappedArray(cudaMipmappedArray_t *mipmappedArray,
   conn_t *conn = connection();
   return record(lupine_rpc_cudaMallocMipmappedArray(conn, mipmappedArray, desc,
                                                     extent, numLevels, flags));
+}
+
+static cudaError_t lupine_rpc_cudaMallocPitch(conn_t *conn, void **devPtr,
+                                              size_t *pitch, size_t width,
+                                              size_t height) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaMallocPitch) < 0 ||
+      rpc_write(conn, &width, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &height, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, devPtr, sizeof(void *)) < 0 ||
+      rpc_read(conn, pitch, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMallocPitch(void **devPtr, size_t *pitch,
+                                       size_t width, size_t height) {
+  if (devPtr == nullptr || pitch == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaMallocPitch(conn, devPtr, pitch, width, height));
 }
 
 #if CUDART_VERSION >= 13000
@@ -2745,6 +3353,19 @@ cudaMemRangeGetAttribute(void *data, size_t dataSize,
                                                     attribute, devPtr, count));
 }
 
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaMemRangeGetAttributes(
+    void **data, size_t *dataSizes, enum cudaMemRangeAttribute *attributes,
+    size_t numAttributes, const void *devPtr, size_t count) {
+  (void)data;
+  (void)dataSizes;
+  (void)attributes;
+  (void)numAttributes;
+  (void)devPtr;
+  (void)count;
+  return record(cudaErrorNotSupported);
+}
+
 #if CUDART_VERSION >= 13000
 static cudaError_t
 lupine_rpc_cudaMemSetMemPool(conn_t *conn, struct cudaMemLocation *location,
@@ -2776,6 +3397,20 @@ extern "C" cudaError_t cudaMemSetMemPool(struct cudaMemLocation *location,
 
 #endif
 
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaMemcpy3D(const struct cudaMemcpy3DParms *p) {
+  (void)p;
+  return record(cudaErrorNotSupported);
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaMemcpy3DAsync(const struct cudaMemcpy3DParms *p,
+                                         cudaStream_t stream) {
+  (void)p;
+  (void)stream;
+  return record(cudaErrorNotSupported);
+}
+
 #if CUDART_VERSION >= 13000
 // Not annotated for this backend, so not supported.
 extern "C" cudaError_t
@@ -2789,6 +3424,21 @@ cudaMemcpy3DBatchAsync(size_t numOps, struct cudaMemcpy3DBatchOp *opList,
 }
 
 #endif
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaMemcpy3DPeer(const struct cudaMemcpy3DPeerParms *p) {
+  (void)p;
+  return record(cudaErrorNotSupported);
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t
+cudaMemcpy3DPeerAsync(const struct cudaMemcpy3DPeerParms *p,
+                      cudaStream_t stream) {
+  (void)p;
+  (void)stream;
+  return record(cudaErrorNotSupported);
+}
 
 #if CUDART_VERSION >= 13000
 // Not annotated for this backend, so not supported.
@@ -2823,6 +3473,47 @@ extern "C" cudaError_t cudaMemcpyBatchAsync(void *const *dsts,
 }
 
 #endif
+
+static cudaError_t lupine_rpc_cudaMemcpyPeer(conn_t *conn, void *dst,
+                                             int dstDevice, const void *src,
+                                             int srcDevice, size_t count) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaMemcpyPeer) < 0 ||
+      rpc_write(conn, &dst, sizeof(void *)) < 0 ||
+      rpc_write(conn, &dstDevice, sizeof(int)) < 0 ||
+      rpc_write(conn, &src, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &srcDevice, sizeof(int)) < 0 ||
+      rpc_write(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cudaError_t lupine_rpc_cudaMemcpyPeerAsync(conn_t *conn, void *dst,
+                                                  int dstDevice,
+                                                  const void *src,
+                                                  int srcDevice, size_t count,
+                                                  cudaStream_t stream) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaMemcpyPeerAsync) < 0 ||
+      rpc_write(conn, &dst, sizeof(void *)) < 0 ||
+      rpc_write(conn, &dstDevice, sizeof(int)) < 0 ||
+      rpc_write(conn, &src, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &srcDevice, sizeof(int)) < 0 ||
+      rpc_write(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
 
 #if CUDART_VERSION >= 13000
 // Not annotated for this backend, so not supported.
@@ -3047,6 +3738,123 @@ extern "C" cudaError_t cudaMipmappedArrayGetSparseProperties(
       conn, sparseProperties, mipmap));
 }
 
+static cudaError_t lupine_rpc_cudaOccupancyAvailableDynamicSMemPerBlock(
+    conn_t *conn, size_t *dynamicSmemSize, const void *func, int numBlocks,
+    int blockSize) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(
+          conn, RPC_cudaOccupancyAvailableDynamicSMemPerBlock) < 0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
+      rpc_write(conn, &blockSize, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, dynamicSmemSize, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaOccupancyAvailableDynamicSMemPerBlock(
+    size_t *dynamicSmemSize, const void *func, int numBlocks, int blockSize) {
+  if (dynamicSmemSize == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaOccupancyAvailableDynamicSMemPerBlock(
+      conn, dynamicSmemSize, func, numBlocks, blockSize));
+}
+
+static cudaError_t lupine_rpc_cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    conn_t *conn, int *numBlocks, const void *func, int blockSize,
+    size_t dynamicSMemSize) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(
+          conn, RPC_cudaOccupancyMaxActiveBlocksPerMultiprocessor) < 0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &blockSize, sizeof(int)) < 0 ||
+      rpc_write(conn, &dynamicSMemSize, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, numBlocks, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize) {
+  if (numBlocks == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+      conn, numBlocks, func, blockSize, dynamicSMemSize));
+}
+
+static cudaError_t
+lupine_rpc_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
+    conn_t *conn, int *numBlocks, const void *func, int blockSize,
+    size_t dynamicSMemSize, unsigned int flags) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(
+          conn, RPC_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags) <
+          0 ||
+      rpc_write(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &blockSize, sizeof(int)) < 0 ||
+      rpc_write(conn, &dynamicSMemSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, numBlocks, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
+    int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize,
+    unsigned int flags) {
+  if (numBlocks == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(
+      lupine_rpc_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
+          conn, numBlocks, func, blockSize, dynamicSMemSize, flags));
+}
+
+static cudaError_t lupine_rpc_cudaPointerGetAttributes(
+    conn_t *conn, struct cudaPointerAttributes *attributes, const void *ptr) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaPointerGetAttributes) < 0 ||
+      rpc_write(conn, &ptr, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, attributes, sizeof(struct cudaPointerAttributes)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t
+cudaPointerGetAttributes(struct cudaPointerAttributes *attributes,
+                         const void *ptr) {
+  if (attributes == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaPointerGetAttributes(conn, attributes, ptr));
+}
+
 static cudaError_t lupine_rpc_cudaRuntimeGetVersion(conn_t *conn,
                                                     int *runtimeVersion) {
   cudaError_t return_value = rpc_error();
@@ -3162,6 +3970,18 @@ extern "C" cudaError_t cudaSignalExternalSemaphoresAsync(
   conn_t *conn = connection_for_stream(stream);
   return record(lupine_rpc_cudaSignalExternalSemaphoresAsync(
       conn, extSemArray, paramsArray, numExtSems, stream));
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" cudaError_t cudaStreamAddCallback(cudaStream_t stream,
+                                             cudaStreamCallback_t callback,
+                                             void *userData,
+                                             unsigned int flags) {
+  (void)stream;
+  (void)callback;
+  (void)userData;
+  (void)flags;
+  return record(cudaErrorNotSupported);
 }
 
 static cudaError_t lupine_rpc_cudaStreamAttachMemAsync(conn_t *conn,
@@ -4405,6 +5225,36 @@ extern "C" cudaError_t cudaGraphCreate(cudaGraph_t *pGraph,
   }
   conn_t *conn = connection();
   return record(lupine_rpc_cudaGraphCreate(conn, pGraph, flags));
+}
+
+static cudaError_t lupine_rpc_cudaGraphDebugDotPrint(conn_t *conn,
+                                                     cudaGraph_t graph,
+                                                     const char *path,
+                                                     unsigned int flags) {
+  cudaError_t return_value = rpc_error();
+  std::size_t path_len = static_cast<std::size_t>(std::strlen(path) + 1);
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaGraphDebugDotPrint) < 0 ||
+      rpc_write(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
+      rpc_write(conn, &path_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, path, path_len) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaGraphDebugDotPrint(cudaGraph_t graph,
+                                              const char *path,
+                                              unsigned int flags) {
+  if (path == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection();
+  return record(lupine_rpc_cudaGraphDebugDotPrint(conn, graph, path, flags));
 }
 
 static cudaError_t lupine_rpc_cudaGraphDestroy(conn_t *conn,

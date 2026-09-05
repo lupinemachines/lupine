@@ -1,7 +1,7 @@
 // Exercises the CUDA runtime shim end to end with code nvcc compiled: the
-// registration ABI hands the shim the embedded fatbin, the kernel launch
-// resolves the host entry point through it, and the copies, symbols, streams,
-// and events run against the remote device.
+// registration ABI forwards the embedded fatbin to the server's runtime, the
+// kernel launch names the host entry point the server registered, and the
+// copies, symbols, streams, and events run against the remote device.
 #include <cuda_runtime.h>
 
 #include <cstdio>
@@ -109,12 +109,13 @@ int main() {
       &blocks, (const void *)scale_and_add, 256, 0));
   EXPECT(blocks > 0);
 
-  int *pinned = nullptr;
-  CHECK(cudaMallocHost(&pinned, kCount * sizeof(int)));
-  CHECK(
-      cudaMemcpy(pinned, output, kCount * sizeof(int), cudaMemcpyDeviceToHost));
-  EXPECT(pinned[kCount - 1] == (kCount - 1) * scale + 7);
-  CHECK(cudaFreeHost(pinned));
+  // cudaMemcpyDefault has the shim ask the server which side is its memory.
+  std::vector<int> readback(kCount, 0);
+  CHECK(cudaMemcpy(readback.data(), output, kCount * sizeof(int),
+                   cudaMemcpyDefault));
+  EXPECT(readback[kCount - 1] == (kCount - 1) * scale + 7);
+  CHECK(cudaMemcpy(input, readback.data(), kCount * sizeof(int),
+                   cudaMemcpyDefault));
 
   cudaPointerAttributes pointer_attributes;
   CHECK(cudaPointerGetAttributes(&pointer_attributes, output));

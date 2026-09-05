@@ -1,20 +1,20 @@
 // CUDA runtime API (libcudart) on the LUPINE client.
 //
-// Most of the surface is generated: each call is forwarded over the CUDA
-// driver shim's connections and executed by the server's own libcudart, so the
-// same server child owns both the driver state and the runtime state, and one
-// lane per client thread keeps the two APIs ordered.
-//
-// The calls in this file cannot be forwarded that way, because their arguments
-// name client-side things the server cannot see: host memory, the module
-// images nvcc embedded in the caller, host entry-point addresses, and host
-// callbacks. Those run on the driver shim's exported `cu*` API, which is the
-// same forwarding path one layer down and already owns the client's identity
-// VA arenas, host mirrors, and module images.
+// Every call is an RPC the server answers with its own libcudart, sent on the
+// CUDA driver shim's connections: the same server child owns the driver state
+// and the runtime state, and one lane per client thread keeps the two APIs
+// ordered. Most of the surface is generated. The calls in this file carry
+// something the generated marshalling cannot: the host side of a copy, the
+// image nvcc embedded in the caller, kernel arguments whose sizes only the
+// server knows, or a value whose width the attribute decides. What cannot be
+// forwarded at all -- memory or a function pointer inside the server, a
+// callback into the client -- is a generated stub that returns
+// cudaErrorNotSupported.
 
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -46,11 +46,33 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
 }
 int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 
+// rpc_write keeps the address it is given and sends at wait time, so every
+// value written has to outlive the request: the helpers below write storage
+// the caller owns.
+//
+// A length-prefixed byte string; the server reads it back null-terminated.
+struct wire_bytes {
+  uint64_t length;
+  const void *data;
+  wire_bytes(const void *bytes, size_t size) : length(size), data(bytes) {}
+  explicit wire_bytes(const char *text)
+      : wire_bytes(text, text == nullptr ? 0 : strlen(text)) {}
+};
+
+int write_bytes(conn_t *conn, const wire_bytes &bytes) {
+  if (rpc_write(conn, &bytes.length, sizeof(bytes.length)) < 0) {
+    return -1;
+  }
+  return bytes.length != 0 ? rpc_write(conn, bytes.data, bytes.length) : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 
-// The sticky error every call feeds and cudaGetLastError drains.
+// The sticky error every call feeds and cudaGetLastError drains. Every result
+// comes back as a return value, so it lives here rather than in the server's
+// runtime, where the shim's own failures would never be seen.
 thread_local cudaError_t local_error = cudaSuccess;
 
 cudaError_t record(cudaError_t error) {
@@ -60,31 +82,14 @@ cudaError_t record(cudaError_t error) {
   return error;
 }
 
-// The two enumerations share their numbering for every code a driver call can
-// return; only the reused values below disagree.
-cudaError_t translate(CUresult result) {
-  switch (result) {
-  case CUDA_SUCCESS:
-    return cudaSuccess;
-  case CUDA_ERROR_DEINITIALIZED:
-    return cudaErrorCudartUnloading;
-  case CUDA_ERROR_INVALID_CONTEXT:
-    return cudaErrorDeviceUninitialized;
-  default:
-    return static_cast<cudaError_t>(result);
-  }
-}
-
-cudaError_t from_driver(CUresult result) { return record(translate(result)); }
-
 // ---------------------------------------------------------------------------
-// Device and context state
+// Device state
 // ---------------------------------------------------------------------------
 
 // The runtime's current device is per thread, and a thread's RPCs share one
-// lane, so the server's runtime sees the same per-thread device once
-// cudaSetDevice has been forwarded there. The driver shim's current context
-// has to follow as well: it decides where the driver-backed calls below land.
+// lane, so the server's runtime sees the same device once cudaSetDevice has
+// been forwarded there. The driver shim's current context follows, as it does
+// under NVIDIA's runtime, so driver calls the caller mixes in land there too.
 thread_local int current_device = 0;
 thread_local bool current_device_bound = false;
 
@@ -93,36 +98,40 @@ void ensure_init() {
   std::call_once(once, [] { (void)cuInit(0); });
 }
 
-cudaError_t bind_current_device() {
-  if (current_device_bound) {
-    return cudaSuccess;
-  }
-  CUcontext context = nullptr;
-  CUresult result = cuDevicePrimaryCtxRetain(&context, current_device);
-  if (result == CUDA_SUCCESS) {
-    result = cuCtxSetCurrent(context);
-  }
-  if (result != CUDA_SUCCESS) {
-    return translate(result);
-  }
-  current_device_bound = true;
-  return cudaSuccess;
-}
-
-// Every driver-backed entry point starts here: the driver has to be
-// initialized and the thread's device selected before the call routes.
-cudaError_t enter() {
-  ensure_init();
-  return bind_current_device();
-}
-
 conn_t *connection_for_device(int *device) {
   ensure_init();
   return lupine_rpc_conn_for_device(device);
 }
 
+} // namespace
+
+static cudaError_t lupine_rpc_cudaSetDevice(conn_t *conn, int device);
+
+namespace {
+
+cudaError_t bind_current_device() {
+  if (current_device_bound) {
+    return cudaSuccess;
+  }
+  int remote_device = current_device;
+  conn_t *conn = connection_for_device(&remote_device);
+  if (conn == nullptr) {
+    return cudaErrorInvalidDevice;
+  }
+  cudaError_t result = lupine_rpc_cudaSetDevice(conn, remote_device);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  CUcontext context = nullptr;
+  if (cuDevicePrimaryCtxRetain(&context, current_device) == CUDA_SUCCESS) {
+    (void)cuCtxSetCurrent(context);
+  }
+  current_device_bound = true;
+  return cudaSuccess;
+}
+
 conn_t *connection() {
-  if (enter() != cudaSuccess) {
+  if (bind_current_device() != cudaSuccess) {
     return nullptr;
   }
   int device = current_device;
@@ -145,6 +154,25 @@ void note_stream_owner(conn_t *conn, cudaStream_t stream) {
 
 void note_event_owner(conn_t *conn, cudaEvent_t event) {
   lupine_rpc_note_event_owner(conn, event);
+}
+
+// Every server that holds a virtual device, once each.
+std::vector<conn_t *> all_connections() {
+  ensure_init();
+  std::vector<conn_t *> connections;
+  int count = 0;
+  if (lupine_rpc_device_count(&count) < 0) {
+    return connections;
+  }
+  for (int device = 0; device < count; ++device) {
+    int remote_device = device;
+    conn_t *conn = lupine_rpc_conn_for_device(&remote_device);
+    if (conn != nullptr && std::find(connections.begin(), connections.end(),
+                                     conn) == connections.end()) {
+      connections.push_back(conn);
+    }
+  }
+  return connections;
 }
 
 } // namespace
@@ -173,13 +201,8 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
 
 extern "C" cudaError_t cudaSetDevice(int device) {
   int remote_device = device;
-  conn_t *conn = connection_for_device(&remote_device);
-  if (conn == nullptr) {
+  if (connection_for_device(&remote_device) == nullptr) {
     return record(cudaErrorInvalidDevice);
-  }
-  cudaError_t result = lupine_rpc_cudaSetDevice(conn, remote_device);
-  if (result != cudaSuccess) {
-    return record(result);
   }
   current_device = device;
   current_device_bound = false;
@@ -194,13 +217,8 @@ extern "C" cudaError_t cudaInitDevice(int device, unsigned int deviceFlags,
   if (conn == nullptr) {
     return record(cudaErrorInvalidDevice);
   }
-  cudaError_t result =
-      lupine_rpc_cudaInitDevice(conn, remote_device, deviceFlags, flags);
-  if (result != cudaSuccess) {
-    return record(result);
-  }
-  CUcontext context = nullptr;
-  return from_driver(cuDevicePrimaryCtxRetain(&context, device));
+  return record(
+      lupine_rpc_cudaInitDevice(conn, remote_device, deviceFlags, flags));
 }
 #endif
 
@@ -238,9 +256,6 @@ extern "C" cudaError_t cudaDeviceReset() {
   return record(result);
 }
 
-// Every generated wrapper records its result, and so does every call this file
-// answers itself, so the sticky error lives here instead of in the server's
-// runtime: keeping it in both would lose the order the two were set in.
 extern "C" cudaError_t cudaGetLastError() {
   const cudaError_t error = local_error;
   local_error = cudaSuccess;
@@ -295,393 +310,191 @@ extern "C" const char *cudaGetErrorString(cudaError_t error) {
 extern "C" struct cudaChannelFormatDesc
 cudaCreateChannelDesc(int x, int y, int z, int w,
                       enum cudaChannelFormatKind f) {
-  struct cudaChannelFormatDesc desc;
-  desc.x = x;
-  desc.y = y;
-  desc.z = z;
-  desc.w = w;
-  desc.f = f;
+  struct cudaChannelFormatDesc desc = {};
+  conn_t *conn = connection();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaCreateChannelDesc) < 0 ||
+      rpc_write(conn, &x, sizeof(x)) < 0 ||
+      rpc_write(conn, &y, sizeof(y)) < 0 ||
+      rpc_write(conn, &z, sizeof(z)) < 0 ||
+      rpc_write(conn, &w, sizeof(w)) < 0 ||
+      rpc_write(conn, &f, sizeof(f)) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &desc, sizeof(desc)) < 0 || rpc_read_end(conn) < 0) {
+    record(rpc_error());
+  }
   return desc;
 }
 
 // ---------------------------------------------------------------------------
-// Memory
+// Copies
 // ---------------------------------------------------------------------------
-
-extern "C" cudaError_t cudaMalloc(void **devPtr, size_t size) {
-  if (devPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  if (size == 0) {
-    *devPtr = nullptr;
-    return cudaSuccess;
-  }
-  CUdeviceptr pointer = 0;
-  CUresult result = cuMemAlloc(&pointer, size);
-  *devPtr = reinterpret_cast<void *>(pointer);
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaFree(void *devPtr) {
-  if (devPtr == nullptr) {
-    return cudaSuccess;
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuMemFree(reinterpret_cast<CUdeviceptr>(devPtr)));
-}
-
-extern "C" cudaError_t cudaMallocPitch(void **devPtr, size_t *pitch,
-                                       size_t width, size_t height) {
-  if (devPtr == nullptr || pitch == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  // The runtime asks for the widest alignment the driver offers.
-  CUresult result = cuMemAllocPitch(&pointer, pitch, width, height, 16);
-  *devPtr = reinterpret_cast<void *>(pointer);
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaMalloc3D(struct cudaPitchedPtr *pitchedDevPtr,
-                                    struct cudaExtent extent) {
-  if (pitchedDevPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  size_t pitch = 0;
-  CUresult result = cuMemAllocPitch(&pointer, &pitch, extent.width,
-                                    extent.height * extent.depth, 16);
-  pitchedDevPtr->ptr = reinterpret_cast<void *>(pointer);
-  pitchedDevPtr->pitch = pitch;
-  pitchedDevPtr->xsize = extent.width;
-  pitchedDevPtr->ysize = extent.height;
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaMallocManaged(void **devPtr, size_t size,
-                                         unsigned int flags) {
-  if (devPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  CUresult result = cuMemAllocManaged(&pointer, size, flags);
-  *devPtr = reinterpret_cast<void *>(pointer);
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaMallocAsync(void **devPtr, size_t size,
-                                       cudaStream_t hStream) {
-  if (devPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  CUresult result =
-      cuMemAllocAsync(&pointer, size, reinterpret_cast<CUstream>(hStream));
-  *devPtr = reinterpret_cast<void *>(pointer);
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaMallocFromPoolAsync(void **ptr, size_t size,
-                                               cudaMemPool_t memPool,
-                                               cudaStream_t stream) {
-  if (ptr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  CUresult result = cuMemAllocFromPoolAsync(
-      &pointer, size, reinterpret_cast<CUmemoryPool>(memPool),
-      reinterpret_cast<CUstream>(stream));
-  *ptr = reinterpret_cast<void *>(pointer);
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaFreeAsync(void *devPtr, cudaStream_t hStream) {
-  if (devPtr == nullptr) {
-    return cudaSuccess;
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuMemFreeAsync(reinterpret_cast<CUdeviceptr>(devPtr),
-                                    reinterpret_cast<CUstream>(hStream)));
-}
-
-extern "C" cudaError_t cudaMallocHost(void **ptr, size_t size) {
-  if (ptr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuMemHostAlloc(ptr, size, 0));
-}
-
-extern "C" cudaError_t cudaHostAlloc(void **pHost, size_t size,
-                                     unsigned int flags) {
-  if (pHost == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  // cudaHostAlloc* and CU_MEMHOSTALLOC_* share their bit values.
-  return from_driver(cuMemHostAlloc(pHost, size, flags));
-}
-
-extern "C" cudaError_t cudaFreeHost(void *ptr) {
-  if (ptr == nullptr) {
-    return cudaSuccess;
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuMemFreeHost(ptr));
-}
-
-extern "C" cudaError_t cudaHostRegister(void *ptr, size_t size,
-                                        unsigned int flags) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  // cudaHostRegister* and CU_MEMHOSTREGISTER_* share their bit values.
-  return from_driver(cuMemHostRegister(ptr, size, flags));
-}
-
-extern "C" cudaError_t cudaHostUnregister(void *ptr) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuMemHostUnregister(ptr));
-}
-
-extern "C" cudaError_t cudaHostGetDevicePointer(void **pDevice, void *pHost,
-                                                unsigned int flags) {
-  if (pDevice == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  CUresult result = cuMemHostGetDevicePointer(&pointer, pHost, flags);
-  *pDevice = reinterpret_cast<void *>(pointer);
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaHostGetFlags(unsigned int *pFlags, void *pHost) {
-  if (pFlags == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuMemHostGetFlags(pFlags, pHost));
-}
 
 namespace {
 
-bool is_device_pointer(const void *pointer) {
-  if (pointer == nullptr) {
+// The server can tell its own device memory from a pointer it has never seen,
+// so a cudaMemcpyDefault copy asks it about each side to pick a direction.
+bool server_memory(conn_t *conn, const void *pointer) {
+  cudaPointerAttributes attributes = {};
+  if (lupine_rpc_cudaPointerGetAttributes(conn, &attributes, pointer) !=
+      cudaSuccess) {
     return false;
   }
-  unsigned int type = CU_MEMORYTYPE_HOST;
-  if (cuPointerGetAttribute(&type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
-                            reinterpret_cast<CUdeviceptr>(pointer)) !=
-      CUDA_SUCCESS) {
-    return false;
+  return attributes.type == cudaMemoryTypeDevice ||
+         attributes.type == cudaMemoryTypeManaged;
+}
+
+cudaMemcpyKind resolve_kind(conn_t *conn, const void *dst, const void *src,
+                            cudaMemcpyKind kind) {
+  if (kind != cudaMemcpyDefault) {
+    return kind;
   }
-  return type == CU_MEMORYTYPE_DEVICE || type == CU_MEMORYTYPE_UNIFIED;
-}
-
-// cudaMemcpyDefault leaves the direction to the pointers, so it is resolved
-// the same way the runtime does: by asking the driver what each one is.
-void resolve_kind(void *dst, const void *src, cudaMemcpyKind kind,
-                  bool *dst_is_device, bool *src_is_device) {
-  switch (kind) {
-  case cudaMemcpyHostToDevice:
-    *dst_is_device = true;
-    *src_is_device = false;
-    return;
-  case cudaMemcpyDeviceToHost:
-    *dst_is_device = false;
-    *src_is_device = true;
-    return;
-  case cudaMemcpyDeviceToDevice:
-    *dst_is_device = true;
-    *src_is_device = true;
-    return;
-  case cudaMemcpyHostToHost:
-    *dst_is_device = false;
-    *src_is_device = false;
-    return;
-  default:
-    *dst_is_device = is_device_pointer(dst);
-    *src_is_device = is_device_pointer(src);
-    return;
+  const bool dst_device = server_memory(conn, dst);
+  const bool src_device = server_memory(conn, src);
+  if (dst_device) {
+    return src_device ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice;
   }
+  return src_device ? cudaMemcpyDeviceToHost : cudaMemcpyHostToHost;
 }
 
-CUresult copy_1d(void *dst, const void *src, size_t count, cudaMemcpyKind kind,
-                 CUstream stream, bool async) {
-  bool dst_is_device = false;
-  bool src_is_device = false;
-  resolve_kind(dst, src, kind, &dst_is_device, &src_is_device);
-  const CUdeviceptr dst_device = reinterpret_cast<CUdeviceptr>(dst);
-  const CUdeviceptr src_device = reinterpret_cast<CUdeviceptr>(src);
-  if (dst_is_device && src_is_device) {
-    return async ? cuMemcpyDtoDAsync(dst_device, src_device, count, stream)
-                 : cuMemcpyDtoD(dst_device, src_device, count);
+// The host side of a copy, if there is one, travels as a payload after the
+// parameters; the server answers with the result and, for a device-to-host
+// copy, the bytes. Both ends are client memory only for host-to-host, which
+// the server never sees.
+cudaError_t copy(conn_t *conn, int op, void *dst, const void *src, size_t count,
+                 cudaMemcpyKind kind, const cudaStream_t *stream) {
+  if (conn == nullptr) {
+    return record(rpc_error());
   }
-  if (dst_is_device) {
-    return async ? cuMemcpyHtoDAsync(dst_device, src, count, stream)
-                 : cuMemcpyHtoD(dst_device, src, count);
+  kind = resolve_kind(conn, dst, src, kind);
+  if (kind == cudaMemcpyHostToHost) {
+    memmove(dst, src, count);
+    return cudaSuccess;
   }
-  if (src_is_device) {
-    return async ? cuMemcpyDtoHAsync(dst, src_device, count, stream)
-                 : cuMemcpyDtoH(dst, src_device, count);
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &dst, sizeof(dst)) < 0 ||
+      rpc_write(conn, &src, sizeof(src)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
+      (stream != nullptr && rpc_write(conn, stream, sizeof(*stream)) < 0) ||
+      (kind == cudaMemcpyHostToDevice && count != 0 &&
+       rpc_write(conn, src, count) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      (kind == cudaMemcpyDeviceToHost && return_value == cudaSuccess &&
+       count != 0 && rpc_read(conn, dst, count) < 0) ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
   }
-  std::memcpy(dst, src, count);
-  return CUDA_SUCCESS;
+  return record(return_value);
 }
 
-void set_2d_source(CUDA_MEMCPY2D *copy, const void *src, size_t pitch,
-                   bool device) {
-  copy->srcMemoryType = device ? CU_MEMORYTYPE_DEVICE : CU_MEMORYTYPE_HOST;
-  copy->srcHost = device ? nullptr : src;
-  copy->srcDevice = device ? reinterpret_cast<CUdeviceptr>(src) : 0;
-  copy->srcPitch = pitch;
-}
-
-void set_2d_destination(CUDA_MEMCPY2D *copy, void *dst, size_t pitch,
-                        bool device) {
-  copy->dstMemoryType = device ? CU_MEMORYTYPE_DEVICE : CU_MEMORYTYPE_HOST;
-  copy->dstHost = device ? nullptr : dst;
-  copy->dstDevice = device ? reinterpret_cast<CUdeviceptr>(dst) : 0;
-  copy->dstPitch = pitch;
-}
-
-CUresult copy_2d(void *dst, size_t dpitch, const void *src, size_t spitch,
-                 size_t width, size_t height, cudaMemcpyKind kind,
-                 CUstream stream, bool async) {
-  bool dst_is_device = false;
-  bool src_is_device = false;
-  resolve_kind(dst, src, kind, &dst_is_device, &src_is_device);
-  CUDA_MEMCPY2D copy = {};
-  set_2d_source(&copy, src, spitch, src_is_device);
-  set_2d_destination(&copy, dst, dpitch, dst_is_device);
-  copy.WidthInBytes = width;
-  copy.Height = height;
-  return async ? cuMemcpy2DAsync(&copy, stream) : cuMemcpy2D(&copy);
-}
-
-CUresult copy_3d(const struct cudaMemcpy3DParms *parms, CUstream stream,
-                 bool async) {
-  if (parms->srcArray != nullptr || parms->dstArray != nullptr) {
-    // A CUDA array position is measured in elements, so translating it needs
-    // the array's element size; array copies are not implemented yet.
-    return CUDA_ERROR_NOT_SUPPORTED;
+// A pitched copy travels packed: `height` rows of `width` bytes.
+cudaError_t copy_2d(conn_t *conn, int op, void *dst, size_t dpitch,
+                    const void *src, size_t spitch, size_t width, size_t height,
+                    cudaMemcpyKind kind, const cudaStream_t *stream) {
+  if (conn == nullptr) {
+    return record(rpc_error());
   }
-  bool dst_is_device = false;
-  bool src_is_device = false;
-  resolve_kind(parms->dstPtr.ptr, parms->srcPtr.ptr, parms->kind,
-               &dst_is_device, &src_is_device);
-  CUDA_MEMCPY3D copy = {};
-  copy.srcXInBytes = parms->srcPos.x;
-  copy.srcY = parms->srcPos.y;
-  copy.srcZ = parms->srcPos.z;
-  copy.srcMemoryType =
-      src_is_device ? CU_MEMORYTYPE_DEVICE : CU_MEMORYTYPE_HOST;
-  copy.srcHost = src_is_device ? nullptr : parms->srcPtr.ptr;
-  copy.srcDevice =
-      src_is_device ? reinterpret_cast<CUdeviceptr>(parms->srcPtr.ptr) : 0;
-  copy.srcPitch = parms->srcPtr.pitch;
-  copy.srcHeight = parms->srcPtr.ysize;
-  copy.dstXInBytes = parms->dstPos.x;
-  copy.dstY = parms->dstPos.y;
-  copy.dstZ = parms->dstPos.z;
-  copy.dstMemoryType =
-      dst_is_device ? CU_MEMORYTYPE_DEVICE : CU_MEMORYTYPE_HOST;
-  copy.dstHost = dst_is_device ? nullptr : parms->dstPtr.ptr;
-  copy.dstDevice =
-      dst_is_device ? reinterpret_cast<CUdeviceptr>(parms->dstPtr.ptr) : 0;
-  copy.dstPitch = parms->dstPtr.pitch;
-  copy.dstHeight = parms->dstPtr.ysize;
-  copy.WidthInBytes = parms->extent.width;
-  copy.Height = parms->extent.height;
-  copy.Depth = parms->extent.depth;
-  return async ? cuMemcpy3DAsync(&copy, stream) : cuMemcpy3D(&copy);
+  kind = resolve_kind(conn, dst, src, kind);
+  if (kind == cudaMemcpyHostToHost) {
+    for (size_t row = 0; row < height; ++row) {
+      memmove(static_cast<char *>(dst) + row * dpitch,
+              static_cast<const char *>(src) + row * spitch, width);
+    }
+    return cudaSuccess;
+  }
+  std::vector<unsigned char> packed;
+  if (kind == cudaMemcpyHostToDevice) {
+    packed.resize(width * height);
+    for (size_t row = 0; row < height; ++row) {
+      memcpy(packed.data() + row * width,
+             static_cast<const char *>(src) + row * spitch, width);
+    }
+  }
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &dst, sizeof(dst)) < 0 ||
+      rpc_write(conn, &dpitch, sizeof(dpitch)) < 0 ||
+      rpc_write(conn, &src, sizeof(src)) < 0 ||
+      rpc_write(conn, &spitch, sizeof(spitch)) < 0 ||
+      rpc_write(conn, &width, sizeof(width)) < 0 ||
+      rpc_write(conn, &height, sizeof(height)) < 0 ||
+      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
+      (stream != nullptr && rpc_write(conn, stream, sizeof(*stream)) < 0) ||
+      (!packed.empty() && rpc_write(conn, packed.data(), packed.size()) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0) {
+    return record(rpc_error());
+  }
+  if (kind == cudaMemcpyDeviceToHost && return_value == cudaSuccess &&
+      width * height != 0) {
+    packed.resize(width * height);
+    if (rpc_read(conn, packed.data(), packed.size()) < 0) {
+      return record(rpc_error());
+    }
+    for (size_t row = 0; row < height; ++row) {
+      memcpy(static_cast<char *>(dst) + row * dpitch,
+             packed.data() + row * width, width);
+    }
+  }
+  return rpc_read_end(conn) < 0 ? rpc_error() : return_value;
 }
 
-CUresult primary_context(int device, CUcontext *context) {
-  return cuDevicePrimaryCtxRetain(context, device);
+// A symbol copy names the device side by the host entry point nvcc
+// registered; only the other side can be client memory.
+cudaError_t copy_symbol(conn_t *conn, int op, const void *symbol, void *other,
+                        size_t count, size_t offset, cudaMemcpyKind kind,
+                        const cudaStream_t *stream, bool to_symbol) {
+  if (conn == nullptr) {
+    return record(rpc_error());
+  }
+  if (kind == cudaMemcpyDefault) {
+    const bool device = server_memory(conn, other);
+    kind = device      ? cudaMemcpyDeviceToDevice
+           : to_symbol ? cudaMemcpyHostToDevice
+                       : cudaMemcpyDeviceToHost;
+  }
+  const bool send = to_symbol && kind == cudaMemcpyHostToDevice;
+  const bool receive = !to_symbol && kind == cudaMemcpyDeviceToHost;
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &symbol, sizeof(symbol)) < 0 ||
+      rpc_write(conn, &other, sizeof(other)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &offset, sizeof(offset)) < 0 ||
+      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
+      (stream != nullptr && rpc_write(conn, stream, sizeof(*stream)) < 0) ||
+      (send && count != 0 && rpc_write(conn, other, count) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      (receive && return_value == cudaSuccess && count != 0 &&
+       rpc_read(conn, other, count) < 0) ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
+  }
+  return record(return_value);
 }
 
 } // namespace
 
 extern "C" cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
                                   enum cudaMemcpyKind kind) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(copy_1d(dst, src, count, kind, nullptr, false));
+  return copy(connection(), RPC_cudaMemcpy, dst, src, count, kind, nullptr);
 }
 
 extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
                                        enum cudaMemcpyKind kind,
                                        cudaStream_t stream) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(
-      copy_1d(dst, src, count, kind, reinterpret_cast<CUstream>(stream), true));
+  return copy(connection_for_stream(stream), RPC_cudaMemcpyAsync, dst, src,
+              count, kind, &stream);
 }
 
 extern "C" cudaError_t cudaMemcpy2D(void *dst, size_t dpitch, const void *src,
                                     size_t spitch, size_t width, size_t height,
                                     enum cudaMemcpyKind kind) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(
-      copy_2d(dst, dpitch, src, spitch, width, height, kind, nullptr, false));
+  return copy_2d(connection(), RPC_cudaMemcpy2D, dst, dpitch, src, spitch,
+                 width, height, kind, nullptr);
 }
 
 extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
@@ -689,294 +502,188 @@ extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
                                          size_t width, size_t height,
                                          enum cudaMemcpyKind kind,
                                          cudaStream_t stream) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(copy_2d(dst, dpitch, src, spitch, width, height, kind,
-                             reinterpret_cast<CUstream>(stream), true));
+  return copy_2d(connection_for_stream(stream), RPC_cudaMemcpy2DAsync, dst,
+                 dpitch, src, spitch, width, height, kind, &stream);
 }
 
-extern "C" cudaError_t cudaMemcpy3D(const struct cudaMemcpy3DParms *p) {
-  if (p == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(copy_3d(p, nullptr, false));
+extern "C" cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
+                                          size_t count, size_t offset,
+                                          enum cudaMemcpyKind kind) {
+  return copy_symbol(connection(), RPC_cudaMemcpyToSymbol, symbol,
+                     const_cast<void *>(src), count, offset, kind, nullptr,
+                     true);
 }
 
-extern "C" cudaError_t cudaMemcpy3DAsync(const struct cudaMemcpy3DParms *p,
-                                         cudaStream_t stream) {
-  if (p == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(copy_3d(p, reinterpret_cast<CUstream>(stream), true));
+extern "C" cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol,
+                                            size_t count, size_t offset,
+                                            enum cudaMemcpyKind kind) {
+  return copy_symbol(connection(), RPC_cudaMemcpyFromSymbol, symbol, dst, count,
+                     offset, kind, nullptr, false);
 }
+
+extern "C" cudaError_t cudaMemcpyToSymbolAsync(const void *symbol,
+                                               const void *src, size_t count,
+                                               size_t offset,
+                                               enum cudaMemcpyKind kind,
+                                               cudaStream_t stream) {
+  return copy_symbol(connection_for_stream(stream), RPC_cudaMemcpyToSymbolAsync,
+                     symbol, const_cast<void *>(src), count, offset, kind,
+                     &stream, true);
+}
+
+extern "C" cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
+                                                 size_t count, size_t offset,
+                                                 enum cudaMemcpyKind kind,
+                                                 cudaStream_t stream) {
+  return copy_symbol(connection_for_stream(stream),
+                     RPC_cudaMemcpyFromSymbolAsync, symbol, dst, count, offset,
+                     kind, &stream, false);
+}
+
+namespace {
+
+// A peer copy names two virtual ordinals; both have to sit behind one server.
+cudaError_t peer_connection(int *dstDevice, int *srcDevice, conn_t **conn) {
+  conn_t *dst_conn = connection_for_device(dstDevice);
+  conn_t *src_conn = connection_for_device(srcDevice);
+  if (dst_conn == nullptr || src_conn == nullptr) {
+    return cudaErrorInvalidDevice;
+  }
+  if (dst_conn != src_conn) {
+    return cudaErrorNotSupported;
+  }
+  *conn = dst_conn;
+  return cudaSuccess;
+}
+
+} // namespace
 
 extern "C" cudaError_t cudaMemcpyPeer(void *dst, int dstDevice, const void *src,
                                       int srcDevice, size_t count) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
+  conn_t *conn = nullptr;
+  cudaError_t routed = peer_connection(&dstDevice, &srcDevice, &conn);
+  if (routed != cudaSuccess) {
+    return record(routed);
   }
-  CUcontext dst_context = nullptr;
-  CUcontext src_context = nullptr;
-  CUresult result = primary_context(dstDevice, &dst_context);
-  if (result == CUDA_SUCCESS) {
-    result = primary_context(srcDevice, &src_context);
-  }
-  if (result != CUDA_SUCCESS) {
-    return from_driver(result);
-  }
-  return from_driver(
-      cuMemcpyPeer(reinterpret_cast<CUdeviceptr>(dst), dst_context,
-                   reinterpret_cast<CUdeviceptr>(src), src_context, count));
+  return record(
+      lupine_rpc_cudaMemcpyPeer(conn, dst, dstDevice, src, srcDevice, count));
 }
 
 extern "C" cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice,
                                            const void *src, int srcDevice,
                                            size_t count, cudaStream_t stream) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
+  conn_t *conn = nullptr;
+  cudaError_t routed = peer_connection(&dstDevice, &srcDevice, &conn);
+  if (routed != cudaSuccess) {
+    return record(routed);
   }
-  CUcontext dst_context = nullptr;
-  CUcontext src_context = nullptr;
-  CUresult result = primary_context(dstDevice, &dst_context);
-  if (result == CUDA_SUCCESS) {
-    result = primary_context(srcDevice, &src_context);
-  }
-  if (result != CUDA_SUCCESS) {
-    return from_driver(result);
-  }
-  return from_driver(
-      cuMemcpyPeerAsync(reinterpret_cast<CUdeviceptr>(dst), dst_context,
-                        reinterpret_cast<CUdeviceptr>(src), src_context, count,
-                        reinterpret_cast<CUstream>(stream)));
+  return record(lupine_rpc_cudaMemcpyPeerAsync(conn, dst, dstDevice, src,
+                                               srcDevice, count, stream));
 }
+
+// ---------------------------------------------------------------------------
+// Attributes whose width the attribute decides
+// ---------------------------------------------------------------------------
 
 namespace {
 
-CUresult copy_3d_peer(const struct cudaMemcpy3DPeerParms *parms,
-                      CUstream stream, bool async) {
-  if (parms->srcArray != nullptr || parms->dstArray != nullptr) {
-    return CUDA_ERROR_NOT_SUPPORTED;
+// The caller's buffer is as wide as the attribute says, so the width goes on
+// the wire and the server reads or writes exactly that many bytes.
+size_t mem_pool_attribute_width(enum cudaMemPoolAttr attr) {
+  switch (attr) {
+  case cudaMemPoolReuseFollowEventDependencies:
+  case cudaMemPoolReuseAllowOpportunistic:
+  case cudaMemPoolReuseAllowInternalDependencies:
+    return sizeof(int);
+  default:
+    return sizeof(cuuint64_t);
   }
-  CUcontext dst_context = nullptr;
-  CUcontext src_context = nullptr;
-  CUresult result = primary_context(parms->dstDevice, &dst_context);
-  if (result == CUDA_SUCCESS) {
-    result = primary_context(parms->srcDevice, &src_context);
+}
+
+cudaError_t get_attribute(conn_t *conn, int op, const void *handle,
+                          size_t handle_size, int attr, void *value,
+                          size_t width) {
+  if (value == nullptr) {
+    return record(cudaErrorInvalidValue);
   }
-  if (result != CUDA_SUCCESS) {
-    return result;
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, handle, handle_size) < 0 ||
+      rpc_write(conn, &attr, sizeof(attr)) < 0 ||
+      rpc_write(conn, &width, sizeof(width)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      (return_value == cudaSuccess && rpc_read(conn, value, width) < 0) ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
   }
-  CUDA_MEMCPY3D_PEER copy = {};
-  copy.srcXInBytes = parms->srcPos.x;
-  copy.srcY = parms->srcPos.y;
-  copy.srcZ = parms->srcPos.z;
-  copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-  copy.srcDevice = reinterpret_cast<CUdeviceptr>(parms->srcPtr.ptr);
-  copy.srcContext = src_context;
-  copy.srcPitch = parms->srcPtr.pitch;
-  copy.srcHeight = parms->srcPtr.ysize;
-  copy.dstXInBytes = parms->dstPos.x;
-  copy.dstY = parms->dstPos.y;
-  copy.dstZ = parms->dstPos.z;
-  copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-  copy.dstDevice = reinterpret_cast<CUdeviceptr>(parms->dstPtr.ptr);
-  copy.dstContext = dst_context;
-  copy.dstPitch = parms->dstPtr.pitch;
-  copy.dstHeight = parms->dstPtr.ysize;
-  copy.WidthInBytes = parms->extent.width;
-  copy.Height = parms->extent.height;
-  copy.Depth = parms->extent.depth;
-  return async ? cuMemcpy3DPeerAsync(&copy, stream) : cuMemcpy3DPeer(&copy);
+  return record(return_value);
+}
+
+cudaError_t set_attribute(conn_t *conn, int op, const void *handle,
+                          size_t handle_size, int attr, const void *value,
+                          size_t width) {
+  if (value == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, handle, handle_size) < 0 ||
+      rpc_write(conn, &attr, sizeof(attr)) < 0 ||
+      rpc_write(conn, &width, sizeof(width)) < 0 ||
+      rpc_write(conn, value, width) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
+  }
+  return record(return_value);
 }
 
 } // namespace
 
-extern "C" cudaError_t cudaMemcpy3DPeer(const struct cudaMemcpy3DPeerParms *p) {
-  if (p == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(copy_3d_peer(p, nullptr, false));
-}
-
-extern "C" cudaError_t
-cudaMemcpy3DPeerAsync(const struct cudaMemcpy3DPeerParms *p,
-                      cudaStream_t stream) {
-  if (p == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(copy_3d_peer(p, reinterpret_cast<CUstream>(stream), true));
-}
-
-extern "C" cudaError_t
-cudaPointerGetAttributes(struct cudaPointerAttributes *attributes,
-                         const void *ptr) {
-  if (attributes == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  std::memset(attributes, 0, sizeof(*attributes));
-  const CUdeviceptr pointer = reinterpret_cast<CUdeviceptr>(ptr);
-  unsigned int memory_type = 0;
-  CUresult result = cuPointerGetAttribute(
-      &memory_type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, pointer);
-  if (result != CUDA_SUCCESS) {
-    // An unregistered host pointer is not an error for the runtime.
-    attributes->type = cudaMemoryTypeUnregistered;
-    return cudaSuccess;
-  }
-  int ordinal = 0;
-  (void)cuPointerGetAttribute(&ordinal, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
-                              pointer);
-  attributes->device = ordinal;
-  CUdeviceptr device_pointer = 0;
-  if (cuPointerGetAttribute(&device_pointer,
-                            CU_POINTER_ATTRIBUTE_DEVICE_POINTER,
-                            pointer) == CUDA_SUCCESS) {
-    attributes->devicePointer = reinterpret_cast<void *>(device_pointer);
-  }
-  void *host_pointer = nullptr;
-  if (cuPointerGetAttribute(&host_pointer, CU_POINTER_ATTRIBUTE_HOST_POINTER,
-                            pointer) == CUDA_SUCCESS) {
-    attributes->hostPointer = host_pointer;
-  }
-  int is_managed = 0;
-  (void)cuPointerGetAttribute(&is_managed, CU_POINTER_ATTRIBUTE_IS_MANAGED,
-                              pointer);
-  if (is_managed != 0) {
-    attributes->type = cudaMemoryTypeManaged;
-  } else if (memory_type == CU_MEMORYTYPE_DEVICE) {
-    attributes->type = cudaMemoryTypeDevice;
-  } else if (memory_type == CU_MEMORYTYPE_HOST) {
-    attributes->type = cudaMemoryTypeHost;
-  } else {
-    attributes->type = cudaMemoryTypeUnregistered;
-  }
-  return cudaSuccess;
-}
-
-// ---------------------------------------------------------------------------
-// Attribute values whose width the attribute itself decides
-// ---------------------------------------------------------------------------
-
 extern "C" cudaError_t cudaMemPoolGetAttribute(cudaMemPool_t memPool,
                                                enum cudaMemPoolAttr attr,
                                                void *value) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(
-      cuMemPoolGetAttribute(reinterpret_cast<CUmemoryPool>(memPool),
-                            static_cast<CUmemPool_attribute>(attr), value));
+  return get_attribute(connection(), RPC_cudaMemPoolGetAttribute, &memPool,
+                       sizeof(memPool), attr, value,
+                       mem_pool_attribute_width(attr));
 }
 
 extern "C" cudaError_t cudaMemPoolSetAttribute(cudaMemPool_t memPool,
                                                enum cudaMemPoolAttr attr,
                                                void *value) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(
-      cuMemPoolSetAttribute(reinterpret_cast<CUmemoryPool>(memPool),
-                            static_cast<CUmemPool_attribute>(attr), value));
+  return set_attribute(connection(), RPC_cudaMemPoolSetAttribute, &memPool,
+                       sizeof(memPool), attr, value,
+                       mem_pool_attribute_width(attr));
 }
 
 extern "C" cudaError_t
 cudaDeviceGetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
                                void *value) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuDeviceGetGraphMemAttribute(
-      device, static_cast<CUgraphMem_attribute>(attr), value));
+  conn_t *conn = connection_for_device(&device);
+  return get_attribute(conn, RPC_cudaDeviceGetGraphMemAttribute, &device,
+                       sizeof(device), attr, value, sizeof(cuuint64_t));
 }
 
 extern "C" cudaError_t
 cudaDeviceSetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
                                void *value) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuDeviceSetGraphMemAttribute(
-      device, static_cast<CUgraphMem_attribute>(attr), value));
-}
-
-extern "C" cudaError_t cudaMemRangeGetAttributes(
-    void **data, size_t *dataSizes, enum cudaMemRangeAttribute *attributes,
-    size_t numAttributes, const void *devPtr, size_t count) {
-  if ((numAttributes != 0 &&
-       (data == nullptr || dataSizes == nullptr || attributes == nullptr))) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  for (size_t i = 0; i < numAttributes; ++i) {
-    CUresult result = cuMemRangeGetAttribute(
-        data[i], dataSizes[i],
-        static_cast<CUmem_range_attribute>(attributes[i]),
-        reinterpret_cast<CUdeviceptr>(devPtr), count);
-    if (result != CUDA_SUCCESS) {
-      return from_driver(result);
-    }
-  }
-  return cudaSuccess;
+  conn_t *conn = connection_for_device(&device);
+  return set_attribute(conn, RPC_cudaDeviceSetGraphMemAttribute, &device,
+                       sizeof(device), attr, value, sizeof(cuuint64_t));
 }
 
 // ---------------------------------------------------------------------------
-// Module registration and kernels
-//
-// nvcc emits a registration call per translation unit that hands the runtime
-// the fatbin it embedded, then one call per kernel and per device variable.
-// Those images and host addresses only exist in the client, so the shim keeps
-// its own registry and resolves each entry through the driver shim's module
-// loader on first use.
+// Module registration
 // ---------------------------------------------------------------------------
 
 namespace {
 
+// nvcc registers each embedded image once per process; the runtime on every
+// server has to see it, so a client handle stands for one server handle per
+// connection and every later registration call fans out the same way.
 struct fatbin_registration {
-  const void *image = nullptr;
-  std::unordered_map<int, CUmodule> modules;
-};
-
-struct function_registration {
-  void **fatbin = nullptr;
-  std::string name;
-  std::unordered_map<int, CUfunction> functions;
-};
-
-struct variable_registration {
-  void **fatbin = nullptr;
-  std::string name;
-  size_t size = 0;
+  std::vector<std::pair<conn_t *, void **>> handles;
 };
 
 std::mutex &registry_mutex() {
@@ -989,132 +696,32 @@ std::unordered_map<void **, fatbin_registration> &fatbins() {
   return *map;
 }
 
-std::unordered_map<const void *, function_registration> &
-registered_functions() {
-  static auto *map =
-      new std::unordered_map<const void *, function_registration>();
-  return *map;
+// The fatbin proper: an outer header followed by its member entries.
+size_t fatbin_size(const void *image) {
+  const auto *header = static_cast<const lupine_fatbin_header *>(image);
+  if (header == nullptr || header->magic != LUPINE_FATBIN_MAGIC) {
+    return 0;
+  }
+  return header->header_size + header->files_size;
 }
 
-std::unordered_map<const void *, variable_registration> &
-registered_variables() {
-  static auto *map =
-      new std::unordered_map<const void *, variable_registration>();
-  return *map;
-}
-
-// registry_mutex() must be held.
-CUresult module_for(void **fatbin, int device, CUmodule *module) {
-  auto entry = fatbins().find(fatbin);
+// Sends the same registration to every server that holds the fatbin.
+template <typename Write>
+void register_on_each(void **fatCubinHandle, int op, Write write) {
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto entry = fatbins().find(fatCubinHandle);
   if (entry == fatbins().end()) {
-    return CUDA_ERROR_NOT_FOUND;
+    return;
   }
-  auto loaded = entry->second.modules.find(device);
-  if (loaded != entry->second.modules.end()) {
-    *module = loaded->second;
-    return CUDA_SUCCESS;
-  }
-  CUmodule created = nullptr;
-  CUresult result = cuModuleLoadData(&created, entry->second.image);
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-  entry->second.modules[device] = created;
-  *module = created;
-  return CUDA_SUCCESS;
-}
-
-CUresult function_for(const void *host_function, CUfunction *function) {
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto entry = registered_functions().find(host_function);
-  if (entry == registered_functions().end()) {
-    return CUDA_ERROR_INVALID_IMAGE;
-  }
-  auto resolved = entry->second.functions.find(current_device);
-  if (resolved != entry->second.functions.end()) {
-    *function = resolved->second;
-    return CUDA_SUCCESS;
-  }
-  CUmodule module = nullptr;
-  CUresult result = module_for(entry->second.fatbin, current_device, &module);
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-  CUfunction created = nullptr;
-  result = cuModuleGetFunction(&created, module, entry->second.name.c_str());
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-  entry->second.functions[current_device] = created;
-  *function = created;
-  return CUDA_SUCCESS;
-}
-
-CUresult variable_for(const void *symbol, CUdeviceptr *pointer, size_t *size) {
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto entry = registered_variables().find(symbol);
-  if (entry == registered_variables().end()) {
-    return CUDA_ERROR_NOT_FOUND;
-  }
-  CUmodule module = nullptr;
-  CUresult result = module_for(entry->second.fatbin, current_device, &module);
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-  size_t resolved_size = 0;
-  result = cuModuleGetGlobal(pointer, &resolved_size, module,
-                             entry->second.name.c_str());
-  if (result == CUDA_SUCCESS && size != nullptr) {
-    *size = resolved_size;
-  }
-  return result;
-}
-
-// Runs a block against a device other than the calling thread's. Modules load
-// into the current context, and the per-device caches are keyed by the current
-// device, so both have to move together and move back.
-class device_scope {
-public:
-  explicit device_scope(int device) : previous_(current_device) {
-    if (device == current_device) {
-      return;
+  for (const auto &[conn, handle] : entry->second.handles) {
+    int ack = 0;
+    if (rpc_write_start_request(conn, op) < 0 ||
+        rpc_write(conn, &handle, sizeof(handle)) < 0 || write(conn) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &ack, sizeof(ack)) < 0 || rpc_read_end(conn) < 0) {
+      record(rpc_error());
     }
-    CUcontext context = nullptr;
-    CUresult result = cuDevicePrimaryCtxRetain(&context, device);
-    if (result == CUDA_SUCCESS) {
-      result = cuCtxSetCurrent(context);
-    }
-    if (result != CUDA_SUCCESS) {
-      status_ = translate(result);
-      return;
-    }
-    current_device = device;
-    restore_ = true;
   }
-
-  ~device_scope() {
-    if (!restore_) {
-      return;
-    }
-    current_device = previous_;
-    current_device_bound = false;
-    (void)bind_current_device();
-  }
-
-  cudaError_t status() const { return status_; }
-
-private:
-  int previous_;
-  bool restore_ = false;
-  cudaError_t status_ = cudaSuccess;
-};
-
-cudaError_t resolve_function(const void *host_function, CUfunction *function) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return entered;
-  }
-  return translate(function_for(host_function, function));
 }
 
 struct call_configuration {
@@ -1126,57 +733,53 @@ struct call_configuration {
 
 thread_local std::vector<call_configuration> call_configurations;
 
-// The runtime and driver launch configurations describe the same thing, and
-// their attribute lists share a layout, so only the dimensions are unpacked.
-CUlaunchConfig to_driver_config(const cudaLaunchConfig_t &config) {
-  static_assert(sizeof(cudaLaunchAttribute) == sizeof(CUlaunchAttribute),
-                "launch attributes must share their layout");
-  CUlaunchConfig driver_config = {};
-  driver_config.gridDimX = config.gridDim.x;
-  driver_config.gridDimY = config.gridDim.y;
-  driver_config.gridDimZ = config.gridDim.z;
-  driver_config.blockDimX = config.blockDim.x;
-  driver_config.blockDimY = config.blockDim.y;
-  driver_config.blockDimZ = config.blockDim.z;
-  driver_config.sharedMemBytes =
-      static_cast<unsigned int>(config.dynamicSmemBytes);
-  driver_config.hStream = reinterpret_cast<CUstream>(config.stream);
-  driver_config.attrs = reinterpret_cast<CUlaunchAttribute *>(config.attrs);
-  driver_config.numAttrs = config.numAttrs;
-  return driver_config;
-}
-
 } // namespace
 
 extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
-  const void *image = fatCubin;
   const auto *wrapper = static_cast<const lupine_fatbin_wrapper *>(fatCubin);
+  uint32_t version = 0;
+  const void *image = fatCubin;
   if (wrapper != nullptr && wrapper->magic == LUPINE_FATBINC_MAGIC) {
+    version = wrapper->version;
     image = wrapper->data;
   }
-  auto *handle = new void *[1];
-  handle[0] = fatCubin;
+  const wire_bytes fatbin(image, fatbin_size(image));
+  if (fatbin.length == 0) {
+    record(cudaErrorInvalidKernelImage);
+    return nullptr;
+  }
+  fatbin_registration registration;
+  for (conn_t *conn : all_connections()) {
+    void **handle = nullptr;
+    if (rpc_write_start_request(conn, RPC___cudaRegisterFatBinary) < 0 ||
+        rpc_write(conn, &version, sizeof(version)) < 0 ||
+        write_bytes(conn, fatbin) < 0 || rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &handle, sizeof(handle)) < 0 || rpc_read_end(conn) < 0 ||
+        handle == nullptr) {
+      record(rpc_error());
+      continue;
+    }
+    registration.handles.emplace_back(conn, handle);
+  }
+  auto *client_handle = new void *[1];
+  client_handle[0] = fatCubin;
   std::lock_guard<std::mutex> lock(registry_mutex());
-  fatbins()[handle].image = image;
-  return handle;
+  fatbins()[client_handle] = std::move(registration);
+  return client_handle;
 }
 
 extern "C" void __cudaRegisterFatBinaryEnd(void **fatCubinHandle) {
-  // Modules load on first use, so there is nothing to finish here.
-  (void)fatCubinHandle;
+  register_on_each(fatCubinHandle, RPC___cudaRegisterFatBinaryEnd,
+                   [](conn_t *) { return 0; });
 }
 
 extern "C" void __cudaUnregisterFatBinary(void **fatCubinHandle) {
+  register_on_each(fatCubinHandle, RPC___cudaUnregisterFatBinary,
+                   [](conn_t *) { return 0; });
   std::lock_guard<std::mutex> lock(registry_mutex());
-  auto entry = fatbins().find(fatCubinHandle);
-  if (entry == fatbins().end()) {
-    return;
+  if (fatbins().erase(fatCubinHandle) != 0) {
+    delete[] fatCubinHandle;
   }
-  for (const auto &module : entry->second.modules) {
-    (void)cuModuleUnload(module.second);
-  }
-  fatbins().erase(entry);
-  delete[] fatCubinHandle;
 }
 
 extern "C" char __cudaInitModule(void **fatCubinHandle) {
@@ -1184,64 +787,92 @@ extern "C" char __cudaInitModule(void **fatCubinHandle) {
   return 1;
 }
 
+namespace {
+
+// An optional launch-bound value: a presence flag, then the value.
+template <typename T>
+int write_optional(conn_t *conn, const uint8_t &present, const T *value) {
+  if (rpc_write(conn, &present, sizeof(present)) < 0) {
+    return -1;
+  }
+  return present ? rpc_write(conn, value, sizeof(*value)) : 0;
+}
+
+} // namespace
+
 extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
                                        const char *hostFun, char *deviceFun,
                                        const char *deviceName, int thread_limit,
                                        uint3 *tid, uint3 *bid, dim3 *bDim,
                                        dim3 *gDim, int *wSize) {
-  (void)deviceFun;
-  (void)thread_limit;
-  (void)tid;
-  (void)bid;
-  (void)bDim;
-  (void)gDim;
-  (void)wSize;
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto &entry = registered_functions()[hostFun];
-  entry.fatbin = fatCubinHandle;
-  entry.name = deviceName;
+  const wire_bytes device_fun(deviceFun);
+  const wire_bytes device_name(deviceName);
+  const uint8_t present[5] = {tid != nullptr, bid != nullptr, bDim != nullptr,
+                              gDim != nullptr, wSize != nullptr};
+  register_on_each(fatCubinHandle, RPC___cudaRegisterFunction, [&](conn_t *c) {
+    return rpc_write(c, &hostFun, sizeof(hostFun)) < 0 ||
+                   write_bytes(c, device_fun) < 0 ||
+                   write_bytes(c, device_name) < 0 ||
+                   rpc_write(c, &thread_limit, sizeof(thread_limit)) < 0 ||
+                   write_optional(c, present[0], tid) < 0 ||
+                   write_optional(c, present[1], bid) < 0 ||
+                   write_optional(c, present[2], bDim) < 0 ||
+                   write_optional(c, present[3], gDim) < 0 ||
+                   write_optional(c, present[4], wSize) < 0
+               ? -1
+               : 0;
+  });
 }
 
 extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                                   char *deviceAddress, const char *deviceName,
                                   int ext, size_t size, int constant,
                                   int global) {
-  (void)deviceAddress;
-  (void)ext;
-  (void)constant;
-  (void)global;
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto &entry = registered_variables()[hostVar];
-  entry.fatbin = fatCubinHandle;
-  entry.name = deviceName;
-  entry.size = size;
+  const wire_bytes device_address(deviceAddress);
+  const wire_bytes device_name(deviceName);
+  register_on_each(fatCubinHandle, RPC___cudaRegisterVar, [&](conn_t *c) {
+    return rpc_write(c, &hostVar, sizeof(hostVar)) < 0 ||
+                   write_bytes(c, device_address) < 0 ||
+                   write_bytes(c, device_name) < 0 ||
+                   rpc_write(c, &ext, sizeof(ext)) < 0 ||
+                   rpc_write(c, &size, sizeof(size)) < 0 ||
+                   rpc_write(c, &constant, sizeof(constant)) < 0 ||
+                   rpc_write(c, &global, sizeof(global)) < 0
+               ? -1
+               : 0;
+  });
 }
 
+// The runtime fills the managed pointer in on the server, so the client's
+// slot stays empty: the variable is reachable by symbol, not by host access.
 extern "C" void
 __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                          char *deviceAddress, const char *deviceName, int ext,
                          size_t size, int constant, int global) {
-  (void)deviceAddress;
-  (void)ext;
-  (void)constant;
-  (void)global;
-  if (hostVarPtrAddress == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto &entry = registered_variables()[hostVarPtrAddress];
-  entry.fatbin = fatCubinHandle;
-  entry.name = deviceName;
-  entry.size = size;
+  const wire_bytes device_address(deviceAddress);
+  const wire_bytes device_name(deviceName);
+  register_on_each(
+      fatCubinHandle, RPC___cudaRegisterManagedVar, [&](conn_t *c) {
+        return rpc_write(c, &hostVarPtrAddress, sizeof(hostVarPtrAddress)) <
+                           0 ||
+                       write_bytes(c, device_address) < 0 ||
+                       write_bytes(c, device_name) < 0 ||
+                       rpc_write(c, &ext, sizeof(ext)) < 0 ||
+                       rpc_write(c, &size, sizeof(size)) < 0 ||
+                       rpc_write(c, &constant, sizeof(constant)) < 0 ||
+                       rpc_write(c, &global, sizeof(global)) < 0
+                   ? -1
+                   : 0;
+      });
 }
 
+// Texture and surface references were removed from the device API; only the
+// objects are supported, and those carry no host-side registration.
 extern "C" void __cudaRegisterTexture(void **fatCubinHandle,
                                       const void *hostVar,
                                       const void **deviceAddress,
                                       const char *deviceName, int dim, int norm,
                                       int ext) {
-  // Texture references were removed from the device API; only texture objects
-  // are supported, and those carry no host-side registration.
   (void)fatCubinHandle;
   (void)hostVar;
   (void)deviceAddress;
@@ -1264,6 +895,21 @@ extern "C" void __cudaRegisterSurface(void **fatCubinHandle,
   (void)ext;
 }
 
+// Host variables carry no device storage, so registering one only has to be
+// accepted. The same is true of the unified-addressing table nvcc hands over.
+extern "C" void __cudaRegisterHostVar(void **fatCubinHandle,
+                                      const char *deviceName, char *hostVar,
+                                      size_t size) {
+  (void)fatCubinHandle;
+  (void)deviceName;
+  (void)hostVar;
+  (void)size;
+}
+
+extern "C" void __cudaRegisterUnifiedTable(void *table) { (void)table; }
+
+// The <<<>>> lowering pushes the configuration and pops it inside the host
+// stub on the same thread, right before cudaLaunchKernel carries it over.
 extern "C" unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
                                                 size_t sharedMem,
                                                 void *stream) {
@@ -1295,62 +941,148 @@ extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
   return cudaSuccess;
 }
 
-#if CUDART_VERSION >= 13000
-// nvcc's launch lowering resolves the host entry point once per launch site
-// and passes the handle back on every launch. A kernel is per device here, so
-// the handle stays the entry-point address and the launch resolves it against
-// the calling thread's device.
-extern "C" cudaError_t __cudaGetKernel(cudaKernel_t *kernel,
-                                       const void *entryFuncAddr) {
-  if (kernel == nullptr) {
+// ---------------------------------------------------------------------------
+// Kernel launches
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Kernel arguments arrive as pointers to values of sizes only the loaded
+// kernel knows, so the layout is fetched from the server once per entry point
+// and the values travel packed in that order.
+std::mutex &layouts_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+std::unordered_map<const void *, std::vector<size_t>> &layouts() {
+  static auto *map =
+      new std::unordered_map<const void *, std::vector<size_t>>();
+  return *map;
+}
+
+cudaError_t param_sizes(conn_t *conn, const void *func,
+                        std::vector<size_t> *sizes) {
+  {
+    std::lock_guard<std::mutex> lock(layouts_mutex());
+    auto entry = layouts().find(func);
+    if (entry != layouts().end()) {
+      *sizes = entry->second;
+      return cudaSuccess;
+    }
+  }
+  cudaError_t return_value = rpc_error();
+  uint32_t count = 0;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_lupineCudartFuncParamLayout) < 0 ||
+      rpc_write(conn, &func, sizeof(func)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0) {
+    return record(rpc_error());
+  }
+  sizes->assign(count, 0);
+  if ((count != 0 &&
+       rpc_read(conn, sizes->data(), count * sizeof(size_t)) < 0) ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
+  }
+  if (return_value == cudaSuccess) {
+    std::lock_guard<std::mutex> lock(layouts_mutex());
+    layouts()[func] = *sizes;
+  }
+  return record(return_value);
+}
+
+int write_params(conn_t *conn, const uint32_t &count,
+                 const std::vector<size_t> &sizes, void **args) {
+  if (rpc_write(conn, &count, sizeof(count)) < 0 ||
+      (count != 0 &&
+       rpc_write(conn, sizes.data(), count * sizeof(size_t)) < 0)) {
+    return -1;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    if (rpc_write(conn, args[i], sizes[i]) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
+                   dim3 blockDim, void **args, size_t sharedMem,
+                   cudaStream_t stream) {
+  std::vector<size_t> sizes;
+  cudaError_t resolved = param_sizes(conn, func, &sizes);
+  if (resolved != cudaSuccess) {
+    return record(resolved);
+  }
+  if (!sizes.empty() && args == nullptr) {
     return record(cudaErrorInvalidValue);
   }
-  *kernel = reinterpret_cast<cudaKernel_t>(const_cast<void *>(entryFuncAddr));
-  return cudaSuccess;
+  const uint32_t count = static_cast<uint32_t>(sizes.size());
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &func, sizeof(func)) < 0 ||
+      rpc_write(conn, &gridDim, sizeof(gridDim)) < 0 ||
+      rpc_write(conn, &blockDim, sizeof(blockDim)) < 0 ||
+      rpc_write(conn, &sharedMem, sizeof(sharedMem)) < 0 ||
+      rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      write_params(conn, count, sizes, args) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
+  }
+  return record(return_value);
 }
 
-extern "C" cudaError_t __cudaLaunchKernel(cudaKernel_t kernel, dim3 gridDim,
-                                          dim3 blockDim, void **args,
-                                          size_t sharedMem,
-                                          cudaStream_t stream) {
-  return cudaLaunchKernel(reinterpret_cast<const void *>(kernel), gridDim,
-                          blockDim, args, sharedMem, stream);
+// The launch attributes sit behind a pointer in the config, so they follow it
+// as an array.
+int write_launch_config(conn_t *conn, const cudaLaunchConfig_t &config,
+                        const uint32_t &attribute_count) {
+  return rpc_write(conn, &config.gridDim, sizeof(config.gridDim)) < 0 ||
+                 rpc_write(conn, &config.blockDim, sizeof(config.blockDim)) <
+                     0 ||
+                 rpc_write(conn, &config.dynamicSmemBytes,
+                           sizeof(config.dynamicSmemBytes)) < 0 ||
+                 rpc_write(conn, &config.stream, sizeof(config.stream)) < 0 ||
+                 rpc_write(conn, &attribute_count, sizeof(attribute_count)) <
+                     0 ||
+                 (attribute_count != 0 &&
+                  rpc_write(conn, config.attrs,
+                            attribute_count * sizeof(*config.attrs)) < 0)
+             ? -1
+             : 0;
 }
 
-extern "C" cudaError_t __cudaLaunchKernel_ptsz(cudaKernel_t kernel,
-                                               dim3 gridDim, dim3 blockDim,
-                                               void **args, size_t sharedMem,
-                                               cudaStream_t stream) {
-  return cudaLaunchKernel(reinterpret_cast<const void *>(kernel), gridDim,
-                          blockDim, args, sharedMem, stream);
+cudaError_t occupancy_for_config(int op, int *result, const void *func,
+                                 const cudaLaunchConfig_t *launchConfig) {
+  if (result == nullptr || launchConfig == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = connection_for_stream(launchConfig->stream);
+  const uint32_t attribute_count = launchConfig->numAttrs;
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &func, sizeof(func)) < 0 ||
+      write_launch_config(conn, *launchConfig, attribute_count) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, result, sizeof(*result)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
+  }
+  return record(return_value);
 }
-#endif
 
-// Host variables carry no device storage, so registering one only has to be
-// accepted. The same is true of the unified-addressing table nvcc hands over.
-extern "C" void __cudaRegisterHostVar(void **fatCubinHandle,
-                                      const char *deviceName, char *hostVar,
-                                      size_t size) {
-  (void)fatCubinHandle;
-  (void)deviceName;
-  (void)hostVar;
-  (void)size;
-}
-
-extern "C" void __cudaRegisterUnifiedTable(void *table) { (void)table; }
+} // namespace
 
 extern "C" cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim,
                                         dim3 blockDim, void **args,
                                         size_t sharedMem, cudaStream_t stream) {
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(cuLaunchKernel(
-      function, gridDim.x, gridDim.y, gridDim.z, blockDim.x, blockDim.y,
-      blockDim.z, static_cast<unsigned int>(sharedMem),
-      reinterpret_cast<CUstream>(stream), args, nullptr));
+  return launch(connection_for_stream(stream), RPC_cudaLaunchKernel, func,
+                gridDim, blockDim, args, sharedMem, stream);
 }
 
 extern "C" cudaError_t cudaLaunchCooperativeKernel(const void *func,
@@ -1358,15 +1090,8 @@ extern "C" cudaError_t cudaLaunchCooperativeKernel(const void *func,
                                                    void **args,
                                                    size_t sharedMem,
                                                    cudaStream_t stream) {
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(cuLaunchCooperativeKernel(
-      function, gridDim.x, gridDim.y, gridDim.z, blockDim.x, blockDim.y,
-      blockDim.z, static_cast<unsigned int>(sharedMem),
-      reinterpret_cast<CUstream>(stream), args));
+  return launch(connection_for_stream(stream), RPC_cudaLaunchCooperativeKernel,
+                func, gridDim, blockDim, args, sharedMem, stream);
 }
 
 extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
@@ -1374,522 +1099,122 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
   if (config == nullptr) {
     return record(cudaErrorInvalidValue);
   }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
+  conn_t *conn = connection_for_stream(config->stream);
+  std::vector<size_t> sizes;
+  cudaError_t resolved = param_sizes(conn, func, &sizes);
   if (resolved != cudaSuccess) {
     return record(resolved);
   }
-  const CUlaunchConfig driver_config = to_driver_config(*config);
-  return from_driver(cuLaunchKernelEx(&driver_config, function, args, nullptr));
+  if (!sizes.empty() && args == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  const uint32_t attribute_count = config->numAttrs;
+  const uint32_t count = static_cast<uint32_t>(sizes.size());
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaLaunchKernelExC) < 0 ||
+      write_launch_config(conn, *config, attribute_count) < 0 ||
+      rpc_write(conn, &func, sizeof(func)) < 0 ||
+      write_params(conn, count, sizes, args) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
+  }
+  return record(return_value);
 }
 
 extern "C" cudaError_t
 cudaOccupancyMaxPotentialClusterSize(int *clusterSize, const void *func,
                                      const cudaLaunchConfig_t *launchConfig) {
-  if (clusterSize == nullptr || launchConfig == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  const CUlaunchConfig driver_config = to_driver_config(*launchConfig);
-  return from_driver(cuOccupancyMaxPotentialClusterSize(clusterSize, function,
-                                                        &driver_config));
+  return occupancy_for_config(RPC_cudaOccupancyMaxPotentialClusterSize,
+                              clusterSize, func, launchConfig);
 }
 
 extern "C" cudaError_t
 cudaOccupancyMaxActiveClusters(int *numClusters, const void *func,
                                const cudaLaunchConfig_t *launchConfig) {
-  if (numClusters == nullptr || launchConfig == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  const CUlaunchConfig driver_config = to_driver_config(*launchConfig);
-  return from_driver(
-      cuOccupancyMaxActiveClusters(numClusters, function, &driver_config));
+  return occupancy_for_config(RPC_cudaOccupancyMaxActiveClusters, numClusters,
+                              func, launchConfig);
 }
-
-extern "C" cudaError_t cudaFuncGetAttributes(struct cudaFuncAttributes *attr,
-                                             const void *func) {
-  if (attr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  std::memset(attr, 0, sizeof(*attr));
-  struct {
-    CUfunction_attribute attribute;
-    int *value;
-  } const integers[] = {
-      {CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, &attr->maxThreadsPerBlock},
-      {CU_FUNC_ATTRIBUTE_NUM_REGS, &attr->numRegs},
-      {CU_FUNC_ATTRIBUTE_PTX_VERSION, &attr->ptxVersion},
-      {CU_FUNC_ATTRIBUTE_BINARY_VERSION, &attr->binaryVersion},
-      {CU_FUNC_ATTRIBUTE_CACHE_MODE_CA, &attr->cacheModeCA},
-      {CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-       &attr->maxDynamicSharedSizeBytes},
-      {CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT,
-       &attr->preferredShmemCarveout},
-  };
-  for (const auto &entry : integers) {
-    int value = 0;
-    CUresult result = cuFuncGetAttribute(&value, entry.attribute, function);
-    if (result != CUDA_SUCCESS) {
-      return from_driver(result);
-    }
-    *entry.value = value;
-  }
-  struct {
-    CUfunction_attribute attribute;
-    size_t *value;
-  } const sizes[] = {
-      {CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, &attr->sharedSizeBytes},
-      {CU_FUNC_ATTRIBUTE_CONST_SIZE_BYTES, &attr->constSizeBytes},
-      {CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, &attr->localSizeBytes},
-  };
-  for (const auto &entry : sizes) {
-    int value = 0;
-    CUresult result = cuFuncGetAttribute(&value, entry.attribute, function);
-    if (result != CUDA_SUCCESS) {
-      return from_driver(result);
-    }
-    *entry.value = static_cast<size_t>(value);
-  }
-  return cudaSuccess;
-}
-
-extern "C" cudaError_t
-cudaFuncSetAttribute(const void *func, enum cudaFuncAttribute attr, int value) {
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(cuFuncSetAttribute(
-      function, static_cast<CUfunction_attribute>(attr), value));
-}
-
-extern "C" cudaError_t cudaFuncSetCacheConfig(const void *func,
-                                              enum cudaFuncCache cacheConfig) {
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(
-      cuFuncSetCacheConfig(function, static_cast<CUfunc_cache>(cacheConfig)));
-}
-
-extern "C" cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
-                                           const void *symbolPtr) {
-  if (functionPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(symbolPtr, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  *functionPtr = reinterpret_cast<cudaFunction_t>(function);
-  return cudaSuccess;
-}
-
-extern "C" cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-    int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize) {
-  if (numBlocks == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(cuOccupancyMaxActiveBlocksPerMultiprocessor(
-      numBlocks, function, blockSize, dynamicSMemSize));
-}
-
-extern "C" cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
-    int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize,
-    unsigned int flags) {
-  if (numBlocks == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
-      numBlocks, function, blockSize, dynamicSMemSize, flags));
-}
-
-extern "C" cudaError_t cudaOccupancyAvailableDynamicSMemPerBlock(
-    size_t *dynamicSmemSize, const void *func, int numBlocks, int blockSize) {
-  if (dynamicSmemSize == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(cuOccupancyAvailableDynamicSMemPerBlock(
-      dynamicSmemSize, function, numBlocks, blockSize));
-}
-
-// ---------------------------------------------------------------------------
-// Device symbols
-// ---------------------------------------------------------------------------
-
-extern "C" cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol) {
-  if (devPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  CUresult result = variable_for(symbol, &pointer, nullptr);
-  *devPtr = reinterpret_cast<void *>(pointer);
-  return from_driver(result);
-}
-
-extern "C" cudaError_t cudaGetSymbolSize(size_t *size, const void *symbol) {
-  if (size == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  return from_driver(variable_for(symbol, &pointer, size));
-}
-
-namespace {
-
-cudaError_t copy_symbol(const void *symbol, void *host, size_t count,
-                        size_t offset, cudaMemcpyKind kind, CUstream stream,
-                        bool async, bool to_symbol) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  CUdeviceptr pointer = 0;
-  size_t size = 0;
-  CUresult resolved = variable_for(symbol, &pointer, &size);
-  if (resolved != CUDA_SUCCESS) {
-    return from_driver(resolved);
-  }
-  if (offset > size || count > size - offset) {
-    return record(cudaErrorInvalidValue);
-  }
-  void *device = reinterpret_cast<void *>(pointer + offset);
-  const cudaMemcpyKind resolved_kind =
-      kind == cudaMemcpyDefault
-          ? (to_symbol ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToHost)
-          : kind;
-  return from_driver(
-      to_symbol ? copy_1d(device, host, count, resolved_kind, stream, async)
-                : copy_1d(host, device, count, resolved_kind, stream, async));
-}
-
-} // namespace
-
-extern "C" cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
-                                          size_t count, size_t offset,
-                                          enum cudaMemcpyKind kind) {
-  return copy_symbol(symbol, const_cast<void *>(src), count, offset, kind,
-                     nullptr, false, true);
-}
-
-extern "C" cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol,
-                                            size_t count, size_t offset,
-                                            enum cudaMemcpyKind kind) {
-  return copy_symbol(symbol, dst, count, offset, kind, nullptr, false, false);
-}
-
-extern "C" cudaError_t cudaMemcpyToSymbolAsync(const void *symbol,
-                                               const void *src, size_t count,
-                                               size_t offset,
-                                               enum cudaMemcpyKind kind,
-                                               cudaStream_t stream) {
-  return copy_symbol(symbol, const_cast<void *>(src), count, offset, kind,
-                     reinterpret_cast<CUstream>(stream), true, true);
-}
-
-extern "C" cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
-                                                 size_t count, size_t offset,
-                                                 enum cudaMemcpyKind kind,
-                                                 cudaStream_t stream) {
-  return copy_symbol(symbol, dst, count, offset, kind,
-                     reinterpret_cast<CUstream>(stream), true, false);
-}
-
-// ---------------------------------------------------------------------------
-// Host callbacks
-// ---------------------------------------------------------------------------
-
-extern "C" cudaError_t cudaLaunchHostFunc(cudaStream_t stream, cudaHostFn_t fn,
-                                          void *userData) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuLaunchHostFunc(reinterpret_cast<CUstream>(stream),
-                                      reinterpret_cast<CUhostFn>(fn),
-                                      userData));
-}
-
-namespace {
-
-// The two callback signatures differ only in the spelling of their handle and
-// result types, so the trampoline just re-types the arguments.
-struct stream_callback {
-  cudaStreamCallback_t callback;
-  void *user_data;
-};
-
-void CUDA_CB stream_callback_trampoline(CUstream stream, CUresult status,
-                                        void *data) {
-  auto *forward = static_cast<stream_callback *>(data);
-  forward->callback(reinterpret_cast<cudaStream_t>(stream), translate(status),
-                    forward->user_data);
-  delete forward;
-}
-
-} // namespace
-
-extern "C" cudaError_t cudaStreamAddCallback(cudaStream_t stream,
-                                             cudaStreamCallback_t callback,
-                                             void *userData,
-                                             unsigned int flags) {
-  if (callback == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  auto *forward = new stream_callback{callback, userData};
-  CUresult result =
-      cuStreamAddCallback(reinterpret_cast<CUstream>(stream),
-                          stream_callback_trampoline, forward, flags);
-  if (result != CUDA_SUCCESS) {
-    delete forward;
-  }
-  return from_driver(result);
-}
-
-// ---------------------------------------------------------------------------
-// Entry points, libraries, and kernel metadata
-// ---------------------------------------------------------------------------
-
-#if CUDART_VERSION >= 12000
-extern "C" cudaError_t
-cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
-                        unsigned long long flags,
-                        enum cudaDriverEntryPointQueryResult *driverStatus) {
-  if (symbol == nullptr || funcPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  ensure_init();
-  CUdriverProcAddressQueryResult status = CU_GET_PROC_ADDRESS_SUCCESS;
-  CUresult result =
-      cuGetProcAddress(symbol, funcPtr, CUDA_VERSION, flags, &status);
-  if (driverStatus != nullptr) {
-    *driverStatus = static_cast<enum cudaDriverEntryPointQueryResult>(status);
-  }
-  return from_driver(result);
-}
-#else
-extern "C" cudaError_t cudaGetDriverEntryPoint(const char *symbol,
-                                               void **funcPtr,
-                                               unsigned long long flags) {
-  if (symbol == nullptr || funcPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  ensure_init();
-  return from_driver(cuGetProcAddress(symbol, funcPtr, CUDA_VERSION, flags));
-}
-#endif
 
 #if CUDART_VERSION >= 13000
-extern "C" cudaError_t cudaGetDriverEntryPointByVersion(
-    const char *symbol, void **funcPtr, unsigned int cudaVersion,
-    unsigned long long flags,
-    enum cudaDriverEntryPointQueryResult *driverStatus) {
-  if (symbol == nullptr || funcPtr == nullptr) {
+// nvcc's launch lowering resolves the host entry point once per launch site
+// and passes the handle back on every launch. The handle is the server's, so
+// it is only good for the device the resolving thread had current.
+extern "C" cudaError_t __cudaGetKernel(cudaKernel_t *kernel,
+                                       const void *entryFuncAddr) {
+  if (kernel == nullptr) {
     return record(cudaErrorInvalidValue);
   }
-  ensure_init();
-  CUdriverProcAddressQueryResult status = CU_GET_PROC_ADDRESS_SUCCESS;
-  CUresult result = cuGetProcAddress(
-      symbol, funcPtr, static_cast<int>(cudaVersion), flags, &status);
-  if (driverStatus != nullptr) {
-    *driverStatus = static_cast<enum cudaDriverEntryPointQueryResult>(status);
+  conn_t *conn = connection();
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC___cudaGetKernel) < 0 ||
+      rpc_write(conn, &entryFuncAddr, sizeof(entryFuncAddr)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, kernel, sizeof(*kernel)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
   }
-  return from_driver(result);
+  return record(return_value);
+}
+
+extern "C" cudaError_t __cudaLaunchKernel(cudaKernel_t kernel, dim3 gridDim,
+                                          dim3 blockDim, void **args,
+                                          size_t sharedMem,
+                                          cudaStream_t stream) {
+  return launch(connection_for_stream(stream), RPC___cudaLaunchKernel, kernel,
+                gridDim, blockDim, args, sharedMem, stream);
+}
+
+extern "C" cudaError_t __cudaLaunchKernel_ptsz(cudaKernel_t kernel,
+                                               dim3 gridDim, dim3 blockDim,
+                                               void **args, size_t sharedMem,
+                                               cudaStream_t stream) {
+  return __cudaLaunchKernel(kernel, gridDim, blockDim, args, sharedMem, stream);
 }
 #endif
 
-extern "C" cudaError_t cudaGetExportTable(const void **ppExportTable,
-                                          const cudaUUID_t *pExportTableId) {
-  ensure_init();
-  return from_driver(cuGetExportTable(
-      ppExportTable, reinterpret_cast<const CUuuid *>(pExportTableId)));
-}
-
-extern "C" cudaError_t cudaGraphDebugDotPrint(cudaGraph_t graph,
-                                              const char *path,
-                                              unsigned int flags) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(
-      cuGraphDebugDotPrint(reinterpret_cast<CUgraph>(graph), path, flags));
-}
-
 #if CUDART_VERSION >= 12000
+// The runtime owns the name string; a copy is held for the life of the
+// process, so the pointer handed back stays valid as the API promises.
 extern "C" cudaError_t cudaFuncGetName(const char **name, const void *func) {
   if (name == nullptr) {
     return record(cudaErrorInvalidValue);
   }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto entry = registered_functions().find(func);
-  if (entry == registered_functions().end()) {
-    return record(cudaErrorInvalidDeviceFunction);
-  }
-  *name = entry->second.name.c_str();
-  return cudaSuccess;
-}
-
-extern "C" cudaError_t cudaFuncGetParamInfo(const void *func, size_t paramIndex,
-                                            size_t *paramOffset,
-                                            size_t *paramSize) {
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  return from_driver(
-      cuFuncGetParamInfo(function, paramIndex, paramOffset, paramSize));
-}
-#endif
-
-#if CUDART_VERSION >= 13000
-extern "C" cudaError_t cudaFuncGetParamCount(const void *func,
-                                             size_t *paramCount) {
-  if (paramCount == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  CUfunction function = nullptr;
-  cudaError_t resolved = resolve_function(func, &function);
-  if (resolved != cudaSuccess) {
-    return record(resolved);
-  }
-  // The driver has no count query, so the parameters are walked until it
-  // reports there is no further index.
-  size_t count = 0;
-  for (;; ++count) {
-    size_t offset = 0;
-    size_t size = 0;
-    if (cuFuncGetParamInfo(function, count, &offset, &size) != CUDA_SUCCESS) {
-      break;
+  static auto *names = new std::unordered_map<const void *, std::string>();
+  static auto *names_mutex = new std::mutex();
+  {
+    std::lock_guard<std::mutex> lock(*names_mutex);
+    auto entry = names->find(func);
+    if (entry != names->end()) {
+      *name = entry->second.c_str();
+      return cudaSuccess;
     }
   }
-  *paramCount = count;
+  constexpr uint32_t kMaxLength = 4096;
+  conn_t *conn = connection();
+  cudaError_t return_value = rpc_error();
+  uint32_t length = 0;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaFuncGetName) < 0 ||
+      rpc_write(conn, &func, sizeof(func)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read(conn, &length, sizeof(length)) < 0 || length > kMaxLength) {
+    return record(rpc_error());
+  }
+  std::string text(length, '\0');
+  if ((length != 0 && rpc_read(conn, &text[0], length) < 0) ||
+      rpc_read_end(conn) < 0) {
+    return record(rpc_error());
+  }
+  if (return_value != cudaSuccess) {
+    return record(return_value);
+  }
+  std::lock_guard<std::mutex> lock(*names_mutex);
+  *name = names->emplace(func, std::move(text)).first->second.c_str();
   return cudaSuccess;
-}
-
-extern "C" cudaError_t cudaGetKernel(cudaKernel_t *kernelPtr,
-                                     const void *entryFuncAddr) {
-  return __cudaGetKernel(kernelPtr, entryFuncAddr);
-}
-
-extern "C" cudaError_t cudaKernelSetAttributeForDevice(
-    cudaKernel_t kernel, enum cudaFuncAttribute attr, int value, int device) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  // The attribute is set on the kernel as the named device sees it, so both
-  // the resolution and the call run under that device's context.
-  device_scope scope(device);
-  if (scope.status() != cudaSuccess) {
-    return record(scope.status());
-  }
-  CUfunction function = nullptr;
-  CUresult resolved =
-      function_for(reinterpret_cast<const void *>(kernel), &function);
-  if (resolved != CUDA_SUCCESS) {
-    return from_driver(resolved);
-  }
-  return from_driver(cuFuncSetAttribute(
-      function, static_cast<CUfunction_attribute>(attr), value));
-}
-
-extern "C" cudaError_t cudaLibraryLoadData(
-    cudaLibrary_t *library, const void *code, enum cudaJitOption *jitOptions,
-    void **jitOptionsValues, unsigned int numJitOptions,
-    enum cudaLibraryOption *libraryOptions, void **libraryOptionValues,
-    unsigned int numLibraryOptions) {
-  if (library == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuLibraryLoadData(
-      reinterpret_cast<CUlibrary *>(library), code,
-      reinterpret_cast<CUjit_option *>(jitOptions), jitOptionsValues,
-      numJitOptions, reinterpret_cast<CUlibraryOption *>(libraryOptions),
-      libraryOptionValues, numLibraryOptions));
-}
-
-extern "C" cudaError_t cudaLibraryLoadFromFile(
-    cudaLibrary_t *library, const char *fileName,
-    enum cudaJitOption *jitOptions, void **jitOptionsValues,
-    unsigned int numJitOptions, enum cudaLibraryOption *libraryOptions,
-    void **libraryOptionValues, unsigned int numLibraryOptions) {
-  if (library == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuLibraryLoadFromFile(
-      reinterpret_cast<CUlibrary *>(library), fileName,
-      reinterpret_cast<CUjit_option *>(jitOptions), jitOptionsValues,
-      numJitOptions, reinterpret_cast<CUlibraryOption *>(libraryOptions),
-      libraryOptionValues, numLibraryOptions));
-}
-
-extern "C" cudaError_t cudaLibraryGetUnifiedFunction(void **fptr,
-                                                     cudaLibrary_t library,
-                                                     const char *symbol) {
-  cudaError_t entered = enter();
-  if (entered != cudaSuccess) {
-    return record(entered);
-  }
-  return from_driver(cuLibraryGetUnifiedFunction(
-      fptr, reinterpret_cast<CUlibrary>(library), symbol));
 }
 #endif

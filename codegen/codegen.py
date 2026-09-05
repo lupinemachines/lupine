@@ -235,6 +235,7 @@ REGISTRY_CPP_TEMPLATE = Template(
 
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include <cuda.h>
+#include <cuda_runtime_api.h>
 #endif
 #include "gen_rpc_ids.h"
 
@@ -331,36 +332,30 @@ def annotation_directives(annotation: str) -> list[str]:
     return directives
 
 
-def parse_server_binding(name: str, annotation: str) -> Optional[ServerBinding]:
-    backend = None
+def parse_server_binding(
+    name: str, annotation: str, backend: str
+) -> Optional[ServerBinding]:
+    """A hand-written server handler: `handle_<call>`, or the name given."""
     handler = None
     guard = None
     for directive in annotation_directives(annotation):
-        parts = directive.split(maxsplit=2)
-        if parts[0] == "@server":
-            if backend is not None or len(parts) < 2:
-                raise RuntimeError(
-                    f"Invalid @server annotation for {name}"
-                )
-            backend = parts[1].upper()
-            if backend not in SERVER_BACKENDS:
-                raise RuntimeError(f"Unknown RPC server backend {backend}")
-            if len(parts) == 3:
-                handler = parts[2]
+        parts = directive.split()
+        if parts[0] == "@disabled" and parts[1:2] != ["client"]:
+            if handler is not None:
+                raise RuntimeError(f"Duplicate @disabled for {name}")
+            rest = parts[2:] if parts[1:2] == ["server"] else parts[1:]
+            handler = rest[0] if rest and rest[0] != "-" else "handle_" + name
         elif parts[0] == "@guard":
             if guard is not None or len(parts) < 2:
                 raise RuntimeError(f"Invalid @guard annotation for {name}")
             guard = directive.removeprefix("@guard").strip()
 
-    if backend is None:
-        return None
-
     if handler is None:
-        handler = "handle_" + name
+        return None
     return ServerBinding(name, backend, handler, guard)
 
 
-def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
+def collect_server_bindings(path: str, backend: str) -> dict[str, ServerBinding]:
     bindings = {}
     with open(path) as annotations_file:
         source = annotations_file.read()
@@ -369,12 +364,12 @@ def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
         name_match = re.search(r"([A-Za-z_]\w*)\s*\($", declaration)
         if name_match is None:
             continue
-        binding = parse_server_binding(name_match.group(1), annotation)
+        binding = parse_server_binding(name_match.group(1), annotation, backend)
         if binding is None:
             continue
         previous = bindings.get(binding.name)
         if previous is not None and previous != binding:
-            raise RuntimeError(f"Conflicting @server annotations for {binding.name}")
+            raise RuntimeError(f"Conflicting @disabled for {binding.name}")
         bindings[binding.name] = binding
     return bindings
 
@@ -510,25 +505,26 @@ def parse_annotation(
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
         return metadata
     for line in annotation.split("\n"):
-        # Disabled annotations can apply to client generation, server
-        # generation, or both. Bare @disabled keeps the historical behavior
-        # by setting both scoped flags.
-        if "@disabled" in line or "@DISABLED" in line:
-            disabled_parts = line.lower().lstrip(" *").split()
-            scope = disabled_parts[1] if len(disabled_parts) > 1 else "both"
-            if scope == "client":
+        # @disabled client / @disabled server skip one generated side; bare
+        # @disabled (optionally naming the server handler) skips both.
+        if "@disabled" in line:
+            if metadata.disabled_client or metadata.disabled_server:
+                raise RuntimeError("Duplicate @disabled")
+            parts = line.lstrip(" *").split()
+            scope = parts[1:2]
+            if scope == ["client"]:
                 metadata.disabled_client = True
                 # "forwards": the manual client provides the entry point but
                 # still sends the call, so it needs the generated builder.
-                metadata.client_forwards = "forwards" in disabled_parts[2:]
+                metadata.client_forwards = parts[2:3] == ["forwards"]
                 continue
-            elif scope == "server":
+            elif scope == ["server"]:
                 metadata.disabled_server = True
                 continue
             else:
                 metadata.disabled_client = True
                 metadata.disabled_server = True
-                return metadata
+                continue
         if line.startswith("/**"):
             continue
         if line.startswith("*/"):
@@ -556,8 +552,6 @@ def parse_annotation(
             if not guard or metadata.guard is not None:
                 raise RuntimeError("Invalid @guard annotation")
             metadata.guard = guard
-            continue
-        if line.startswith("@server"):
             continue
         if line.startswith("@routingkey"):
             parts = line.split()
@@ -1486,9 +1480,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write("}\n\n")
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
-            if metadata.disabled_client and metadata.disabled_server:
-                continue
-
             if metadata.guard is not None:
                 f.write(f"#if {metadata.guard}\n")
             f.write(
@@ -1642,10 +1633,11 @@ def main():
         ANNOTATION_FILES["cuda"], definition_return_types
     )
     server_bindings = {}
-    for path in ANNOTATION_FILES.values():
-        for name, binding in collect_server_bindings(path).items():
+    # A handler belongs to the backend whose annotation file declares it.
+    for target, path in ANNOTATION_FILES.items():
+        for name, binding in collect_server_bindings(path, target.upper()).items():
             if name in server_bindings and server_bindings[name] != binding:
-                raise RuntimeError(f"Conflicting @server annotations for {name}")
+                raise RuntimeError(f"Conflicting @disabled for {name}")
             server_bindings[name] = binding
     functions = [
         function
@@ -1708,8 +1700,8 @@ def main():
         if not legacy_abi and not client_disabled:
             continue
         if not legacy_abi and any(
-            directive == "@disabled"
-            or directive.startswith("@disabled server")
+            directive.startswith("@disabled")
+            and not directive.startswith("@disabled client")
             for directive in directives
         ):
             continue
