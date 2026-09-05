@@ -27,6 +27,7 @@ hipError_t hipDeviceGet(int *device, int ordinal);
  * @param prop RECV_ONLY
  * @param deviceId SEND_ONLY
  * @routingkey HIP_DEVICE deviceId
+ * @clearfields prop hdpMemFlushCntl hdpRegFlushCntl
  */
 hipError_t hipGetDevicePropertiesR0600(hipDeviceProp_tR0600 *prop,
                                        int deviceId);

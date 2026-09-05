@@ -25,10 +25,7 @@ class NullableOperation:
         if not (self.send or self.recv):
             return
         f.write(
-            "        rpc_write(conn, &{param_name}, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
+            f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.format()})) < 0 ||\n"
         )
 
         if not self.send:
@@ -47,11 +44,9 @@ class NullableOperation:
 
     def client_unified_copy(self, f, direction, error):
         f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, cudaMemcpyDeviceToHost) < 0)\n".format(
-                name=self.parameter.name
-            )
+            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, cudaMemcpyDeviceToHost) < 0)\n"
         )
-        f.write("      return {error};\n".format(error=error))
+        f.write(f"      return {error};\n")
 
     @property
     def server_declaration(self) -> str:
@@ -69,10 +64,7 @@ class NullableOperation:
         if not (self.send or self.recv):
             return
         f.write(
-            "        rpc_read(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
+            f"        rpc_read(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
         )
         if not self.send:
             return
@@ -96,32 +88,20 @@ class NullableOperation:
         if not self.recv:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
+            f"        rpc_write(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
         )
         f.write(
-            "        ({param_name}_null_check && rpc_write(conn, &{param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                base_type=self.ptr.ptr_to.format(),
-            )
+            f"        ({self.parameter.name}_null_check && rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
         if not self.recv:
             return
         f.write(
-            "        rpc_read(conn, &{param_name}_null_check, sizeof({server_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
+            f"        rpc_read(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
         )
         f.write(
-            "        ({param_name}_null_check && rpc_read(conn, {param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                base_type=self.ptr.ptr_to.format(),
-            )
+            f"        ({self.parameter.name}_null_check && rpc_read(conn, {self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
         )
 
 
@@ -196,101 +176,70 @@ class ArrayOperation:
         ):
             return
         f.write(
-            "    if ({size} != 0 && {param_name} == nullptr)\n"
-            "        return {error_return};\n".format(
-                param_name=self.parameter.name,
-                size=self.transfer_size_expr(),
-                error_return=error_return,
-            )
+            f"    if ({self.transfer_size_expr()} != 0 && {self.parameter.name} == nullptr)\n"
+                f"        return {error_return};\n"
         )
     def client_rpc_write(self, f):
         if not self.send:
             return
         if isinstance(self.length, int):
             f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
+                f"        rpc_write(conn, {self.parameter.name}, {self.length}) < 0 ||\n"
             )
         # array length operations are handled differently than char
         elif isinstance(self.ptr, Array):
             f.write(
-                "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    param_type=self.ptr.array_of.format(),
-                )
+                f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.array_of.format()})) < 0 ||\n"
             )
         else:
             f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
+                f"        rpc_write(conn, {self.parameter.name}, {self.transfer_size_expr()}) < 0 ||\n"
             )
 
 
     def client_unified_copy(self, f, direction, error):
         f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                name=self.parameter.name, direction=direction
-            )
+            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
         )
-        f.write("      return {error};\n".format(error=error))
+        f.write(f"      return {error};\n")
 
         if isinstance(self.length, int):
             f.write(
-                "    for (int i = 0; i < {name} && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                    param=self.parameter.name, name=self.length
-                )
+                f"    for (int i = 0; i < {self.length} && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
             )
             f.write(
-                "      if (maybe_copy_unified_arg(conn, (void*)&{name}[i], {direction}) < 0 )\n".format(
-                    name=self.parameter.name, direction=direction
-                )
+                f"      if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}[i], {direction}) < 0 )\n"
             )
-            f.write("        return {error};\n".format(error=error))
+            f.write(f"        return {error};\n")
 
             return
 
         if hasattr(self.length.type, "ptr_to"):
             # need to cast the int a bit differently here
             f.write(
-                "    for (int i = 0; i < static_cast<int>(*{name}) && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                    param=self.parameter.name, name=self.length.name
-                )
+                f"    for (int i = 0; i < static_cast<int>(*{self.length.name}) && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
             )
             f.write(
-                "      if (maybe_copy_unified_arg(conn, (void*)&{name}[i], {direction}) < 0)\n".format(
-                    name=self.parameter.name, direction=direction
-                )
+                f"      if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}[i], {direction}) < 0)\n"
             )
-            f.write("        return {error};\n".format(error=error))
+            f.write(f"        return {error};\n")
         else:
             if hasattr(self.parameter.type, "ptr_to"):
                 f.write(
-                    "    for (int i = 0; i < static_cast<int>({name}) && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                        param=self.parameter.name, name=self.length.name
-                    )
+                    f"    for (int i = 0; i < static_cast<int>({self.length.name}) && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
                 )
                 f.write(
-                    "      if (maybe_copy_unified_arg(conn, (void*)&{name}[i], {direction}) < 0)\n".format(
-                        name=self.parameter.name, direction=direction
-                    )
+                    f"      if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}[i], {direction}) < 0)\n"
                 )
-                f.write("        return {error};\n".format(error=error))
+                f.write(f"        return {error};\n")
             else:
                 f.write(
-                    "    for (int i = 0; i < static_cast<int>({name}) && is_unified_pointer(conn, (void*){param}); i++)\n".format(
-                        param=self.parameter.name, name=self.length.name
-                    )
+                    f"    for (int i = 0; i < static_cast<int>({self.length.name}) && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
                 )
                 f.write(
-                    "      if (maybe_copy_unified_arg(conn, (void*){name}[i], {direction}) < 0)\n".format(
-                        name=self.parameter.name, direction=direction
-                    )
+                    f"      if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}[i], {direction}) < 0)\n"
                 )
-                f.write("        return {error};\n".format(error=error))
+                f.write(f"        return {error};\n")
 
     @property
     def server_declaration(self) -> str:
@@ -315,17 +264,10 @@ class ArrayOperation:
                 f.write("        false)\n")
                 f.write("        goto ERROR_0;\n")
                 f.write(
-                    "    {param_name} = ({server_type})malloc({size});\n".format(
-                        param_name=self.parameter.name,
-                        server_type=self.ptr.format(),
-                        size=self.server_transfer_size_expr(),
-                    )
+                    f"    {self.parameter.name} = ({self.ptr.format()})malloc({self.server_transfer_size_expr()});\n"
                 )
                 f.write(
-                    "    if (({size} != 0 && {param_name} == nullptr) ||\n".format(
-                        param_name=self.parameter.name,
-                        size=self.server_transfer_size_expr(),
-                    )
+                    f"    if (({self.server_transfer_size_expr()} != 0 && {self.parameter.name} == nullptr) ||\n"
                 )
                 return self.parameter.name
             return
@@ -333,10 +275,7 @@ class ArrayOperation:
             f.write("        false)\n")
             f.write("        goto ERROR_0;\n")
             f.write(
-                "    {param_name}_size = {size};\n".format(
-                    param_name=self.parameter.name,
-                    size=self.server_transfer_size_expr(),
-                )
+                f"    {self.parameter.name}_size = {self.server_transfer_size_expr()};\n"
             )
             f.write(
                 "    {param_name} = ({server_type})malloc({size});\n".format(
@@ -346,9 +285,7 @@ class ArrayOperation:
                 )
             )
             f.write(
-                "    if ({param_name}_size != 0 && {param_name} == nullptr)\n".format(
-                    param_name=self.parameter.name
-                )
+                f"    if ({self.parameter.name}_size != 0 && {self.parameter.name} == nullptr)\n"
             )
             f.write("        goto ERROR_0;\n")
             f.write("    if(\n")
@@ -361,24 +298,15 @@ class ArrayOperation:
             return self.parameter.name
         elif isinstance(self.length, int):
             f.write(
-                "        rpc_read(conn, &{param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
+                f"        rpc_read(conn, &{self.parameter.name}, {self.length}) < 0 ||\n"
             )
         elif isinstance(self.ptr, Array):
             f.write(
-                "        rpc_read(conn, &{param_name}, sizeof({param_type}*)) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    param_type=self.ptr.array_of.format(),
-                )
+                f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.ptr.array_of.format()}*)) < 0 ||\n"
             )
         else:
             f.write(
-                "        rpc_read(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
+                f"        rpc_read(conn, {self.parameter.name}, {self.transfer_size_expr()}) < 0 ||\n"
             )
 
         return None
@@ -397,17 +325,11 @@ class ArrayOperation:
             return
         if isinstance(self.length, int):
             f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
+                f"        rpc_write(conn, {self.parameter.name}, {self.length}) < 0 ||\n"
             )
         else:
             f.write(
-                "        rpc_write(conn, {param_name}, {size}) < 0 ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.server_transfer_size_expr(),
-                )
+                f"        rpc_write(conn, {self.parameter.name}, {self.server_transfer_size_expr()}) < 0 ||\n"
             )
 
     def client_rpc_read(self, f):
@@ -415,17 +337,11 @@ class ArrayOperation:
             return
         if isinstance(self.length, int):
             f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.length,
-                )
+                f"        ({self.length} != 0 && rpc_read(conn, {self.parameter.name}, {self.length}) < 0) ||\n"
             )
         else:
             f.write(
-                "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                    param_name=self.parameter.name,
-                    size=self.transfer_size_expr(),
-                )
+                f"        ({self.transfer_size_expr()} != 0 && rpc_read(conn, {self.parameter.name}, {self.transfer_size_expr()}) < 0) ||\n"
             )
 
 
@@ -791,15 +707,10 @@ class NullTerminatedOperation:
         if not self.send:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}_len, sizeof({length_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                length_type=self.length_type,
-            )
+            f"        rpc_write(conn, &{self.parameter.name}_len, sizeof({self.length_type})) < 0 ||\n"
         )
         f.write(
-            "        rpc_write(conn, {param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name,
-            )
+            f"        rpc_write(conn, {self.parameter.name}, {self.parameter.name}_len) < 0 ||\n"
         )
 
     @property
@@ -821,33 +732,23 @@ class NullTerminatedOperation:
 
     def client_unified_copy(self, f, direction, error):
         f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                name=self.parameter.name, direction=direction
-            )
+            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
         )
-        f.write("      return {error};\n".format(error=error))
+        f.write(f"      return {error};\n")
 
     def server_rpc_read(self, f) -> Optional[str]:
         if not self.send:
             return None
         f.write(
-            "        rpc_read(conn, &{param_name}_len, sizeof({length_type})) < 0)\n".format(
-                param_name=self.parameter.name,
-                length_type=self.length_type,
-            )
+            f"        rpc_read(conn, &{self.parameter.name}_len, sizeof({self.length_type})) < 0)\n"
         )
         f.write("        goto ERROR_0;\n")
         f.write(
-            "    {param_name} = ({server_type})malloc({param_name}_len);\n".format(
-                param_name=self.parameter.name,
-                server_type=self.ptr.format(),
-            )
+            f"    {self.parameter.name} = ({self.ptr.format()})malloc({self.parameter.name}_len);\n"
         )
         f.write(
-            "    if (({param_name}_len != 0 && {param_name} == nullptr) ||\n"
-            "        rpc_read(conn, (void *){param_name}, {param_name}_len) < 0 ||\n".format(
-                param_name=self.parameter.name
-            )
+            f"    if (({self.parameter.name}_len != 0 && {self.parameter.name} == nullptr) ||\n"
+                f"        rpc_read(conn, (void *){self.parameter.name}, {self.parameter.name}_len) < 0 ||\n"
         )
         return self.parameter.name
 
@@ -937,10 +838,7 @@ class OpaqueTypeOperation:
                 else self.parameter.name
             )
             f.write(
-                "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                    param_name=param_name,
-                    param_type=self.type_.format(),
-                )
+                f"        rpc_write(conn, &{param_name}, sizeof({self.type_.format()})) < 0 ||\n"
             )
 
     @property
@@ -961,27 +859,20 @@ class OpaqueTypeOperation:
     def client_unified_copy(self, f, direction, error):
         if isinstance(self.type_, Pointer):
             f.write(
-                "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                    name=self.parameter.name, direction=direction
-                )
+                f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
             )
-            f.write("      return {error};\n".format(error=error))
+            f.write(f"      return {error};\n")
         else:
             f.write(
-                "    if (maybe_copy_unified_arg(conn, (void*)&{name}, {direction}) < 0)\n".format(
-                    name=self.parameter.name, direction=direction
-                )
+                f"    if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}, {direction}) < 0)\n"
             )
-            f.write("      return {error};\n".format(error=error))
+            f.write(f"      return {error};\n")
 
     def server_rpc_read(self, f):
         if not self.send:
             return
         f.write(
-            "        rpc_read(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.format(),
-            )
+            f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.type_.format()})) < 0 ||\n"
         )
 
     @property
@@ -994,20 +885,14 @@ class OpaqueTypeOperation:
         if not self.recv:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.format(),
-            )
+            f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.type_.format()})) < 0 ||\n"
         )
 
     def client_rpc_read(self, f):
         if not self.recv:
             return
         f.write(
-            "        rpc_read(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.format(),
-            )
+            f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.type_.format()})) < 0 ||\n"
         )
 
 
@@ -1027,10 +912,7 @@ class DereferenceOperation:
         if not self.send:
             return
         f.write(
-            "        rpc_write(conn, {param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
+            f"        rpc_write(conn, {self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
         )
 
     @property
@@ -1045,19 +927,14 @@ class DereferenceOperation:
         if not self.send:
             return
         f.write(
-            "        rpc_read(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
+            f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
         )
 
     def client_unified_copy(self, f, direction, error):
         f.write(
-            "    if (maybe_copy_unified_arg(conn, (void*){name}, {direction}) < 0)\n".format(
-                name=self.parameter.name, direction=direction
-            )
+            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
         )
-        f.write("      return {error};\n".format(error=error))
+        f.write(f"      return {error};\n")
 
     @property
     def server_reference(self) -> str:
@@ -1067,10 +944,7 @@ class DereferenceOperation:
         if not self.recv:
             return
         f.write(
-            "        rpc_write(conn, &{param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
+            f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
         )
 
     def client_rpc_read(self, f):
@@ -1078,10 +952,7 @@ class DereferenceOperation:
             return
         # if this parameter is recv only then dereference it.
         f.write(
-            "        rpc_read(conn, {param_name}, sizeof({param_type})) < 0 ||\n".format(
-                param_name=self.parameter.name,
-                param_type=self.type_.ptr_to.format(),
-            )
+            f"        rpc_read(conn, {self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
         )
 
 
@@ -1174,6 +1045,8 @@ class FunctionAnnotationMetadata:
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     graph_exec_node: Optional[GraphExecNodeAnnotation] = None
     client_call_template: Optional[ClientCallTemplate] = None
+    # @clearfields: members holding host addresses, cleared on both sides.
+    clear_fields: list[tuple[str, tuple[str, ...]]] = None
 
     def __post_init__(self):
         if self.record_owners is None:
@@ -1184,3 +1057,5 @@ class FunctionAnnotationMetadata:
             self.releases = []
         if self.parents is None:
             self.parents = []
+        if self.clear_fields is None:
+            self.clear_fields = []
