@@ -179,6 +179,8 @@ std::vector<conn_t *> all_connections() {
 
 #include "codegen/gen_cudart_client.inc"
 
+extern "C" conn_t *lupine_cudart_connection() { return connection(); }
+
 // ---------------------------------------------------------------------------
 // Device management
 // ---------------------------------------------------------------------------

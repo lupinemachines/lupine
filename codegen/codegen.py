@@ -40,6 +40,7 @@ from ops import (
     NullTerminatedOperation,
     OpaqueTypeOperation,
     DereferenceOperation,
+    ScalarOperation,
     Operation,
     OwnerAnnotation,
     RetainAnnotation,
@@ -237,6 +238,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+#include <cublas_v2.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -244,6 +248,8 @@ REGISTRY_CPP_TEMPLATE = Template(
 $cuda_registry_entries
 #define LUPINE_CUDART_RPC_HANDLERS(HANDLER) \
 $cudart_registry_entries
+#define LUPINE_CUBLAS_RPC_HANDLERS(HANDLER) \
+$cublas_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -257,6 +263,10 @@ LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cuda_guarded_declarations
 LUPINE_CUDART_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cudart_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$cublas_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -281,6 +291,10 @@ $cuda_guarded_handlers
       LUPINE_CUDART_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cudart_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+      LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$cublas_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -297,6 +311,7 @@ $hip_guarded_handlers
 
 #undef LUPINE_CUDA_RPC_HANDLERS
 #undef LUPINE_CUDART_RPC_HANDLERS
+#undef LUPINE_CUBLAS_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -320,6 +335,7 @@ SERVER_BACKENDS = {
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
     "CUDART": "rpc_backend::cudart",
+    "CUBLAS": "rpc_backend::cublas",
 }
 
 
@@ -419,9 +435,22 @@ CUDART = Backend(
     guard_null_conn=True,
 )
 
+# cuBLAS calls run on the driver shim's connections like the runtime's, and
+# the client keeps no sticky error: every status is the call's own.
+CUBLAS = Backend(
+    name="cublas",
+    result="cublasStatus_t",
+    success="CUBLAS_STATUS_SUCCESS",
+    invalid_argument="CUBLAS_STATUS_INVALID_VALUE",
+    not_supported="CUBLAS_STATUS_NOT_SUPPORTED",
+    symbol_lookup="cublas_symbol",
+    guard_null_conn=True,
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
+    "cublas": "annotations_cublas.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -477,6 +506,10 @@ def infer_routing_key(
             return "GRAPH_EXEC", param
         if type_name == "CUdeviceptr":
             return "DEVICEPTR", param
+        # A library handle is created on one server and routes every later
+        # call there.
+        if type_name == "cublasHandle_t":
+            return "HANDLE", param
     return None, None
 
 
@@ -646,6 +679,33 @@ def parse_annotation(
                 nullable = "NULLABLE" in args
                 deref = "DEREF" in args
                 recv_on_error = "ON_ERROR" in args
+                scalar = "SCALAR" in args
+
+                if scalar:
+                    # SCALAR: a pointer-mode scalar, sized by SIZE:<expr> when
+                    # the pointee is void. The call's first parameter is the
+                    # handle whose pointer mode decides where it lives.
+                    if length_arg or null_terminated or nullable or deref:
+                        raise NotImplementedError(
+                            "SCALAR composes only with SIZE"
+                        )
+                    width = size_arg.split(":", 1)[1] if size_arg else None
+                    if width is None and param.type.ptr_to.format() in (
+                        "void",
+                        "const void",
+                    ):
+                        raise NotImplementedError("SCALAR on void needs SIZE")
+                    operations.append(
+                        ScalarOperation(
+                            send=send,
+                            recv=recv,
+                            parameter=param,
+                            ptr=param.type,
+                            mode=params[0],
+                            width=width,
+                        )
+                    )
+                    continue
 
                 # NULLABLE composes with LENGTH (an optional out-array
                 # sized by an in/out count); every other combination is
@@ -1574,6 +1634,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cudart_registry_entries=" \\\n".join(
                     registry_entries["CUDART"]
                 ),
+                cublas_registry_entries=" \\\n".join(
+                    registry_entries["CUBLAS"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -1581,6 +1644,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 ),
                 cudart_guarded_declarations="\n".join(
                     guarded_declarations["CUDART"]
+                ),
+                cublas_guarded_declarations="\n".join(
+                    guarded_declarations["CUBLAS"]
                 ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
@@ -1590,6 +1656,7 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 ),
                 cuda_guarded_handlers="\n".join(guarded_handlers["CUDA"]),
                 cudart_guarded_handlers="\n".join(guarded_handlers["CUDART"]),
+                cublas_guarded_handlers="\n".join(guarded_handlers["CUBLAS"]),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -1604,7 +1671,9 @@ def main():
     hip_include_dir = os.path.dirname(os.path.dirname(hip_header))
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            defines=["__HIP_PLATFORM_AMD__"],
+            # cublas_api.h refuses direct inclusion until its umbrella
+            # header has defined this marker.
+            defines=["__HIP_PLATFORM_AMD__", "CUBLASAPI="],
             include_paths=[cuda_include_dir, hip_include_dir],
         ),
     )
@@ -1766,11 +1835,15 @@ def main():
     cudart_functions_with_annotations = collect_backend_functions(
         annotations_by_target["cudart"]
     )
+    cublas_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["cublas"]
+    )
     # The SDK's own declarations, so a call an annotation file leaves out still
     # gets a symbol.
     forwarding_backends = [
         (HIP, hip_functions_with_annotations),
         (CUDART, cudart_functions_with_annotations),
+        (CUBLAS, cublas_functions_with_annotations),
     ]
     sdk_functions_for = {
         backend.name: parse_file(
@@ -1901,6 +1974,9 @@ def main():
             "gen_cudart_client.inc",
             "gen_cudart_server.inc",
             "gen_cudart_server.h",
+            "gen_cublas_client.inc",
+            "gen_cublas_server.inc",
+            "gen_cublas_server.h",
         ],
         check=True,
     )
@@ -1924,10 +2000,16 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_cudart_server.inc",
             "gen_cudart_server.h",
         ],
+        "cublas": [
+            "gen_cublas_client.inc",
+            "gen_cublas_server.inc",
+            "gen_cublas_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
         "cudart": ["nvml", "hip"],
+        "cublas": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -1948,7 +2030,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "nvml", "hip"),
+        choices=("all", "cuda", "nvml", "hip", "cudart", "cublas"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

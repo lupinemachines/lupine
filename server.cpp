@@ -166,9 +166,12 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
   switch (handler.backend) {
   case rpc_backend::cuda:
   case rpc_backend::cudart:
+  case rpc_backend::cublas:
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   {
-    backend_name = handler.backend == rpc_backend::cuda ? "CUDA" : "cudart";
+    backend_name = handler.backend == rpc_backend::cuda     ? "CUDA"
+                   : handler.backend == rpc_backend::cudart ? "cudart"
+                                                            : "cuBLAS";
     lupine_checkpoint::cuda_call_guard guard;
     result = handler.handler(conn);
     break;

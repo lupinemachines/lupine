@@ -460,6 +460,68 @@ if(LUPINE_BUILD_CUDA)
     add_custom_target(lupine_cudart DEPENDS lupine_cudart_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The cuBLAS shim needs the library's own headers, which the runtime header
+    # wheels the native client builds use do not carry; without them it is left
+    # out of the build.
+    find_path(LUPINE_CUBLAS_INCLUDE_DIR cublas_api.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_CUBLAS_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_CUBLAS_INCLUDE_DIR}/cublas_api.h
+             LUPINE_CUBLAS_MAJOR_LINE REGEX "^#define CUBLAS_VER_MAJOR ")
+        string(REGEX REPLACE "^#define CUBLAS_VER_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_CUBLAS_SOVERSION "${LUPINE_CUBLAS_MAJOR_LINE}")
+        set(LUPINE_BUILD_CUBLAS ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUBLAS)
+    # Named like NVIDIA's (libcublas.so.13, cublas64_13.dll) with the matching
+    # ELF version node, since consumers reference name@libcublas.so.13. It runs
+    # on the runtime shim's current device, so it links both sibling shims.
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cublas.exports.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/cublas.exports @ONLY)
+
+    add_library(lupine_cublas_client SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/cublas_client.cpp)
+    if(NOT LUPINE_CUDA_CRT_INCLUDE_DIR)
+        target_include_directories(lupine_cublas_client BEFORE PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/cudart_stubs)
+    endif()
+    target_include_directories(lupine_cublas_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(lupine_cublas_client PRIVATE
+        lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_cublas_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    if(WIN32)
+        target_compile_options(lupine_cublas_client PRIVATE /wd4996)
+        set_target_properties(lupine_cublas_client PROPERTIES
+            OUTPUT_NAME cublas64_${LUPINE_CUBLAS_SOVERSION}
+            PREFIX ""
+            WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cublas_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cublas_client PROPERTIES
+            OUTPUT_NAME cublas)
+        if(APPLE)
+            set_target_properties(lupine_cublas_client PROPERTIES
+                BUILD_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_cublas_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cublas.exports")
+            set_target_properties(lupine_cublas_client PROPERTIES
+                BUILD_RPATH "$ORIGIN"
+                VERSION ${LUPINE_CUBLAS_SOVERSION}
+                SOVERSION ${LUPINE_CUBLAS_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_cublas DEPENDS lupine_cublas_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -552,6 +614,16 @@ if(LUPINE_BUILD_SERVER)
             ${CUDAToolkit_INCLUDE_DIRS})
         target_link_libraries(lupine_cudart_server PRIVATE
             lupine_server_core ${CMAKE_DL_LIBS})
+
+        if(LUPINE_BUILD_CUBLAS)
+            add_library(lupine_cublas_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/cublas_server.cpp)
+            lupine_internal_target(lupine_cublas_server)
+            target_include_directories(lupine_cublas_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_cublas_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -649,6 +721,12 @@ if(LUPINE_BUILD_SERVER)
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
         target_link_libraries(lupine_driver_server PRIVATE
             lupine_cuda_server lupine_cudart_server)
+        if(LUPINE_BUILD_CUBLAS)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_CUBLAS_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_cublas_server)
+        endif()
     endif()
     if(LUPINE_BUILD_NVML)
         target_compile_definitions(lupine_driver_server PRIVATE
@@ -796,6 +874,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q cudaLaunchKernel && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q __cudaRegisterFatBinary && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q cudaGetDeviceProperties && nm -D \"$<TARGET_FILE:lupine_cuda_client>\" | grep -q lupine_rpc_write_start_request")
     endif()
 
+    if(TARGET lupine_cublas_client)
+        add_test(NAME cublas_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q lupine_cudart_connection")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -811,6 +895,10 @@ endif()
 if(TARGET lupine_cudart_client)
     message(STATUS
         "Building CUDA runtime client: lupine_cudart_client (libcudart.so.${LUPINE_CUDART_SOVERSION})")
+endif()
+if(TARGET lupine_cublas_client)
+    message(STATUS
+        "Building cuBLAS client: lupine_cublas_client (libcublas.so.${LUPINE_CUBLAS_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

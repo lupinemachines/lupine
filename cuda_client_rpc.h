@@ -34,6 +34,11 @@ int lupine_rpc_wait_for_response(conn_t *conn);
 int lupine_rpc_read(conn_t *conn, void *data, size_t size);
 int lupine_rpc_read_end(conn_t *conn);
 
+// Exported by the CUDA runtime shim (libcudart) for a sibling whose objects
+// are created on the runtime's current device (libcublas): the connection
+// serving that device, with the device bound on this thread's lane.
+conn_t *lupine_cudart_connection(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -16,6 +16,7 @@ from ops import (
     NullableArrayOperation,
     NullableOperation,
     NullTerminatedOperation,
+    ScalarOperation,
 )
 
 
@@ -111,7 +112,8 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     f.write(") {\n")
     for operation in operations:
         if isinstance(
-            operation, (InOutCountOperation, NullableArrayOperation)
+            operation,
+            (InOutCountOperation, NullableArrayOperation, ScalarOperation),
         ) or (isinstance(operation, NullTerminatedOperation) and operation.recv):
             f.write(operation.client_declaration())
     # Reject invalid send buffers before the request is framed, so a bad
