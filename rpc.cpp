@@ -23,6 +23,8 @@
 
 namespace {
 
+const rpc_va_provider *lupine_va_provider = nullptr;
+
 #if !defined(_WIN32) && !defined(__APPLE__)
 void *lupine_va_reserve_exact(uintptr_t base, size_t size) {
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -47,6 +49,16 @@ void lupine_va_destroy(conn_t *conn) {
   if (conn == nullptr || conn->va_size == 0) {
     return;
   }
+  // Whether arenas come from a provider is a property of the process, not of
+  // the connection: the hook is installed once at load time, before any
+  // connection exists, and only ever by a server backend.
+  if (lupine_va_provider != nullptr && lupine_va_provider->release != nullptr) {
+    lupine_va_provider->release(conn);
+    conn->va_base = 0;
+    conn->va_size = 0;
+    conn->va_next = 0;
+    return;
+  }
 #if !defined(_WIN32) && !defined(__APPLE__)
   munmap(reinterpret_cast<void *>(conn->va_base + conn->w_offset),
          conn->va_size);
@@ -59,9 +71,28 @@ void lupine_va_destroy(conn_t *conn) {
 
 } // namespace
 
+int rpc_set_va_provider(const rpc_va_provider *provider) {
+  if (lupine_va_provider != nullptr) {
+    return -1;
+  }
+  lupine_va_provider = provider;
+  return 0;
+}
+
 lupine_va_window lupine_va_local_window(void) {
+  // An installed provider is authoritative, including when it states no window:
+  // falling back to the built-in range would advertise arenas the backend that
+  // owns reservations cannot actually hand out.
+  if (lupine_va_provider != nullptr) {
+    lupine_va_window stated = {};
+    if (lupine_va_provider->window != nullptr &&
+        lupine_va_provider->window(&stated)) {
+      return stated;
+    }
+    return {};
+  }
 #if defined(_WIN32) || defined(__APPLE__)
-  // No arena can be hosted here, so state none and let the peer fall back.
+  // Nothing here can host an arena without a backend provider, so state none.
   return {};
 #else
   return {LUPINE_VA_FIRST_BASE, LUPINE_VA_ARENA_SIZE * LUPINE_VA_ARENA_COUNT};
@@ -127,6 +158,15 @@ bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
 int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size) {
   if (conn == nullptr || conn->va_size != 0) {
     return -1;
+  }
+  if (lupine_va_provider != nullptr && lupine_va_provider->reserve != nullptr) {
+    if (lupine_va_provider->reserve(conn, base, size) < 0) {
+      return -1;
+    }
+    conn->va_base = base;
+    conn->va_size = size;
+    conn->va_next = base;
+    return 0;
   }
 #if defined(_WIN32) || defined(__APPLE__)
   return -1;

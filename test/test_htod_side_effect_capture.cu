@@ -53,6 +53,9 @@ static int check_captured_source(CUdeviceptr destination, CUstream stream,
                                  const char *label) {
   std::vector<unsigned char> readback(bytes);
   CHECK(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  // Managed allocations are write-tracked by the client. Dirtying one after
+  // capture begins forces the pre-RPC flush itself to be capture-safe.
+  std::fill_n(source, bytes, static_cast<unsigned char>(0x22));
   CHECK(cuMemcpyHtoDAsync(destination, source, bytes, stream));
   CUgraph graph = nullptr;
   CHECK(cuStreamEndCapture(stream, &graph));

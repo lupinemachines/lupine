@@ -753,6 +753,49 @@ void test_va_window_and_aliases_are_disjoint() {
           "writable aliases overlap the arena window");
 }
 
+// A backend that must reserve arenas through its own driver replaces both the
+// stated window and the reservation itself, so the core has to defer to it
+// rather than to its own fixed mapping. Installation is one-shot.
+lupine_va_window provider_window_value = {0x2000000000, 0x4000000000};
+bool provider_window_called = false;
+bool provider_window(lupine_va_window *window) {
+  provider_window_called = true;
+  *window = provider_window_value;
+  return provider_window_value.size != 0;
+}
+int provider_reserve(conn_t *, uintptr_t, size_t) { return -1; }
+// Reserving always fails above, so nothing in this process is ever provider
+// owned. Releasing through the provider would mean a connection reached
+// teardown after the hook was installed, which leaks its mmap'd arena.
+void provider_release(conn_t *) {
+  require(false, "an mmap-owned arena was released through the provider");
+}
+
+// Installing a provider is process-wide and one-shot, so this runs last: a
+// connection torn down afterwards would take the provider release path.
+void test_va_provider_supplies_window() {
+  const lupine_va_window builtin = lupine_va_local_window();
+  static const rpc_va_provider provider = {provider_window, provider_reserve,
+                                           provider_release};
+  require(rpc_set_va_provider(&provider) == 0, "provider install failed");
+  require(rpc_set_va_provider(&provider) == -1,
+          "provider install was not one-shot");
+
+  provider_window_called = false;
+  const lupine_va_window stated = lupine_va_local_window();
+  require(provider_window_called, "core did not consult the provider");
+  require(stated.base == provider_window_value.base &&
+              stated.size == provider_window_value.size,
+          "core did not adopt the provider's window");
+  require(stated.base != builtin.base || stated.size != builtin.size,
+          "provider window was indistinguishable from the built-in one");
+  // A provider that states no window must not leak the built-in range, or the
+  // core would advertise arenas the backend cannot hand out.
+  provider_window_value = {};
+  require(lupine_va_local_window().size == 0,
+          "an empty provider window leaked a non-empty local window");
+}
+
 void test_fragmented_cursors() {
   h2_pair pair = make_pair();
   std::vector<std::string> chunks = {"alpha", "", ":", "beta", ":gamma"};
@@ -1960,6 +2003,7 @@ int main() {
 #endif
   RUN_CASE(test_server_window_hold_caps_and_releases());
   RUN_CASE(test_reset_wakes_flow_controlled_writer());
+  RUN_CASE(test_va_provider_supplies_window());
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
 }
