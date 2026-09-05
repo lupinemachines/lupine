@@ -33,6 +33,7 @@ extern "C" void __cudaRegisterTexture(void **, const void *, const void **,
                                       const char *, int, int, int);
 extern "C" void __cudaRegisterSurface(void **, const void *, const void **,
                                       const char *, int, int);
+extern "C" void __cudaRegisterHostVar(void **, const char *, char *, size_t);
 extern "C" void __cudaRegisterUnifiedTable(void *);
 extern "C" unsigned __cudaPushCallConfiguration(dim3, dim3, size_t, void *);
 extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *, dim3 *, size_t *,
@@ -49,7 +50,10 @@ static thread_local std::vector<unsigned char> request, response;
 static thread_local size_t read_offset;
 static thread_local int operation, server;
 static thread_local bool fail_request;
-static int registrations, functions, variables, managed, textures, surfaces;
+static thread_local int failing_server = -1;
+static int registrations, functions, variables, managed, textures, surfaces,
+    host_variables;
+static int ended[2], unregistered[2];
 static std::vector<const char *> retained_names;
 static std::vector<const uint3 *> retained_indices;
 static std::vector<void **> managed_slots;
@@ -64,6 +68,8 @@ static CUresult driver_result = CUDA_SUCCESS;
 static CUdeviceptr driver_dst, driver_src;
 static size_t driver_count;
 static CUstream driver_stream;
+static CUevent driver_event;
+static unsigned driver_flags;
 static CUDA_MEMCPY3D driver_3d;
 
 extern "C" int lupine_rpc_device_count(int *count) {
@@ -103,10 +109,10 @@ static void append(std::vector<unsigned char> &bytes, const void *data,
   bytes.insert(bytes.end(), p, p + size);
 }
 extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
-  if (fail_request)
-    return -1;
   assert(conn == servers[0] || conn == servers[1]);
   server = conn == servers[1];
+  if (fail_request || server == failing_server)
+    return -1;
   operation = op;
   writes.clear();
   request.clear();
@@ -152,6 +158,7 @@ extern "C" int lupine_rpc_wait_for_response(conn_t *conn) {
     DISPATCH(__cudaRegisterManagedVar);
     DISPATCH(__cudaRegisterTexture);
     DISPATCH(__cudaRegisterSurface);
+    DISPATCH(__cudaRegisterHostVar);
     DISPATCH(__cudaPushCallConfiguration);
     DISPATCH(__cudaPopCallConfiguration);
     DISPATCH(cudaSetDevice);
@@ -187,15 +194,21 @@ static void **vendor_fatbin(void *image) {
   ++registrations;
   return reinterpret_cast<void **>(0x1000 + server * 0x100);
 }
-static void vendor_end(void **) {
+static void vendor_end(void **handle) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
+  ++ended[server];
   // These writes happen after the registration RPC's temporary buffers died.
   for (void **slot : managed_slots)
     *slot = reinterpret_cast<void *>(0xdead);
 }
-static void vendor_unregister(void **) {}
-static void vendor_function(void **, const char *host, char *device,
+static void vendor_unregister(void **handle) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
+  ++unregistered[server];
+}
+static void vendor_function(void **handle, const char *host, char *device,
                             const char *name, int limit, uint3 *tid, uint3 *bid,
                             dim3 *bd, dim3 *gd, int *ws) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
   assert(host == reinterpret_cast<const char *>(0xabc));
   assert(std::strcmp(device, "kernel") == 0 &&
          std::strcmp(name, "kernel") == 0);
@@ -210,31 +223,42 @@ static void vendor_function(void **, const char *host, char *device,
   retained_names.push_back(name);
   ++functions;
 }
-static void vendor_var(void **, char *host, char *device, const char *name, int,
-                       size_t size, int, int) {
+static void vendor_var(void **handle, char *host, char *device,
+                       const char *name, int, size_t size, int, int) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
   assert(host == reinterpret_cast<char *>(0xdef) && size == 32);
   assert(std::strcmp(device, "variable") == 0);
   retained_names.push_back(name);
   ++variables;
 }
-static void vendor_managed(void **, void **slot, char *, const char *name, int,
-                           size_t, int, int) {
+static void vendor_managed(void **handle, void **slot, char *, const char *name,
+                           int, size_t, int, int) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
   assert(slot != reinterpret_cast<void **>(0xbad));
   managed_slots.push_back(slot);
   retained_names.push_back(name);
   ++managed;
 }
-static void vendor_texture(void **, const void *, const void **device,
+static void vendor_texture(void **handle, const void *, const void **device,
                            const char *name, int, int, int) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
   assert(std::strcmp(reinterpret_cast<const char *>(device), "texture") == 0);
   retained_names.push_back(name);
   ++textures;
 }
-static void vendor_surface(void **, const void *, const void **device,
+static void vendor_surface(void **handle, const void *, const void **device,
                            const char *name, int, int) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
   assert(std::strcmp(reinterpret_cast<const char *>(device), "surface") == 0);
   retained_names.push_back(name);
   ++surfaces;
+}
+static void vendor_host_var(void **handle, const char *name, char *host,
+                            size_t size) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
+  assert(host == reinterpret_cast<char *>(0xdef) && size == 32);
+  retained_names.push_back(name);
+  ++host_variables;
 }
 struct configuration {
   dim3 grid, block;
@@ -305,6 +329,7 @@ extern "C" void *__wrap_dlsym(void *, const char *name) {
   SYMBOL(__cudaRegisterManagedVar, vendor_managed);
   SYMBOL(__cudaRegisterTexture, vendor_texture);
   SYMBOL(__cudaRegisterSurface, vendor_surface);
+  SYMBOL(__cudaRegisterHostVar, vendor_host_var);
   SYMBOL(__cudaPushCallConfiguration, vendor_push);
   SYMBOL(__cudaPopCallConfiguration, vendor_pop);
   SYMBOL(cudaSetDevice, vendor_set_device);
@@ -395,32 +420,43 @@ extern "C" CUresult cuCtxSynchronize() {
   driver_call = "device_sync";
   return driver_result;
 }
-extern "C" CUresult cuStreamSynchronize(CUstream) {
+extern "C" CUresult cuStreamSynchronize(CUstream stream) {
   driver_call = "stream_sync";
+  driver_stream = stream;
   return driver_result;
 }
-extern "C" CUresult cuStreamQuery(CUstream) {
+extern "C" CUresult cuStreamQuery(CUstream stream) {
   driver_call = "stream_query";
+  driver_stream = stream;
   return driver_result;
 }
-extern "C" CUresult cuEventSynchronize(CUevent) {
+extern "C" CUresult cuEventSynchronize(CUevent event) {
   driver_call = "event_sync";
+  driver_event = event;
   return driver_result;
 }
-extern "C" CUresult cuEventQuery(CUevent) {
+extern "C" CUresult cuEventQuery(CUevent event) {
   driver_call = "event_query";
+  driver_event = event;
   return driver_result;
 }
-extern "C" CUresult cuEventRecord(CUevent, CUstream) {
+extern "C" CUresult cuEventRecord(CUevent event, CUstream stream) {
   driver_call = "event_record";
+  driver_event = event;
+  driver_stream = stream;
   return driver_result;
 }
-extern "C" CUresult cuEventRecordWithFlags(CUevent, CUstream, unsigned) {
+extern "C" CUresult cuEventRecordWithFlags(CUevent event, CUstream stream,
+                                           unsigned flags) {
   driver_call = "event_record_flags";
+  driver_event = event;
+  driver_stream = stream;
+  driver_flags = flags;
   return driver_result;
 }
-extern "C" CUresult cuEventDestroy(CUevent) {
+extern "C" CUresult cuEventDestroy(CUevent event) {
   driver_call = "event_destroy";
+  driver_event = event;
   return driver_result;
 }
 
@@ -449,19 +485,33 @@ int main() {
                         0);
   __cudaRegisterSurface(
       handle, nullptr, reinterpret_cast<const void **>(surface), surface, 2, 0);
+  __cudaRegisterHostVar(handle, variable, reinterpret_cast<char *>(0xdef), 32);
   std::memset(kernel, '!', 6);
   std::memset(variable, '!', 8);
   assert(functions == 4 && variables == 2 && managed == 2 && textures == 2 &&
-         surfaces == 2);
+         surfaces == 2 && host_variables == 2);
   for (const char *name : retained_names)
     assert(std::strchr(name, '!') == nullptr);
   tid.x = 99;
   for (const uint3 *index : retained_indices)
     assert(index->x == 7);
   __cudaRegisterFatBinaryEnd(handle);
+  assert(ended[0] == 1 && ended[1] == 1);
   for (void **slot : managed_slots)
     assert(*slot == reinterpret_cast<void *>(0xdead));
+  failing_server = 0;
+  __cudaRegisterFatBinaryEnd(handle);
+  assert(ended[0] == 1 && ended[1] == 2);
+  assert(cudaPeekAtLastError() == cudaErrorDevicesUnavailable);
+  failing_server = -1;
   __cudaUnregisterFatBinary(handle);
+  assert(unregistered[0] == 1 && unregistered[1] == 1);
+  // Released handles no longer broadcast, including repeated unregisters.
+  __cudaRegisterFatBinaryEnd(handle);
+  __cudaUnregisterFatBinary(handle);
+  assert(ended[0] == 1 && ended[1] == 2);
+  assert(unregistered[0] == 1 && unregistered[1] == 1);
+  assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
   assert(cudaPeekAtLastError() == cudaSuccess);
 
   auto stream = reinterpret_cast<cudaStream_t>(0x123456789abcdef0ULL);
@@ -559,21 +609,45 @@ int main() {
          driver_call == "peer_async");
 
   auto event = reinterpret_cast<cudaEvent_t>(0x123);
-  assert(cudaEventRecord(event, stream) == cudaSuccess &&
-         driver_call == "event_record");
-  assert(cudaEventRecordWithFlags(event, stream, 0) == cudaSuccess &&
-         driver_call == "event_record_flags");
-  assert(cudaEventSynchronize(event) == cudaSuccess &&
-         driver_call == "event_sync");
-  assert(cudaEventQuery(event) == cudaSuccess && driver_call == "event_query");
-  assert(cudaEventDestroy(event) == cudaSuccess &&
-         driver_call == "event_destroy");
-  assert(cudaStreamSynchronize(stream) == cudaSuccess &&
-         driver_call == "stream_sync");
-  assert(cudaStreamQuery(stream) == cudaSuccess &&
-         driver_call == "stream_query");
-  assert(cudaDeviceSynchronize() == cudaSuccess &&
-         driver_call == "device_sync");
+  for (CUresult result :
+       {CUDA_SUCCESS, CUDA_ERROR_NOT_READY, CUDA_ERROR_DEINITIALIZED}) {
+    driver_result = result;
+    auto expected = result == CUDA_ERROR_DEINITIALIZED
+                        ? cudaErrorDeviceUninitialized
+                        : static_cast<cudaError_t>(result);
+    driver_event = nullptr;
+    driver_stream = nullptr;
+    assert(cudaEventRecord(event, stream) == expected &&
+           driver_call == "event_record" && driver_event == event &&
+           driver_stream == stream);
+    driver_event = nullptr;
+    driver_stream = nullptr;
+    driver_flags = 0;
+    assert(cudaEventRecordWithFlags(event, stream, cudaEventRecordExternal) ==
+               expected &&
+           driver_call == "event_record_flags" && driver_event == event &&
+           driver_stream == stream && driver_flags == cudaEventRecordExternal);
+    driver_event = nullptr;
+    assert(cudaEventSynchronize(event) == expected &&
+           driver_call == "event_sync" && driver_event == event);
+    driver_event = nullptr;
+    assert(cudaEventQuery(event) == expected && driver_call == "event_query" &&
+           driver_event == event);
+    driver_event = nullptr;
+    assert(cudaEventDestroy(event) == expected &&
+           driver_call == "event_destroy" && driver_event == event);
+    driver_stream = nullptr;
+    assert(cudaStreamSynchronize(stream) == expected &&
+           driver_call == "stream_sync" && driver_stream == stream);
+    driver_stream = nullptr;
+    assert(cudaStreamQuery(stream) == expected &&
+           driver_call == "stream_query" && driver_stream == stream);
+    assert(cudaDeviceSynchronize() == expected && driver_call == "device_sync");
+  }
+  driver_result = CUDA_SUCCESS;
+  assert(cudaDeviceSynchronize() == cudaSuccess);
+  assert(cudaGetLastError() == cudaErrorDeviceUninitialized);
+  assert(cudaPeekAtLastError() == cudaSuccess);
   driver_result = CUDA_ERROR_DEINITIALIZED;
   assert(cudaMemcpy(dst, src, 1, cudaMemcpyDefault) ==
          cudaErrorDeviceUninitialized);

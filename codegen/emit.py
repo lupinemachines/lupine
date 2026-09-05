@@ -154,6 +154,27 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     result = function.return_type.format()
     params = ", ".join(format_function_params(function))
     f.write(f'extern "C" {result} {name}({params}) {{\n')
+    if metadata.client_call is not None:
+        args = ", ".join(format_call_args(function))
+        f.write(f"  return record({metadata.client_call}({args}));\n")
+        f.write("}\n\n")
+        return
+    if metadata.broadcast is not None:
+        if result != "void":
+            raise RuntimeError(f"{name}: @broadcast currently requires a void result")
+        handle = metadata.broadcast.parameter
+        args = ", ".join(
+            "remote_handle" if arg == handle.name else arg
+            for arg in format_call_args(function)
+        )
+        f.write(f"  broadcast_{metadata.broadcast.kind.lower()}({handle.name},\n")
+        f.write(f"      [&](conn_t *conn, {handle.type.format()} remote_handle) {{\n")
+        f.write(f"        return lupine_rpc_{name}(conn, {args});\n")
+        f.write("      });\n")
+        for release in metadata.releases:
+            f.write(f"  release_{release.kind.lower()}({release.parameter.name});\n")
+        f.write("}\n\n")
+        return
     write_client_validation(f, backend, operations)
 
     call_args = format_call_args(function)
@@ -241,7 +262,7 @@ def unsupported(function, metadata) -> bool:
     it leaves out, and one it carries without saying what to do with the
     parameters, mean the same thing, and both get a stub.
     """
-    if metadata.disabled_client:
+    if metadata.disabled_client or metadata.client_call is not None:
         return False
     return bool(function.parameters) and not metadata.operations
 
@@ -395,7 +416,8 @@ def write_backend(backend: Backend, functions_with_annotations, sdk_functions=()
                 f.write(f"#if {metadata.guard}\n")
             if not metadata.disabled_client:
                 client_functions[function.name.format()] = function
-            write_client_rpc(f, backend, function, operations, metadata)
+            if metadata.client_call is None:
+                write_client_rpc(f, backend, function, operations, metadata)
             write_client_wrapper(f, backend, function, operations, metadata)
             if metadata.guard is not None:
                 f.write("#endif\n\n")

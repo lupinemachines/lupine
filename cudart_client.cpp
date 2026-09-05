@@ -31,6 +31,16 @@ namespace {
 
 cudaError_t rpc_error() { return cudaErrorDevicesUnavailable; }
 
+cudaError_t record(cudaError_t error);
+
+// Most driver and runtime error values agree. A deinitialized driver is not
+// cudaErrorCudartUnloading (the runtime's historical value at the same number).
+cudaError_t record(CUresult error) {
+  return record(error == CUDA_ERROR_DEINITIALIZED
+                    ? cudaErrorDeviceUninitialized
+                    : static_cast<cudaError_t>(error));
+}
+
 // The generated code speaks the RPC core's vocabulary; the driver shim exports
 // it under its own prefix so both can be declared in one translation unit.
 int rpc_write_start_request(conn_t *conn, int op) {
@@ -72,6 +82,43 @@ std::vector<conn_t *> all_connections() {
     }
   }
   return connections;
+}
+
+// nvcc registers each embedded image once per process; the runtime on every
+// server has to see it, so a client handle stands for one server handle per
+// connection and every later registration call fans out the same way.
+struct fatbin_registration {
+  std::vector<std::pair<conn_t *, void **>> handles;
+};
+
+std::mutex &registry_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+std::unordered_map<void **, fatbin_registration> &fatbins() {
+  static auto *map = new std::unordered_map<void **, fatbin_registration>();
+  return *map;
+}
+
+// Registration is replicated, but each request uses the generated marshaller.
+template <typename Call>
+void broadcast_fatbin(void **fatCubinHandle, Call call) {
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto entry = fatbins().find(fatCubinHandle);
+  if (entry == fatbins().end()) {
+    return;
+  }
+  for (const auto &[conn, handle] : entry->second.handles) {
+    record(call(conn, handle));
+  }
+}
+
+void release_fatbin(void **fatCubinHandle) {
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  if (fatbins().erase(fatCubinHandle) != 0) {
+    delete[] fatCubinHandle;
+  }
 }
 
 } // namespace
@@ -240,14 +287,6 @@ cudaCreateChannelDesc(int x, int y, int z, int w,
 // ---------------------------------------------------------------------------
 
 namespace {
-
-// Most driver and runtime error values agree. A deinitialized driver is not
-// cudaErrorCudartUnloading (the runtime's historical value at the same number).
-cudaError_t record(CUresult error) {
-  return record(error == CUDA_ERROR_DEINITIALIZED
-                    ? cudaErrorDeviceUninitialized
-                    : static_cast<cudaError_t>(error));
-}
 
 cudaError_t copy_2d(void *dst, size_t dpitch, const void *src, size_t spitch,
                     size_t width, size_t height, cudaMemcpyKind kind,
@@ -519,42 +558,6 @@ extern "C" cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice,
   return copy_peer(dst, dstDevice, src, srcDevice, count, &stream);
 }
 
-// Driver copies may defer host results until synchronization. Use the same
-// completion path to collect those bytes before returning to runtime callers.
-extern "C" cudaError_t cudaDeviceSynchronize() {
-  return record(cuCtxSynchronize());
-}
-
-extern "C" cudaError_t cudaStreamSynchronize(cudaStream_t stream) {
-  return record(cuStreamSynchronize(stream));
-}
-
-extern "C" cudaError_t cudaStreamQuery(cudaStream_t stream) {
-  return record(cuStreamQuery(stream));
-}
-
-extern "C" cudaError_t cudaEventSynchronize(cudaEvent_t event) {
-  return record(cuEventSynchronize(event));
-}
-
-extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
-  return record(cuEventQuery(event));
-}
-
-extern "C" cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream) {
-  return record(cuEventRecord(event, stream));
-}
-
-extern "C" cudaError_t cudaEventRecordWithFlags(cudaEvent_t event,
-                                                cudaStream_t stream,
-                                                unsigned int flags) {
-  return record(cuEventRecordWithFlags(event, stream, flags));
-}
-
-extern "C" cudaError_t cudaEventDestroy(cudaEvent_t event) {
-  return record(cuEventDestroy(event));
-}
-
 // ---------------------------------------------------------------------------
 // Attributes whose width the attribute decides
 // ---------------------------------------------------------------------------
@@ -657,23 +660,6 @@ cudaDeviceSetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
 
 namespace {
 
-// nvcc registers each embedded image once per process; the runtime on every
-// server has to see it, so a client handle stands for one server handle per
-// connection and every later registration call fans out the same way.
-struct fatbin_registration {
-  std::vector<std::pair<conn_t *, void **>> handles;
-};
-
-std::mutex &registry_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-std::unordered_map<void **, fatbin_registration> &fatbins() {
-  static auto *map = new std::unordered_map<void **, fatbin_registration>();
-  return *map;
-}
-
 // The fatbin proper: an outer header followed by its member entries.
 size_t fatbin_size(const void *image) {
   const auto *header = static_cast<const lupine_fatbin_header *>(image);
@@ -681,19 +667,6 @@ size_t fatbin_size(const void *image) {
     return 0;
   }
   return header->header_size + header->files_size;
-}
-
-// Registration is replicated, but each request uses the generated marshaller.
-template <typename Register, typename... Args>
-void register_on_each(void **fatCubinHandle, Register call, Args... args) {
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto entry = fatbins().find(fatCubinHandle);
-  if (entry == fatbins().end()) {
-    return;
-  }
-  for (const auto &[conn, handle] : entry->second.handles) {
-    record(call(conn, handle, args...));
-  }
 }
 
 } // namespace
@@ -733,73 +706,9 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
   return client_handle;
 }
 
-extern "C" void __cudaRegisterFatBinaryEnd(void **fatCubinHandle) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterFatBinaryEnd);
-}
-
-extern "C" void __cudaUnregisterFatBinary(void **fatCubinHandle) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaUnregisterFatBinary);
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  if (fatbins().erase(fatCubinHandle) != 0) {
-    delete[] fatCubinHandle;
-  }
-}
-
 extern "C" char __cudaInitModule(void **fatCubinHandle) {
   (void)fatCubinHandle;
   return 1;
-}
-
-extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
-                                       const char *hostFun, char *deviceFun,
-                                       const char *deviceName, int thread_limit,
-                                       uint3 *tid, uint3 *bid, dim3 *bDim,
-                                       dim3 *gDim, int *wSize) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterFunction, hostFun,
-                   deviceFun, deviceName, thread_limit, tid, bid, bDim, gDim,
-                   wSize);
-}
-
-extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
-                                  char *deviceAddress, const char *deviceName,
-                                  int ext, size_t size, int constant,
-                                  int global) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterVar, hostVar,
-                   deviceAddress, deviceName, ext, size, constant, global);
-}
-
-extern "C" void
-__cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
-                         char *deviceAddress, const char *deviceName, int ext,
-                         size_t size, int constant, int global) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterManagedVar,
-                   hostVarPtrAddress, deviceAddress, deviceName, ext, size,
-                   constant, global);
-}
-
-extern "C" void __cudaRegisterTexture(void **fatCubinHandle,
-                                      const void *hostVar,
-                                      const void **deviceAddress,
-                                      const char *deviceName, int dim, int norm,
-                                      int ext) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterTexture, hostVar,
-                   deviceAddress, deviceName, dim, norm, ext);
-}
-
-extern "C" void __cudaRegisterSurface(void **fatCubinHandle,
-                                      const void *hostVar,
-                                      const void **deviceAddress,
-                                      const char *deviceName, int dim,
-                                      int ext) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterSurface, hostVar,
-                   deviceAddress, deviceName, dim, ext);
-}
-
-extern "C" void __cudaRegisterHostVar(void **fatCubinHandle,
-                                      const char *deviceName, char *hostVar,
-                                      size_t size) {
-  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterHostVar, deviceName,
-                   hostVar, size);
 }
 
 // The private table layout and pointer fixups are not described by the SDK.

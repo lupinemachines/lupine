@@ -329,7 +329,7 @@ cudaError_t cudaDeviceSetMemPool(int device, cudaMemPool_t memPool);
 cudaError_t cudaDeviceSetSharedMemConfig(enum cudaSharedMemConfig config);
 #endif
 /**
- * @disabled local - reuse the driver's copy and completion machinery
+ * @clientcall cuCtxSynchronize
  */
 cudaError_t cudaDeviceSynchronize(void);
 #if CUDART_VERSION >= 12000
@@ -356,7 +356,7 @@ cudaError_t cudaEventCreate(cudaEvent_t *event);
  */
 cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event, unsigned int flags);
 /**
- * @disabled local - reuse the driver's copy-completion markers
+ * @clientcall cuEventDestroy
  */
 cudaError_t cudaEventDestroy(cudaEvent_t event);
 /**
@@ -367,20 +367,20 @@ cudaError_t cudaEventDestroy(cudaEvent_t event);
  */
 cudaError_t cudaEventElapsedTime(float *ms, cudaEvent_t start, cudaEvent_t end);
 /**
- * @disabled local - reuse the driver's copy and completion machinery
+ * @clientcall cuEventQuery
  */
 cudaError_t cudaEventQuery(cudaEvent_t event);
 /**
- * @disabled local - reuse the driver's copy-completion markers
+ * @clientcall cuEventRecord
  */
 cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream);
 /**
- * @disabled local - reuse the driver's copy-completion markers
+ * @clientcall cuEventRecordWithFlags
  */
 cudaError_t cudaEventRecordWithFlags(cudaEvent_t event, cudaStream_t stream,
                                      unsigned int flags);
 /**
- * @disabled local - reuse the driver's copy and completion machinery
+ * @clientcall cuEventSynchronize
  */
 cudaError_t cudaEventSynchronize(cudaEvent_t event);
 #if CUDART_VERSION >= 13000
@@ -1771,7 +1771,7 @@ cudaError_t cudaStreamGetPriority(cudaStream_t hStream, int *priority);
 cudaError_t cudaStreamIsCapturing(cudaStream_t stream,
                                   enum cudaStreamCaptureStatus *pCaptureStatus);
 /**
- * @disabled local - reuse the driver's copy and completion machinery
+ * @clientcall cuStreamQuery
  */
 cudaError_t cudaStreamQuery(cudaStream_t stream);
 /**
@@ -1782,7 +1782,7 @@ cudaError_t cudaStreamQuery(cudaStream_t stream);
 cudaError_t cudaStreamSetAttribute(cudaStream_t hStream, cudaStreamAttrID attr,
                                    const cudaStreamAttrValue *value);
 /**
- * @disabled local - reuse the driver's copy and completion machinery
+ * @clientcall cuStreamSynchronize
  */
 cudaError_t cudaStreamSynchronize(cudaStream_t stream);
 #if CUDART_VERSION < 13000
@@ -2693,7 +2693,7 @@ cudaError_t cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource);
 // Registration strings and managed slots outlive an RPC; typed server
 // adapters retain them, while codegen owns all transport.
 /**
- * @disabled client - fan out over the fatbin's server handles
+ * @broadcast FATBIN fatCubinHandle
  * @servercall register_function
  * @param fatCubinHandle SEND_ONLY
  * @param hostFun SEND_ONLY
@@ -2711,7 +2711,7 @@ void __cudaRegisterFunction(void **fatCubinHandle, const char *hostFun,
                             int thread_limit, uint3 *tid, uint3 *bid,
                             dim3 *bDim, dim3 *gDim, int *wSize);
 /**
- * @disabled client - fan out over the fatbin's server handles
+ * @broadcast FATBIN fatCubinHandle
  * @servercall register_var
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
@@ -2726,7 +2726,7 @@ void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                        char *deviceAddress, const char *deviceName, int ext,
                        size_t size, int constant, int global);
 /**
- * @disabled client - fan out over the fatbin's server handles
+ * @broadcast FATBIN fatCubinHandle
  * @servercall register_managed_var
  * @param fatCubinHandle SEND_ONLY
  * @param hostVarPtrAddress SEND_ONLY
@@ -2741,7 +2741,7 @@ void __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                               char *deviceAddress, const char *deviceName,
                               int ext, size_t size, int constant, int global);
 /**
- * @disabled client - fan out over the fatbin's server handles
+ * @broadcast FATBIN fatCubinHandle
  * @servercall register_texture
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
@@ -2755,7 +2755,7 @@ void __cudaRegisterTexture(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int norm, int ext);
 /**
- * @disabled client - fan out over the fatbin's server handles
+ * @broadcast FATBIN fatCubinHandle
  * @servercall register_surface
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
@@ -2768,7 +2768,7 @@ void __cudaRegisterSurface(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int ext);
 /**
- * @disabled client - fan out over the fatbin's server handles
+ * @broadcast FATBIN fatCubinHandle
  * @servercall register_host_var
  * @param fatCubinHandle SEND_ONLY
  * @param deviceName SEND_ONLY NULL_TERMINATED
@@ -2798,12 +2798,13 @@ cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
                                        size_t *sharedMem, void *stream);
 
 /**
- * @disabled client - fan out over the fatbin's server handles
+ * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  */
 void __cudaRegisterFatBinaryEnd(void **fatCubinHandle);
 /**
- * @disabled client - fan out, then release the client handle
+ * @broadcast FATBIN fatCubinHandle
+ * @release FATBIN fatCubinHandle
  * @servercall unregister_fat_binary
  * @param fatCubinHandle SEND_ONLY
  */

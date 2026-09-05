@@ -554,6 +554,20 @@ def parse_annotation(
                 raise RuntimeError("@servercall requires one adapter name")
             metadata.server_call = parts[1]
             continue
+        if line.strip().startswith("@clientcall"):
+            parts = line.split()
+            if len(parts) != 2 or metadata.client_call is not None:
+                raise RuntimeError("@clientcall requires one target name")
+            metadata.client_call = parts[1]
+            continue
+        if line.strip().startswith("@broadcast"):
+            parts = line.split()
+            if len(parts) != 3 or metadata.broadcast is not None:
+                raise RuntimeError("@broadcast requires a handle kind and parameter")
+            metadata.broadcast = OwnerAnnotation(
+                kind=parts[1].upper(), parameter=annotation_param(params, parts[2])
+            )
+            continue
         if line.startswith("@routingkey"):
             parts = line.split()
             if len(parts) < 2:
@@ -866,6 +880,18 @@ def parse_annotation(
                 "@retain currently requires a RECV_ONLY NULL_TERMINATED parameter"
             )
 
+    if metadata.client_call is not None:
+        if (
+            metadata.disabled_client
+            or metadata.disabled_server
+            or metadata.server_call
+            or metadata.broadcast
+        ):
+            raise RuntimeError(
+                "@clientcall cannot combine with @disabled, @servercall or @broadcast"
+            )
+        metadata.disabled_server = True
+
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
     return metadata
@@ -1137,7 +1163,7 @@ def write_rpc_ids(
         for name in NVML_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
         for function, _, _, metadata in forwarded_functions:
-            if unsupported(function, metadata) or (
+            if metadata.client_call is not None or unsupported(function, metadata) or (
                 metadata.disabled_client and metadata.disabled_server
             ):
                 continue

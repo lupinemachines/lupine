@@ -1030,6 +1030,10 @@ class FunctionAnnotationMetadata:
     guard: Optional[str] = None
     disabled_client: bool = False
     disabled_server: bool = False
+    # @clientcall: delegate to another client entry point without an RPC.
+    client_call: Optional[str] = None
+    # @broadcast: invoke the RPC on every remote instance of a client handle.
+    broadcast: Optional[OwnerAnnotation] = None
     # @servercall: typed adapter for API-specific server-side state.
     server_call: Optional[str] = None
     # @async: fire-and-forget op; client does not wait, server sends no response.

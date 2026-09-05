@@ -49,6 +49,21 @@ manual entry point can reuse it without an additional annotation.
 
 `@disabled local` omits both generated sides and server registration: the
 manual client implements the call locally or delegates to another shim.
+
+For forwarding backends, `@clientcall <target>` generates a client wrapper that
+calls `target` with the original arguments in declaration order and records its
+result. It generates no RPC or server handler; the target owns routing and
+completion. The runtime sync/event wrappers use this to delegate to the driver's
+copy-completion paths.
+
+`@broadcast <kind> <handle>` generates a void client entry point that calls
+`broadcast_<kind>` with a generated RPC callback. The callback substitutes each
+remote handle in the original argument list. For example,
+`@broadcast FATBIN fatCubinHandle` visits every server that registered that
+fatbin, records errors and continues after failures. This differs from
+`@routingkey ALL`, which searches until a lookup succeeds. A matching
+`@release FATBIN fatCubinHandle` releases the client handle after all attempts.
+
 `@servercall <adapter>` keeps generated marshalling but calls a typed adapter
 instead of looking up the vendor symbol. The adapter returns the wire result
 (the backend status for a void API). Runtime registration adapters use this to

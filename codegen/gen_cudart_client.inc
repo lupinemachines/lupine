@@ -908,6 +908,10 @@ extern "C" cudaError_t cudaDeviceSetMemPool(int device, cudaMemPool_t memPool) {
   return record(lupine_rpc_cudaDeviceSetMemPool(conn, device, memPool));
 }
 
+extern "C" cudaError_t cudaDeviceSynchronize() {
+  return record(cuCtxSynchronize());
+}
+
 static cudaError_t lupine_rpc_cudaDriverGetVersion(conn_t *conn,
                                                    int *driverVersion) {
   cudaError_t return_value = rpc_error();
@@ -984,6 +988,10 @@ extern "C" cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event,
   return return_value;
 }
 
+extern "C" cudaError_t cudaEventDestroy(cudaEvent_t event) {
+  return record(cuEventDestroy(event));
+}
+
 static cudaError_t lupine_rpc_cudaEventElapsedTime(conn_t *conn, float *ms,
                                                    cudaEvent_t start,
                                                    cudaEvent_t end) {
@@ -1009,6 +1017,24 @@ extern "C" cudaError_t cudaEventElapsedTime(float *ms, cudaEvent_t start,
   conn_t *conn = start == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                   : lupine_rpc_conn_for_event(start);
   return record(lupine_rpc_cudaEventElapsedTime(conn, ms, start, end));
+}
+
+extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
+  return record(cuEventQuery(event));
+}
+
+extern "C" cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream) {
+  return record(cuEventRecord(event, stream));
+}
+
+extern "C" cudaError_t cudaEventRecordWithFlags(cudaEvent_t event,
+                                                cudaStream_t stream,
+                                                unsigned int flags) {
+  return record(cuEventRecordWithFlags(event, stream, flags));
+}
+
+extern "C" cudaError_t cudaEventSynchronize(cudaEvent_t event) {
+  return record(cuEventSynchronize(event));
 }
 
 #if CUDART_VERSION >= 13000
@@ -3912,6 +3938,10 @@ cudaStreamIsCapturing(cudaStream_t stream,
   return record(lupine_rpc_cudaStreamIsCapturing(conn, stream, pCaptureStatus));
 }
 
+extern "C" cudaError_t cudaStreamQuery(cudaStream_t stream) {
+  return record(cuStreamQuery(stream));
+}
+
 static cudaError_t
 lupine_rpc_cudaStreamSetAttribute(conn_t *conn, cudaStream_t hStream,
                                   cudaLaunchAttributeID attr,
@@ -3939,6 +3969,10 @@ cudaStreamSetAttribute(cudaStream_t hStream, cudaLaunchAttributeID attr,
   conn_t *conn = hStream == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                     : lupine_rpc_conn_for_stream(hStream);
   return record(lupine_rpc_cudaStreamSetAttribute(conn, hStream, attr, value));
+}
+
+extern "C" cudaError_t cudaStreamSynchronize(cudaStream_t stream) {
+  return record(cuStreamSynchronize(stream));
 }
 
 #if CUDART_VERSION >= 13000
@@ -6013,6 +6047,18 @@ static cudaError_t lupine_rpc___cudaRegisterFunction(
   return return_value;
 }
 
+extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
+                                       const char *hostFun, char *deviceFun,
+                                       const char *deviceName, int thread_limit,
+                                       uint3 *tid, uint3 *bid, dim3 *bDim,
+                                       dim3 *gDim, int *wSize) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterFunction(
+        conn, remote_handle, hostFun, deviceFun, deviceName, thread_limit, tid,
+        bid, bDim, gDim, wSize);
+  });
+}
+
 static cudaError_t
 lupine_rpc___cudaRegisterVar(conn_t *conn, void **fatCubinHandle, char *hostVar,
                              char *deviceAddress, const char *deviceName,
@@ -6045,6 +6091,17 @@ lupine_rpc___cudaRegisterVar(conn_t *conn, void **fatCubinHandle, char *hostVar,
     return rpc_error();
   }
   return return_value;
+}
+
+extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
+                                  char *deviceAddress, const char *deviceName,
+                                  int ext, size_t size, int constant,
+                                  int global) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterVar(conn, remote_handle, hostVar,
+                                        deviceAddress, deviceName, ext, size,
+                                        constant, global);
+  });
 }
 
 static cudaError_t lupine_rpc___cudaRegisterManagedVar(
@@ -6081,6 +6138,17 @@ static cudaError_t lupine_rpc___cudaRegisterManagedVar(
   return return_value;
 }
 
+extern "C" void
+__cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
+                         char *deviceAddress, const char *deviceName, int ext,
+                         size_t size, int constant, int global) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterManagedVar(
+        conn, remote_handle, hostVarPtrAddress, deviceAddress, deviceName, ext,
+        size, constant, global);
+  });
+}
+
 static cudaError_t lupine_rpc___cudaRegisterTexture(
     conn_t *conn, void **fatCubinHandle, const void *hostVar,
     const void **deviceAddress, const char *deviceName, int dim, int norm,
@@ -6114,6 +6182,18 @@ static cudaError_t lupine_rpc___cudaRegisterTexture(
   return return_value;
 }
 
+extern "C" void __cudaRegisterTexture(void **fatCubinHandle,
+                                      const void *hostVar,
+                                      const void **deviceAddress,
+                                      const char *deviceName, int dim, int norm,
+                                      int ext) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterTexture(conn, remote_handle, hostVar,
+                                            deviceAddress, deviceName, dim,
+                                            norm, ext);
+  });
+}
+
 static cudaError_t lupine_rpc___cudaRegisterSurface(
     conn_t *conn, void **fatCubinHandle, const void *hostVar,
     const void **deviceAddress, const char *deviceName, int dim, int ext) {
@@ -6145,6 +6225,17 @@ static cudaError_t lupine_rpc___cudaRegisterSurface(
   return return_value;
 }
 
+extern "C" void __cudaRegisterSurface(void **fatCubinHandle,
+                                      const void *hostVar,
+                                      const void **deviceAddress,
+                                      const char *deviceName, int dim,
+                                      int ext) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterSurface(
+        conn, remote_handle, hostVar, deviceAddress, deviceName, dim, ext);
+  });
+}
+
 static cudaError_t lupine_rpc___cudaRegisterHostVar(conn_t *conn,
                                                     void **fatCubinHandle,
                                                     const char *deviceName,
@@ -6168,6 +6259,15 @@ static cudaError_t lupine_rpc___cudaRegisterHostVar(conn_t *conn,
     return rpc_error();
   }
   return return_value;
+}
+
+extern "C" void __cudaRegisterHostVar(void **fatCubinHandle,
+                                      const char *deviceName, char *hostVar,
+                                      size_t size) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterHostVar(conn, remote_handle, deviceName,
+                                            hostVar, size);
+  });
 }
 
 static unsigned lupine_rpc___cudaPushCallConfiguration(
@@ -6248,6 +6348,12 @@ lupine_rpc___cudaRegisterFatBinaryEnd(conn_t *conn, void **fatCubinHandle) {
   return return_value;
 }
 
+extern "C" void __cudaRegisterFatBinaryEnd(void **fatCubinHandle) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterFatBinaryEnd(conn, remote_handle);
+  });
+}
+
 static cudaError_t lupine_rpc___cudaUnregisterFatBinary(conn_t *conn,
                                                         void **fatCubinHandle) {
   cudaError_t return_value = rpc_error();
@@ -6259,6 +6365,13 @@ static cudaError_t lupine_rpc___cudaUnregisterFatBinary(conn_t *conn,
     return rpc_error();
   }
   return return_value;
+}
+
+extern "C" void __cudaUnregisterFatBinary(void **fatCubinHandle) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaUnregisterFatBinary(conn, remote_handle);
+  });
+  release_fatbin(fatCubinHandle);
 }
 
 #if CUDART_VERSION >= 13000
