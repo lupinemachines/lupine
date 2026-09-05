@@ -2013,16 +2013,16 @@ nvmlDeviceSetNvLinkDeviceLowPowerThreshold(nvmlDevice_t device,
 // Registry-only operations without API declarations above. The code generator
 // reads these annotations directly; the C++ parser intentionally ignores them.
 #if 0
-/** @server NVML */
+/** @disabled server */
 void nvmlDeviceGetComputeRunningProcesses();
-/** @server NVML */
+/** @disabled server */
 void nvmlDeviceGetComputeRunningProcesses_v2();
-/** @server NVML */
+/** @disabled server */
 void nvmlDeviceGetGraphicsRunningProcesses();
-/** @server NVML */
+/** @disabled server */
 void nvmlDeviceGetGraphicsRunningProcesses_v2();
-/** @server NVML */
+/** @disabled server */
 void nvmlDeviceGetMPSComputeRunningProcesses();
-/** @server NVML */
+/** @disabled server */
 void nvmlDeviceGetMPSComputeRunningProcesses_v2();
 #endif

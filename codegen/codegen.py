@@ -324,36 +324,30 @@ def annotation_directives(annotation: str) -> list[str]:
     return directives
 
 
-def parse_server_binding(name: str, annotation: str) -> Optional[ServerBinding]:
-    backend = None
+def parse_server_binding(
+    name: str, annotation: str, backend: str
+) -> Optional[ServerBinding]:
+    """A hand-written server handler: `handle_<call>`, or the name given."""
     handler = None
     guard = None
     for directive in annotation_directives(annotation):
-        parts = directive.split(maxsplit=2)
-        if parts[0] == "@server":
-            if backend is not None or len(parts) < 2:
-                raise RuntimeError(
-                    f"Invalid @server annotation for {name}"
-                )
-            backend = parts[1].upper()
-            if backend not in SERVER_BACKENDS:
-                raise RuntimeError(f"Unknown RPC server backend {backend}")
-            if len(parts) == 3:
-                handler = parts[2]
+        parts = directive.split()
+        if parts[0] == "@disabled" and parts[1:2] == ["server"]:
+            if handler is not None:
+                raise RuntimeError(f"Duplicate @disabled server for {name}")
+            named = parts[2:3] and parts[2] != "-"
+            handler = parts[2] if named else "handle_" + name
         elif parts[0] == "@guard":
             if guard is not None or len(parts) < 2:
                 raise RuntimeError(f"Invalid @guard annotation for {name}")
             guard = directive.removeprefix("@guard").strip()
 
-    if backend is None:
-        return None
-
     if handler is None:
-        handler = "handle_" + name
+        return None
     return ServerBinding(name, backend, handler, guard)
 
 
-def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
+def collect_server_bindings(path: str, backend: str) -> dict[str, ServerBinding]:
     bindings = {}
     with open(path) as annotations_file:
         source = annotations_file.read()
@@ -362,12 +356,12 @@ def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
         name_match = re.search(r"([A-Za-z_]\w*)\s*\($", declaration)
         if name_match is None:
             continue
-        binding = parse_server_binding(name_match.group(1), annotation)
+        binding = parse_server_binding(name_match.group(1), annotation, backend)
         if binding is None:
             continue
         previous = bindings.get(binding.name)
         if previous is not None and previous != binding:
-            raise RuntimeError(f"Conflicting @server annotations for {binding.name}")
+            raise RuntimeError(f"Conflicting @disabled server for {binding.name}")
         bindings[binding.name] = binding
     return bindings
 
@@ -516,8 +510,6 @@ def parse_annotation(
             if not guard or metadata.guard is not None:
                 raise RuntimeError("Invalid @guard annotation")
             metadata.guard = guard
-            continue
-        if line.startswith("@server"):
             continue
         if line.startswith("@routingkey"):
             parts = line.split()
@@ -1434,7 +1426,12 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write("}\n\n")
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
-            if metadata.disabled_client and metadata.disabled_server:
+            # A call with neither side and nothing to marshal has no symbol.
+            if (
+                metadata.disabled_client
+                and metadata.disabled_server
+                and not metadata.operations
+            ):
                 continue
 
             if metadata.guard is not None:
@@ -1701,10 +1698,11 @@ def main():
         ANNOTATION_FILES["cuda"], definition_return_types
     )
     server_bindings = {}
-    for path in ANNOTATION_FILES.values():
-        for name, binding in collect_server_bindings(path).items():
+    # A handler belongs to the backend whose annotation file declares it.
+    for target, path in ANNOTATION_FILES.items():
+        for name, binding in collect_server_bindings(path, target.upper()).items():
             if name in server_bindings and server_bindings[name] != binding:
-                raise RuntimeError(f"Conflicting @server annotations for {name}")
+                raise RuntimeError(f"Conflicting @disabled server for {name}")
             server_bindings[name] = binding
     functions = [
         function
@@ -1933,6 +1931,12 @@ def main():
         ServerBinding(name, "NVML", f"handle_{name}")
         for name in NVML_RPC_FUNCTIONS
         if name not in server_bindings
+    )
+    generated_bindings.extend(
+        ServerBinding(function.name.format(), "HIP", f"handle_{function.name.format()}")
+        for function, _, _, metadata in hip_functions_with_annotations
+        if not metadata.disabled_server
+        and function.name.format() not in server_bindings
     )
     bindings = list(server_bindings.values()) + generated_bindings
 

@@ -225,7 +225,6 @@
 #define RPC_cuLaunchKernel 732897317
 #define RPC_cuLaunchKernelEx 1100221233
 #define RPC_cuLaunchCooperativeKernel 1003615807
-#define RPC_cuLaunchHostFunc 1459790768
 #define RPC_cuFuncSetBlockShape 1591448334
 #define RPC_cuFuncSetSharedSize 1705340648
 #define RPC_cuParamSetSize 1767310842
@@ -406,6 +405,7 @@
 #define RPC_cuGraphAddDependencies_v2 1733357590
 #define RPC_cuGraphAddNode_v2 1958016248
 #define RPC_cuGraphRemoveDependencies_v2 1606074400
+#define RPC_cuLaunchHostFunc 1459790768
 #define RPC_cuMemAdvise 2001260778
 #define RPC_cuMemGetHandleForAddressRange 835443611
 #define RPC_cuMemHostRegister_v2 590145791
