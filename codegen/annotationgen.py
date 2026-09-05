@@ -17,7 +17,9 @@ def main(target: str):
     header = find_header_file(sdk_header(annotations_path))
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            defines=["__HIP_PLATFORM_AMD__"],
+            # cublas_api.h refuses direct inclusion until its umbrella
+            # header has defined this marker.
+            defines=["__HIP_PLATFORM_AMD__", "CUBLASAPI="],
             # HIP declarations are included as <hip/...>, so search the
             # header's parent directory as well as its own.
             include_paths=[

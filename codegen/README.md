@@ -2,8 +2,8 @@ Codegen works via a human-in-the-loop system. It's quite challenging to build a 
 infer what parameters should be sent and received so we instead have a two-step process.
 
 First, `annotationgen.py` reads the SDK header a target's annotation file includes and copies that header's
-function signatures into the annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_nvml.h`,
-`annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+function signatures into the annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
+`annotations_cublaslt.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -19,6 +19,18 @@ several arrays may share one count.
 `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
 writes the buffer on failure. The generated response preserves the caller's
 buffer on success.
+`SCALAR` marks a pointer that a library's pointer mode places on the host or on
+the device (a cuBLAS `alpha`, `beta`, or dot-product `result`). The mode belongs
+to the call's first parameter, or to the parameter named by `SCALAR:<param>`
+(a cuBLASLt descriptor). The generated client asks
+`scalar_on_host(<owner>, "<name>")`, the name being the scalar's own for modes
+that place alpha and beta differently, and sends the value in host mode or the
+address in device mode, with the width leading on the wire so the server can
+tell which. `SEND_RECV SCALAR` brings a host value back (`cublasSrotg`). A
+`void` scalar carries its width as `SIZE:<expr>`, a C++ expression the client
+evaluates over the call's arguments (`SIZE:data_type_width(resultType)`); a
+typed scalar wider than its pointee spells that out the same way
+(`SIZE:5*sizeof(float)`).
 
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
@@ -28,7 +40,10 @@ generated client wrapper before it writes the RPC. Supported kinds are
 `@routingkey CURRENT_CONTEXT` routes through the client's current CUDA context
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
-the routing key is not the first matching parameter.
+the routing key is not the first matching parameter. A by-value
+`cublasHandle_t` or `cublasLtHandle_t` infers `HANDLE` routing to the
+connection the handle was created on, which `@recordowner HANDLE <param>`
+records on the creating call.
 
 NVML wrappers use the same mechanism. A by-value `nvmlDevice_t` parameter
 infers `NVML_DEVICE` routing: the generated client resolves its owning server

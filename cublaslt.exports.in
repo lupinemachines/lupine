@@ -1,0 +1,8 @@
+/* The version node is literally NVIDIA's SONAME: consumers such as PyTorch
+   reference library symbols as name@libcublasLt.so.<major>. */
+libcublasLt.so.@LUPINE_CUBLAS_SOVERSION@ {
+  global:
+    cublasLt*;
+  local:
+    *;
+};

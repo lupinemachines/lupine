@@ -8493,6 +8493,7 @@ close_connection:
 }
 
 extern "C" int lupine_rpc_device_count(int *count) {
+  lupine_rpc_ensure_driver_init();
   return lupine_virtual_device_count(count) == CUDA_SUCCESS ? 0 : -1;
 }
 

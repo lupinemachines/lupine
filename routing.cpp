@@ -329,7 +329,15 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
   return first_error;
 }
 
+// A runtime-first program never calls cuInit, so the sibling shims' bridge
+// initializes the driver on its behalf, as NVIDIA's runtime does.
+void lupine_rpc_ensure_driver_init() {
+  static std::once_flag once;
+  std::call_once(once, [] { (void)cuInit(0); });
+}
+
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device) {
+  lupine_rpc_ensure_driver_init();
   return lupine_route_remote_conn(lupine_route_for_device(device));
 }
 
