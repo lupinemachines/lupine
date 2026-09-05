@@ -187,10 +187,12 @@ def write_server_buffer_cleanup(f, owned_buffers, indent):
 
 def write_server_handler(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
-    fn_params = ", ".join(
-        parameter.type.format() for parameter in function.parameters
-    )
+    result = function.return_type.format()
+    # The driver exports this one unversioned.
+    entry = "cuEventElapsedTime" if name == "cuEventElapsedTime_v2" else name
     cleared = {parameter for parameter, _ in metadata.clear_fields}
+    if metadata.guard is not None:
+        f.write(f"#if {metadata.guard}\n")
     f.write(f"int handle_{name}(conn_t *conn) {{\n")
     owned_buffers = []
     for operation in operations:
@@ -206,11 +208,24 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
                 f.write(f"  std::memset(&{argument}, 0, sizeof({argument}));\n")
             else:
                 f.write(f"  {argument} = {{}};\n")
+    if metadata.async_fire_forget:
+        f.write("  uint64_t async_sequence = 0;\n")
     f.write("  int request_id;\n")
-    f.write(f"  {backend.result} return_value;\n")
-    f.write(f"  using fn_t = {backend.result} (*)({fn_params});\n")
-    f.write("  fn_t fn = nullptr;\n")
+    if not metadata.async_fire_forget:
+        # A void call has no result to send, but the wire still carries the
+        # field, so the handler needs storage of some type to point at.
+        f.write(f"  {'void *' if result == 'void' else result} return_value;\n")
+    if backend.symbol_lookup:
+        fn_params = ", ".join(
+            parameter.type.format() for parameter in function.parameters
+        )
+        f.write(f"  using fn_t = {result} (*)({fn_params});\n")
+        f.write("  fn_t fn = nullptr;\n")
     f.write("  if (\n")
+    if metadata.async_fire_forget:
+        f.write(
+            "      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
+        )
     signed_lengths = signed_length_arrays(operations)
     for operation in operations:
         if operation in signed_lengths:
@@ -223,29 +238,53 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     f.write("  if (request_id < 0)\n")
     f.write("    goto ERROR_0;\n\n")
 
+    if metadata.graph_exec_node is not None:
+        graph_exec = metadata.graph_exec_node.graph_exec.name
+        node = metadata.graph_exec_node.node.name
+        f.write(f"  {node} = lupine_htod_graph_exec_node({graph_exec}, {node});\n")
+    if metadata.async_fire_forget:
+        f.write("  if (rpc_async_sequence_begin(conn, async_sequence) < 0)\n")
+        f.write("    goto ERROR_0;\n\n")
+
     call_args = []
     for parameter in function.parameters:
         operation = next(
-            op for op in operations if op.parameter.name == parameter.name
+            (op for op in operations if op.parameter.name == parameter.name), None
         )
+        if operation is None:
+            raise RuntimeError(
+                f"{name}: parameter {parameter.name} has no @param annotation"
+            )
         call_args.append(operation.server_reference)
-    f.write(f'  fn = {backend.symbol_lookup}<fn_t>("{name}");\n')
-    f.write(
-        "  return_value = fn == nullptr ? function_not_found()\n"
-        f"                               : fn({', '.join(call_args)});\n\n"
-    )
+    args = ", ".join(call_args)
+    if backend.symbol_lookup:
+        f.write(f'  fn = {backend.symbol_lookup}<fn_t>("{name}");\n')
+        f.write(
+            "  return_value = fn == nullptr ? function_not_found()\n"
+            f"                               : fn({args});\n\n"
+        )
+    elif metadata.async_fire_forget or result == "void":
+        f.write(f"  {entry}({args});\n\n")
+    else:
+        f.write(f"  return_value = {entry}({args});\n\n")
+    if metadata.async_fire_forget:
+        f.write("  rpc_async_sequence_end(conn);\n\n")
+
     if metadata.clear_fields:
         write_cleared_fields(f, metadata, "  ", ".")
         f.write("\n")
-    f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
-    for operation in operations:
-        operation.server_rpc_write(f)
-    f.write("      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||\n")
-    f.write("      rpc_write_end(conn) < 0)\n")
-    f.write("    goto ERROR_0;\n")
+    if not metadata.async_fire_forget:
+        f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+        for operation in operations:
+            operation.server_rpc_write(f)
+        f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
+        f.write("      rpc_write_end(conn) < 0)\n")
+        f.write("    goto ERROR_0;\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return 0;\n")
     f.write("ERROR_0:\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return -1;\n")
     f.write("}\n\n")
+    if metadata.guard is not None:
+        f.write("#endif\n\n")
