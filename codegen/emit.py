@@ -1,8 +1,8 @@
 """Writers shared by the forwarding backends.
 
 A forwarding backend sends every annotated call to the server and resolves the
-vendor entry point there by name. A backend states its own types and codes;
-nothing here asks which one it is writing.
+vendor entry point there by name. Backends share marshalling; CUDART routes
+directly through the driver shim's connection and ownership bridge.
 """
 
 from dataclasses import dataclass
@@ -172,8 +172,13 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         f.write("}\n\n")
         return
 
+    driver_connections = backend.name == "cudart"
+    default_connection = "connection()"
+    if driver_connections and metadata.routing_kind in (None, "STREAM", "EVENT"):
+        f.write("  int route_device = current_device;\n")
+        default_connection = "lupine_rpc_conn_for_device(&route_device)"
     if metadata.routing_kind is None:
-        f.write("  conn_t *conn = connection();\n")
+        connection = default_connection
     else:
         if metadata.routing_parameter is None:
             raise RuntimeError(
@@ -184,10 +189,11 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         argument = metadata.routing_parameter.name
         if metadata.routing_kind == "DEVICE":
             argument = f"&{argument}"
-        f.write(
-            f"  conn_t *conn = connection_for_{metadata.routing_kind.lower()}"
-            f"({argument});\n"
-        )
+        prefix = "lupine_rpc_conn_for" if driver_connections else "connection_for"
+        connection = f"{prefix}_{metadata.routing_kind.lower()}({argument})"
+        if driver_connections and metadata.routing_kind in ("STREAM", "EVENT"):
+            connection = f"{argument} == nullptr ? {default_connection} : {connection}"
+    f.write(f"  conn_t *conn = {connection};\n")
     suffix = f", {', '.join(call_args)}" if call_args else ""
     call = f"record(lupine_rpc_{name}(conn{suffix}))"
     if not metadata.record_owners:
@@ -199,9 +205,10 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         handle = owner.parameter.name
         guard = f" && {handle} != nullptr" if isinstance(owner.parameter.type, Pointer) else ""
         value = f"*{handle}" if isinstance(owner.parameter.type, Pointer) else handle
+        prefix = "lupine_rpc_note" if driver_connections else "note"
         f.write(
             f"  if (return_value == {backend.success}{guard}) "
-            f"note_{owner.kind.lower()}_owner(conn, {value});\n"
+            f"{prefix}_{owner.kind.lower()}_owner(conn, {value});\n"
         )
     f.write("  return return_value;\n")
     f.write("}\n\n")
