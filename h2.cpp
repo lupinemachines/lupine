@@ -40,6 +40,8 @@ constexpr size_t kH2ProviderMaxFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Retained capacity for drained staging buffers, a few frames' worth.
 constexpr size_t kH2StagingPoolBytes = 4 * 1024 * 1024;
+constexpr std::array<uint8_t, 8> kH2ShutdownPing = {'l', 'u', 'p', 'i',
+                                                    'n', 'e', 0,   1};
 // Linux restarts slow start after an idle period of one retransmission
 // timeout. Keeping response waits below the usual 200 ms minimum RTO avoids
 // collapsing the congestion window between bursts on high-latency links.
@@ -79,6 +81,7 @@ struct h2_transport {
   bool server = false;
   bool request_received = false;
   bool request_handled = false;
+  int request_status = 0;
   int32_t dispatch_stream_id = -1;
   nghttp2_session *session = nullptr;
   std::unordered_map<int32_t, h2_stream> streams;
@@ -104,6 +107,7 @@ struct h2_transport {
   pthread_t heartbeat_thread = {};
   int response_waiters = 0;
   bool transport_failed = false;
+  bool shutdown_acknowledged = false;
   std::string peer_cuda_version;
   std::string peer_capabilities;
   std::string peer_client_etag;
@@ -127,6 +131,12 @@ struct h2_transport {
 
 h2_stream &h2_get_stream(h2_transport *transport, int32_t stream_id) {
   return transport->streams.try_emplace(stream_id).first->second;
+}
+
+bool h2_retryable_handshake_rejection(const h2_transport *transport,
+                                      const h2_stream &stream) {
+  return !transport->server && stream.response_received &&
+         stream.response_status == 409;
 }
 
 void h2_release_codecs(h2_stream &stream) {
@@ -681,6 +691,12 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
 int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
                               void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
+  if (transport->server && frame->hd.type == NGHTTP2_PING &&
+      (frame->hd.flags & NGHTTP2_FLAG_ACK) != 0 &&
+      memcmp(frame->ping.opaque_data, kH2ShutdownPing.data(),
+             kH2ShutdownPing.size()) == 0) {
+    transport->shutdown_acknowledged = true;
+  }
   if (!transport->server && frame->hd.type == NGHTTP2_GOAWAY &&
       lupine_h2_debug_enabled()) {
     std::string debug;
@@ -739,7 +755,8 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     }
     bool dispatch =
         status == 200 && !probe && transport->dispatch_stream_id < 0;
-    transport->request_handled = probe || status != 200;
+    transport->request_handled = probe || (status != 200 && status != 409);
+    transport->request_status = status;
     if (dispatch) {
       transport->dispatch_stream_id = frame->hd.stream_id;
     } else if (status == 200 && !probe) {
@@ -767,7 +784,10 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.remote_end = true;
-    if (frame->hd.stream_id == transport->dispatch_stream_id) {
+    bool retryable_rejection =
+        h2_retryable_handshake_rejection(transport, stream);
+    if (frame->hd.stream_id == transport->dispatch_stream_id &&
+        !retryable_rejection) {
       transport->transport_failed = true;
     }
   }
@@ -781,7 +801,9 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   h2_stream &stream = h2_get_stream(transport, stream_id);
   h2_release_codecs(stream);
   stream.closed = true;
-  if (stream_id == transport->dispatch_stream_id) {
+  bool retryable_rejection =
+      h2_retryable_handshake_rejection(transport, stream);
+  if (stream_id == transport->dispatch_stream_id && !retryable_rejection) {
     transport->transport_failed = true;
   }
   pthread_cond_broadcast(&transport->session_progress);
@@ -1038,6 +1060,64 @@ void *h2_read_main(void *arg) {
   }
 }
 
+int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
+                                   bool probe) {
+  transport->peer_cuda_version.clear();
+  transport->peer_capabilities.clear();
+  transport->peer_client_etag.clear();
+  transport->peer_va_base.clear();
+  transport->peer_va_size.clear();
+  transport->peer_window_base.clear();
+  transport->peer_window_size.clear();
+
+  std::vector<nghttp2_nv> headers = {
+      h2_nv(":method", probe ? "HEAD" : "POST"),
+      h2_nv(":scheme", "http"),
+      h2_nv(":path", "/"),
+      h2_nv(":authority", "lupine"),
+  };
+  if (!probe) {
+    headers.push_back(h2_nv(kContentEncodingHeader, kLz4Encoding));
+    const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
+    const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
+    const char *session_id = getenv("LUPINE_SESSION");
+    transport->client_etag =
+        client_etag == nullptr ? std::string() : client_etag;
+    transport->client_platform =
+        client_platform == nullptr ? std::string() : client_platform;
+    transport->session_id = session_id == nullptr ? std::string() : session_id;
+    if (!transport->client_etag.empty()) {
+      headers.push_back(
+          h2_nv(kLupineClientEtagHeader, transport->client_etag.c_str()));
+    }
+    if (!transport->client_platform.empty()) {
+      headers.push_back(h2_nv(kLupineClientPlatformHeader,
+                              transport->client_platform.c_str()));
+    }
+    if (!transport->session_id.empty()) {
+      headers.push_back(
+          h2_nv(kLupineSessionHeader, transport->session_id.c_str()));
+    }
+    if (conn->va_size != 0) {
+      transport->local_va_base = h2_hex(conn->va_base);
+      transport->local_va_size = h2_hex(conn->va_size);
+      headers.push_back(
+          h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str()));
+      headers.push_back(
+          h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str()));
+    }
+  }
+  uint8_t flags = probe ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
+  int32_t stream_id =
+      nghttp2_submit_headers(transport->session, flags, -1, nullptr,
+                             headers.data(), headers.size(), nullptr);
+  if (stream_id >= 0) {
+    transport->dispatch_stream_id = stream_id;
+    h2_get_stream(transport, stream_id);
+  }
+  return stream_id;
+}
+
 int h2_init_direct(conn_t *conn, bool server, bool probe,
                    const rpc_http2_server_metadata *metadata = nullptr) {
   auto *transport = new h2_transport();
@@ -1115,50 +1195,11 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   }
 
   if (!server) {
-    const char *session_id = getenv("LUPINE_SESSION");
-    std::vector<nghttp2_nv> headers = {
-        h2_nv(":method", probe ? "HEAD" : "POST"),
-        h2_nv(":scheme", "http"),
-        h2_nv(":path", "/"),
-        h2_nv(":authority", "lupine"),
-    };
-    if (!probe) {
-      headers.push_back(h2_nv(kContentEncodingHeader, kLz4Encoding));
-      const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
-      const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
-      if (client_etag != nullptr && client_etag[0] != '\0') {
-        transport->client_etag = client_etag;
-        headers.push_back(
-            h2_nv(kLupineClientEtagHeader, transport->client_etag.c_str()));
-      }
-      if (client_platform != nullptr && client_platform[0] != '\0') {
-        transport->client_platform = client_platform;
-        headers.push_back(h2_nv(kLupineClientPlatformHeader,
-                                transport->client_platform.c_str()));
-      }
-      if (session_id != nullptr && session_id[0] != '\0') {
-        headers.push_back(h2_nv(kLupineSessionHeader, session_id));
-      }
-      if (conn->va_size != 0) {
-        transport->local_va_base = h2_hex(conn->va_base);
-        transport->local_va_size = h2_hex(conn->va_size);
-        headers.push_back(
-            h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str()));
-        headers.push_back(
-            h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str()));
-      }
-    }
-    uint8_t flags = probe ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
-    int32_t stream_id =
-        nghttp2_submit_headers(transport->session, flags, -1, nullptr,
-                               headers.data(), headers.size(), nullptr);
-    if (stream_id < 0) {
+    if (h2_submit_client_handshake(transport, conn, probe) < 0) {
       nghttp2_session_del(transport->session);
       delete transport;
       return -1;
     }
-    transport->dispatch_stream_id = stream_id;
-    h2_get_stream(transport, stream_id);
   }
 
   conn->http2 = transport;
@@ -1483,6 +1524,34 @@ int rpc_http2_client_init(conn_t *conn) {
   return rpc_http2_client_await_ready(conn);
 }
 
+int rpc_http2_client_retry_handshake(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  int32_t previous_stream_id = transport->dispatch_stream_id;
+  h2_stream &previous = h2_get_stream(transport, previous_stream_id);
+  int result = -1;
+  if (!transport->server && !transport->transport_failed &&
+      h2_retryable_handshake_rejection(transport, previous)) {
+    // The request side of the rejected stream was deliberately left open in
+    // case it became the long-lived RPC stream. Retire only that stream, then
+    // negotiate the next arena without replacing the HTTP/2 connection.
+    if (nghttp2_submit_rst_stream(transport->session, NGHTTP2_FLAG_NONE,
+                                  previous_stream_id, NGHTTP2_CANCEL) == 0 &&
+        h2_submit_client_handshake(transport, conn, false) >= 0 &&
+        h2_flush_session_locked(transport) == 0) {
+      result = 0;
+    } else {
+      transport->transport_failed = true;
+      pthread_cond_broadcast(&transport->session_progress);
+    }
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result == 0 ? rpc_http2_client_await_ready(conn) : -1;
+}
+
 // The server answers the request headers before any payload flows, so this
 // costs one round trip and settles both the arena request and the build check
 // on the connection that will carry the session. Kept separate from
@@ -1605,15 +1674,56 @@ int rpc_http2_server_init_with_metadata(
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
-  while (!transport->request_received && !transport->transport_failed) {
-    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
-  }
   int result = -1;
-  if (transport->request_received) {
+  for (;;) {
+    while (!transport->request_received && !transport->transport_failed) {
+      pthread_cond_wait(&transport->session_progress,
+                        &transport->session_mutex);
+    }
+    if (transport->transport_failed) {
+      break;
+    }
+    if (transport->request_status == 409) {
+      transport->request_received = false;
+      continue;
+    }
     result = transport->request_handled ? 1 : 0;
+    break;
   }
   pthread_mutex_unlock(&transport->session_mutex);
   return result;
+}
+
+int rpc_http2_server_graceful_shutdown(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  int32_t last_stream_id =
+      nghttp2_session_get_last_proc_stream_id(transport->session);
+  int result =
+      nghttp2_submit_goaway(transport->session, NGHTTP2_FLAG_NONE,
+                            last_stream_id, NGHTTP2_NO_ERROR, nullptr, 0);
+  if (result == 0) {
+    result = nghttp2_submit_ping(transport->session, NGHTTP2_FLAG_NONE,
+                                 kH2ShutdownPing.data());
+  }
+  if (result == 0) {
+    result = h2_flush_session_locked(transport);
+  }
+  while (result == 0 && !transport->shutdown_acknowledged &&
+         !transport->transport_failed) {
+    if (pthread_cond_wait(&transport->session_progress,
+                          &transport->session_mutex) != 0) {
+      result = -1;
+    }
+  }
+  if (!transport->shutdown_acknowledged) {
+    result = -1;
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result == 0 ? 0 : -1;
 }
 
 void rpc_http2_destroy(conn_t *conn) {

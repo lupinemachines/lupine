@@ -257,6 +257,9 @@ int client_handler(lupine_socket_t connfd) {
 #endif
   }
   if (http2_init_result != 0) {
+    if (rpc_http2_server_graceful_shutdown(&conn) < 0) {
+      LUPINE_LOG_DEBUG("HTTP/2 peer closed before acknowledging shutdown");
+    }
     rpc_conn_destroy(&conn);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();
