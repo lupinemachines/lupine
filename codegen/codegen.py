@@ -372,10 +372,6 @@ def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
     return bindings
 
 
-def rpc_id(name: str) -> int:
-    return zlib.crc32(name.encode("utf-8")) & 0x7FFFFFFF
-
-
 # One annotation file per shim target. A declaration belongs to the target
 # whose file it lives in, so no API-name prefix is needed to tell them apart.
 NVML = Backend(
@@ -399,12 +395,6 @@ ANNOTATION_FILES = {
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
-
-
-def annotated_rpc_names(annotations: ParsedData) -> list[str]:
-    return sorted(
-        {function.name.format() for function in annotations.namespace.functions}
-    )
 
 
 SKIP_FUNCTIONS = {
@@ -459,6 +449,17 @@ def infer_routing_key(
 
 
 # Parses a function annotation into marshalling operations and metadata.
+# Directives that name their annotation's fields in order. A field called
+# "kind" is taken as written; the rest name parameters.
+UNIFORM_ANNOTATIONS = {
+    "routingfallback": (RoutingFallbackAnnotation, None),
+    "recordowner": (OwnerAnnotation, "record_owners"),
+    "recordparent": (ParentAnnotation, "parents"),
+    "retain": (RetainAnnotation, "retains"),
+    "release": (ReleaseAnnotation, "releases"),
+}
+
+
 def parse_annotation(
     annotation: str, params: list[Parameter]
 ) -> FunctionAnnotationMetadata:
@@ -526,57 +527,24 @@ def parse_annotation(
             if len(parts) >= 3:
                 metadata.routing_parameter = annotation_param(params, parts[2])
             continue
-        if line.startswith("@routingfallback"):
+        directive = next(
+            (name for name in UNIFORM_ANNOTATIONS if line.startswith("@" + name)),
+            None,
+        )
+        if directive is not None:
+            annotation, target = UNIFORM_ANNOTATIONS[directive]
+            fields = list(annotation.__annotations__)
             parts = line.split()
-            if len(parts) < 3:
-                continue
-            metadata.routing_fallback = RoutingFallbackAnnotation(
-                kind=parts[1].upper(),
-                parameter=annotation_param(params, parts[2]),
-            )
-            continue
-        if line.startswith("@recordowner"):
-            parts = line.split()
-            if len(parts) < 3:
-                continue
-            param = annotation_param(params, parts[2])
-            metadata.record_owners.append(OwnerAnnotation(parts[1].upper(), param))
-            continue
-        if line.startswith("@retain"):
-            parts = line.split()
-            if len(parts) != 3:
-                raise RuntimeError("@retain requires an output parameter and a handle")
-            metadata.retains.append(
-                RetainAnnotation(
-                    parameter=annotation_param(params, parts[1]),
-                    handle=annotation_param(params, parts[2]),
-                )
-            )
-            continue
-        if line.startswith("@release"):
-            parts = line.split()
-            if len(parts) != 3:
-                raise RuntimeError("@release requires a handle kind and parameter")
-            metadata.releases.append(
-                ReleaseAnnotation(
-                    kind=parts[1].upper(),
-                    parameter=annotation_param(params, parts[2]),
-                )
-            )
-            continue
-        if line.startswith("@recordparent"):
-            parts = line.split()
-            if len(parts) != 4:
-                raise RuntimeError(
-                    "@recordparent requires a parent kind, child, and parent"
-                )
-            metadata.parents.append(
-                ParentAnnotation(
-                    kind=parts[1].upper(),
-                    child=annotation_param(params, parts[2]),
-                    parent=annotation_param(params, parts[3]),
-                )
-            )
+            if len(parts) != len(fields) + 1:
+                raise RuntimeError(f"@{directive} requires {' '.join(fields)}")
+            values = {
+                field: part.upper() if field == "kind" else annotation_param(params, part)
+                for field, part in zip(fields, parts[1:])
+            }
+            if target is None:
+                metadata.routing_fallback = annotation(**values)
+            else:
+                getattr(metadata, target).append(annotation(**values))
             continue
         if line.startswith("@crossservercopy"):
             parts = line.split()
@@ -900,20 +868,6 @@ def client_routing_key_expr(
     return f"{route}({name})"
 
 
-def client_routing_route_expr(metadata: FunctionAnnotationMetadata) -> str:
-    return client_routing_key_expr(
-        metadata.routing_kind, metadata.routing_parameter, metadata
-    )
-
-
-def client_call_args(function: Function, metadata: FunctionAnnotationMetadata) -> list[str]:
-    return [param.name for param in function.parameters if param.name]
-
-
-def write_client_rpc_write(f, operation: Operation, metadata: FunctionAnnotationMetadata):
-    operation.client_rpc_write(f)
-
-
 def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
     name = owner.parameter.name
     output = isinstance(owner.parameter.type, Pointer)
@@ -924,11 +878,6 @@ def client_record_owner_stmt(owner: OwnerAnnotation) -> str:
         f"        lupine_note_{owner.kind.lower()}_owner_route({value}, route);\n"
         "    }\n"
     )
-
-
-def write_client_template_section(f, section: str):
-    if section:
-        f.write(textwrap.indent(section, "    "))
 
 
 def write_client_post_call(f, metadata: FunctionAnnotationMetadata):
@@ -960,7 +909,7 @@ def write_client_post_call(f, metadata: FunctionAnnotationMetadata):
         )
 
     if metadata.client_call_template is not None:
-        write_client_template_section(f, metadata.client_call_template.after_call)
+        f.write(textwrap.indent(metadata.client_call_template.after_call, "    "))
 
     if metadata.synchronize:
         f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
@@ -1000,26 +949,11 @@ RESULT_CODES = {
 }
 
 
-def result_code(return_type: str, result: str) -> str:
+def result_code(return_type: str, result: str = "unavailable") -> str:
     codes = RESULT_CODES.get(return_type)
-    if codes is None or getattr(codes, result) is None:
-        raise NotImplementedError(f"No {result} result for return type: {return_type}")
-    return getattr(codes, result)
-
-
-def error_const(return_type: str) -> str:
-    return result_code(return_type, "unavailable")
-
-
-def invalid_device_const(return_type: str) -> str:
-    return result_code(return_type, "invalid_device")
-
-
-def invalid_argument_const(return_type: str) -> str:
-    codes = RESULT_CODES.get(return_type)
-    if codes is None or codes.invalid_argument is None:
-        return error_const(return_type)
-    return codes.invalid_argument
+    if codes is None:
+        raise NotImplementedError(f"Unknown return type: {return_type}")
+    return getattr(codes, result) or codes.unavailable
 
 
 def server_call_name(function_name: str) -> str:
@@ -1137,7 +1071,7 @@ def write_rpc_ids(
         def write_rpc_define(macro_name: str, operation_name: str) -> None:
             if macro_name in emitted_macros:
                 return
-            value = rpc_id(operation_name)
+            value = zlib.crc32(operation_name.encode("utf-8")) & 0x7FFFFFFF
             if value in seen_rpc_ids:
                 raise RuntimeError(
                     f"RPC id collision: {operation_name} and {seen_rpc_ids[value]} "
@@ -1301,16 +1235,16 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                     f"            {all_output.type.format()} {output_name} = route_output;\n"
                 )
             else:
-                f.write(f"    lupine_route route = {client_routing_route_expr(metadata)};\n")
+                route_expr = client_routing_key_expr(
+                    metadata.routing_kind, metadata.routing_parameter, metadata
+                )
+                f.write(f"    lupine_route route = {route_expr};\n")
                 if metadata.routing_kind == "DEVICE":
                     f.write("    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)\n")
-                    f.write(
-                        "        return {error_return};\n".format(
-                            error_return=invalid_device_const(
-                                function.return_type.format()
-                            )
-                        )
+                    invalid = result_code(
+                        function.return_type.format(), "invalid_device"
                     )
+                    f.write(f"        return {invalid};\n")
             if metadata.cross_server_copy is not None:
                 copy = metadata.cross_server_copy
                 stream_arg = (
@@ -1332,11 +1266,13 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 )
                 f.write("    }\n")
             if metadata.client_call_template is not None:
-                write_client_template_section(
-                    f, metadata.client_call_template.before_call
+                f.write(
+                    textwrap.indent(metadata.client_call_template.before_call, "    ")
                 )
             f.write(f"    {function.return_type.format()} return_value;\n")
-            call_args = ", ".join(client_call_args(function, metadata))
+            call_args = ", ".join(
+                param.name for param in function.parameters if param.name
+            )
             helper_args = f", {call_args}" if call_args else ""
             local_call = f'lupine_call_real_cuda_fn("{function.name.format()}"{helper_args})'
             local_post_call = io.StringIO()
@@ -1380,18 +1316,18 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             for operation in operations:
                 if isinstance(operation, ArrayOperation):
                     operation.client_preflight(
-                        f, invalid_argument_const(function.return_type.format())
+                        f, result_code(function.return_type.format(), "invalid_argument")
                     )
                 elif (
                     isinstance(operation, NullTerminatedOperation)
                     and operation.recv
                 ):
                     operation.client_preflight(
-                        f, invalid_argument_const(function.return_type.format())
+                        f, result_code(function.return_type.format(), "invalid_argument")
                     )
 
             if metadata.async_fire_forget:
-                error_return = error_const(function.return_type.format())
+                error_return = result_code(function.return_type.format())
                 f.write(
                     f"    uint64_t async_sequence = 0;\n"
                     f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
@@ -1400,7 +1336,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                     f"        rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
                 )
                 for operation in operations:
-                    write_client_rpc_write(f, operation, metadata)
+                    operation.client_rpc_write(f)
                 f.write("        rpc_write_end(conn) < 0) {\n")
                 f.write(f"        return {error_return};\n")
                 f.write("    }\n")
@@ -1423,7 +1359,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             )
 
             for operation in operations:
-                write_client_rpc_write(f, operation, metadata)
+                operation.client_rpc_write(f)
 
             f.write("        rpc_wait_for_response(conn) < 0 ||\n")
 
@@ -1437,7 +1373,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
 
             f.write(f"        rpc_read(conn, &return_value, sizeof({function.return_type.format()})) < 0 ||\n")
             f.write("        rpc_read_end(conn) < 0)\n")
-            f.write(f"        return {error_const(function.return_type.format())};\n")
+            f.write(f"        return {result_code(function.return_type.format())};\n")
 
             for operation in operations:
                 if isinstance(operation, NullTerminatedOperation) and operation.recv:
@@ -1895,7 +1831,7 @@ def main():
     )
 
     annotated_names = sorted(
-        set(annotated_rpc_names(cuda_annotations))
+        {function.name.format() for function in cuda_annotations.namespace.functions}
         | {
             name
             for name, binding in server_bindings.items()
@@ -2002,7 +1938,7 @@ def main():
 
     operations_by_id = {}
     for binding in bindings:
-        operation = rpc_id(binding.name)
+        operation = zlib.crc32(binding.name.encode("utf-8")) & 0x7FFFFFFF
         if operation in operations_by_id:
             raise RuntimeError(
                 f"Duplicate RPC operation for {operations_by_id[operation]} "
