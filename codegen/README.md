@@ -55,6 +55,46 @@ route-local device back to its virtual client ordinal before returning it.
 `@disabled client` leaves server/RPC generation enabled while requiring a
 manual client implementation with the original API name. These manual symbols
 remain part of the generated client function map.
+For forwarding backends, it keeps the `lupine_rpc_<call>` request builder so the
+manual entry point can reuse it without an additional annotation.
+
+`@disabled local` omits both generated sides and server registration: the
+manual client implements the call locally or delegates to another shim.
+
+For forwarding backends, `@clientcall <target>` generates a client wrapper that
+calls `target` with the original arguments in declaration order and records its
+result. It generates no RPC or server handler; the target owns routing and
+completion. The runtime sync/event wrappers use this to delegate to the driver's
+copy-completion paths.
+
+`@broadcast <kind> <handle>` generates a void client entry point that calls
+`broadcast_<kind>` with a generated RPC callback. The callback substitutes each
+remote handle in the original argument list. For example,
+`@broadcast FATBIN fatCubinHandle` visits every server that registered that
+fatbin, records errors and continues after failures. This differs from
+`@routingkey ALL`, which searches until a lookup succeeds. A matching
+`@release FATBIN fatCubinHandle` releases the client handle after all attempts.
+
+`@servercall <adapter>` keeps generated marshalling but calls a typed adapter
+instead of looking up the vendor symbol. The adapter returns the wire result
+(the backend status for a void API). Runtime registration adapters use this to
+retain strings and managed slots for the fatbin's lifetime.
+`@routingkey THREAD` anchors runtime per-thread state to the first server's
+lane, independent of device changes. Push/pop configuration therefore use the
+server runtime's stack even when evaluating launch arguments changes devices.
+
+Every forwarding backend gets a generated per-thread `local_error` and
+`record(result)` helper. Generated entry points record errors automatically;
+manual entry points use the same helper. Successful calls preserve the previous
+error, and runtime last-error APIs read or clear that state locally. The shared
+`rpc_write_start_request` rejects null connections for every backend.
+
+Returns other than the backend's status type or `void` travel as ordinary typed
+values, followed by a separate RPC status. For example, `__cudaInitModule`
+preserves its entire `char` result; no boolean-return annotation or conversion
+is needed. Its client body translates the opaque fatbin proxy to the selected
+server's vendor handle. The proxy itself owns the per-server handles, without a
+separate client registry.
 
 `@guard <preprocessor-expression>` wraps the generated client wrapper, server
 handler, function-map entry, and server registration. Use it for APIs that are
@@ -80,7 +120,21 @@ handler calls CUDA.
 
 Functions that need custom client-side code around the generated call may be
 written as definitions instead of declarations. The body must contain one
-explicitly typed generated-call placeholder and end by returning its result:
+explicitly typed generated-call placeholder and end by returning its result.
+
+This also works for forwarding backends. Their bodies can use the selected
+`conn`; CUDA driver bodies use `route`. Runtime allocation/free definitions
+use the shared driver allocation bridge so subsequent copies route by pointer.
+Non-status return bodies can inspect `rpc_status` separately from their return
+value. `__cudaPushCallConfiguration` uses this to interpret its unsigned result
+as a CUDA error explicitly.
+
+Runtime pool and graph-memory attributes use generated eight-byte slots on the
+wire. Small client bodies stage pool values in a zeroed slot and copy only the
+attribute's actual width to or from the caller. Getters copy back only on
+success, so four-byte outputs are safe and failures preserve existing values.
+
+For example:
 
 ```cpp
 CUresult cuExample(CUdeviceptr ptr) {
@@ -114,6 +168,10 @@ manual cases include callback forwarding, CUDA graph capture bookkeeping,
 stdout capture, local host allocation, local file loading, cross-server event
 waits, manual client/server wire framing, and server-side deferred-copy queue
 management.
+Runtime kernel launches remain manual because parameter sizes come from the
+server. They reuse the driver's RPC connections and the existing async ticket
+sequence, submitting without waiting for a response. The initial parameter
+layout query is cached; subsequent launches need no response round trip.
 
 With the annotations in place, `codegen.py` reads in the annotations and generates the RPC server and client.
 Run it through `./codegen/run.sh` from the repository root. The runner uses the

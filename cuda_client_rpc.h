@@ -24,12 +24,19 @@ conn_t *lupine_rpc_conn_for_device(int *device);
 // same ownership table.
 conn_t *lupine_rpc_conn_for_stream(struct CUstream_st *stream);
 conn_t *lupine_rpc_conn_for_event(struct CUevent_st *event);
+conn_t *lupine_rpc_conn_for_deviceptr(unsigned long long ptr);
 void lupine_rpc_note_stream_owner(conn_t *conn, struct CUstream_st *stream);
 void lupine_rpc_note_event_owner(conn_t *conn, struct CUevent_st *event);
+// Share whole allocation ranges so interior pointers route with their base.
+void lupine_rpc_note_allocation(conn_t *conn, const void *ptr, size_t size);
+void lupine_rpc_forget_allocation(const void *ptr);
 
 // Flushes client-side state the request must observe, then opens the request.
 int lupine_rpc_write_start_request(conn_t *conn, int op);
+int lupine_rpc_write_start_async_request(conn_t *conn, int op,
+                                         uint64_t *sequence);
 int lupine_rpc_write(conn_t *conn, const void *data, size_t size);
+int lupine_rpc_write_end(conn_t *conn);
 int lupine_rpc_wait_for_response(conn_t *conn);
 int lupine_rpc_read(conn_t *conn, void *data, size_t size);
 int lupine_rpc_read_end(conn_t *conn);

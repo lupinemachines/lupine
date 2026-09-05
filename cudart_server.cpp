@@ -61,16 +61,6 @@ template <typename Fn> Fn cudart_symbol(const char *name) {
     return fn == nullptr ? (not_found) : fn(__VA_ARGS__);                      \
   }())
 
-// A length-prefixed byte string from the client, null-terminated here.
-int read_bytes(conn_t *conn, std::string *text) {
-  uint64_t length = 0;
-  if (rpc_read(conn, &length, sizeof(length)) < 0) {
-    return -1;
-  }
-  text->assign(static_cast<size_t>(length), '\0');
-  return length != 0 ? rpc_read(conn, &(*text)[0], text->size()) : 0;
-}
-
 int write_result(conn_t *conn, int request_id, cudaError_t result) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -164,313 +154,6 @@ int handle_cudaFuncGetName(conn_t *conn) {
 #endif
 
 // ---------------------------------------------------------------------------
-// Copies
-// ---------------------------------------------------------------------------
-
-namespace {
-
-// A host side is staged here: a host-to-device payload lands in a buffer the
-// copy reads, and a device-to-host copy fills one the response carries. An
-// asynchronous copy with a host side completes on its stream before the
-// staging buffer goes away, which is also what makes the response correct.
-struct copy_request {
-  void *dst = nullptr;
-  const void *src = nullptr;
-  size_t count = 0;
-  cudaMemcpyKind kind = cudaMemcpyDefault;
-  cudaStream_t stream = nullptr;
-  bool async = false;
-};
-
-int read_copy(conn_t *conn, bool async, copy_request *copy,
-              std::vector<unsigned char> *staging) {
-  copy->async = async;
-  if (rpc_read(conn, &copy->dst, sizeof(copy->dst)) < 0 ||
-      rpc_read(conn, &copy->src, sizeof(copy->src)) < 0 ||
-      rpc_read(conn, &copy->count, sizeof(copy->count)) < 0 ||
-      rpc_read(conn, &copy->kind, sizeof(copy->kind)) < 0 ||
-      (async && rpc_read(conn, &copy->stream, sizeof(copy->stream)) < 0)) {
-    return -1;
-  }
-  if (copy->kind == cudaMemcpyHostToDevice) {
-    staging->resize(copy->count);
-    if (copy->count != 0 &&
-        rpc_read(conn, staging->data(), staging->size()) < 0) {
-      return -1;
-    }
-    copy->src = staging->data();
-  } else if (copy->kind == cudaMemcpyDeviceToHost) {
-    staging->resize(copy->count);
-    copy->dst = staging->data();
-  }
-  return 0;
-}
-
-cudaError_t run_copy(const copy_request &copy) {
-  if (!copy.async) {
-    return LUPINE_CUDART_CALL(cudaMemcpy, function_not_found(), copy.dst,
-                              copy.src, copy.count, copy.kind);
-  }
-  cudaError_t result =
-      LUPINE_CUDART_CALL(cudaMemcpyAsync, function_not_found(), copy.dst,
-                         copy.src, copy.count, copy.kind, copy.stream);
-  if (result == cudaSuccess && copy.kind != cudaMemcpyDeviceToDevice) {
-    result = LUPINE_CUDART_CALL(cudaStreamSynchronize, function_not_found(),
-                                copy.stream);
-  }
-  return result;
-}
-
-int handle_copy(conn_t *conn, bool async) {
-  copy_request copy;
-  std::vector<unsigned char> staging;
-  if (read_copy(conn, async, &copy, &staging) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  cudaError_t result = run_copy(copy);
-  const bool respond_bytes =
-      copy.kind == cudaMemcpyDeviceToHost && result == cudaSuccess;
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (respond_bytes && copy.count != 0 &&
-       rpc_write(conn, staging.data(), staging.size()) < 0) ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-// A pitched copy travels packed, so the staging buffer's pitch is its width.
-int handle_copy_2d(conn_t *conn, bool async) {
-  void *dst = nullptr;
-  size_t dpitch = 0;
-  const void *src = nullptr;
-  size_t spitch = 0;
-  size_t width = 0;
-  size_t height = 0;
-  cudaMemcpyKind kind = cudaMemcpyDefault;
-  cudaStream_t stream = nullptr;
-  if (rpc_read(conn, &dst, sizeof(dst)) < 0 ||
-      rpc_read(conn, &dpitch, sizeof(dpitch)) < 0 ||
-      rpc_read(conn, &src, sizeof(src)) < 0 ||
-      rpc_read(conn, &spitch, sizeof(spitch)) < 0 ||
-      rpc_read(conn, &width, sizeof(width)) < 0 ||
-      rpc_read(conn, &height, sizeof(height)) < 0 ||
-      rpc_read(conn, &kind, sizeof(kind)) < 0 ||
-      (async && rpc_read(conn, &stream, sizeof(stream)) < 0)) {
-    return -1;
-  }
-  std::vector<unsigned char> staging;
-  if (kind == cudaMemcpyHostToDevice) {
-    staging.resize(width * height);
-    if (!staging.empty() &&
-        rpc_read(conn, staging.data(), staging.size()) < 0) {
-      return -1;
-    }
-    src = staging.data();
-    spitch = width;
-  } else if (kind == cudaMemcpyDeviceToHost) {
-    staging.resize(width * height);
-    dst = staging.data();
-    dpitch = width;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  cudaError_t result;
-  if (!async) {
-    result = LUPINE_CUDART_CALL(cudaMemcpy2D, function_not_found(), dst, dpitch,
-                                src, spitch, width, height, kind);
-  } else {
-    result =
-        LUPINE_CUDART_CALL(cudaMemcpy2DAsync, function_not_found(), dst, dpitch,
-                           src, spitch, width, height, kind, stream);
-    if (result == cudaSuccess && kind != cudaMemcpyDeviceToDevice) {
-      result = LUPINE_CUDART_CALL(cudaStreamSynchronize, function_not_found(),
-                                  stream);
-    }
-  }
-  const bool respond_bytes = kind == cudaMemcpyDeviceToHost &&
-                             result == cudaSuccess && !staging.empty();
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (respond_bytes && rpc_write(conn, staging.data(), staging.size()) < 0) ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_copy_symbol(conn_t *conn, bool async, bool to_symbol) {
-  const void *symbol = nullptr;
-  void *other = nullptr;
-  size_t count = 0;
-  size_t offset = 0;
-  cudaMemcpyKind kind = cudaMemcpyDefault;
-  cudaStream_t stream = nullptr;
-  if (rpc_read(conn, &symbol, sizeof(symbol)) < 0 ||
-      rpc_read(conn, &other, sizeof(other)) < 0 ||
-      rpc_read(conn, &count, sizeof(count)) < 0 ||
-      rpc_read(conn, &offset, sizeof(offset)) < 0 ||
-      rpc_read(conn, &kind, sizeof(kind)) < 0 ||
-      (async && rpc_read(conn, &stream, sizeof(stream)) < 0)) {
-    return -1;
-  }
-  const bool receive_bytes = to_symbol && kind == cudaMemcpyHostToDevice;
-  const bool respond_bytes = !to_symbol && kind == cudaMemcpyDeviceToHost;
-  std::vector<unsigned char> staging;
-  if (receive_bytes || respond_bytes) {
-    staging.resize(count);
-    if (receive_bytes && count != 0 &&
-        rpc_read(conn, staging.data(), staging.size()) < 0) {
-      return -1;
-    }
-    other = staging.data();
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  cudaError_t result;
-  if (to_symbol && !async) {
-    result = LUPINE_CUDART_CALL(cudaMemcpyToSymbol, function_not_found(),
-                                symbol, other, count, offset, kind);
-  } else if (to_symbol) {
-    result = LUPINE_CUDART_CALL(cudaMemcpyToSymbolAsync, function_not_found(),
-                                symbol, other, count, offset, kind, stream);
-  } else if (!async) {
-    result = LUPINE_CUDART_CALL(cudaMemcpyFromSymbol, function_not_found(),
-                                other, symbol, count, offset, kind);
-  } else {
-    result = LUPINE_CUDART_CALL(cudaMemcpyFromSymbolAsync, function_not_found(),
-                                other, symbol, count, offset, kind, stream);
-  }
-  if (async && result == cudaSuccess && kind != cudaMemcpyDeviceToDevice) {
-    result =
-        LUPINE_CUDART_CALL(cudaStreamSynchronize, function_not_found(), stream);
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (respond_bytes && result == cudaSuccess && count != 0 &&
-       rpc_write(conn, staging.data(), staging.size()) < 0) ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-} // namespace
-
-int handle_cudaMemcpy(conn_t *conn) { return handle_copy(conn, false); }
-int handle_cudaMemcpyAsync(conn_t *conn) { return handle_copy(conn, true); }
-int handle_cudaMemcpy2D(conn_t *conn) { return handle_copy_2d(conn, false); }
-int handle_cudaMemcpy2DAsync(conn_t *conn) {
-  return handle_copy_2d(conn, true);
-}
-int handle_cudaMemcpyToSymbol(conn_t *conn) {
-  return handle_copy_symbol(conn, false, true);
-}
-int handle_cudaMemcpyToSymbolAsync(conn_t *conn) {
-  return handle_copy_symbol(conn, true, true);
-}
-int handle_cudaMemcpyFromSymbol(conn_t *conn) {
-  return handle_copy_symbol(conn, false, false);
-}
-int handle_cudaMemcpyFromSymbolAsync(conn_t *conn) {
-  return handle_copy_symbol(conn, true, false);
-}
-
-// ---------------------------------------------------------------------------
-// Attributes whose width the attribute decides
-// ---------------------------------------------------------------------------
-
-namespace {
-
-// The client says how wide its buffer is; the value is read or written whole.
-template <typename Handle, typename Attr>
-int handle_get_attribute(conn_t *conn, const char *symbol) {
-  Handle handle;
-  int attr = 0;
-  size_t width = 0;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_read(conn, &width, sizeof(width)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  std::vector<unsigned char> value(width);
-  using fn_t = cudaError_t (*)(Handle, Attr, void *);
-  fn_t fn = cudart_symbol<fn_t>(symbol);
-  cudaError_t result = fn == nullptr
-                           ? function_not_found()
-                           : fn(handle, static_cast<Attr>(attr), value.data());
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (result == cudaSuccess && width != 0 &&
-       rpc_write(conn, value.data(), width) < 0) ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-template <typename Handle, typename Attr>
-int handle_set_attribute(conn_t *conn, const char *symbol) {
-  Handle handle;
-  int attr = 0;
-  size_t width = 0;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_read(conn, &width, sizeof(width)) < 0) {
-    return -1;
-  }
-  std::vector<unsigned char> value(width);
-  if (width != 0 && rpc_read(conn, value.data(), width) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  using fn_t = cudaError_t (*)(Handle, Attr, void *);
-  fn_t fn = cudart_symbol<fn_t>(symbol);
-  cudaError_t result = fn == nullptr
-                           ? function_not_found()
-                           : fn(handle, static_cast<Attr>(attr), value.data());
-  return write_result(conn, request_id, result);
-}
-
-} // namespace
-
-int handle_cudaMemPoolGetAttribute(conn_t *conn) {
-  return handle_get_attribute<cudaMemPool_t, enum cudaMemPoolAttr>(
-      conn, "cudaMemPoolGetAttribute");
-}
-
-int handle_cudaMemPoolSetAttribute(conn_t *conn) {
-  return handle_set_attribute<cudaMemPool_t, enum cudaMemPoolAttr>(
-      conn, "cudaMemPoolSetAttribute");
-}
-
-int handle_cudaDeviceGetGraphMemAttribute(conn_t *conn) {
-  return handle_get_attribute<int, enum cudaGraphMemAttributeType>(
-      conn, "cudaDeviceGetGraphMemAttribute");
-}
-
-int handle_cudaDeviceSetGraphMemAttribute(conn_t *conn) {
-  return handle_set_attribute<int, enum cudaGraphMemAttributeType>(
-      conn, "cudaDeviceSetGraphMemAttribute");
-}
-
-// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
@@ -484,6 +167,9 @@ struct fatbin_registration {
   std::vector<unsigned char> image;
   std::deque<std::string> strings;
   std::deque<void *> managed_slots;
+  std::deque<uint3> indices;
+  std::deque<dim3> dimensions;
+  std::deque<int> warp_sizes;
 };
 
 std::mutex &registry_mutex() {
@@ -503,11 +189,11 @@ fatbin_registration *registration_for(void **handle) {
 }
 
 // Keeps a string for the registration's lifetime and hands out its address.
-char *retain(fatbin_registration *registration, std::string text) {
-  if (registration == nullptr) {
+char *retain(fatbin_registration *registration, const char *text) {
+  if (registration == nullptr || text == nullptr) {
     return nullptr;
   }
-  registration->strings.push_back(std::move(text));
+  registration->strings.emplace_back(text);
   return &registration->strings.back()[0];
 }
 
@@ -521,24 +207,18 @@ typedef void (*register_var_fn)(void **, char *, char *, const char *, int,
                                 size_t, int, int);
 typedef void (*register_managed_var_fn)(void **, void **, char *, const char *,
                                         int, size_t, int, int);
+typedef void (*register_texture_fn)(void **, const void *, const void **,
+                                    const char *, int, int, int);
+typedef void (*register_surface_fn)(void **, const void *, const void **,
+                                    const char *, int, int);
+typedef void (*register_host_var_fn)(void **, const char *, char *, size_t);
 
-int write_ack(conn_t *conn, int request_id) {
-  int ack = 0;
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &ack, sizeof(ack)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
+template <typename T> T *retain(std::deque<T> &values, const T *value) {
+  if (value == nullptr) {
+    return nullptr;
   }
-  return 0;
-}
-
-// An optional launch-bound value: a presence flag, then the value.
-template <typename T> int read_optional(conn_t *conn, T *storage, T **value) {
-  uint8_t present = 0;
-  if (rpc_read(conn, &present, sizeof(present)) < 0) {
-    return -1;
-  }
-  *value = present ? storage : nullptr;
-  return present ? rpc_read(conn, storage, sizeof(*storage)) : 0;
+  values.push_back(*value);
+  return &values.back();
 }
 
 } // namespace
@@ -580,162 +260,142 @@ int handle___cudaRegisterFatBinary(conn_t *conn) {
   return 0;
 }
 
-int handle___cudaRegisterFatBinaryEnd(conn_t *conn) {
-  void **handle = nullptr;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  auto fn =
-      cudart_symbol<register_fat_binary_end_fn>("__cudaRegisterFatBinaryEnd");
-  if (fn != nullptr) {
-    fn(handle);
-  }
-  return write_ack(conn, request_id);
-}
+namespace {
 
-int handle___cudaUnregisterFatBinary(conn_t *conn) {
-  void **handle = nullptr;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
+// The generated handlers own transport. These adapters keep storage that the
+// runtime retains after a registration RPC returns.
+cudaError_t unregister_fat_binary(void **handle) {
   auto fn =
       cudart_symbol<unregister_fat_binary_fn>("__cudaUnregisterFatBinary");
-  if (fn != nullptr) {
-    fn(handle);
+  if (fn == nullptr) {
+    return function_not_found();
   }
+  fn(handle);
   std::lock_guard<std::mutex> lock(registry_mutex());
   auto entry = registrations().find(handle);
   if (entry != registrations().end()) {
     delete entry->second;
     registrations().erase(entry);
   }
-  return write_ack(conn, request_id);
+  return cudaSuccess;
 }
 
-int handle___cudaRegisterFunction(conn_t *conn) {
-  void **handle = nullptr;
-  const char *hostFun = nullptr;
-  std::string deviceFun;
-  std::string deviceName;
-  int thread_limit = 0;
-  uint3 tid_storage, bid_storage;
-  dim3 bDim_storage, gDim_storage;
-  int wSize_storage = 0;
-  uint3 *tid, *bid;
-  dim3 *bDim, *gDim;
-  int *wSize;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &hostFun, sizeof(hostFun)) < 0 ||
-      read_bytes(conn, &deviceFun) < 0 || read_bytes(conn, &deviceName) < 0 ||
-      rpc_read(conn, &thread_limit, sizeof(thread_limit)) < 0 ||
-      read_optional(conn, &tid_storage, &tid) < 0 ||
-      read_optional(conn, &bid_storage, &bid) < 0 ||
-      read_optional(conn, &bDim_storage, &bDim) < 0 ||
-      read_optional(conn, &gDim_storage, &gDim) < 0 ||
-      read_optional(conn, &wSize_storage, &wSize) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
+cudaError_t register_function(void **handle, const char *hostFun,
+                              char *deviceFun, const char *deviceName,
+                              int thread_limit, uint3 *tid, uint3 *bid,
+                              dim3 *bDim, dim3 *gDim, int *wSize) {
   auto fn = cudart_symbol<register_function_fn>("__cudaRegisterFunction");
-  {
-    std::lock_guard<std::mutex> lock(registry_mutex());
-    fatbin_registration *registration = registration_for(handle);
-    if (fn != nullptr && registration != nullptr) {
-      fn(handle, hostFun, retain(registration, std::move(deviceFun)),
-         retain(registration, std::move(deviceName)), thread_limit, tid, bid,
-         bDim, gDim, wSize);
-    }
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto *registration = registration_for(handle);
+  if (fn == nullptr) {
+    return function_not_found();
   }
-  return write_ack(conn, request_id);
+  if (registration == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  fn(handle, hostFun, retain(registration, deviceFun),
+     retain(registration, deviceName), thread_limit,
+     retain(registration->indices, tid), retain(registration->indices, bid),
+     retain(registration->dimensions, bDim),
+     retain(registration->dimensions, gDim),
+     retain(registration->warp_sizes, wSize));
+  return cudaSuccess;
 }
 
-int handle___cudaRegisterVar(conn_t *conn) {
-  void **handle = nullptr;
-  char *hostVar = nullptr;
-  std::string deviceAddress;
-  std::string deviceName;
-  int ext = 0;
-  size_t size = 0;
-  int constant = 0;
-  int global = 0;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &hostVar, sizeof(hostVar)) < 0 ||
-      read_bytes(conn, &deviceAddress) < 0 ||
-      read_bytes(conn, &deviceName) < 0 ||
-      rpc_read(conn, &ext, sizeof(ext)) < 0 ||
-      rpc_read(conn, &size, sizeof(size)) < 0 ||
-      rpc_read(conn, &constant, sizeof(constant)) < 0 ||
-      rpc_read(conn, &global, sizeof(global)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
+cudaError_t register_var(void **handle, char *hostVar, char *deviceAddress,
+                         const char *deviceName, int ext, size_t size,
+                         int constant, int global) {
   auto fn = cudart_symbol<register_var_fn>("__cudaRegisterVar");
-  {
-    std::lock_guard<std::mutex> lock(registry_mutex());
-    fatbin_registration *registration = registration_for(handle);
-    if (fn != nullptr && registration != nullptr) {
-      fn(handle, hostVar, retain(registration, std::move(deviceAddress)),
-         retain(registration, std::move(deviceName)), ext, size, constant,
-         global);
-    }
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto *registration = registration_for(handle);
+  if (fn == nullptr) {
+    return function_not_found();
   }
-  return write_ack(conn, request_id);
+  if (registration == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  fn(handle, hostVar, retain(registration, deviceAddress),
+     retain(registration, deviceName), ext, size, constant, global);
+  return cudaSuccess;
 }
 
-// The runtime writes the managed pointer into the slot it is given, so the
-// slot lives here with the registration; the client keys the variable by the
-// address of its own.
-int handle___cudaRegisterManagedVar(conn_t *conn) {
-  void **handle = nullptr;
-  void **hostVarPtrAddress = nullptr;
-  std::string deviceAddress;
-  std::string deviceName;
-  int ext = 0;
-  size_t size = 0;
-  int constant = 0;
-  int global = 0;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &hostVarPtrAddress, sizeof(hostVarPtrAddress)) < 0 ||
-      read_bytes(conn, &deviceAddress) < 0 ||
-      read_bytes(conn, &deviceName) < 0 ||
-      rpc_read(conn, &ext, sizeof(ext)) < 0 ||
-      rpc_read(conn, &size, sizeof(size)) < 0 ||
-      rpc_read(conn, &constant, sizeof(constant)) < 0 ||
-      rpc_read(conn, &global, sizeof(global)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
+// The runtime writes to this slot, so it must remain server-owned. This does
+// not make managed globals directly host-addressable on the client.
+cudaError_t register_managed_var(void **handle, void **hostVarPtrAddress,
+                                 char *deviceAddress, const char *deviceName,
+                                 int ext, size_t size, int constant,
+                                 int global) {
+  (void)hostVarPtrAddress;
   auto fn = cudart_symbol<register_managed_var_fn>("__cudaRegisterManagedVar");
-  {
-    std::lock_guard<std::mutex> lock(registry_mutex());
-    fatbin_registration *registration = registration_for(handle);
-    if (fn != nullptr && registration != nullptr) {
-      registration->managed_slots.push_back(nullptr);
-      fn(handle, &registration->managed_slots.back(),
-         retain(registration, std::move(deviceAddress)),
-         retain(registration, std::move(deviceName)), ext, size, constant,
-         global);
-    }
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto *registration = registration_for(handle);
+  if (fn == nullptr) {
+    return function_not_found();
   }
-  return write_ack(conn, request_id);
+  if (registration == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  registration->managed_slots.push_back(nullptr);
+  fn(handle, &registration->managed_slots.back(),
+     retain(registration, deviceAddress), retain(registration, deviceName), ext,
+     size, constant, global);
+  return cudaSuccess;
 }
+
+cudaError_t register_texture(void **handle, const void *hostVar,
+                             const void **deviceAddress, const char *deviceName,
+                             int dim, int norm, int ext) {
+  auto fn = cudart_symbol<register_texture_fn>("__cudaRegisterTexture");
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto *registration = registration_for(handle);
+  if (fn == nullptr) {
+    return function_not_found();
+  }
+  if (registration == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  fn(handle, hostVar,
+     reinterpret_cast<const void **>(
+         retain(registration, reinterpret_cast<const char *>(deviceAddress))),
+     retain(registration, deviceName), dim, norm, ext);
+  return cudaSuccess;
+}
+
+cudaError_t register_surface(void **handle, const void *hostVar,
+                             const void **deviceAddress, const char *deviceName,
+                             int dim, int ext) {
+  auto fn = cudart_symbol<register_surface_fn>("__cudaRegisterSurface");
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto *registration = registration_for(handle);
+  if (fn == nullptr) {
+    return function_not_found();
+  }
+  if (registration == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  fn(handle, hostVar,
+     reinterpret_cast<const void **>(
+         retain(registration, reinterpret_cast<const char *>(deviceAddress))),
+     retain(registration, deviceName), dim, ext);
+  return cudaSuccess;
+}
+
+cudaError_t register_host_var(void **handle, const char *deviceName,
+                              char *hostVar, size_t size) {
+  auto fn = cudart_symbol<register_host_var_fn>("__cudaRegisterHostVar");
+  std::lock_guard<std::mutex> lock(registry_mutex());
+  auto *registration = registration_for(handle);
+  if (fn == nullptr) {
+    return function_not_found();
+  }
+  if (registration == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  fn(handle, retain(registration, deviceName), hostVar, size);
+  return cudaSuccess;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Kernel launches
@@ -851,12 +511,14 @@ int read_launch_config(conn_t *conn, launch_config *launch) {
 // cudaLaunchKernel, cudaLaunchCooperativeKernel and __cudaLaunchKernel take
 // the same arguments once the entry point is a pointer-sized value.
 template <typename Entry> int handle_launch(conn_t *conn, const char *symbol) {
+  uint64_t async_sequence = 0;
   Entry entry;
   dim3 gridDim, blockDim;
   size_t sharedMem = 0;
   cudaStream_t stream = nullptr;
   packed_params params;
-  if (rpc_read(conn, &entry, sizeof(entry)) < 0 ||
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &entry, sizeof(entry)) < 0 ||
       rpc_read(conn, &gridDim, sizeof(gridDim)) < 0 ||
       rpc_read(conn, &blockDim, sizeof(blockDim)) < 0 ||
       rpc_read(conn, &sharedMem, sizeof(sharedMem)) < 0 ||
@@ -871,11 +533,14 @@ template <typename Entry> int handle_launch(conn_t *conn, const char *symbol) {
   using fn_t =
       cudaError_t (*)(Entry, dim3, dim3, void **, size_t, cudaStream_t);
   fn_t fn = cudart_symbol<fn_t>(symbol);
-  cudaError_t result = fn == nullptr
-                           ? function_not_found()
-                           : fn(entry, gridDim, blockDim,
-                                params.pointers.data(), sharedMem, stream);
-  return write_result(conn, request_id, result);
+  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  if (fn != nullptr) {
+    fn(entry, gridDim, blockDim, params.pointers.data(), sharedMem, stream);
+  }
+  rpc_async_sequence_end(conn);
+  return 0;
 }
 
 } // namespace
@@ -899,10 +564,12 @@ int handle___cudaLaunchKernel(conn_t *conn) {
 #endif
 
 int handle_cudaLaunchKernelExC(conn_t *conn) {
+  uint64_t async_sequence = 0;
   launch_config launch;
   const void *func = nullptr;
   packed_params params;
-  if (read_launch_config(conn, &launch) < 0 ||
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      read_launch_config(conn, &launch) < 0 ||
       rpc_read(conn, &func, sizeof(func)) < 0 ||
       read_params(conn, &params) < 0) {
     return -1;
@@ -911,10 +578,13 @@ int handle_cudaLaunchKernelExC(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  cudaError_t result =
-      LUPINE_CUDART_CALL(cudaLaunchKernelExC, function_not_found(),
-                         &launch.config, func, params.pointers.data());
-  return write_result(conn, request_id, result);
+  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  LUPINE_CUDART_CALL(cudaLaunchKernelExC, function_not_found(), &launch.config,
+                     func, params.pointers.data());
+  rpc_async_sequence_end(conn);
+  return 0;
 }
 
 namespace {
@@ -954,28 +624,5 @@ int handle_cudaOccupancyMaxActiveClusters(conn_t *conn) {
   return handle_occupancy_for_config(conn, "cudaOccupancyMaxActiveClusters");
 }
 
-#if CUDART_VERSION >= 13000
-int handle___cudaGetKernel(conn_t *conn) {
-  const void *entry = nullptr;
-  if (rpc_read(conn, &entry, sizeof(entry)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  cudaKernel_t kernel = nullptr;
-  using fn_t = cudaError_t (*)(cudaKernel_t *, const void *);
-  fn_t fn = cudart_symbol<fn_t>("__cudaGetKernel");
-  cudaError_t result =
-      fn == nullptr ? function_not_found() : fn(&kernel, entry);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &kernel, sizeof(kernel)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-#endif
 
 #include "codegen/gen_cudart_server.inc"

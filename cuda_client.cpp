@@ -8500,8 +8500,19 @@ extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
   return lupine_prepare_rpc(conn) < 0 ? -1 : rpc_write_start_request(conn, op);
 }
 
+extern "C" int lupine_rpc_write_start_async_request(conn_t *conn, int op,
+                                                    uint64_t *sequence) {
+  return lupine_prepare_rpc(conn) < 0
+             ? -1
+             : rpc_write_start_async_request(conn, op, sequence);
+}
+
 extern "C" int lupine_rpc_write(conn_t *conn, const void *data, size_t size) {
   return rpc_write(conn, data, size);
+}
+
+extern "C" int lupine_rpc_write_end(conn_t *conn) {
+  return rpc_write_end(conn);
 }
 
 extern "C" int lupine_rpc_wait_for_response(conn_t *conn) {
@@ -8520,6 +8531,16 @@ extern "C" void lupine_rpc_note_stream_owner(conn_t *conn, CUstream stream) {
 
 extern "C" void lupine_rpc_note_event_owner(conn_t *conn, CUevent event) {
   lupine_note_event_owner(event, conn);
+}
+
+extern "C" void lupine_rpc_note_allocation(conn_t *conn, const void *ptr,
+                                           size_t size) {
+  lupine_note_deviceptr_allocation(reinterpret_cast<CUdeviceptr>(ptr), size,
+                                   conn);
+}
+
+extern "C" void lupine_rpc_forget_allocation(const void *ptr) {
+  lupine_forget_deviceptr_owner(reinterpret_cast<CUdeviceptr>(ptr));
 }
 
 int rpc_open() {

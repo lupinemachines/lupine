@@ -356,7 +356,7 @@ def parse_server_binding(
     guard = None
     for directive in annotation_directives(annotation):
         parts = directive.split()
-        if parts[0] == "@disabled" and parts[1:2] != ["client"]:
+        if parts[0] == "@disabled" and parts[1:2] not in (["client"], ["local"]):
             if handler is not None:
                 raise RuntimeError(f"Duplicate @disabled for {name}")
             rest = parts[2:] if parts[1:2] == ["server"] else parts[1:]
@@ -420,7 +420,6 @@ HIP = Backend(
     invalid_argument="hipErrorInvalidValue",
     not_supported="hipErrorNotSupported",
     symbol_lookup="hip_symbol",
-    guard_null_conn=True,
     remappings=(("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),),
 )
 
@@ -431,8 +430,6 @@ CUDART = Backend(
     invalid_argument="cudaErrorInvalidValue",
     not_supported="cudaErrorNotSupported",
     symbol_lookup="cudart_symbol",
-    sticky_error="record",
-    guard_null_conn=True,
 )
 
 # cuBLAS calls run on the driver shim's connections like the runtime's, and
@@ -539,7 +536,8 @@ def parse_annotation(
         return metadata
     for line in annotation.split("\n"):
         # @disabled client / @disabled server skip one generated side; bare
-        # @disabled (optionally naming the server handler) skips both.
+        # @disabled skips both and registers a manual server handler.
+        # @disabled local skips both without registering a server handler.
         if "@disabled" in line:
             if metadata.disabled_client or metadata.disabled_server:
                 raise RuntimeError("Duplicate @disabled")
@@ -547,9 +545,6 @@ def parse_annotation(
             scope = parts[1:2]
             if scope == ["client"]:
                 metadata.disabled_client = True
-                # "forwards": the manual client provides the entry point but
-                # still sends the call, so it needs the generated builder.
-                metadata.client_forwards = parts[2:3] == ["forwards"]
                 continue
             elif scope == ["server"]:
                 metadata.disabled_server = True
@@ -585,6 +580,26 @@ def parse_annotation(
             if not guard or metadata.guard is not None:
                 raise RuntimeError("Invalid @guard annotation")
             metadata.guard = guard
+            continue
+        if line.strip().startswith("@servercall"):
+            parts = line.split()
+            if len(parts) != 2 or metadata.server_call is not None:
+                raise RuntimeError("@servercall requires one adapter name")
+            metadata.server_call = parts[1]
+            continue
+        if line.strip().startswith("@clientcall"):
+            parts = line.split()
+            if len(parts) != 2 or metadata.client_call is not None:
+                raise RuntimeError("@clientcall requires one target name")
+            metadata.client_call = parts[1]
+            continue
+        if line.strip().startswith("@broadcast"):
+            parts = line.split()
+            if len(parts) != 3 or metadata.broadcast is not None:
+                raise RuntimeError("@broadcast requires a handle kind and parameter")
+            metadata.broadcast = OwnerAnnotation(
+                kind=parts[1].upper(), parameter=annotation_param(params, parts[2])
+            )
             continue
         if line.startswith("@routingkey"):
             parts = line.split()
@@ -925,6 +940,18 @@ def parse_annotation(
                 "@retain currently requires a RECV_ONLY NULL_TERMINATED parameter"
             )
 
+    if metadata.client_call is not None:
+        if (
+            metadata.disabled_client
+            or metadata.disabled_server
+            or metadata.server_call
+            or metadata.broadcast
+        ):
+            raise RuntimeError(
+                "@clientcall cannot combine with @disabled, @servercall or @broadcast"
+            )
+        metadata.disabled_server = True
+
     if metadata.routing_kind is None:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
     return metadata
@@ -1196,7 +1223,7 @@ def write_rpc_ids(
         for name in NVML_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
         for function, _, _, metadata in forwarded_functions:
-            if unsupported(function, metadata) or (
+            if metadata.client_call is not None or unsupported(function, metadata) or (
                 metadata.disabled_client and metadata.disabled_server
             ):
                 continue
@@ -1845,6 +1872,16 @@ def main():
         (CUDART, cudart_functions_with_annotations),
         (CUBLAS, cublas_functions_with_annotations),
     ]
+    for backend, functions in forwarding_backends:
+        templates = collect_client_call_templates(
+            ANNOTATION_FILES[backend.name],
+            {
+                function.name.format(): function.return_type.format()
+                for function, _, _, _ in functions if function.has_body
+            },
+        )
+        for function, _, _, metadata in functions:
+            attach_client_call_template(function, metadata, templates)
     sdk_functions_for = {
         backend.name: parse_file(
             find_header_file(sdk_header(ANNOTATION_FILES[backend.name])),

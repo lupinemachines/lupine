@@ -20,6 +20,18 @@ hipError_t hipGetDeviceCount(int *count);
  */
 hipError_t hipDeviceGet(int *device, int ordinal);
 /**
+ * @disabled client - the sticky error is kept on the client
+ */
+hipError_t hipGetLastError(void);
+/**
+ * @disabled client - the sticky error is kept on the client
+ */
+hipError_t hipExtGetLastError(void);
+/**
+ * @disabled client - the sticky error is kept on the client
+ */
+hipError_t hipPeekAtLastError(void);
+/**
  * @param prop RECV_ONLY
  * @param deviceId SEND_ONLY
  * @routingkey DEVICE deviceId

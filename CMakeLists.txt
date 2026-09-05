@@ -869,6 +869,24 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_cudart_client)
+        if(TARGET lupine_cudart_server)
+            add_executable(cudart_forwarding_test
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_cudart_forwarding.cpp)
+            target_include_directories(cudart_forwarding_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(cudart_forwarding_test PRIVATE
+                lupine_cudart_client lupine_cudart_server lupine_cuda_client
+                Threads::Threads)
+            target_link_options(cudart_forwarding_test PRIVATE
+                -rdynamic LINKER:--wrap=dlopen LINKER:--wrap=dlsym
+                LINKER:--wrap=_Z8rpc_readP6conn_tPvm
+                LINKER:--wrap=_Z12rpc_read_endP6conn_t
+                LINKER:--wrap=_Z24rpc_write_start_responseP6conn_ti
+                LINKER:--wrap=_Z9rpc_writeP6conn_tPKvm
+                LINKER:--wrap=_Z13rpc_write_endP6conn_t)
+            add_test(NAME cudart_forwarding_test COMMAND cudart_forwarding_test)
+            set_tests_properties(cudart_forwarding_test PROPERTIES TIMEOUT 30)
+        endif()
         add_test(NAME cudart_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q cudaLaunchKernel && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q __cudaRegisterFatBinary && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q cudaGetDeviceProperties && nm -D \"$<TARGET_FILE:lupine_cuda_client>\" | grep -q lupine_rpc_write_start_request")

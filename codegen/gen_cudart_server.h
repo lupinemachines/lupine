@@ -28,6 +28,7 @@ int handle_cudaDeviceGetDevResource(conn_t *conn);
 int handle_cudaDeviceGetExecutionCtx(conn_t *conn);
 #endif
 
+int handle_cudaDeviceGetGraphMemAttribute(conn_t *conn);
 #if CUDART_VERSION >= 13000
 int handle_cudaDeviceGetHostAtomicCapabilities(conn_t *conn);
 #endif
@@ -45,18 +46,13 @@ int handle_cudaDeviceGetTexture1DLinearMaxWidth(conn_t *conn);
 int handle_cudaDeviceGraphMemTrim(conn_t *conn);
 int handle_cudaDeviceReset(conn_t *conn);
 int handle_cudaDeviceSetCacheConfig(conn_t *conn);
+int handle_cudaDeviceSetGraphMemAttribute(conn_t *conn);
 int handle_cudaDeviceSetLimit(conn_t *conn);
 int handle_cudaDeviceSetMemPool(conn_t *conn);
-int handle_cudaDeviceSynchronize(conn_t *conn);
 int handle_cudaDriverGetVersion(conn_t *conn);
 int handle_cudaEventCreate(conn_t *conn);
 int handle_cudaEventCreateWithFlags(conn_t *conn);
-int handle_cudaEventDestroy(conn_t *conn);
 int handle_cudaEventElapsedTime(conn_t *conn);
-int handle_cudaEventQuery(conn_t *conn);
-int handle_cudaEventRecord(conn_t *conn);
-int handle_cudaEventRecordWithFlags(conn_t *conn);
-int handle_cudaEventSynchronize(conn_t *conn);
 #if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxDestroy(conn_t *conn);
 #endif
@@ -202,8 +198,10 @@ int handle_cudaMemPoolCreate(conn_t *conn);
 int handle_cudaMemPoolDestroy(conn_t *conn);
 int handle_cudaMemPoolExportPointer(conn_t *conn);
 int handle_cudaMemPoolGetAccess(conn_t *conn);
+int handle_cudaMemPoolGetAttribute(conn_t *conn);
 int handle_cudaMemPoolImportPointer(conn_t *conn);
 int handle_cudaMemPoolSetAccess(conn_t *conn);
+int handle_cudaMemPoolSetAttribute(conn_t *conn);
 int handle_cudaMemPoolTrimTo(conn_t *conn);
 #if CUDART_VERSION >= 13000
 int handle_cudaMemPrefetchAsync(conn_t *conn);
@@ -214,8 +212,6 @@ int handle_cudaMemRangeGetAttribute(conn_t *conn);
 int handle_cudaMemSetMemPool(conn_t *conn);
 #endif
 
-int handle_cudaMemcpyPeer(conn_t *conn);
-int handle_cudaMemcpyPeerAsync(conn_t *conn);
 int handle_cudaMemset(conn_t *conn);
 int handle_cudaMemset2D(conn_t *conn);
 int handle_cudaMemset2DAsync(conn_t *conn);
@@ -262,9 +258,7 @@ int handle_cudaStreamGetId(conn_t *conn);
 
 int handle_cudaStreamGetPriority(conn_t *conn);
 int handle_cudaStreamIsCapturing(conn_t *conn);
-int handle_cudaStreamQuery(conn_t *conn);
 int handle_cudaStreamSetAttribute(conn_t *conn);
-int handle_cudaStreamSynchronize(conn_t *conn);
 #if CUDART_VERSION >= 13000
 int handle_cudaStreamUpdateCaptureDependencies(conn_t *conn);
 #endif
@@ -386,3 +380,17 @@ int handle_cudaGraphicsResourceSetMapFlags(conn_t *conn);
 int handle_cudaGraphicsSubResourceGetMappedArray(conn_t *conn);
 int handle_cudaGraphicsUnmapResources(conn_t *conn);
 int handle_cudaGraphicsUnregisterResource(conn_t *conn);
+int handle___cudaRegisterFunction(conn_t *conn);
+int handle___cudaRegisterVar(conn_t *conn);
+int handle___cudaRegisterManagedVar(conn_t *conn);
+int handle___cudaRegisterTexture(conn_t *conn);
+int handle___cudaRegisterSurface(conn_t *conn);
+int handle___cudaRegisterHostVar(conn_t *conn);
+int handle___cudaPushCallConfiguration(conn_t *conn);
+int handle___cudaPopCallConfiguration(conn_t *conn);
+int handle___cudaRegisterFatBinaryEnd(conn_t *conn);
+int handle___cudaUnregisterFatBinary(conn_t *conn);
+int handle___cudaInitModule(conn_t *conn);
+#if CUDART_VERSION >= 13000
+int handle___cudaGetKernel(conn_t *conn);
+#endif
