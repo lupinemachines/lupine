@@ -1112,20 +1112,21 @@ void test_large_payload() {
   require(received == payload, "large payload mismatch");
 }
 
-#ifndef _WIN32
-// The payload is a >2 GiB read-only MAP_NORESERVE mapping that is never
-// faulted in; Windows cannot hand out readable pages without charging
-// commit, so this case stays Unix-only.
 void test_payload_larger_than_flow_control_window() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
 
+  // Flow control counts compressed bytes. Cross the current server window
+  // with incompressible data; a multi-GiB zero mapping compresses below the
+  // window while still allowing gigabytes of decoded staging in the receiver.
   constexpr size_t payload_size =
-      static_cast<size_t>(INT32_MAX) + 64 * 1024 + 1;
-
-  void *payload = mmap(nullptr, payload_size, PROT_READ,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-  require(payload != MAP_FAILED, "flow-control payload mmap failed");
+      LUPINE_FF_STAGING_WINDOW_BYTES + 64 * 1024 + 1;
+  std::vector<unsigned char> payload(payload_size);
+  uint32_t seed = 53;
+  for (unsigned char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
 
   std::atomic<bool> read_failed{false};
   size_t received = 0;
@@ -1138,8 +1139,7 @@ void test_payload_larger_than_flow_control_window() {
         read_failed = true;
         break;
       }
-      if (!std::all_of(buffer.begin(), buffer.begin() + chunk,
-                       [](unsigned char value) { return value == 0; })) {
+      if (memcmp(buffer.data(), payload.data() + received, chunk) != 0) {
         read_failed = true;
         break;
       }
@@ -1155,7 +1155,7 @@ void test_payload_larger_than_flow_control_window() {
     (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
   });
 
-  int write_result = write_bytes(&pair.client, payload, payload_size);
+  int write_result = write_bytes(&pair.client, payload.data(), payload.size());
   if (write_result != 0) {
     shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
     shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
@@ -1163,13 +1163,11 @@ void test_payload_larger_than_flow_control_window() {
   server_reader.join();
   shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
   client_control_reader.join();
-  munmap(payload, payload_size);
 
   require(write_result == 0, "flow-controlled write failed before completion");
   require(!read_failed, "flow-controlled read failed");
   require(received == payload_size, "flow-controlled payload was truncated");
 }
-#endif
 
 // A server-side hold keeps received payload bytes uncredited until the staging
 // they landed in retires. Held bytes saturate at a cap so the reader filling
@@ -2001,8 +1999,8 @@ int main() {
   RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
   RUN_CASE(test_refillable_cursor_across_flow_control_window());
-  RUN_CASE(test_payload_larger_than_flow_control_window());
 #endif
+  RUN_CASE(test_payload_larger_than_flow_control_window());
   RUN_CASE(test_server_window_hold_caps_and_releases());
   RUN_CASE(test_reset_wakes_flow_controlled_writer());
   std::cout << "h2_test: PASS" << std::endl;
