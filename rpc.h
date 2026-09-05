@@ -152,6 +152,8 @@ extern int lupine_va_reserve_client(conn_t *conn,
                                     const lupine_va_window &window,
                                     unsigned int min_slot, unsigned int *slot);
 extern int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size);
+// Releases a rejected candidate without disturbing the connection transport.
+extern void lupine_va_release(conn_t *conn);
 // Bump-claims an aligned span inside the connection's arena. Concurrent callers
 // each get a disjoint span; false means the arena cannot fit the request.
 extern bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
@@ -261,6 +263,9 @@ extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
+// Sends another arena preflight on the existing HTTP/2 connection and waits
+// for its result.
+extern int rpc_http2_client_retry_handshake(conn_t *conn);
 // Waits for the peer's response headers on the session's own connection and
 // settles the client-bundle check and, when one was requested, the arena
 // verdict. rpc_http2_client_init already does this when an arena was requested;
@@ -292,6 +297,10 @@ extern int rpc_http2_server_init(conn_t *conn);
 extern int
 rpc_http2_server_init_with_metadata(conn_t *conn,
                                     const rpc_http2_server_metadata *metadata);
+// Finishes an HTTP-handled connection with GOAWAY and waits for a PING
+// acknowledgement, ensuring the response reached the peer before the server's
+// abortive transport cleanup can reset the socket.
+extern int rpc_http2_server_graceful_shutdown(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.
 extern const char *rpc_http2_session_id(conn_t *conn);

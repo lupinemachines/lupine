@@ -162,24 +162,25 @@ int connect_endpoint(client_transport_state &state,
   // says so in its response, and the retry below adopts it, so a matching pair
   // never spends an extra dial to learn what it already assumed.
   lupine_va_window window = lupine_va_local_window();
+  *conn = {};
+  unsigned int retries =
+      state.config.dial_policy == lupine_client_dial_policy::bounded_retry
+          ? kBoundedRetryCount
+          : 0;
+  lupine_socket_t connfd =
+      lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), retries);
+  if (connfd == LUPINE_INVALID_SOCKET) {
+    LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
+                                      << endpoint.port << " failed");
+    return -1;
+  }
+  if (rpc_conn_init(conn, connfd, 0) < 0) {
+    return -1;
+  }
+  conn->logical_index = static_cast<int>(index);
+  conn->w_offset = state.config.w_offset;
+  bool first_handshake = true;
   for (;;) {
-    *conn = {};
-    unsigned int retries =
-        state.config.dial_policy == lupine_client_dial_policy::bounded_retry
-            ? kBoundedRetryCount
-            : 0;
-    lupine_socket_t connfd = lupine_tcp_connect(endpoint.host.c_str(),
-                                                endpoint.port.c_str(), retries);
-    if (connfd == LUPINE_INVALID_SOCKET) {
-      LUPINE_LOG_ERROR("Connecting to " << endpoint.host << " port "
-                                        << endpoint.port << " failed");
-      return -1;
-    }
-    if (rpc_conn_init(conn, connfd, 0) < 0) {
-      return -1;
-    }
-    conn->logical_index = static_cast<int>(index);
-    conn->w_offset = state.config.w_offset;
     unsigned int slot = min_slot;
     // A server that stated no window hosts no arena at all; the refusal below
     // reports that rather than spending a dial to be told the same thing.
@@ -191,11 +192,13 @@ int connect_endpoint(client_transport_state &state,
         return -1;
       }
     }
-    if (initialize_tls(conn, endpoint) < 0) {
+    if (first_handshake && initialize_tls(conn, endpoint) < 0) {
       reset_connection(conn);
       return -1;
     }
-    int http2_result = rpc_http2_client_init(conn);
+    int http2_result = first_handshake ? rpc_http2_client_init(conn)
+                                       : rpc_http2_client_retry_handshake(conn);
+    first_handshake = false;
     // No arena was requested, so client_init returned without waiting. Settle
     // the build check on this same connection rather than spending a dial.
     if (http2_result == 0 && conn->va_size == 0) {
@@ -209,6 +212,7 @@ int connect_endpoint(client_transport_state &state,
       lupine_va_window stated = {};
       bool adopt = rpc_http2_peer_va_window(conn, &stated) &&
                    (stated.base != window.base || stated.size != window.size);
+      lupine_va_release(conn);
       if (adopt) {
         LUPINE_LOG_DEBUG("LUPINE server at " << endpoint.host << " port "
                                              << endpoint.port
@@ -216,12 +220,10 @@ int connect_endpoint(client_transport_state &state,
                                                 "retrying in its window");
         window = stated;
         min_slot = 0;
-        reset_connection(conn);
         continue;
       }
       if (slot + 1 < LUPINE_VA_ARENA_COUNT) {
         min_slot = slot + 1;
-        reset_connection(conn);
         continue;
       }
     }
