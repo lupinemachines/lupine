@@ -102,31 +102,6 @@ int handle_cudaGetErrorString(conn_t *conn) {
   return handle_error_text(conn, "cudaGetErrorString");
 }
 
-int handle_cudaCreateChannelDesc(conn_t *conn) {
-  int x, y, z, w;
-  enum cudaChannelFormatKind f;
-  if (rpc_read(conn, &x, sizeof(x)) < 0 || rpc_read(conn, &y, sizeof(y)) < 0 ||
-      rpc_read(conn, &z, sizeof(z)) < 0 || rpc_read(conn, &w, sizeof(w)) < 0 ||
-      rpc_read(conn, &f, sizeof(f)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  struct cudaChannelFormatDesc desc = {};
-  auto fn =
-      cudart_symbol<decltype(&cudaCreateChannelDesc)>("cudaCreateChannelDesc");
-  if (fn != nullptr) {
-    desc = fn(x, y, z, w, f);
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &desc, sizeof(desc)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 #if CUDART_VERSION >= 12000
 int handle_cudaFuncGetName(conn_t *conn) {
   const void *func = nullptr;
@@ -586,43 +561,5 @@ int handle_cudaLaunchKernelExC(conn_t *conn) {
   rpc_async_sequence_end(conn);
   return 0;
 }
-
-namespace {
-
-int handle_occupancy_for_config(conn_t *conn, const char *symbol) {
-  const void *func = nullptr;
-  launch_config launch;
-  if (rpc_read(conn, &func, sizeof(func)) < 0 ||
-      read_launch_config(conn, &launch) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  int value = 0;
-  using fn_t = cudaError_t (*)(int *, const void *, const cudaLaunchConfig_t *);
-  fn_t fn = cudart_symbol<fn_t>(symbol);
-  cudaError_t result =
-      fn == nullptr ? function_not_found() : fn(&value, func, &launch.config);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &value, sizeof(value)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-} // namespace
-
-int handle_cudaOccupancyMaxPotentialClusterSize(conn_t *conn) {
-  return handle_occupancy_for_config(conn,
-                                     "cudaOccupancyMaxPotentialClusterSize");
-}
-
-int handle_cudaOccupancyMaxActiveClusters(conn_t *conn) {
-  return handle_occupancy_for_config(conn, "cudaOccupancyMaxActiveClusters");
-}
-
 
 #include "codegen/gen_cudart_server.inc"

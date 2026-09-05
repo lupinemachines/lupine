@@ -385,14 +385,11 @@
   HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphExecUpdate, handle_cuGraphExecUpdate, rpc_backend::cuda)
 #define LUPINE_CUDART_RPC_HANDLERS(HANDLER) \
-  HANDLER(RPC_cudaCreateChannelDesc, handle_cudaCreateChannelDesc, rpc_backend::cudart) \
   HANDLER(RPC_cudaGetErrorName, handle_cudaGetErrorName, rpc_backend::cudart) \
   HANDLER(RPC_cudaGetErrorString, handle_cudaGetErrorString, rpc_backend::cudart) \
   HANDLER(RPC_cudaLaunchCooperativeKernel, handle_cudaLaunchCooperativeKernel, rpc_backend::cudart) \
   HANDLER(RPC_cudaLaunchKernel, handle_cudaLaunchKernel, rpc_backend::cudart) \
   HANDLER(RPC_cudaLaunchKernelExC, handle_cudaLaunchKernelExC, rpc_backend::cudart) \
-  HANDLER(RPC_cudaOccupancyMaxActiveClusters, handle_cudaOccupancyMaxActiveClusters, rpc_backend::cudart) \
-  HANDLER(RPC_cudaOccupancyMaxPotentialClusterSize, handle_cudaOccupancyMaxPotentialClusterSize, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterFatBinary, handle___cudaRegisterFatBinary, rpc_backend::cudart) \
   HANDLER(RPC_lupineCudartFuncParamLayout, handle_lupineCudartFuncParamLayout, rpc_backend::cudart) \
   HANDLER(RPC_cudaArrayGetInfo, handle_cudaArrayGetInfo, rpc_backend::cudart) \
@@ -400,6 +397,7 @@
   HANDLER(RPC_cudaArrayGetPlane, handle_cudaArrayGetPlane, rpc_backend::cudart) \
   HANDLER(RPC_cudaArrayGetSparseProperties, handle_cudaArrayGetSparseProperties, rpc_backend::cudart) \
   HANDLER(RPC_cudaChooseDevice, handle_cudaChooseDevice, rpc_backend::cudart) \
+  HANDLER(RPC_cudaCreateChannelDesc, handle_cudaCreateChannelDesc, rpc_backend::cudart) \
   HANDLER(RPC_cudaCreateSurfaceObject, handle_cudaCreateSurfaceObject, rpc_backend::cudart) \
   HANDLER(RPC_cudaCreateTextureObject, handle_cudaCreateTextureObject, rpc_backend::cudart) \
   HANDLER(RPC_cudaCtxResetPersistingL2Cache, handle_cudaCtxResetPersistingL2Cache, rpc_backend::cudart) \
@@ -490,6 +488,8 @@
   HANDLER(RPC_cudaOccupancyAvailableDynamicSMemPerBlock, handle_cudaOccupancyAvailableDynamicSMemPerBlock, rpc_backend::cudart) \
   HANDLER(RPC_cudaOccupancyMaxActiveBlocksPerMultiprocessor, handle_cudaOccupancyMaxActiveBlocksPerMultiprocessor, rpc_backend::cudart) \
   HANDLER(RPC_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags, handle_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags, rpc_backend::cudart) \
+  HANDLER(RPC_cudaOccupancyMaxActiveClusters, handle_cudaOccupancyMaxActiveClusters, rpc_backend::cudart) \
+  HANDLER(RPC_cudaOccupancyMaxPotentialClusterSize, handle_cudaOccupancyMaxPotentialClusterSize, rpc_backend::cudart) \
   HANDLER(RPC_cudaPeekAtLastError, handle_cudaPeekAtLastError, rpc_backend::cudart) \
   HANDLER(RPC_cudaPointerGetAttributes, handle_cudaPointerGetAttributes, rpc_backend::cudart) \
   HANDLER(RPC_cudaRuntimeGetVersion, handle_cudaRuntimeGetVersion, rpc_backend::cudart) \

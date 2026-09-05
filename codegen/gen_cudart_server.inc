@@ -162,6 +162,46 @@ ERROR_0:
   return -1;
 }
 
+int handle_cudaCreateChannelDesc(conn_t *conn) {
+  int x;
+  int y;
+  int z;
+  int w;
+  enum cudaChannelFormatKind f;
+  int request_id;
+  struct cudaChannelFormatDesc return_value = {};
+  cudaError_t rpc_status = cudaSuccess;
+  using fn_t = struct cudaChannelFormatDesc (*)(int, int, int, int,
+                                                enum cudaChannelFormatKind);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &x, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(int)) < 0 ||
+      rpc_read(conn, &z, sizeof(int)) < 0 ||
+      rpc_read(conn, &w, sizeof(int)) < 0 ||
+      rpc_read(conn, &f, sizeof(enum cudaChannelFormatKind)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaCreateChannelDesc));
+  if (fn == nullptr)
+    rpc_status = function_not_found();
+  else
+    return_value = fn(x, y, z, w, f);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(struct cudaChannelFormatDesc)) <
+          0 ||
+      rpc_write(conn, &rpc_status, sizeof(rpc_status)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_cudaCreateSurfaceObject(conn_t *conn) {
   cudaSurfaceObject_t pSurfObject;
   pSurfObject = {};
@@ -4059,6 +4099,91 @@ int handle_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cudaOccupancyMaxActiveClusters(conn_t *conn) {
+  int numClusters;
+  numClusters = {};
+  const void *func;
+  cudaLaunchConfig_t launchConfig = {};
+  std::vector<unsigned char> launchConfig_attrs_buf;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(int *, const void *, const cudaLaunchConfig_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &launchConfig, sizeof(launchConfig)) < 0 ||
+      ((launchConfig_attrs_buf.resize(launchConfig.numAttrs *
+                                      sizeof(*launchConfig.attrs)),
+        false)) ||
+      (launchConfig.numAttrs != 0 &&
+       rpc_read(conn, launchConfig_attrs_buf.data(),
+                launchConfig_attrs_buf.size()) < 0) ||
+      ((launchConfig.attrs =
+            (decltype(launchConfig.attrs))launchConfig_attrs_buf.data()),
+       false) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaOccupancyMaxActiveClusters));
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(&numClusters, func, &launchConfig);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &numClusters, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cudaOccupancyMaxPotentialClusterSize(conn_t *conn) {
+  int clusterSize;
+  clusterSize = {};
+  const void *func;
+  cudaLaunchConfig_t launchConfig = {};
+  std::vector<unsigned char> launchConfig_attrs_buf;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(int *, const void *, const cudaLaunchConfig_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &func, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &launchConfig, sizeof(launchConfig)) < 0 ||
+      ((launchConfig_attrs_buf.resize(launchConfig.numAttrs *
+                                      sizeof(*launchConfig.attrs)),
+        false)) ||
+      (launchConfig.numAttrs != 0 &&
+       rpc_read(conn, launchConfig_attrs_buf.data(),
+                launchConfig_attrs_buf.size()) < 0) ||
+      ((launchConfig.attrs =
+            (decltype(launchConfig.attrs))launchConfig_attrs_buf.data()),
+       false) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(
+      LUPINE_SYMBOL_NAME(cudaOccupancyMaxPotentialClusterSize));
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(&clusterSize, func, &launchConfig);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &clusterSize, sizeof(int)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

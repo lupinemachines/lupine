@@ -88,7 +88,6 @@ int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 // binding on the caller's lane.
 thread_local int current_device = 0;
 
-
 // Every server that holds a virtual device, once each.
 std::vector<conn_t *> all_connections() {
   std::vector<conn_t *> connections;
@@ -184,19 +183,6 @@ extern "C" cudaError_t cudaSetDevice(int device) {
   return cudaSuccess;
 }
 
-#if CUDART_VERSION >= 12000
-extern "C" cudaError_t cudaInitDevice(int device, unsigned int deviceFlags,
-                                      unsigned int flags) {
-  int remote_device = device;
-  conn_t *conn = lupine_rpc_conn_for_device(&remote_device);
-  if (conn == nullptr) {
-    return record(cudaErrorInvalidDevice);
-  }
-  return record(
-      lupine_rpc_cudaInitDevice(conn, remote_device, deviceFlags, flags));
-}
-#endif
-
 extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
   if (len < 0 || (len != 0 && device_arr == nullptr)) {
     return record(cudaErrorInvalidValue);
@@ -282,25 +268,6 @@ extern "C" const char *cudaGetErrorName(cudaError_t error) {
 
 extern "C" const char *cudaGetErrorString(cudaError_t error) {
   return error_text(RPC_cudaGetErrorString, error, false);
-}
-
-extern "C" struct cudaChannelFormatDesc
-cudaCreateChannelDesc(int x, int y, int z, int w,
-                      enum cudaChannelFormatKind f) {
-  struct cudaChannelFormatDesc desc = {};
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cudaCreateChannelDesc) < 0 ||
-      rpc_write(conn, &x, sizeof(x)) < 0 ||
-      rpc_write(conn, &y, sizeof(y)) < 0 ||
-      rpc_write(conn, &z, sizeof(z)) < 0 ||
-      rpc_write(conn, &w, sizeof(w)) < 0 ||
-      rpc_write(conn, &f, sizeof(f)) < 0 || rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &desc, sizeof(desc)) < 0 || rpc_read_end(conn) < 0) {
-    record(rpc_error());
-  }
-  return desc;
 }
 
 // ---------------------------------------------------------------------------
@@ -727,41 +694,6 @@ cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
   return cudaSuccess;
 }
 
-cudaError_t occupancy_for_config(int op, int *result, const void *func,
-                                 const cudaLaunchConfig_t *launchConfig) {
-  if (result == nullptr || launchConfig == nullptr ||
-      (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
-    return record(cudaErrorInvalidValue);
-  }
-  int route_device = current_device;
-  conn_t *conn = launchConfig->stream == nullptr
-                     ? lupine_rpc_conn_for_device(&route_device)
-                     : lupine_rpc_conn_for_stream(launchConfig->stream);
-  const uint32_t attribute_count = launchConfig->numAttrs;
-  cudaError_t return_value = rpc_error();
-  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
-      rpc_write(conn, &func, sizeof(func)) < 0 ||
-      rpc_write(conn, &launchConfig->gridDim, sizeof(launchConfig->gridDim)) <
-          0 ||
-      rpc_write(conn, &launchConfig->blockDim, sizeof(launchConfig->blockDim)) <
-          0 ||
-      rpc_write(conn, &launchConfig->dynamicSmemBytes,
-                sizeof(launchConfig->dynamicSmemBytes)) < 0 ||
-      rpc_write(conn, &launchConfig->stream, sizeof(launchConfig->stream)) <
-          0 ||
-      rpc_write(conn, &attribute_count, sizeof(attribute_count)) < 0 ||
-      (attribute_count != 0 &&
-       rpc_write(conn, launchConfig->attrs,
-                 attribute_count * sizeof(*launchConfig->attrs)) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, result, sizeof(*result)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return record(rpc_error());
-  }
-  return record(return_value);
-}
-
 } // namespace
 
 extern "C" cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim,
@@ -829,20 +761,6 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
     return record(rpc_error());
   }
   return cudaSuccess;
-}
-
-extern "C" cudaError_t
-cudaOccupancyMaxPotentialClusterSize(int *clusterSize, const void *func,
-                                     const cudaLaunchConfig_t *launchConfig) {
-  return occupancy_for_config(RPC_cudaOccupancyMaxPotentialClusterSize,
-                              clusterSize, func, launchConfig);
-}
-
-extern "C" cudaError_t
-cudaOccupancyMaxActiveClusters(int *numClusters, const void *func,
-                               const cudaLaunchConfig_t *launchConfig) {
-  return occupancy_for_config(RPC_cudaOccupancyMaxActiveClusters, numClusters,
-                              func, launchConfig);
 }
 
 #if CUDART_VERSION >= 13000

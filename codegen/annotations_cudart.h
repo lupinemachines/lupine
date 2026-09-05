@@ -53,7 +53,11 @@ cudaArrayGetSparseProperties(struct cudaArraySparseProperties *sparseProperties,
  */
 cudaError_t cudaChooseDevice(int *device, const struct cudaDeviceProp *prop);
 /**
- * @disabled - the result is a struct, not an error code
+ * @param x SEND_ONLY
+ * @param y SEND_ONLY
+ * @param z SEND_ONLY
+ * @param w SEND_ONLY
+ * @param f SEND_ONLY
  */
 struct cudaChannelFormatDesc
 cudaCreateChannelDesc(int x, int y, int z, int w, enum cudaChannelFormatKind f);
@@ -782,14 +786,20 @@ cudaError_t cudaImportExternalSemaphore(
     const struct cudaExternalSemaphoreHandleDesc *semHandleDesc);
 #if CUDART_VERSION >= 12000
 /**
- * @disabled client - manual client maps the virtual ordinal
  * @guard CUDART_VERSION >= 12000
+ * @routingkey DEVICE device
  * @param device SEND_ONLY
  * @param deviceFlags SEND_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaInitDevice(int device, unsigned int deviceFlags,
-                           unsigned int flags);
+                           unsigned int flags) {
+  if (conn == nullptr) {
+    return record(cudaErrorInvalidDevice);
+  }
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 #endif
 /**
  * @param devPtr SEND_ONLY
@@ -1542,17 +1552,43 @@ cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags);
 /**
- * @disabled - manual client sends the attributes behind the launch config
+ * @param numClusters RECV_ONLY
+ * @param func SEND_ONLY
+ * @param launchConfig SEND_ONLY
+ * @deeparray launchConfig attrs numAttrs
  */
 cudaError_t
 cudaOccupancyMaxActiveClusters(int *numClusters, const void *func,
-                               const cudaLaunchConfig_t *launchConfig);
+                               const cudaLaunchConfig_t *launchConfig) {
+  if (launchConfig == nullptr ||
+      (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
+    return record(cudaErrorInvalidValue);
+  }
+  if (launchConfig->stream != nullptr) {
+    conn = lupine_rpc_conn_for_stream(launchConfig->stream);
+  }
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled - manual client sends the attributes behind the launch config
+ * @param clusterSize RECV_ONLY
+ * @param func SEND_ONLY
+ * @param launchConfig SEND_ONLY
+ * @deeparray launchConfig attrs numAttrs
  */
 cudaError_t
 cudaOccupancyMaxPotentialClusterSize(int *clusterSize, const void *func,
-                                     const cudaLaunchConfig_t *launchConfig);
+                                     const cudaLaunchConfig_t *launchConfig) {
+  if (launchConfig == nullptr ||
+      (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
+    return record(cudaErrorInvalidValue);
+  }
+  if (launchConfig->stream != nullptr) {
+    conn = lupine_rpc_conn_for_stream(launchConfig->stream);
+  }
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled client - the sticky error is kept on the client
  */

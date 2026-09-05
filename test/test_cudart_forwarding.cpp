@@ -33,8 +33,6 @@ int handle_cudaLaunchKernel(conn_t *);
 int handle_cudaLaunchCooperativeKernel(conn_t *);
 int handle_cudaLaunchKernelExC(conn_t *);
 int handle___cudaLaunchKernel(conn_t *);
-int handle_cudaOccupancyMaxPotentialClusterSize(conn_t *);
-int handle_cudaOccupancyMaxActiveClusters(conn_t *);
 extern "C" void **__cudaRegisterFatBinary(void *);
 extern "C" char __cudaInitModule(void **);
 extern "C" cudaError_t __cudaLaunchKernel(cudaKernel_t, dim3, dim3, void **,
@@ -89,6 +87,11 @@ static size_t unified_function_size, unified_data_size;
 static int module_inits[2];
 static char module_result = static_cast<char>(0xa5);
 static bool missing_init_module;
+static bool missing_channel_desc;
+#if CUDART_VERSION >= 12000
+static int init_device, init_server, init_calls;
+static cudaError_t init_result = cudaSuccess;
+#endif
 static std::vector<const char *> retained_names;
 static std::vector<const uint3 *> retained_indices;
 static std::vector<void **> managed_slots;
@@ -114,6 +117,7 @@ static int expected_launch_server;
 static const void *expected_entry;
 static const void *zero_arg_entry = reinterpret_cast<const void *>(0x777);
 static int expected_attributes;
+static const cudaLaunchAttribute *client_attributes;
 static std::string launch_call;
 
 extern "C" int lupine_rpc_device_count(int *count) {
@@ -121,7 +125,8 @@ extern "C" int lupine_rpc_device_count(int *count) {
   return 0;
 }
 extern "C" conn_t *lupine_rpc_conn_for_device(int *device) {
-  assert(*device >= 0 && *device < 3);
+  if (*device < 0 || *device >= 3)
+    return nullptr;
   conn_t *conn = servers[*device == 1];
   *device = *device == 2 ? 1 : 0;
   return conn;
@@ -219,6 +224,10 @@ static void dispatch_request(conn_t *conn) {
     DISPATCH(__cudaPushCallConfiguration);
     DISPATCH(__cudaPopCallConfiguration);
     DISPATCH(cudaSetDevice);
+#if CUDART_VERSION >= 12000
+    DISPATCH(cudaInitDevice);
+#endif
+    DISPATCH(cudaCreateChannelDesc);
     DISPATCH(cudaMalloc);
     DISPATCH(cudaMallocAsync);
     DISPATCH(cudaMallocPitch);
@@ -409,6 +418,21 @@ static cudaError_t vendor_set_device(int device) {
   assert(device == 0);
   return cudaSuccess;
 }
+#if CUDART_VERSION >= 12000
+static cudaError_t vendor_init_device(int device, unsigned device_flags,
+                                      unsigned flags) {
+  assert(device_flags == 0x12 && flags == 0x34);
+  init_device = device;
+  init_server = server;
+  ++init_calls;
+  return init_result;
+}
+#endif
+static cudaChannelFormatDesc vendor_channel_desc(int x, int y, int z, int w,
+                                                 cudaChannelFormatKind f) {
+  assert(server == 1);
+  return {x, y, z, w, f};
+}
 static cudaError_t vendor_malloc(void **ptr, size_t) {
   *ptr = reinterpret_cast<void *>(0x1000000 + server * 0x1000000);
   return cudaSuccess;
@@ -542,6 +566,7 @@ static void check_config(const cudaLaunchConfig_t *config) {
   assert(config->dynamicSmemBytes == 8192 &&
          config->numAttrs == static_cast<unsigned>(expected_attributes));
   if (config->numAttrs != 0) {
+    assert(config->attrs != client_attributes);
     assert(config->attrs[0].id == cudaLaunchAttributeCooperative &&
            config->attrs[0].val.cooperative == 1);
   }
@@ -584,6 +609,13 @@ extern "C" void *__wrap_dlsym(void *, const char *name) {
   SYMBOL(__cudaPushCallConfiguration, vendor_push);
   SYMBOL(__cudaPopCallConfiguration, vendor_pop);
   SYMBOL(cudaSetDevice, vendor_set_device);
+#if CUDART_VERSION >= 12000
+  SYMBOL(cudaInitDevice, vendor_init_device);
+#endif
+  if (std::strcmp(name, "cudaCreateChannelDesc") == 0)
+    return missing_channel_desc
+               ? nullptr
+               : reinterpret_cast<void *>(&vendor_channel_desc);
   SYMBOL(cudaMalloc, vendor_malloc);
   SYMBOL(cudaMallocAsync, vendor_malloc_async);
   SYMBOL(cudaMallocPitch, vendor_malloc_pitch);
@@ -809,6 +841,43 @@ int main() {
   assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
   assert(cudaPeekAtLastError() == cudaSuccess);
 
+  assert(cudaSetDevice(1) == cudaSuccess);
+#if CUDART_VERSION >= 12000
+  assert(cudaInitDevice(2, 0x12, 0x34) == cudaSuccess);
+  assert(init_server == 0 && init_device == 1 && init_calls == 1);
+  int current = -1;
+  assert(cudaGetDevice(&current) == cudaSuccess && current == 1);
+  init_result = cudaErrorInitializationError;
+  assert(cudaInitDevice(1, 0x12, 0x34) == cudaErrorInitializationError);
+  assert(init_server == 1 && init_device == 0 && init_calls == 2);
+  assert(cudaGetLastError() == cudaErrorInitializationError);
+  init_result = cudaSuccess;
+  assert(cudaInitDevice(-1, 0x12, 0x34) == cudaErrorInvalidDevice);
+  assert(init_calls == 2);
+  assert(cudaGetLastError() == cudaErrorInvalidDevice);
+  fail_request = true;
+  assert(cudaInitDevice(2, 0x12, 0x34) == cudaErrorDevicesUnavailable);
+  fail_request = false;
+  assert(init_calls == 2);
+  assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
+#endif
+  auto desc = cudaCreateChannelDesc(8, 16, 24, 32, cudaChannelFormatKindSigned);
+  assert(desc.x == 8 && desc.y == 16 && desc.z == 24 && desc.w == 32 &&
+         desc.f == cudaChannelFormatKindSigned);
+  missing_channel_desc = true;
+  desc = cudaCreateChannelDesc(8, 16, 24, 32, cudaChannelFormatKindSigned);
+  assert(desc.x == 0 && desc.y == 0 && desc.z == 0 && desc.w == 0 &&
+         desc.f == 0);
+  assert(cudaGetLastError() == cudaErrorNotSupported);
+  missing_channel_desc = false;
+  fail_request = true;
+  desc = cudaCreateChannelDesc(8, 16, 24, 32, cudaChannelFormatKindSigned);
+  fail_request = false;
+  assert(desc.x == 0 && desc.y == 0 && desc.z == 0 && desc.w == 0 &&
+         desc.f == 0);
+  assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
+  assert(cudaSetDevice(0) == cudaSuccess);
+
   auto stream = reinterpret_cast<cudaStream_t>(0x123456789abcdef0ULL);
   assert(__cudaPushCallConfiguration(dim3(2, 3, 4), dim3(5, 6, 7), 8192,
                                      stream) == 0);
@@ -998,13 +1067,29 @@ int main() {
     config.stream = stream;
     config.numAttrs = attrs;
     config.attrs = attrs ? &attribute : nullptr;
+    client_attributes = config.attrs;
     int clusters = 0;
-    assert(cudaOccupancyMaxPotentialClusterSize(&clusters, expected_entry,
-                                                &config) == cudaSuccess &&
-           clusters == 8);
-    assert(cudaOccupancyMaxActiveClusters(&clusters, expected_entry, &config) ==
-               cudaSuccess &&
-           clusters == 8);
+    for (auto occupancy : {cudaOccupancyMaxPotentialClusterSize,
+                           cudaOccupancyMaxActiveClusters}) {
+      for (auto query_stream : {cudaStream_t{}, stream}) {
+        config.stream = query_stream;
+        expected_launch_server = query_stream == nullptr ? 0 : 1;
+        assert(occupancy(&clusters, expected_entry, &config) == cudaSuccess &&
+               clusters == 8);
+      }
+      waits = response_waits;
+      assert(occupancy(nullptr, expected_entry, &config) ==
+             cudaErrorInvalidValue);
+      assert(occupancy(&clusters, expected_entry, nullptr) ==
+             cudaErrorInvalidValue);
+      cudaLaunchConfig_t invalid = config;
+      invalid.numAttrs = 1;
+      invalid.attrs = nullptr;
+      assert(occupancy(&clusters, expected_entry, &invalid) ==
+             cudaErrorInvalidValue);
+      assert(response_waits == waits);
+      assert(cudaGetLastError() == cudaErrorInvalidValue);
+    }
     waits = response_waits;
     assert(cudaLaunchKernelExC(&config, expected_entry, args) == cudaSuccess);
     assert(response_waits == waits);

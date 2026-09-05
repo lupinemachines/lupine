@@ -495,6 +495,7 @@
 #define RPC_cudaArrayGetPlane 1426811304
 #define RPC_cudaArrayGetSparseProperties 2097681243
 #define RPC_cudaChooseDevice 1160900913
+#define RPC_cudaCreateChannelDesc 496602705
 #define RPC_cudaCreateSurfaceObject 243770130
 #define RPC_cudaCreateTextureObject 2133156655
 #define RPC_cudaCtxResetPersistingL2Cache 1119250310
@@ -617,6 +618,8 @@
 #define RPC_cudaOccupancyAvailableDynamicSMemPerBlock 1612850605
 #define RPC_cudaOccupancyMaxActiveBlocksPerMultiprocessor 1541167556
 #define RPC_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags 1787840641
+#define RPC_cudaOccupancyMaxActiveClusters 1604174875
+#define RPC_cudaOccupancyMaxPotentialClusterSize 1223278984
 #define RPC_cudaPeekAtLastError 1072806477
 #define RPC_cudaPointerGetAttributes 1582769505
 #define RPC_cudaRuntimeGetVersion 1640094675
@@ -721,15 +724,12 @@
 #define RPC___cudaUnregisterFatBinary 83215989
 #define RPC___cudaInitModule 112657159
 #define RPC___cudaGetKernel 2093390772
-#define RPC_cudaCreateChannelDesc 496602705
 #define RPC_cudaFuncGetName 2032901329
 #define RPC_cudaGetErrorName 826623402
 #define RPC_cudaGetErrorString 755451662
 #define RPC_cudaLaunchCooperativeKernel 290708246
 #define RPC_cudaLaunchKernel 579742057
 #define RPC_cudaLaunchKernelExC 140751916
-#define RPC_cudaOccupancyMaxActiveClusters 1604174875
-#define RPC_cudaOccupancyMaxPotentialClusterSize 1223278984
 #define RPC___cudaRegisterFatBinary 1167276453
 #define RPC___cudaLaunchKernel 1206577725
 #define RPC_lupineCudartFuncParamLayout 632188610
