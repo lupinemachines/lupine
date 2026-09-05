@@ -1047,11 +1047,12 @@ def sdk_header(path: str) -> str:
     """The SDK header a target's annotations describe: the one they include."""
     # Only the leading includes are parsed. The rest of an annotation file needs
     # a preprocessor, which would expand the include away before it is read.
-    head = itertools.takewhile(
-        lambda line: not line.strip() or line.startswith("#include"),
-        open(path, encoding="utf-8"),
-    )
-    includes = parse_string("".join(head)).includes
+    with open(path, encoding="utf-8") as f:
+        head = itertools.takewhile(
+            lambda line: not line.strip() or line.startswith("#include"),
+            f,
+        )
+        includes = parse_string("".join(head)).includes
     if len(includes) != 1:
         raise RuntimeError(f"{path}: expected one #include of the SDK header")
     return includes[0].filename.strip('<>"')
