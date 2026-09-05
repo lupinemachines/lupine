@@ -41,7 +41,14 @@ typedef struct CUgraphExecUpdateResultInfo_st {
 #ifdef __cplusplus
 extern "C" {
 #endif
+CUresult cuLibraryLoadData(CUlibrary *, const void *, CUjit_option *, void **,
+                           unsigned int, CUlibraryOption *, void **,
+                           unsigned int);
+CUresult cuGraphAddKernelNode_v2(CUgraphNode *, CUgraph, const CUgraphNode *,
+                                 size_t, const CUDA_KERNEL_NODE_PARAMS *);
 CUresult cuGraphKernelNodeGetParams_v2(CUgraphNode, CUDA_KERNEL_NODE_PARAMS *);
+CUresult cuGraphKernelNodeSetParams_v2(CUgraphNode,
+                                       const CUDA_KERNEL_NODE_PARAMS *);
 CUresult cuGraphExecKernelNodeSetParams_v2(CUgraphExec, CUgraphNode,
                                            const CUDA_KERNEL_NODE_PARAMS *);
 CUresult cuKernelGetParamInfo(CUkernel, size_t, size_t *, size_t *);
