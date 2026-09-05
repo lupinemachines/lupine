@@ -190,7 +190,7 @@ conn_t *connection_for_device(int *device) {
 extern "C" hipError_t hipInit(unsigned int flags) {
   std::lock_guard<std::mutex> lock(devices_mutex);
   if (open_connections() < 0) {
-    return rpc_error();
+    return record(rpc_error());
   }
 
   hipError_t first_error = hipSuccess;
@@ -211,17 +211,17 @@ extern "C" hipError_t hipInit(unsigned int flags) {
 
   devices_ready = false;
   devices.clear();
-  return first_error;
+  return record(first_error);
 }
 
 extern "C" hipError_t hipGetDeviceCount(int *count) {
   if (count == nullptr) {
-    return hipErrorInvalidValue;
+    return record(hipErrorInvalidValue);
   }
   std::lock_guard<std::mutex> lock(devices_mutex);
   hipError_t result = ensure_devices_locked();
   if (result != hipSuccess) {
-    return result;
+    return record(result);
   }
   *count = static_cast<int>(devices.size());
   return hipSuccess;
@@ -229,16 +229,26 @@ extern "C" hipError_t hipGetDeviceCount(int *count) {
 
 extern "C" hipError_t hipDeviceGet(int *device, int ordinal) {
   if (device == nullptr) {
-    return hipErrorInvalidValue;
+    return record(hipErrorInvalidValue);
   }
   std::lock_guard<std::mutex> lock(devices_mutex);
   hipError_t result = ensure_devices_locked();
   if (result != hipSuccess) {
-    return result;
+    return record(result);
   }
   if (ordinal < 0 || ordinal >= static_cast<int>(devices.size())) {
-    return hipErrorInvalidDevice;
+    return record(hipErrorInvalidDevice);
   }
   *device = ordinal;
   return hipSuccess;
 }
+
+extern "C" hipError_t hipGetLastError() {
+  const hipError_t error = local_error;
+  local_error = hipSuccess;
+  return error;
+}
+
+extern "C" hipError_t hipExtGetLastError() { return hipGetLastError(); }
+
+extern "C" hipError_t hipPeekAtLastError() { return local_error; }

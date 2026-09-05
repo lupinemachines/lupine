@@ -3,6 +3,9 @@
 int handle_hipInit(conn_t *conn);
 int handle_hipGetDeviceCount(conn_t *conn);
 int handle_hipDeviceGet(conn_t *conn);
+int handle_hipGetLastError(conn_t *conn);
+int handle_hipExtGetLastError(conn_t *conn);
+int handle_hipPeekAtLastError(conn_t *conn);
 int handle_hipGetDevicePropertiesR0600(conn_t *conn);
 int handle_hipDeviceGetName(conn_t *conn);
 int handle_hipDeviceTotalMem(conn_t *conn);

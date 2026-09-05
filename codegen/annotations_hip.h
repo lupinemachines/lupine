@@ -20,9 +20,21 @@ hipError_t hipGetDeviceCount(int *count);
  */
 hipError_t hipDeviceGet(int *device, int ordinal);
 /**
+ * @disabled client - the sticky error is kept on the client
+ */
+hipError_t hipGetLastError(void);
+/**
+ * @disabled client - the sticky error is kept on the client
+ */
+hipError_t hipExtGetLastError(void);
+/**
+ * @disabled client - the sticky error is kept on the client
+ */
+hipError_t hipPeekAtLastError(void);
+/**
  * @param prop RECV_ONLY
  * @param deviceId SEND_ONLY
- * @routingkey HIP_DEVICE deviceId
+ * @routingkey DEVICE deviceId
  * @clearfields prop hdpMemFlushCntl hdpRegFlushCntl
  */
 hipError_t hipGetDevicePropertiesR0600(hipDeviceProp_tR0600 *prop,
@@ -31,20 +43,20 @@ hipError_t hipGetDevicePropertiesR0600(hipDeviceProp_tR0600 *prop,
  * @param name RECV_ONLY LENGTH:len
  * @param len SEND_ONLY
  * @param deviceId SEND_ONLY
- * @routingkey HIP_DEVICE deviceId
+ * @routingkey DEVICE deviceId
  */
 hipError_t hipDeviceGetName(char *name, int len, int deviceId);
 /**
  * @param bytes RECV_ONLY
  * @param deviceId SEND_ONLY
- * @routingkey HIP_DEVICE deviceId
+ * @routingkey DEVICE deviceId
  */
 hipError_t hipDeviceTotalMem(size_t *bytes, int deviceId);
 /**
  * @param pi RECV_ONLY
  * @param attr SEND_ONLY
  * @param deviceId SEND_ONLY
- * @routingkey HIP_DEVICE deviceId
+ * @routingkey DEVICE deviceId
  */
 hipError_t hipDeviceGetAttribute(int *pi, hipDeviceAttribute_t attr,
                                  int deviceId);

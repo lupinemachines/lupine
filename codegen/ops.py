@@ -36,7 +36,7 @@ class NullableOperation:
                 # void is treated differently from non void pointer types
                 base_type=(
                     self.ptr.format()
-                    if self.ptr.ptr_to.format() == "const void"
+                    if self.ptr.ptr_to.format() in ("void", "const void")
                     else self.ptr.ptr_to.format()
                 ),
             )
@@ -74,7 +74,7 @@ class NullableOperation:
                 # void is treated differently from non void pointer types
                 base_type=(
                     self.ptr.format()
-                    if self.ptr.ptr_to.format() == "const void"
+                    if self.ptr.ptr_to.format() in ("void", "const void")
                     else self.ptr.ptr_to.format()
                 ),
             )
@@ -91,7 +91,7 @@ class NullableOperation:
             f"        rpc_write(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
         )
         f.write(
-            f"        ({self.parameter.name}_null_check && rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
+            f"        ({self.parameter.name}_null_check && rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.format() if self.ptr.ptr_to.format() == 'void' else self.ptr.ptr_to.format()})) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
@@ -101,7 +101,7 @@ class NullableOperation:
             f"        rpc_read(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
         )
         f.write(
-            f"        ({self.parameter.name}_null_check && rpc_read(conn, {self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
+            f"        ({self.parameter.name}_null_check && rpc_read(conn, {self.parameter.name}, sizeof({self.ptr.format() if self.ptr.ptr_to.format() == 'void' else self.ptr.ptr_to.format()})) < 0) ||\n"
         )
 
 
@@ -744,7 +744,7 @@ class NullTerminatedOperation:
         )
         f.write("        goto ERROR_0;\n")
         f.write(
-            f"    {self.parameter.name} = ({self.ptr.format()})malloc({self.parameter.name}_len);\n"
+            f"    {self.parameter.name} = {self.parameter.name}_len == 0 ? nullptr : ({self.ptr.format()})malloc({self.parameter.name}_len);\n"
         )
         f.write(
             f"    if (({self.parameter.name}_len != 0 && {self.parameter.name} == nullptr) ||\n"
@@ -1030,6 +1030,12 @@ class FunctionAnnotationMetadata:
     guard: Optional[str] = None
     disabled_client: bool = False
     disabled_server: bool = False
+    # @clientcall: delegate to another client entry point without an RPC.
+    client_call: Optional[str] = None
+    # @broadcast: invoke the RPC on every remote instance of a client handle.
+    broadcast: Optional[OwnerAnnotation] = None
+    # @servercall: typed adapter for API-specific server-side state.
+    server_call: Optional[str] = None
     # @async: fire-and-forget op; client does not wait, server sends no response.
     async_fire_forget: bool = False
     # Optional response fields are emitted by the corresponding manual server

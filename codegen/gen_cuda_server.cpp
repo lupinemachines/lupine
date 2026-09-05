@@ -1087,7 +1087,7 @@ int handle_cuModuleGetFunction(conn_t *conn) {
   if (rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -1121,7 +1121,7 @@ int handle_cuModuleGetTexRef(conn_t *conn) {
   if (rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -1155,7 +1155,7 @@ int handle_cuModuleGetSurfRef(conn_t *conn) {
   if (rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -1197,7 +1197,7 @@ int handle_cuLibraryLoadFromFile(conn_t *conn) {
   CUresult return_value;
   if (rpc_read(conn, &fileName_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  fileName = (const char *)malloc(fileName_len);
+  fileName = fileName_len == 0 ? nullptr : (const char *)malloc(fileName_len);
   if ((fileName_len != 0 && fileName == nullptr) ||
       rpc_read(conn, (void *)fileName, fileName_len) < 0 ||
       rpc_read(conn, &numJitOptions, sizeof(unsigned int)) < 0 || false)
@@ -1280,7 +1280,7 @@ int handle_cuLibraryGetKernel(conn_t *conn) {
   if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -1356,8 +1356,10 @@ ERROR_0:
 int handle_cuLibraryGetGlobal(conn_t *conn) {
   CUdeviceptr *dptr_null_check;
   CUdeviceptr dptr;
+  dptr = {};
   size_t *bytes_null_check;
   size_t bytes;
+  bytes = {};
   CUlibrary library;
   const char *name = nullptr;
   std::size_t name_len;
@@ -1368,7 +1370,7 @@ int handle_cuLibraryGetGlobal(conn_t *conn) {
       rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -1399,8 +1401,10 @@ ERROR_0:
 int handle_cuLibraryGetManaged(conn_t *conn) {
   CUdeviceptr *dptr_null_check;
   CUdeviceptr dptr;
+  dptr = {};
   size_t *bytes_null_check;
   size_t bytes;
+  bytes = {};
   CUlibrary library;
   const char *name = nullptr;
   std::size_t name_len;
@@ -1411,7 +1415,7 @@ int handle_cuLibraryGetManaged(conn_t *conn) {
       rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -1450,7 +1454,7 @@ int handle_cuLibraryGetUnifiedFunction(conn_t *conn) {
   if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &symbol_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  symbol = (const char *)malloc(symbol_len);
+  symbol = symbol_len == 0 ? nullptr : (const char *)malloc(symbol_len);
   if ((symbol_len != 0 && symbol == nullptr) ||
       rpc_read(conn, (void *)symbol, symbol_len) < 0 || false)
     goto ERROR_0;
@@ -1788,6 +1792,7 @@ ERROR_0:
 int handle_cuDeviceGetByPCIBusId(conn_t *conn) {
   CUdevice *dev_null_check;
   CUdevice dev;
+  dev = {};
   const char *pciBusId = nullptr;
   std::size_t pciBusId_len;
   int request_id;
@@ -1795,7 +1800,7 @@ int handle_cuDeviceGetByPCIBusId(conn_t *conn) {
   if (rpc_read(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
       rpc_read(conn, &pciBusId_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  pciBusId = (const char *)malloc(pciBusId_len);
+  pciBusId = pciBusId_len == 0 ? nullptr : (const char *)malloc(pciBusId_len);
   if ((pciBusId_len != 0 && pciBusId == nullptr) ||
       rpc_read(conn, (void *)pciBusId, pciBusId_len) < 0 || false)
     goto ERROR_0;
@@ -6844,7 +6849,7 @@ int handle_cuGraphDebugDotPrint(conn_t *conn) {
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &path_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  path = (const char *)malloc(path_len);
+  path = path_len == 0 ? nullptr : (const char *)malloc(path_len);
   if ((path_len != 0 && path == nullptr) ||
       rpc_read(conn, (void *)path, path_len) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
@@ -8700,6 +8705,7 @@ int handle_cuDevSmResourceSplitByCount(conn_t *conn) {
   CUdevResource input;
   CUdevResource *remainder_null_check;
   CUdevResource remainder;
+  remainder = {};
   unsigned int flags;
   unsigned int minCount;
   int request_id;
@@ -8759,6 +8765,7 @@ int handle_cuDevSmResourceSplit(conn_t *conn) {
   CUdevResource input;
   CUdevResource *remainder_null_check;
   CUdevResource remainder;
+  remainder = {};
   unsigned int flags;
   CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams = nullptr;
   size_t groupParams_size;
@@ -9035,6 +9042,7 @@ ERROR_0:
 int handle_cuLogsCurrent(conn_t *conn) {
   CUlogIterator *iterator_out_null_check;
   CUlogIterator iterator_out;
+  iterator_out = {};
   unsigned int flags;
   int request_id;
   CUresult return_value;
@@ -9077,7 +9085,8 @@ int handle_cuLogsDumpToFile(conn_t *conn) {
        rpc_read(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
       rpc_read(conn, &pathToFile_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  pathToFile = (const char *)malloc(pathToFile_len);
+  pathToFile =
+      pathToFile_len == 0 ? nullptr : (const char *)malloc(pathToFile_len);
   if ((pathToFile_len != 0 && pathToFile == nullptr) ||
       rpc_read(conn, (void *)pathToFile, pathToFile_len) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
@@ -9222,8 +9231,10 @@ int handle_cuGraphExecUpdate(conn_t *conn) {
   CUgraph hGraph;
   CUgraphNode *hErrorNode_out_null_check;
   CUgraphNode hErrorNode_out;
+  hErrorNode_out = {};
   CUgraphExecUpdateResult *updateResult_out_null_check;
   CUgraphExecUpdateResult updateResult_out;
+  updateResult_out = {};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
