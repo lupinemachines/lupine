@@ -7685,6 +7685,42 @@ ERROR_0:
   return -1;
 }
 
+int handle___cudaRegisterUnifiedTable(conn_t *conn) {
+  void **fatCubinHandle;
+  void *functionTable;
+  size_t functionWindowSize;
+  void *dataTable;
+  size_t dataWindowSize;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = void (*)(void **, void *, size_t, void *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_read(conn, &functionTable, sizeof(void *)) < 0 ||
+      rpc_read(conn, &functionWindowSize, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &dataTable, sizeof(void *)) < 0 ||
+      rpc_read(conn, &dataWindowSize, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(__cudaRegisterUnifiedTable));
+  return_value = fn == nullptr ? function_not_found() : cudaSuccess;
+  if (fn != nullptr)
+    fn(fatCubinHandle, functionTable, functionWindowSize, dataTable,
+       dataWindowSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle___cudaPushCallConfiguration(conn_t *conn) {
   dim3 gridDim;
   dim3 blockDim;

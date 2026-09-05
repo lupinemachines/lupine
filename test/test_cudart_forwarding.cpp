@@ -55,7 +55,7 @@ extern "C" void __cudaRegisterTexture(void **, const void *, const void **,
 extern "C" void __cudaRegisterSurface(void **, const void *, const void **,
                                       const char *, int, int);
 extern "C" void __cudaRegisterHostVar(void **, const char *, char *, size_t);
-extern "C" void __cudaRegisterUnifiedTable(void *);
+extern "C" void __cudaRegisterUnifiedTable(void **, void *, size_t, void *, size_t);
 extern "C" unsigned __cudaPushCallConfiguration(dim3, dim3, size_t, void *);
 extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *, dim3 *, size_t *,
                                                   void *);
@@ -83,6 +83,9 @@ static thread_local int failing_server = -1;
 static int registrations, functions, variables, managed, textures, surfaces,
     host_variables;
 static int ended[2], unregistered[2];
+static int unified_tables[2];
+static void *unified_functions, *unified_data;
+static size_t unified_function_size, unified_data_size;
 static int module_inits[2];
 static char module_result = static_cast<char>(0xa5);
 static bool missing_init_module;
@@ -212,6 +215,7 @@ static void dispatch_request(conn_t *conn) {
     DISPATCH(__cudaRegisterTexture);
     DISPATCH(__cudaRegisterSurface);
     DISPATCH(__cudaRegisterHostVar);
+    DISPATCH(__cudaRegisterUnifiedTable);
     DISPATCH(__cudaPushCallConfiguration);
     DISPATCH(__cudaPopCallConfiguration);
     DISPATCH(cudaSetDevice);
@@ -298,6 +302,15 @@ static void vendor_end(void **handle) {
   // These writes happen after the registration RPC's temporary buffers died.
   for (void **slot : managed_slots)
     *slot = reinterpret_cast<void *>(0xdead);
+}
+static void vendor_unified_table(void **handle, void *function_table,
+                                 size_t function_size, void *data_table,
+                                 size_t data_size) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
+  assert(function_table == unified_functions &&
+         function_size == unified_function_size);
+  assert(data_table == unified_data && data_size == unified_data_size);
+  ++unified_tables[server];
 }
 static void vendor_unregister(void **handle) {
   assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
@@ -567,6 +580,7 @@ extern "C" void *__wrap_dlsym(void *, const char *name) {
   SYMBOL(__cudaRegisterTexture, vendor_texture);
   SYMBOL(__cudaRegisterSurface, vendor_surface);
   SYMBOL(__cudaRegisterHostVar, vendor_host_var);
+  SYMBOL(__cudaRegisterUnifiedTable, vendor_unified_table);
   SYMBOL(__cudaPushCallConfiguration, vendor_push);
   SYMBOL(__cudaPopCallConfiguration, vendor_pop);
   SYMBOL(cudaSetDevice, vendor_set_device);
@@ -716,6 +730,21 @@ int main() {
   image.header_size = sizeof(image);
   void **handle = __cudaRegisterFatBinary(&image);
   assert(handle && registrations == 2);
+  // Unmapped address identities must reach every server unchanged. Attempting
+  // to serialize window bytes would fault, and allocating copies would change
+  // the addresses used by host-originated unified pointers.
+  unified_functions = reinterpret_cast<void *>(0x123400000000ULL);
+  unified_data = reinterpret_cast<void *>(0x567800000000ULL);
+  unified_function_size = 128;
+  unified_data_size = 16;
+  __cudaRegisterUnifiedTable(handle, unified_functions, unified_function_size,
+                             unified_data, unified_data_size);
+  assert(unified_tables[0] == 1 && unified_tables[1] == 1);
+  unified_functions = unified_data = nullptr;
+  unified_function_size = unified_data_size = 0;
+  __cudaRegisterUnifiedTable(handle, nullptr, 0, nullptr, 0);
+  assert(unified_tables[0] == 2 && unified_tables[1] == 2);
+  assert(cudaPeekAtLastError() == cudaSuccess);
   uint3 tid{7, 0, 0}, bid{0, 8, 0};
   dim3 block(1, 1, 9), grid(10, 1, 1);
   int warp = 32;
@@ -1068,8 +1097,7 @@ int main() {
   assert(cudaMemcpy(dst, src, 1, cudaMemcpyDefault) ==
          cudaErrorDeviceUninitialized);
   assert(cudaPeekAtLastError() == cudaErrorDeviceUninitialized);
-  __cudaRegisterUnifiedTable(nullptr);
-  assert(cudaGetLastError() == cudaErrorNotSupported);
+  assert(cudaGetLastError() == cudaErrorDeviceUninitialized);
   for (conn_t *conn : servers)
     rpc_conn_destroy(conn);
 }

@@ -386,6 +386,7 @@ int handle___cudaRegisterManagedVar(conn_t *conn);
 int handle___cudaRegisterTexture(conn_t *conn);
 int handle___cudaRegisterSurface(conn_t *conn);
 int handle___cudaRegisterHostVar(conn_t *conn);
+int handle___cudaRegisterUnifiedTable(conn_t *conn);
 int handle___cudaPushCallConfiguration(conn_t *conn);
 int handle___cudaPopCallConfiguration(conn_t *conn);
 int handle___cudaRegisterFatBinaryEnd(conn_t *conn);

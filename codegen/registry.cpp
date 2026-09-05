@@ -565,6 +565,7 @@
   HANDLER(RPC___cudaRegisterTexture, handle___cudaRegisterTexture, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterSurface, handle___cudaRegisterSurface, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterHostVar, handle___cudaRegisterHostVar, rpc_backend::cudart) \
+  HANDLER(RPC___cudaRegisterUnifiedTable, handle___cudaRegisterUnifiedTable, rpc_backend::cudart) \
   HANDLER(RPC___cudaPushCallConfiguration, handle___cudaPushCallConfiguration, rpc_backend::cudart) \
   HANDLER(RPC___cudaPopCallConfiguration, handle___cudaPopCallConfiguration, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterFatBinaryEnd, handle___cudaRegisterFatBinaryEnd, rpc_backend::cudart) \

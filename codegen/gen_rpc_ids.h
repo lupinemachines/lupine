@@ -714,6 +714,7 @@
 #define RPC___cudaRegisterTexture 829914553
 #define RPC___cudaRegisterSurface 256962213
 #define RPC___cudaRegisterHostVar 527803800
+#define RPC___cudaRegisterUnifiedTable 342283658
 #define RPC___cudaPushCallConfiguration 1729087233
 #define RPC___cudaPopCallConfiguration 665931968
 #define RPC___cudaRegisterFatBinaryEnd 8430939

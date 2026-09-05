@@ -2812,6 +2812,23 @@ void __cudaRegisterSurface(void **fatCubinHandle, const void *hostVar,
 void __cudaRegisterHostVar(void **fatCubinHandle, const char *deviceName,
                            char *hostVar, size_t size);
 
+// These are canonical host address windows, not arrays to serialize. CUDA
+// resolves the corresponding GPU code/data from the fatbinary's UUID index.
+// GH200 probes execute unified data loads and indirect calls with both windows
+// inaccessible after registration. Copying a window changes its canonical
+// addresses and breaks calls through host-originated function pointers.
+/**
+ * @broadcast FATBIN fatCubinHandle
+ * @param fatCubinHandle SEND_ONLY
+ * @param functionTable SEND_ONLY
+ * @param functionWindowSize SEND_ONLY
+ * @param dataTable SEND_ONLY
+ * @param dataWindowSize SEND_ONLY
+ */
+void __cudaRegisterUnifiedTable(void **fatCubinHandle, void *functionTable,
+                                size_t functionWindowSize, void *dataTable,
+                                size_t dataWindowSize);
+
 /**
  * @routingkey THREAD
  * @param gridDim SEND_ONLY

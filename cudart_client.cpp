@@ -628,13 +628,6 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
       new fatbin_registration(std::move(registration)));
 }
 
-// The private table layout and pointer fixups are not described by the SDK.
-// A client address is not a server handle, so this cannot be forwarded.
-extern "C" void __cudaRegisterUnifiedTable(void *table) {
-  (void)table;
-  record(cudaErrorNotSupported);
-}
-
 // ---------------------------------------------------------------------------
 // Kernel launches
 // ---------------------------------------------------------------------------

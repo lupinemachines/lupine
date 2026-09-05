@@ -6400,6 +6400,36 @@ extern "C" void __cudaRegisterHostVar(void **fatCubinHandle,
   });
 }
 
+static cudaError_t lupine_rpc___cudaRegisterUnifiedTable(
+    conn_t *conn, void **fatCubinHandle, void *functionTable,
+    size_t functionWindowSize, void *dataTable, size_t dataWindowSize) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC___cudaRegisterUnifiedTable) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_write(conn, &functionTable, sizeof(void *)) < 0 ||
+      rpc_write(conn, &functionWindowSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &dataTable, sizeof(void *)) < 0 ||
+      rpc_write(conn, &dataWindowSize, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" void __cudaRegisterUnifiedTable(void **fatCubinHandle,
+                                           void *functionTable,
+                                           size_t functionWindowSize,
+                                           void *dataTable,
+                                           size_t dataWindowSize) {
+  broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **remote_handle) {
+    return lupine_rpc___cudaRegisterUnifiedTable(
+        conn, remote_handle, functionTable, functionWindowSize, dataTable,
+        dataWindowSize);
+  });
+}
+
 static cudaError_t
 lupine_rpc___cudaPushCallConfiguration(conn_t *conn, dim3 gridDim,
                                        dim3 blockDim, size_t sharedMem,
