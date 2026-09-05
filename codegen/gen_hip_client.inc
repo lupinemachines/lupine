@@ -153,3 +153,4293 @@ extern "C" hipError_t hipGetDeviceProperties(hipDeviceProp_tR0600 *prop,
                                              int deviceId) {
   return hipGetDevicePropertiesR0600(prop, deviceId);
 }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceComputeCapability(int *major, int *minor,
+                                                 hipDevice_t device) {
+  (void)major;
+  (void)minor;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetUuid(hipUUID *uuid, hipDevice_t device) {
+  (void)uuid;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetP2PAttribute(int *value,
+                                               hipDeviceP2PAttr attr,
+                                               int srcDevice, int dstDevice) {
+  (void)value;
+  (void)attr;
+  (void)srcDevice;
+  (void)dstDevice;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetPCIBusId(char *pciBusId, int len,
+                                           int device) {
+  (void)pciBusId;
+  (void)len;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetByPCIBusId(int *device,
+                                             const char *pciBusId) {
+  (void)device;
+  (void)pciBusId;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceSynchronize() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceReset() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipSetDevice(int deviceId) {
+  (void)deviceId;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipSetValidDevices(int *device_arr, int len) {
+  (void)device_arr;
+  (void)len;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetDevice(int *deviceId) {
+  (void)deviceId;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetDefaultMemPool(hipMemPool_t *mem_pool,
+                                                 int device) {
+  (void)mem_pool;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceSetMemPool(int device, hipMemPool_t mem_pool) {
+  (void)device;
+  (void)mem_pool;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetMemPool(hipMemPool_t *mem_pool, int device) {
+  (void)mem_pool;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetTexture1DLinearMaxWidth(
+    size_t *max_width, const hipChannelFormatDesc *desc, int device) {
+  (void)max_width;
+  (void)desc;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceSetCacheConfig(hipFuncCache_t cacheConfig) {
+  (void)cacheConfig;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetCacheConfig(hipFuncCache_t *cacheConfig) {
+  (void)cacheConfig;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetLimit(size_t *pValue, enum hipLimit_t limit) {
+  (void)pValue;
+  (void)limit;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceSetLimit(enum hipLimit_t limit, size_t value) {
+  (void)limit;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetSharedMemConfig(hipSharedMemConfig *pConfig) {
+  (void)pConfig;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetDeviceFlags(unsigned int *flags) {
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceSetSharedMemConfig(hipSharedMemConfig config) {
+  (void)config;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipSetDeviceFlags(unsigned flags) {
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipChooseDeviceR0600(int *device,
+                                           const hipDeviceProp_tR0600 *prop) {
+  (void)device;
+  (void)prop;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipExtGetLinkTypeAndHopCount(int device1, int device2,
+                                                   uint32_t *linktype,
+                                                   uint32_t *hopcount) {
+  (void)device1;
+  (void)device2;
+  (void)linktype;
+  (void)hopcount;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipIpcGetMemHandle(hipIpcMemHandle_t *handle,
+                                         void *devPtr) {
+  (void)handle;
+  (void)devPtr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipIpcOpenMemHandle(void **devPtr,
+                                          hipIpcMemHandle_t handle,
+                                          unsigned int flags) {
+  (void)devPtr;
+  (void)handle;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipIpcCloseMemHandle(void *devPtr) {
+  (void)devPtr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipIpcGetEventHandle(hipIpcEventHandle_t *handle,
+                                           hipEvent_t event) {
+  (void)handle;
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipIpcOpenEventHandle(hipEvent_t *event,
+                                            hipIpcEventHandle_t handle) {
+  (void)event;
+  (void)handle;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFuncSetAttribute(const void *func,
+                                          hipFuncAttribute attr, int value) {
+  (void)func;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFuncSetCacheConfig(const void *func,
+                                            hipFuncCache_t config) {
+  (void)func;
+  (void)config;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFuncSetSharedMemConfig(const void *func,
+                                                hipSharedMemConfig config) {
+  (void)func;
+  (void)config;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetLastError() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipExtGetLastError() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipPeekAtLastError() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvGetErrorName(hipError_t hipError,
+                                         const char **errorString) {
+  (void)hipError;
+  (void)errorString;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvGetErrorString(hipError_t hipError,
+                                           const char **errorString) {
+  (void)hipError;
+  (void)errorString;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamCreate(hipStream_t *stream) {
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamCreateWithFlags(hipStream_t *stream,
+                                               unsigned int flags) {
+  (void)stream;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamCreateWithPriority(hipStream_t *stream,
+                                                  unsigned int flags,
+                                                  int priority) {
+  (void)stream;
+  (void)flags;
+  (void)priority;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGetStreamPriorityRange(int *leastPriority,
+                                                      int *greatestPriority) {
+  (void)leastPriority;
+  (void)greatestPriority;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamDestroy(hipStream_t stream) {
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamQuery(hipStream_t stream) {
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamSynchronize(hipStream_t stream) {
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamWaitEvent(hipStream_t stream, hipEvent_t event,
+                                         unsigned int flags) {
+  (void)stream;
+  (void)event;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamGetFlags(hipStream_t stream,
+                                        unsigned int *flags) {
+  (void)stream;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamGetId(hipStream_t stream,
+                                     unsigned long long *streamId) {
+  (void)stream;
+  (void)streamId;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamGetPriority(hipStream_t stream, int *priority) {
+  (void)stream;
+  (void)priority;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamGetDevice(hipStream_t stream,
+                                         hipDevice_t *device) {
+  (void)stream;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipExtStreamCreateWithCUMask(hipStream_t *stream,
+                                                   uint32_t cuMaskSize,
+                                                   const uint32_t *cuMask) {
+  (void)stream;
+  (void)cuMaskSize;
+  (void)cuMask;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipExtStreamGetCUMask(hipStream_t stream,
+                                            uint32_t cuMaskSize,
+                                            uint32_t *cuMask) {
+  (void)stream;
+  (void)cuMaskSize;
+  (void)cuMask;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamAddCallback(hipStream_t stream,
+                                           hipStreamCallback_t callback,
+                                           void *userData, unsigned int flags) {
+  (void)stream;
+  (void)callback;
+  (void)userData;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipStreamSetAttribute(hipStream_t stream, hipLaunchAttributeID attr,
+                      const hipLaunchAttributeValue *value) {
+  (void)stream;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipStreamGetAttribute(hipStream_t stream, hipLaunchAttributeID attr,
+                      hipLaunchAttributeValue *value_out) {
+  (void)stream;
+  (void)attr;
+  (void)value_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamCopyAttributes(hipStream_t dst,
+                                              hipStream_t src) {
+  (void)dst;
+  (void)src;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamWaitValue32(hipStream_t stream, void *ptr,
+                                           uint32_t value, unsigned int flags,
+                                           uint32_t mask) {
+  (void)stream;
+  (void)ptr;
+  (void)value;
+  (void)flags;
+  (void)mask;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamWaitValue64(hipStream_t stream, void *ptr,
+                                           uint64_t value, unsigned int flags,
+                                           uint64_t mask) {
+  (void)stream;
+  (void)ptr;
+  (void)value;
+  (void)flags;
+  (void)mask;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamWriteValue32(hipStream_t stream, void *ptr,
+                                            uint32_t value,
+                                            unsigned int flags) {
+  (void)stream;
+  (void)ptr;
+  (void)value;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamWriteValue64(hipStream_t stream, void *ptr,
+                                            uint64_t value,
+                                            unsigned int flags) {
+  (void)stream;
+  (void)ptr;
+  (void)value;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamBatchMemOp(hipStream_t stream,
+                                          unsigned int count,
+                                          hipStreamBatchMemOpParams *paramArray,
+                                          unsigned int flags) {
+  (void)stream;
+  (void)count;
+  (void)paramArray;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddBatchMemOpNode(hipGraphNode_t *phGraphNode, hipGraph_t hGraph,
+                          const hipGraphNode_t *dependencies,
+                          size_t numDependencies,
+                          const hipBatchMemOpNodeParams *nodeParams) {
+  (void)phGraphNode;
+  (void)hGraph;
+  (void)dependencies;
+  (void)numDependencies;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphBatchMemOpNodeGetParams(hipGraphNode_t hNode,
+                                hipBatchMemOpNodeParams *nodeParams_out) {
+  (void)hNode;
+  (void)nodeParams_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphBatchMemOpNodeSetParams(hipGraphNode_t hNode,
+                                hipBatchMemOpNodeParams *nodeParams) {
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecBatchMemOpNodeSetParams(hipGraphExec_t hGraphExec,
+                                    hipGraphNode_t hNode,
+                                    const hipBatchMemOpNodeParams *nodeParams) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventCreateWithFlags(hipEvent_t *event,
+                                              unsigned flags) {
+  (void)event;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventCreate(hipEvent_t *event) {
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventRecordWithFlags(hipEvent_t event,
+                                              hipStream_t stream,
+                                              unsigned int flags) {
+  (void)event;
+  (void)stream;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventRecord(hipEvent_t event, hipStream_t stream) {
+  (void)event;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventDestroy(hipEvent_t event) {
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventSynchronize(hipEvent_t event) {
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventElapsedTime(float *ms, hipEvent_t start,
+                                          hipEvent_t stop) {
+  (void)ms;
+  (void)start;
+  (void)stop;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipEventQuery(hipEvent_t event) {
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipPointerSetAttribute(const void *value,
+                                             hipPointer_attribute attribute,
+                                             hipDeviceptr_t ptr) {
+  (void)value;
+  (void)attribute;
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipPointerGetAttributes(hipPointerAttribute_t *attributes,
+                                              const void *ptr) {
+  (void)attributes;
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipPointerGetAttribute(void *data,
+                                             hipPointer_attribute attribute,
+                                             hipDeviceptr_t ptr) {
+  (void)data;
+  (void)attribute;
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDrvPointerGetAttributes(unsigned int numAttributes,
+                           hipPointer_attribute *attributes, void **data,
+                           hipDeviceptr_t ptr) {
+  (void)numAttributes;
+  (void)attributes;
+  (void)data;
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipImportExternalSemaphore(
+    hipExternalSemaphore_t *extSem_out,
+    const hipExternalSemaphoreHandleDesc *semHandleDesc) {
+  (void)extSem_out;
+  (void)semHandleDesc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipSignalExternalSemaphoresAsync(
+    const hipExternalSemaphore_t *extSemArray,
+    const hipExternalSemaphoreSignalParams *paramsArray,
+    unsigned int numExtSems, hipStream_t stream) {
+  (void)extSemArray;
+  (void)paramsArray;
+  (void)numExtSems;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipWaitExternalSemaphoresAsync(
+    const hipExternalSemaphore_t *extSemArray,
+    const hipExternalSemaphoreWaitParams *paramsArray, unsigned int numExtSems,
+    hipStream_t stream) {
+  (void)extSemArray;
+  (void)paramsArray;
+  (void)numExtSems;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDestroyExternalSemaphore(hipExternalSemaphore_t extSem) {
+  (void)extSem;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipImportExternalMemory(hipExternalMemory_t *extMem_out,
+                        const hipExternalMemoryHandleDesc *memHandleDesc) {
+  (void)extMem_out;
+  (void)memHandleDesc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipExternalMemoryGetMappedBuffer(
+    void **devPtr, hipExternalMemory_t extMem,
+    const hipExternalMemoryBufferDesc *bufferDesc) {
+  (void)devPtr;
+  (void)extMem;
+  (void)bufferDesc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDestroyExternalMemory(hipExternalMemory_t extMem) {
+  (void)extMem;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipExternalMemoryGetMappedMipmappedArray(
+    hipMipmappedArray_t *mipmap, hipExternalMemory_t extMem,
+    const hipExternalMemoryMipmappedArrayDesc *mipmapDesc) {
+  (void)mipmap;
+  (void)extMem;
+  (void)mipmapDesc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMalloc(void **ptr, size_t size) {
+  (void)ptr;
+  (void)size;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipExtMallocWithFlags(void **ptr, size_t sizeBytes,
+                                            unsigned int flags) {
+  (void)ptr;
+  (void)sizeBytes;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMallocHost(void **ptr, size_t size) {
+  (void)ptr;
+  (void)size;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemAllocHost(void **ptr, size_t size) {
+  (void)ptr;
+  (void)size;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipHostMalloc(void **ptr, size_t size,
+                                    unsigned int flags) {
+  (void)ptr;
+  (void)size;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMallocManaged(void **dev_ptr, size_t size,
+                                       unsigned int flags) {
+  (void)dev_ptr;
+  (void)size;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPrefetchAsync(const void *dev_ptr, size_t count,
+                                          int device, hipStream_t stream) {
+  (void)dev_ptr;
+  (void)count;
+  (void)device;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPrefetchAsync_v2(const void *dev_ptr, size_t count,
+                                             hipMemLocation location,
+                                             unsigned int flags,
+                                             hipStream_t stream) {
+  (void)dev_ptr;
+  (void)count;
+  (void)location;
+  (void)flags;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemAdvise(const void *dev_ptr, size_t count,
+                                   hipMemoryAdvise advice, int device) {
+  (void)dev_ptr;
+  (void)count;
+  (void)advice;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemAdvise_v2(const void *dev_ptr, size_t count,
+                                      hipMemoryAdvise advice,
+                                      hipMemLocation location) {
+  (void)dev_ptr;
+  (void)count;
+  (void)advice;
+  (void)location;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemRangeGetAttribute(void *data, size_t data_size,
+                                              hipMemRangeAttribute attribute,
+                                              const void *dev_ptr,
+                                              size_t count) {
+  (void)data;
+  (void)data_size;
+  (void)attribute;
+  (void)dev_ptr;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemRangeGetAttributes(void **data, size_t *data_sizes,
+                                               hipMemRangeAttribute *attributes,
+                                               size_t num_attributes,
+                                               const void *dev_ptr,
+                                               size_t count) {
+  (void)data;
+  (void)data_sizes;
+  (void)attributes;
+  (void)num_attributes;
+  (void)dev_ptr;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamAttachMemAsync(hipStream_t stream, void *dev_ptr,
+                                              size_t length,
+                                              unsigned int flags) {
+  (void)stream;
+  (void)dev_ptr;
+  (void)length;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMallocAsync(void **dev_ptr, size_t size,
+                                     hipStream_t stream) {
+  (void)dev_ptr;
+  (void)size;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFreeAsync(void *dev_ptr, hipStream_t stream) {
+  (void)dev_ptr;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPoolTrimTo(hipMemPool_t mem_pool,
+                                       size_t min_bytes_to_hold) {
+  (void)mem_pool;
+  (void)min_bytes_to_hold;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPoolSetAttribute(hipMemPool_t mem_pool,
+                                             hipMemPoolAttr attr, void *value) {
+  (void)mem_pool;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPoolGetAttribute(hipMemPool_t mem_pool,
+                                             hipMemPoolAttr attr, void *value) {
+  (void)mem_pool;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPoolSetAccess(hipMemPool_t mem_pool,
+                                          const hipMemAccessDesc *desc_list,
+                                          size_t count) {
+  (void)mem_pool;
+  (void)desc_list;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPoolGetAccess(hipMemAccessFlags *flags,
+                                          hipMemPool_t mem_pool,
+                                          hipMemLocation *location) {
+  (void)flags;
+  (void)mem_pool;
+  (void)location;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPoolCreate(hipMemPool_t *mem_pool,
+                                       const hipMemPoolProps *pool_props) {
+  (void)mem_pool;
+  (void)pool_props;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPoolDestroy(hipMemPool_t mem_pool) {
+  (void)mem_pool;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMallocFromPoolAsync(void **dev_ptr, size_t size,
+                                             hipMemPool_t mem_pool,
+                                             hipStream_t stream) {
+  (void)dev_ptr;
+  (void)size;
+  (void)mem_pool;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemPoolExportToShareableHandle(void *shared_handle, hipMemPool_t mem_pool,
+                                  hipMemAllocationHandleType handle_type,
+                                  unsigned int flags) {
+  (void)shared_handle;
+  (void)mem_pool;
+  (void)handle_type;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemPoolImportFromShareableHandle(hipMemPool_t *mem_pool, void *shared_handle,
+                                    hipMemAllocationHandleType handle_type,
+                                    unsigned int flags) {
+  (void)mem_pool;
+  (void)shared_handle;
+  (void)handle_type;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemPoolExportPointer(hipMemPoolPtrExportData *export_data, void *dev_ptr) {
+  (void)export_data;
+  (void)dev_ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemPoolImportPointer(void **dev_ptr, hipMemPool_t mem_pool,
+                        hipMemPoolPtrExportData *export_data) {
+  (void)dev_ptr;
+  (void)mem_pool;
+  (void)export_data;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipHostAlloc(void **ptr, size_t size,
+                                   unsigned int flags) {
+  (void)ptr;
+  (void)size;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipHostGetDevicePointer(void **devPtr, void *hstPtr,
+                                              unsigned int flags) {
+  (void)devPtr;
+  (void)hstPtr;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipHostGetFlags(unsigned int *flagsPtr, void *hostPtr) {
+  (void)flagsPtr;
+  (void)hostPtr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipHostRegister(void *hostPtr, size_t sizeBytes,
+                                      unsigned int flags) {
+  (void)hostPtr;
+  (void)sizeBytes;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipHostUnregister(void *hostPtr) {
+  (void)hostPtr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMallocPitch(void **ptr, size_t *pitch, size_t width,
+                                     size_t height) {
+  (void)ptr;
+  (void)pitch;
+  (void)width;
+  (void)height;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemAllocPitch(hipDeviceptr_t *dptr, size_t *pitch,
+                                       size_t widthInBytes, size_t height,
+                                       unsigned int elementSizeBytes) {
+  (void)dptr;
+  (void)pitch;
+  (void)widthInBytes;
+  (void)height;
+  (void)elementSizeBytes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFree(void *ptr) {
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFreeHost(void *ptr) {
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipHostFree(void *ptr) {
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy(void *dst, const void *src, size_t sizeBytes,
+                                hipMemcpyKind kind) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyWithStream(void *dst, const void *src,
+                                          size_t sizeBytes, hipMemcpyKind kind,
+                                          hipStream_t stream) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  (void)kind;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyHtoD(hipDeviceptr_t dst, const void *src,
+                                    size_t sizeBytes) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyDtoH(void *dst, hipDeviceptr_t src,
+                                    size_t sizeBytes) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyDtoD(hipDeviceptr_t dst, hipDeviceptr_t src,
+                                    size_t sizeBytes) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyAtoD(hipDeviceptr_t dstDevice,
+                                    hipArray_t srcArray, size_t srcOffset,
+                                    size_t ByteCount) {
+  (void)dstDevice;
+  (void)srcArray;
+  (void)srcOffset;
+  (void)ByteCount;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyDtoA(hipArray_t dstArray, size_t dstOffset,
+                                    hipDeviceptr_t srcDevice,
+                                    size_t ByteCount) {
+  (void)dstArray;
+  (void)dstOffset;
+  (void)srcDevice;
+  (void)ByteCount;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyAtoA(hipArray_t dstArray, size_t dstOffset,
+                                    hipArray_t srcArray, size_t srcOffset,
+                                    size_t ByteCount) {
+  (void)dstArray;
+  (void)dstOffset;
+  (void)srcArray;
+  (void)srcOffset;
+  (void)ByteCount;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyHtoDAsync(hipDeviceptr_t dst, const void *src,
+                                         size_t sizeBytes, hipStream_t stream) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyDtoHAsync(void *dst, hipDeviceptr_t src,
+                                         size_t sizeBytes, hipStream_t stream) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyDtoDAsync(hipDeviceptr_t dst, hipDeviceptr_t src,
+                                         size_t sizeBytes, hipStream_t stream) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyAtoHAsync(void *dstHost, hipArray_t srcArray,
+                                         size_t srcOffset, size_t ByteCount,
+                                         hipStream_t stream) {
+  (void)dstHost;
+  (void)srcArray;
+  (void)srcOffset;
+  (void)ByteCount;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyHtoAAsync(hipArray_t dstArray, size_t dstOffset,
+                                         const void *srcHost, size_t ByteCount,
+                                         hipStream_t stream) {
+  (void)dstArray;
+  (void)dstOffset;
+  (void)srcHost;
+  (void)ByteCount;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleGetGlobal(hipDeviceptr_t *dptr, size_t *bytes,
+                                         hipModule_t hmod, const char *name) {
+  (void)dptr;
+  (void)bytes;
+  (void)hmod;
+  (void)name;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetSymbolAddress(void **devPtr, const void *symbol) {
+  (void)devPtr;
+  (void)symbol;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetSymbolSize(size_t *size, const void *symbol) {
+  (void)size;
+  (void)symbol;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGetProcAddress(const char *symbol, void **pfn, int hipVersion,
+                  uint64_t flags,
+                  hipDriverProcAddressQueryResult *symbolStatus) {
+  (void)symbol;
+  (void)pfn;
+  (void)hipVersion;
+  (void)flags;
+  (void)symbolStatus;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyToSymbol(const void *symbol, const void *src,
+                                        size_t sizeBytes, size_t offset,
+                                        hipMemcpyKind kind) {
+  (void)symbol;
+  (void)src;
+  (void)sizeBytes;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyToSymbolAsync(const void *symbol,
+                                             const void *src, size_t sizeBytes,
+                                             size_t offset, hipMemcpyKind kind,
+                                             hipStream_t stream) {
+  (void)symbol;
+  (void)src;
+  (void)sizeBytes;
+  (void)offset;
+  (void)kind;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyFromSymbol(void *dst, const void *symbol,
+                                          size_t sizeBytes, size_t offset,
+                                          hipMemcpyKind kind) {
+  (void)dst;
+  (void)symbol;
+  (void)sizeBytes;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyFromSymbolAsync(void *dst, const void *symbol,
+                                               size_t sizeBytes, size_t offset,
+                                               hipMemcpyKind kind,
+                                               hipStream_t stream) {
+  (void)dst;
+  (void)symbol;
+  (void)sizeBytes;
+  (void)offset;
+  (void)kind;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyAsync(void *dst, const void *src,
+                                     size_t sizeBytes, hipMemcpyKind kind,
+                                     hipStream_t stream) {
+  (void)dst;
+  (void)src;
+  (void)sizeBytes;
+  (void)kind;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemset(void *dst, int value, size_t sizeBytes) {
+  (void)dst;
+  (void)value;
+  (void)sizeBytes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD8(hipDeviceptr_t dest, unsigned char value,
+                                  size_t count) {
+  (void)dest;
+  (void)value;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD8Async(hipDeviceptr_t dest, unsigned char value,
+                                       size_t count, hipStream_t stream) {
+  (void)dest;
+  (void)value;
+  (void)count;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD16(hipDeviceptr_t dest, unsigned short value,
+                                   size_t count) {
+  (void)dest;
+  (void)value;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD16Async(hipDeviceptr_t dest,
+                                        unsigned short value, size_t count,
+                                        hipStream_t stream) {
+  (void)dest;
+  (void)value;
+  (void)count;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD32(hipDeviceptr_t dest, int value,
+                                   size_t count) {
+  (void)dest;
+  (void)value;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetAsync(void *dst, int value, size_t sizeBytes,
+                                     hipStream_t stream) {
+  (void)dst;
+  (void)value;
+  (void)sizeBytes;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD32Async(hipDeviceptr_t dst, int value,
+                                        size_t count, hipStream_t stream) {
+  (void)dst;
+  (void)value;
+  (void)count;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemset2D(void *dst, size_t pitch, int value,
+                                  size_t width, size_t height) {
+  (void)dst;
+  (void)pitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemset2DAsync(void *dst, size_t pitch, int value,
+                                       size_t width, size_t height,
+                                       hipStream_t stream) {
+  (void)dst;
+  (void)pitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemset3D(hipPitchedPtr pitchedDevPtr, int value,
+                                  hipExtent extent) {
+  (void)pitchedDevPtr;
+  (void)value;
+  (void)extent;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemset3DAsync(hipPitchedPtr pitchedDevPtr, int value,
+                                       hipExtent extent, hipStream_t stream) {
+  (void)pitchedDevPtr;
+  (void)value;
+  (void)extent;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD2D8(hipDeviceptr_t dst, size_t dstPitch,
+                                    unsigned char value, size_t width,
+                                    size_t height) {
+  (void)dst;
+  (void)dstPitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD2D8Async(hipDeviceptr_t dst, size_t dstPitch,
+                                         unsigned char value, size_t width,
+                                         size_t height, hipStream_t stream) {
+  (void)dst;
+  (void)dstPitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD2D16(hipDeviceptr_t dst, size_t dstPitch,
+                                     unsigned short value, size_t width,
+                                     size_t height) {
+  (void)dst;
+  (void)dstPitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD2D16Async(hipDeviceptr_t dst, size_t dstPitch,
+                                          unsigned short value, size_t width,
+                                          size_t height, hipStream_t stream) {
+  (void)dst;
+  (void)dstPitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD2D32(hipDeviceptr_t dst, size_t dstPitch,
+                                     unsigned int value, size_t width,
+                                     size_t height) {
+  (void)dst;
+  (void)dstPitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemsetD2D32Async(hipDeviceptr_t dst, size_t dstPitch,
+                                          unsigned int value, size_t width,
+                                          size_t height, hipStream_t stream) {
+  (void)dst;
+  (void)dstPitch;
+  (void)value;
+  (void)width;
+  (void)height;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemGetInfo(size_t *free, size_t *total) {
+  (void)free;
+  (void)total;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemPtrGetInfo(void *ptr, size_t *size) {
+  (void)ptr;
+  (void)size;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMallocArray(hipArray_t *array,
+                                     const hipChannelFormatDesc *desc,
+                                     size_t width, size_t height,
+                                     unsigned int flags) {
+  (void)array;
+  (void)desc;
+  (void)width;
+  (void)height;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipArrayCreate(hipArray_t *pHandle,
+               const HIP_ARRAY_DESCRIPTOR *pAllocateArray) {
+  (void)pHandle;
+  (void)pAllocateArray;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipArrayDestroy(hipArray_t array) {
+  (void)array;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipArray3DCreate(hipArray_t *array,
+                 const HIP_ARRAY3D_DESCRIPTOR *pAllocateArray) {
+  (void)array;
+  (void)pAllocateArray;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMalloc3D(hipPitchedPtr *pitchedDevPtr,
+                                  hipExtent extent) {
+  (void)pitchedDevPtr;
+  (void)extent;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFreeArray(hipArray_t array) {
+  (void)array;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMalloc3DArray(hipArray_t *array,
+                                       const struct hipChannelFormatDesc *desc,
+                                       struct hipExtent extent,
+                                       unsigned int flags) {
+  (void)array;
+  (void)desc;
+  (void)extent;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipArrayGetInfo(hipChannelFormatDesc *desc,
+                                      hipExtent *extent, unsigned int *flags,
+                                      hipArray_t array) {
+  (void)desc;
+  (void)extent;
+  (void)flags;
+  (void)array;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipArrayGetDescriptor(HIP_ARRAY_DESCRIPTOR *pArrayDescriptor,
+                      hipArray_t array) {
+  (void)pArrayDescriptor;
+  (void)array;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipArray3DGetDescriptor(HIP_ARRAY3D_DESCRIPTOR *pArrayDescriptor,
+                        hipArray_t array) {
+  (void)pArrayDescriptor;
+  (void)array;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy2D(void *dst, size_t dpitch, const void *src,
+                                  size_t spitch, size_t width, size_t height,
+                                  hipMemcpyKind kind) {
+  (void)dst;
+  (void)dpitch;
+  (void)src;
+  (void)spitch;
+  (void)width;
+  (void)height;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyParam2D(const hip_Memcpy2D *pCopy) {
+  (void)pCopy;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyParam2DAsync(const hip_Memcpy2D *pCopy,
+                                            hipStream_t stream) {
+  (void)pCopy;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy2DAsync(void *dst, size_t dpitch,
+                                       const void *src, size_t spitch,
+                                       size_t width, size_t height,
+                                       hipMemcpyKind kind, hipStream_t stream) {
+  (void)dst;
+  (void)dpitch;
+  (void)src;
+  (void)spitch;
+  (void)width;
+  (void)height;
+  (void)kind;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy2DToArray(hipArray_t dst, size_t wOffset,
+                                         size_t hOffset, const void *src,
+                                         size_t spitch, size_t width,
+                                         size_t height, hipMemcpyKind kind) {
+  (void)dst;
+  (void)wOffset;
+  (void)hOffset;
+  (void)src;
+  (void)spitch;
+  (void)width;
+  (void)height;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy2DToArrayAsync(hipArray_t dst, size_t wOffset,
+                                              size_t hOffset, const void *src,
+                                              size_t spitch, size_t width,
+                                              size_t height, hipMemcpyKind kind,
+                                              hipStream_t stream) {
+  (void)dst;
+  (void)wOffset;
+  (void)hOffset;
+  (void)src;
+  (void)spitch;
+  (void)width;
+  (void)height;
+  (void)kind;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemcpy2DArrayToArray(hipArray_t dst, size_t wOffsetDst, size_t hOffsetDst,
+                        hipArray_const_t src, size_t wOffsetSrc,
+                        size_t hOffsetSrc, size_t width, size_t height,
+                        hipMemcpyKind kind) {
+  (void)dst;
+  (void)wOffsetDst;
+  (void)hOffsetDst;
+  (void)src;
+  (void)wOffsetSrc;
+  (void)hOffsetSrc;
+  (void)width;
+  (void)height;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyToArray(hipArray_t dst, size_t wOffset,
+                                       size_t hOffset, const void *src,
+                                       size_t count, hipMemcpyKind kind) {
+  (void)dst;
+  (void)wOffset;
+  (void)hOffset;
+  (void)src;
+  (void)count;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyFromArray(void *dst, hipArray_const_t srcArray,
+                                         size_t wOffset, size_t hOffset,
+                                         size_t count, hipMemcpyKind kind) {
+  (void)dst;
+  (void)srcArray;
+  (void)wOffset;
+  (void)hOffset;
+  (void)count;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy2DFromArray(void *dst, size_t dpitch,
+                                           hipArray_const_t src, size_t wOffset,
+                                           size_t hOffset, size_t width,
+                                           size_t height, hipMemcpyKind kind) {
+  (void)dst;
+  (void)dpitch;
+  (void)src;
+  (void)wOffset;
+  (void)hOffset;
+  (void)width;
+  (void)height;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy2DFromArrayAsync(void *dst, size_t dpitch,
+                                                hipArray_const_t src,
+                                                size_t wOffset, size_t hOffset,
+                                                size_t width, size_t height,
+                                                hipMemcpyKind kind,
+                                                hipStream_t stream) {
+  (void)dst;
+  (void)dpitch;
+  (void)src;
+  (void)wOffset;
+  (void)hOffset;
+  (void)width;
+  (void)height;
+  (void)kind;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyAtoH(void *dst, hipArray_t srcArray,
+                                    size_t srcOffset, size_t count) {
+  (void)dst;
+  (void)srcArray;
+  (void)srcOffset;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyHtoA(hipArray_t dstArray, size_t dstOffset,
+                                    const void *srcHost, size_t count) {
+  (void)dstArray;
+  (void)dstOffset;
+  (void)srcHost;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy3D(const struct hipMemcpy3DParms *p) {
+  (void)p;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy3DAsync(const struct hipMemcpy3DParms *p,
+                                       hipStream_t stream) {
+  (void)p;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvMemcpy3D(const HIP_MEMCPY3D *pCopy) {
+  (void)pCopy;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvMemcpy3DAsync(const HIP_MEMCPY3D *pCopy,
+                                          hipStream_t stream) {
+  (void)pCopy;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemGetAddressRange(hipDeviceptr_t *pbase,
+                                            size_t *psize,
+                                            hipDeviceptr_t dptr) {
+  (void)pbase;
+  (void)psize;
+  (void)dptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyBatchAsync(void **dsts, void **srcs,
+                                          size_t *sizes, size_t count,
+                                          hipMemcpyAttributes *attrs,
+                                          size_t *attrsIdxs, size_t numAttrs,
+                                          size_t *failIdx, hipStream_t stream) {
+  (void)dsts;
+  (void)srcs;
+  (void)sizes;
+  (void)count;
+  (void)attrs;
+  (void)attrsIdxs;
+  (void)numAttrs;
+  (void)failIdx;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy3DBatchAsync(size_t numOps,
+                                            struct hipMemcpy3DBatchOp *opList,
+                                            size_t *failIdx,
+                                            unsigned long long flags,
+                                            hipStream_t stream) {
+  (void)numOps;
+  (void)opList;
+  (void)failIdx;
+  (void)flags;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy3DPeer(hipMemcpy3DPeerParms *p) {
+  (void)p;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpy3DPeerAsync(hipMemcpy3DPeerParms *p,
+                                           hipStream_t stream) {
+  (void)p;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceCanAccessPeer(int *canAccessPeer, int deviceId,
+                                             int peerDeviceId) {
+  (void)canAccessPeer;
+  (void)deviceId;
+  (void)peerDeviceId;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceEnablePeerAccess(int peerDeviceId,
+                                                unsigned int flags) {
+  (void)peerDeviceId;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceDisablePeerAccess(int peerDeviceId) {
+  (void)peerDeviceId;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyPeer(void *dst, int dstDeviceId, const void *src,
+                                    int srcDeviceId, size_t sizeBytes) {
+  (void)dst;
+  (void)dstDeviceId;
+  (void)src;
+  (void)srcDeviceId;
+  (void)sizeBytes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemcpyPeerAsync(void *dst, int dstDeviceId,
+                                         const void *src, int srcDevice,
+                                         size_t sizeBytes, hipStream_t stream) {
+  (void)dst;
+  (void)dstDeviceId;
+  (void)src;
+  (void)srcDevice;
+  (void)sizeBytes;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxCreate(hipCtx_t *ctx, unsigned int flags,
+                                   hipDevice_t device) {
+  (void)ctx;
+  (void)flags;
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxDestroy(hipCtx_t ctx) {
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxPopCurrent(hipCtx_t *ctx) {
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxPushCurrent(hipCtx_t ctx) {
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxSetCurrent(hipCtx_t ctx) {
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxGetCurrent(hipCtx_t *ctx) {
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxGetDevice(hipDevice_t *device) {
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxGetApiVersion(hipCtx_t ctx,
+                                          unsigned int *apiVersion) {
+  (void)ctx;
+  (void)apiVersion;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxGetCacheConfig(hipFuncCache_t *cacheConfig) {
+  (void)cacheConfig;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxSetCacheConfig(hipFuncCache_t cacheConfig) {
+  (void)cacheConfig;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxSetSharedMemConfig(hipSharedMemConfig config) {
+  (void)config;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxGetSharedMemConfig(hipSharedMemConfig *pConfig) {
+  (void)pConfig;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxSynchronize() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxGetFlags(unsigned int *flags) {
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxEnablePeerAccess(hipCtx_t peerCtx,
+                                             unsigned int flags) {
+  (void)peerCtx;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCtxDisablePeerAccess(hipCtx_t peerCtx) {
+  (void)peerCtx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDevicePrimaryCtxGetState(hipDevice_t dev, unsigned int *flags, int *active) {
+  (void)dev;
+  (void)flags;
+  (void)active;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDevicePrimaryCtxRelease(hipDevice_t dev) {
+  (void)dev;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDevicePrimaryCtxRetain(hipCtx_t *pctx,
+                                                hipDevice_t dev) {
+  (void)pctx;
+  (void)dev;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDevicePrimaryCtxReset(hipDevice_t dev) {
+  (void)dev;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDevicePrimaryCtxSetFlags(hipDevice_t dev,
+                                                  unsigned int flags) {
+  (void)dev;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleLoadFatBinary(hipModule_t *module,
+                                             const void *fatbin) {
+  (void)module;
+  (void)fatbin;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleLoad(hipModule_t *module, const char *fname) {
+  (void)module;
+  (void)fname;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleUnload(hipModule_t module) {
+  (void)module;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleGetFunction(hipFunction_t *function,
+                                           hipModule_t module,
+                                           const char *kname) {
+  (void)function;
+  (void)module;
+  (void)kname;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleGetFunctionCount(unsigned int *count,
+                                                hipModule_t mod) {
+  (void)count;
+  (void)mod;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipLibraryLoadData(hipLibrary_t *library, const void *code,
+                   hipJitOption *jitOptions, void **jitOptionsValues,
+                   unsigned int numJitOptions, hipLibraryOption *libraryOptions,
+                   void **libraryOptionValues, unsigned int numLibraryOptions) {
+  (void)library;
+  (void)code;
+  (void)jitOptions;
+  (void)jitOptionsValues;
+  (void)numJitOptions;
+  (void)libraryOptions;
+  (void)libraryOptionValues;
+  (void)numLibraryOptions;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLibraryLoadFromFile(
+    hipLibrary_t *library, const char *fileName, hipJitOption *jitOptions,
+    void **jitOptionsValues, unsigned int numJitOptions,
+    hipLibraryOption *libraryOptions, void **libraryOptionValues,
+    unsigned int numLibraryOptions) {
+  (void)library;
+  (void)fileName;
+  (void)jitOptions;
+  (void)jitOptionsValues;
+  (void)numJitOptions;
+  (void)libraryOptions;
+  (void)libraryOptionValues;
+  (void)numLibraryOptions;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLibraryUnload(hipLibrary_t library) {
+  (void)library;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLibraryGetKernel(hipKernel_t *pKernel,
+                                          hipLibrary_t library,
+                                          const char *name) {
+  (void)pKernel;
+  (void)library;
+  (void)name;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLibraryGetKernelCount(unsigned int *count,
+                                               hipLibrary_t library) {
+  (void)count;
+  (void)library;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLibraryEnumerateKernels(hipKernel_t *kernels,
+                                                 unsigned int numKernels,
+                                                 hipLibrary_t library) {
+  (void)kernels;
+  (void)numKernels;
+  (void)library;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipKernelGetLibrary(hipLibrary_t *library,
+                                          hipKernel_t kernel) {
+  (void)library;
+  (void)kernel;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipKernelGetName(const char **name, hipKernel_t kernel) {
+  (void)name;
+  (void)kernel;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFuncGetAttributes(struct hipFuncAttributes *attr,
+                                           const void *func) {
+  (void)attr;
+  (void)func;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipFuncGetAttribute(int *value,
+                                          hipFunction_attribute attrib,
+                                          hipFunction_t hfunc) {
+  (void)value;
+  (void)attrib;
+  (void)hfunc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetFuncBySymbol(hipFunction_t *functionPtr,
+                                         const void *symbolPtr) {
+  (void)functionPtr;
+  (void)symbolPtr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGetDriverEntryPoint(const char *symbol, void **funcPtr,
+                       unsigned long long flags,
+                       hipDriverEntryPointQueryResult *driverStatus) {
+  (void)symbol;
+  (void)funcPtr;
+  (void)flags;
+  (void)driverStatus;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleGetTexRef(textureReference **texRef,
+                                         hipModule_t hmod, const char *name) {
+  (void)texRef;
+  (void)hmod;
+  (void)name;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleLoadData(hipModule_t *module,
+                                        const void *image) {
+  (void)module;
+  (void)image;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleLoadDataEx(hipModule_t *module,
+                                          const void *image,
+                                          unsigned int numOptions,
+                                          hipJitOption *options,
+                                          void **optionValues) {
+  (void)module;
+  (void)image;
+  (void)numOptions;
+  (void)options;
+  (void)optionValues;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLinkAddData(hipLinkState_t state, hipJitInputType type,
+                                     void *data, size_t size, const char *name,
+                                     unsigned int numOptions,
+                                     hipJitOption *options,
+                                     void **optionValues) {
+  (void)state;
+  (void)type;
+  (void)data;
+  (void)size;
+  (void)name;
+  (void)numOptions;
+  (void)options;
+  (void)optionValues;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLinkAddFile(hipLinkState_t state, hipJitInputType type,
+                                     const char *path, unsigned int numOptions,
+                                     hipJitOption *options,
+                                     void **optionValues) {
+  (void)state;
+  (void)type;
+  (void)path;
+  (void)numOptions;
+  (void)options;
+  (void)optionValues;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLinkComplete(hipLinkState_t state, void **hipBinOut,
+                                      size_t *sizeOut) {
+  (void)state;
+  (void)hipBinOut;
+  (void)sizeOut;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLinkCreate(unsigned int numOptions,
+                                    hipJitOption *options, void **optionValues,
+                                    hipLinkState_t *stateOut) {
+  (void)numOptions;
+  (void)options;
+  (void)optionValues;
+  (void)stateOut;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLinkDestroy(hipLinkState_t state) {
+  (void)state;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
+                      unsigned int gridDimY, unsigned int gridDimZ,
+                      unsigned int blockDimX, unsigned int blockDimY,
+                      unsigned int blockDimZ, unsigned int sharedMemBytes,
+                      hipStream_t stream, void **kernelParams, void **extra) {
+  (void)f;
+  (void)gridDimX;
+  (void)gridDimY;
+  (void)gridDimZ;
+  (void)blockDimX;
+  (void)blockDimY;
+  (void)blockDimZ;
+  (void)sharedMemBytes;
+  (void)stream;
+  (void)kernelParams;
+  (void)extra;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleLaunchCooperativeKernel(
+    hipFunction_t f, unsigned int gridDimX, unsigned int gridDimY,
+    unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,
+    unsigned int blockDimZ, unsigned int sharedMemBytes, hipStream_t stream,
+    void **kernelParams) {
+  (void)f;
+  (void)gridDimX;
+  (void)gridDimY;
+  (void)gridDimZ;
+  (void)blockDimX;
+  (void)blockDimY;
+  (void)blockDimZ;
+  (void)sharedMemBytes;
+  (void)stream;
+  (void)kernelParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleLaunchCooperativeKernelMultiDevice(
+    hipFunctionLaunchParams *launchParamsList, unsigned int numDevices,
+    unsigned int flags) {
+  (void)launchParamsList;
+  (void)numDevices;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLaunchCooperativeKernel(const void *f, dim3 gridDim,
+                                                 dim3 blockDimX,
+                                                 void **kernelParams,
+                                                 unsigned int sharedMemBytes,
+                                                 hipStream_t stream) {
+  (void)f;
+  (void)gridDim;
+  (void)blockDimX;
+  (void)kernelParams;
+  (void)sharedMemBytes;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipLaunchCooperativeKernelMultiDevice(hipLaunchParams *launchParamsList,
+                                      int numDevices, unsigned int flags) {
+  (void)launchParamsList;
+  (void)numDevices;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipExtLaunchMultiKernelMultiDevice(hipLaunchParams *launchParamsList,
+                                   int numDevices, unsigned int flags) {
+  (void)launchParamsList;
+  (void)numDevices;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLaunchKernelExC(const hipLaunchConfig_t *config,
+                                         const void *fPtr, void **args) {
+  (void)config;
+  (void)fPtr;
+  (void)args;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvLaunchKernelEx(const HIP_LAUNCH_CONFIG *config,
+                                           hipFunction_t f, void **params,
+                                           void **extra) {
+  (void)config;
+  (void)f;
+  (void)params;
+  (void)extra;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemGetHandleForAddressRange(void *handle, hipDeviceptr_t dptr, size_t size,
+                               hipMemRangeHandleType handleType,
+                               unsigned long long flags) {
+  (void)handle;
+  (void)dptr;
+  (void)size;
+  (void)handleType;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleOccupancyMaxPotentialBlockSize(
+    int *gridSize, int *blockSize, hipFunction_t f, size_t dynSharedMemPerBlk,
+    int blockSizeLimit) {
+  (void)gridSize;
+  (void)blockSize;
+  (void)f;
+  (void)dynSharedMemPerBlk;
+  (void)blockSizeLimit;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleOccupancyMaxPotentialBlockSizeWithFlags(
+    int *gridSize, int *blockSize, hipFunction_t f, size_t dynSharedMemPerBlk,
+    int blockSizeLimit, unsigned int flags) {
+  (void)gridSize;
+  (void)blockSize;
+  (void)f;
+  (void)dynSharedMemPerBlk;
+  (void)blockSizeLimit;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipModuleOccupancyMaxActiveBlocksPerMultiprocessor(
+    int *numBlocks, hipFunction_t f, int blockSize, size_t dynSharedMemPerBlk) {
+  (void)numBlocks;
+  (void)f;
+  (void)blockSize;
+  (void)dynSharedMemPerBlk;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipModuleOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
+    int *numBlocks, hipFunction_t f, int blockSize, size_t dynSharedMemPerBlk,
+    unsigned int flags) {
+  (void)numBlocks;
+  (void)f;
+  (void)blockSize;
+  (void)dynSharedMemPerBlk;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipOccupancyMaxActiveBlocksPerMultiprocessor(
+    int *numBlocks, const void *f, int blockSize, size_t dynSharedMemPerBlk) {
+  (void)numBlocks;
+  (void)f;
+  (void)blockSize;
+  (void)dynSharedMemPerBlk;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
+    int *numBlocks, const void *f, int blockSize, size_t dynSharedMemPerBlk,
+    unsigned int flags) {
+  (void)numBlocks;
+  (void)f;
+  (void)blockSize;
+  (void)dynSharedMemPerBlk;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipOccupancyMaxPotentialBlockSize(int *gridSize, int *blockSize, const void *f,
+                                  size_t dynSharedMemPerBlk,
+                                  int blockSizeLimit) {
+  (void)gridSize;
+  (void)blockSize;
+  (void)f;
+  (void)dynSharedMemPerBlk;
+  (void)blockSizeLimit;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize, const void *f,
+                                         int numBlocks, int blockSize) {
+  (void)dynamicSmemSize;
+  (void)f;
+  (void)numBlocks;
+  (void)blockSize;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipProfilerStart() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipProfilerStop() { return hipErrorNotSupported; }
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipConfigureCall(dim3 gridDim, dim3 blockDim,
+                                       size_t sharedMem, hipStream_t stream) {
+  (void)gridDim;
+  (void)blockDim;
+  (void)sharedMem;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipSetupArgument(const void *arg, size_t size,
+                                       size_t offset) {
+  (void)arg;
+  (void)size;
+  (void)offset;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLaunchByPtr(const void *func) {
+  (void)func;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t __hipPushCallConfiguration(dim3 gridDim, dim3 blockDim,
+                                                 size_t sharedMem,
+                                                 hipStream_t stream) {
+  (void)gridDim;
+  (void)blockDim;
+  (void)sharedMem;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t __hipPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
+                                                size_t *sharedMem,
+                                                hipStream_t *stream) {
+  (void)gridDim;
+  (void)blockDim;
+  (void)sharedMem;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLaunchKernel(const void *function_address,
+                                      dim3 numBlocks, dim3 dimBlocks,
+                                      void **args, size_t sharedMemBytes,
+                                      hipStream_t stream) {
+  (void)function_address;
+  (void)numBlocks;
+  (void)dimBlocks;
+  (void)args;
+  (void)sharedMemBytes;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipLaunchHostFunc(hipStream_t stream, hipHostFn_t fn,
+                                        void *userData) {
+  (void)stream;
+  (void)fn;
+  (void)userData;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvMemcpy2DUnaligned(const hip_Memcpy2D *pCopy) {
+  (void)pCopy;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipExtLaunchKernel(const void *function_address, dim3 numBlocks, dim3 dimBlocks,
+                   void **args, size_t sharedMemBytes, hipStream_t stream,
+                   hipEvent_t startEvent, hipEvent_t stopEvent, int flags) {
+  (void)function_address;
+  (void)numBlocks;
+  (void)dimBlocks;
+  (void)args;
+  (void)sharedMemBytes;
+  (void)stream;
+  (void)startEvent;
+  (void)stopEvent;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipCreateTextureObject(hipTextureObject_t *pTexObject,
+                       const hipResourceDesc *pResDesc,
+                       const hipTextureDesc *pTexDesc,
+                       const struct hipResourceViewDesc *pResViewDesc) {
+  (void)pTexObject;
+  (void)pResDesc;
+  (void)pTexDesc;
+  (void)pResViewDesc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDestroyTextureObject(hipTextureObject_t textureObject) {
+  (void)textureObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetChannelDesc(hipChannelFormatDesc *desc,
+                                        hipArray_const_t array) {
+  (void)desc;
+  (void)array;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGetTextureObjectResourceDesc(hipResourceDesc *pResDesc,
+                                hipTextureObject_t textureObject) {
+  (void)pResDesc;
+  (void)textureObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGetTextureObjectResourceViewDesc(struct hipResourceViewDesc *pResViewDesc,
+                                    hipTextureObject_t textureObject) {
+  (void)pResViewDesc;
+  (void)textureObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGetTextureObjectTextureDesc(hipTextureDesc *pTexDesc,
+                               hipTextureObject_t textureObject) {
+  (void)pTexDesc;
+  (void)textureObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexObjectCreate(hipTextureObject_t *pTexObject,
+                   const HIP_RESOURCE_DESC *pResDesc,
+                   const HIP_TEXTURE_DESC *pTexDesc,
+                   const HIP_RESOURCE_VIEW_DESC *pResViewDesc) {
+  (void)pTexObject;
+  (void)pResDesc;
+  (void)pTexDesc;
+  (void)pResViewDesc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexObjectDestroy(hipTextureObject_t texObject) {
+  (void)texObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexObjectGetResourceDesc(HIP_RESOURCE_DESC *pResDesc,
+                            hipTextureObject_t texObject) {
+  (void)pResDesc;
+  (void)texObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexObjectGetResourceViewDesc(HIP_RESOURCE_VIEW_DESC *pResViewDesc,
+                                hipTextureObject_t texObject) {
+  (void)pResViewDesc;
+  (void)texObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexObjectGetTextureDesc(HIP_TEXTURE_DESC *pTexDesc,
+                                                 hipTextureObject_t texObject) {
+  (void)pTexDesc;
+  (void)texObject;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMallocMipmappedArray(hipMipmappedArray_t *mipmappedArray,
+                        const struct hipChannelFormatDesc *desc,
+                        struct hipExtent extent, unsigned int numLevels,
+                        unsigned int flags) {
+  (void)mipmappedArray;
+  (void)desc;
+  (void)extent;
+  (void)numLevels;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipFreeMipmappedArray(hipMipmappedArray_t mipmappedArray) {
+  (void)mipmappedArray;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGetMipmappedArrayLevel(hipArray_t *levelArray,
+                          hipMipmappedArray_const_t mipmappedArray,
+                          unsigned int level) {
+  (void)levelArray;
+  (void)mipmappedArray;
+  (void)level;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMipmappedArrayCreate(hipMipmappedArray_t *pHandle,
+                        HIP_ARRAY3D_DESCRIPTOR *pMipmappedArrayDesc,
+                        unsigned int numMipmapLevels) {
+  (void)pHandle;
+  (void)pMipmappedArrayDesc;
+  (void)numMipmapLevels;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMipmappedArrayDestroy(hipMipmappedArray_t hMipmappedArray) {
+  (void)hMipmappedArray;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMipmappedArrayGetLevel(hipArray_t *pLevelArray,
+                          hipMipmappedArray_t hMipMappedArray,
+                          unsigned int level) {
+  (void)pLevelArray;
+  (void)hMipMappedArray;
+  (void)level;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipBindTextureToMipmappedArray(const textureReference *tex,
+                               hipMipmappedArray_const_t mipmappedArray,
+                               const hipChannelFormatDesc *desc) {
+  (void)tex;
+  (void)mipmappedArray;
+  (void)desc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGetTextureReference(const textureReference **texref,
+                                             const void *symbol) {
+  (void)texref;
+  (void)symbol;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefGetBorderColor(float *pBorderColor,
+                                              const textureReference *texRef) {
+  (void)pBorderColor;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefGetArray(hipArray_t *pArray,
+                                        const textureReference *texRef) {
+  (void)pArray;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetAddressMode(textureReference *texRef, int dim,
+                                              enum hipTextureAddressMode am) {
+  (void)texRef;
+  (void)dim;
+  (void)am;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetArray(textureReference *tex,
+                                        hipArray_const_t array,
+                                        unsigned int flags) {
+  (void)tex;
+  (void)array;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetFilterMode(textureReference *texRef,
+                                             enum hipTextureFilterMode fm) {
+  (void)texRef;
+  (void)fm;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetFlags(textureReference *texRef,
+                                        unsigned int Flags) {
+  (void)texRef;
+  (void)Flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetFormat(textureReference *texRef,
+                                         hipArray_Format fmt,
+                                         int NumPackedComponents) {
+  (void)texRef;
+  (void)fmt;
+  (void)NumPackedComponents;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipBindTexture(size_t *offset, const textureReference *tex, const void *devPtr,
+               const hipChannelFormatDesc *desc, size_t size) {
+  (void)offset;
+  (void)tex;
+  (void)devPtr;
+  (void)desc;
+  (void)size;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipBindTexture2D(size_t *offset, const textureReference *tex,
+                 const void *devPtr, const hipChannelFormatDesc *desc,
+                 size_t width, size_t height, size_t pitch) {
+  (void)offset;
+  (void)tex;
+  (void)devPtr;
+  (void)desc;
+  (void)width;
+  (void)height;
+  (void)pitch;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipBindTextureToArray(const textureReference *tex,
+                                            hipArray_const_t array,
+                                            const hipChannelFormatDesc *desc) {
+  (void)tex;
+  (void)array;
+  (void)desc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGetTextureAlignmentOffset(size_t *offset, const textureReference *texref) {
+  (void)offset;
+  (void)texref;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipUnbindTexture(const textureReference *tex) {
+  (void)tex;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefGetAddress(hipDeviceptr_t *dev_ptr,
+                                          const textureReference *texRef) {
+  (void)dev_ptr;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefGetAddressMode(enum hipTextureAddressMode *pam,
+                                              const textureReference *texRef,
+                                              int dim) {
+  (void)pam;
+  (void)texRef;
+  (void)dim;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefGetFilterMode(enum hipTextureFilterMode *pfm,
+                                             const textureReference *texRef) {
+  (void)pfm;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefGetFlags(unsigned int *pFlags,
+                                        const textureReference *texRef) {
+  (void)pFlags;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefGetFormat(hipArray_Format *pFormat,
+                                         int *pNumChannels,
+                                         const textureReference *texRef) {
+  (void)pFormat;
+  (void)pNumChannels;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexRefGetMaxAnisotropy(int *pmaxAnsio, const textureReference *texRef) {
+  (void)pmaxAnsio;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexRefGetMipmapFilterMode(enum hipTextureFilterMode *pfm,
+                             const textureReference *texRef) {
+  (void)pfm;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexRefGetMipmapLevelBias(float *pbias, const textureReference *texRef) {
+  (void)pbias;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexRefGetMipmapLevelClamp(float *pminMipmapLevelClamp,
+                             float *pmaxMipmapLevelClamp,
+                             const textureReference *texRef) {
+  (void)pminMipmapLevelClamp;
+  (void)pmaxMipmapLevelClamp;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexRefGetMipMappedArray(hipMipmappedArray_t *pArray,
+                           const textureReference *texRef) {
+  (void)pArray;
+  (void)texRef;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetAddress(size_t *ByteOffset,
+                                          textureReference *texRef,
+                                          hipDeviceptr_t dptr, size_t bytes) {
+  (void)ByteOffset;
+  (void)texRef;
+  (void)dptr;
+  (void)bytes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetAddress2D(textureReference *texRef,
+                                            const HIP_ARRAY_DESCRIPTOR *desc,
+                                            hipDeviceptr_t dptr, size_t Pitch) {
+  (void)texRef;
+  (void)desc;
+  (void)dptr;
+  (void)Pitch;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetMaxAnisotropy(textureReference *texRef,
+                                                unsigned int maxAniso) {
+  (void)texRef;
+  (void)maxAniso;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetBorderColor(textureReference *texRef,
+                                              float *pBorderColor) {
+  (void)texRef;
+  (void)pBorderColor;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexRefSetMipmapFilterMode(textureReference *texRef,
+                             enum hipTextureFilterMode fm) {
+  (void)texRef;
+  (void)fm;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetMipmapLevelBias(textureReference *texRef,
+                                                  float bias) {
+  (void)texRef;
+  (void)bias;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipTexRefSetMipmapLevelClamp(textureReference *texRef,
+                                                   float minMipMapLevelClamp,
+                                                   float maxMipMapLevelClamp) {
+  (void)texRef;
+  (void)minMipMapLevelClamp;
+  (void)maxMipMapLevelClamp;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipTexRefSetMipmappedArray(textureReference *texRef,
+                           struct hipMipmappedArray *mipmappedArray,
+                           unsigned int Flags) {
+  (void)texRef;
+  (void)mipmappedArray;
+  (void)Flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamBeginCapture(hipStream_t stream,
+                                            hipStreamCaptureMode mode) {
+  (void)stream;
+  (void)mode;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamBeginCaptureToGraph(
+    hipStream_t stream, hipGraph_t graph, const hipGraphNode_t *dependencies,
+    const hipGraphEdgeData *dependencyData, size_t numDependencies,
+    hipStreamCaptureMode mode) {
+  (void)stream;
+  (void)graph;
+  (void)dependencies;
+  (void)dependencyData;
+  (void)numDependencies;
+  (void)mode;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamEndCapture(hipStream_t stream,
+                                          hipGraph_t *pGraph) {
+  (void)stream;
+  (void)pGraph;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipStreamGetCaptureInfo(hipStream_t stream,
+                        hipStreamCaptureStatus *pCaptureStatus,
+                        unsigned long long *pId) {
+  (void)stream;
+  (void)pCaptureStatus;
+  (void)pId;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipStreamGetCaptureInfo_v2(
+    hipStream_t stream, hipStreamCaptureStatus *captureStatus_out,
+    unsigned long long *id_out, hipGraph_t *graph_out,
+    const hipGraphNode_t **dependencies_out, size_t *numDependencies_out) {
+  (void)stream;
+  (void)captureStatus_out;
+  (void)id_out;
+  (void)graph_out;
+  (void)dependencies_out;
+  (void)numDependencies_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipStreamIsCapturing(hipStream_t stream,
+                     hipStreamCaptureStatus *pCaptureStatus) {
+  (void)stream;
+  (void)pCaptureStatus;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipStreamUpdateCaptureDependencies(hipStream_t stream,
+                                   hipGraphNode_t *dependencies,
+                                   size_t numDependencies, unsigned int flags) {
+  (void)stream;
+  (void)dependencies;
+  (void)numDependencies;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipThreadExchangeStreamCaptureMode(hipStreamCaptureMode *mode) {
+  (void)mode;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphCreate(hipGraph_t *pGraph, unsigned int flags) {
+  (void)pGraph;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphDestroy(hipGraph_t graph) {
+  (void)graph;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphAddDependencies(hipGraph_t graph,
+                                              const hipGraphNode_t *from,
+                                              const hipGraphNode_t *to,
+                                              size_t numDependencies) {
+  (void)graph;
+  (void)from;
+  (void)to;
+  (void)numDependencies;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphRemoveDependencies(hipGraph_t graph,
+                                                 const hipGraphNode_t *from,
+                                                 const hipGraphNode_t *to,
+                                                 size_t numDependencies) {
+  (void)graph;
+  (void)from;
+  (void)to;
+  (void)numDependencies;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphGetEdges(hipGraph_t graph, hipGraphNode_t *from,
+                                       hipGraphNode_t *to, size_t *numEdges) {
+  (void)graph;
+  (void)from;
+  (void)to;
+  (void)numEdges;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphGetNodes(hipGraph_t graph, hipGraphNode_t *nodes,
+                                       size_t *numNodes) {
+  (void)graph;
+  (void)nodes;
+  (void)numNodes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphGetRootNodes(hipGraph_t graph,
+                                           hipGraphNode_t *pRootNodes,
+                                           size_t *pNumRootNodes) {
+  (void)graph;
+  (void)pRootNodes;
+  (void)pNumRootNodes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphNodeGetDependencies(hipGraphNode_t node,
+                                                  hipGraphNode_t *pDependencies,
+                                                  size_t *pNumDependencies) {
+  (void)node;
+  (void)pDependencies;
+  (void)pNumDependencies;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphNodeGetDependentNodes(hipGraphNode_t node,
+                              hipGraphNode_t *pDependentNodes,
+                              size_t *pNumDependentNodes) {
+  (void)node;
+  (void)pDependentNodes;
+  (void)pNumDependentNodes;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphNodeGetType(hipGraphNode_t node,
+                                          hipGraphNodeType *pType) {
+  (void)node;
+  (void)pType;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphDestroyNode(hipGraphNode_t node) {
+  (void)node;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphClone(hipGraph_t *pGraphClone,
+                                    hipGraph_t originalGraph) {
+  (void)pGraphClone;
+  (void)originalGraph;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphNodeFindInClone(hipGraphNode_t *pNode,
+                                              hipGraphNode_t originalNode,
+                                              hipGraph_t clonedGraph) {
+  (void)pNode;
+  (void)originalNode;
+  (void)clonedGraph;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphInstantiate(hipGraphExec_t *pGraphExec,
+                                          hipGraph_t graph,
+                                          hipGraphNode_t *pErrorNode,
+                                          char *pLogBuffer, size_t bufferSize) {
+  (void)pGraphExec;
+  (void)graph;
+  (void)pErrorNode;
+  (void)pLogBuffer;
+  (void)bufferSize;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphInstantiateWithFlags(hipGraphExec_t *pGraphExec,
+                                                   hipGraph_t graph,
+                                                   unsigned long long flags) {
+  (void)pGraphExec;
+  (void)graph;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphInstantiateWithParams(hipGraphExec_t *pGraphExec, hipGraph_t graph,
+                              hipGraphInstantiateParams *instantiateParams) {
+  (void)pGraphExec;
+  (void)graph;
+  (void)instantiateParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphLaunch(hipGraphExec_t graphExec,
+                                     hipStream_t stream) {
+  (void)graphExec;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphUpload(hipGraphExec_t graphExec,
+                                     hipStream_t stream) {
+  (void)graphExec;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphAddNode(hipGraphNode_t *pGraphNode,
+                                      hipGraph_t graph,
+                                      const hipGraphNode_t *pDependencies,
+                                      size_t numDependencies,
+                                      hipGraphNodeParams *nodeParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecGetFlags(hipGraphExec_t graphExec,
+                                           unsigned long long *flags) {
+  (void)graphExec;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphNodeSetParams(hipGraphNode_t node,
+                                            hipGraphNodeParams *nodeParams) {
+  (void)node;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecNodeSetParams(hipGraphExec_t graphExec, hipGraphNode_t node,
+                          hipGraphNodeParams *nodeParams) {
+  (void)graphExec;
+  (void)node;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecDestroy(hipGraphExec_t graphExec) {
+  (void)graphExec;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecUpdate(hipGraphExec_t hGraphExec, hipGraph_t hGraph,
+                   hipGraphNode_t *hErrorNode_out,
+                   hipGraphExecUpdateResult *updateResult_out) {
+  (void)hGraphExec;
+  (void)hGraph;
+  (void)hErrorNode_out;
+  (void)updateResult_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddKernelNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                      const hipGraphNode_t *pDependencies,
+                      size_t numDependencies,
+                      const hipKernelNodeParams *pNodeParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphKernelNodeGetParams(hipGraphNode_t node,
+                            hipKernelNodeParams *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphKernelNodeSetParams(hipGraphNode_t node,
+                            const hipKernelNodeParams *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecKernelNodeSetParams(hipGraphExec_t hGraphExec, hipGraphNode_t node,
+                                const hipKernelNodeParams *pNodeParams) {
+  (void)hGraphExec;
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDrvGraphAddMemcpyNode(hipGraphNode_t *phGraphNode, hipGraph_t hGraph,
+                         const hipGraphNode_t *dependencies,
+                         size_t numDependencies, const HIP_MEMCPY3D *copyParams,
+                         hipCtx_t ctx) {
+  (void)phGraphNode;
+  (void)hGraph;
+  (void)dependencies;
+  (void)numDependencies;
+  (void)copyParams;
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddMemcpyNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                      const hipGraphNode_t *pDependencies,
+                      size_t numDependencies,
+                      const hipMemcpy3DParms *pCopyParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)pCopyParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphMemcpyNodeGetParams(hipGraphNode_t node,
+                            hipMemcpy3DParms *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphMemcpyNodeSetParams(hipGraphNode_t node,
+                            const hipMemcpy3DParms *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphKernelNodeSetAttribute(hipGraphNode_t hNode, hipLaunchAttributeID attr,
+                               const hipLaunchAttributeValue *value) {
+  (void)hNode;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphKernelNodeGetAttribute(hipGraphNode_t hNode, hipLaunchAttributeID attr,
+                               hipLaunchAttributeValue *value) {
+  (void)hNode;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecMemcpyNodeSetParams(hipGraphExec_t hGraphExec, hipGraphNode_t node,
+                                hipMemcpy3DParms *pNodeParams) {
+  (void)hGraphExec;
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddMemcpyNode1D(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                        const hipGraphNode_t *pDependencies,
+                        size_t numDependencies, void *dst, const void *src,
+                        size_t count, hipMemcpyKind kind) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)dst;
+  (void)src;
+  (void)count;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphMemcpyNodeSetParams1D(hipGraphNode_t node,
+                                                    void *dst, const void *src,
+                                                    size_t count,
+                                                    hipMemcpyKind kind) {
+  (void)node;
+  (void)dst;
+  (void)src;
+  (void)count;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecMemcpyNodeSetParams1D(
+    hipGraphExec_t hGraphExec, hipGraphNode_t node, void *dst, const void *src,
+    size_t count, hipMemcpyKind kind) {
+  (void)hGraphExec;
+  (void)node;
+  (void)dst;
+  (void)src;
+  (void)count;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphAddMemcpyNodeFromSymbol(
+    hipGraphNode_t *pGraphNode, hipGraph_t graph,
+    const hipGraphNode_t *pDependencies, size_t numDependencies, void *dst,
+    const void *symbol, size_t count, size_t offset, hipMemcpyKind kind) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)dst;
+  (void)symbol;
+  (void)count;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphMemcpyNodeSetParamsFromSymbol(hipGraphNode_t node, void *dst,
+                                      const void *symbol, size_t count,
+                                      size_t offset, hipMemcpyKind kind) {
+  (void)node;
+  (void)dst;
+  (void)symbol;
+  (void)count;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecMemcpyNodeSetParamsFromSymbol(
+    hipGraphExec_t hGraphExec, hipGraphNode_t node, void *dst,
+    const void *symbol, size_t count, size_t offset, hipMemcpyKind kind) {
+  (void)hGraphExec;
+  (void)node;
+  (void)dst;
+  (void)symbol;
+  (void)count;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddMemcpyNodeToSymbol(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                              const hipGraphNode_t *pDependencies,
+                              size_t numDependencies, const void *symbol,
+                              const void *src, size_t count, size_t offset,
+                              hipMemcpyKind kind) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)symbol;
+  (void)src;
+  (void)count;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphMemcpyNodeSetParamsToSymbol(hipGraphNode_t node, const void *symbol,
+                                    const void *src, size_t count,
+                                    size_t offset, hipMemcpyKind kind) {
+  (void)node;
+  (void)symbol;
+  (void)src;
+  (void)count;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecMemcpyNodeSetParamsToSymbol(
+    hipGraphExec_t hGraphExec, hipGraphNode_t node, const void *symbol,
+    const void *src, size_t count, size_t offset, hipMemcpyKind kind) {
+  (void)hGraphExec;
+  (void)node;
+  (void)symbol;
+  (void)src;
+  (void)count;
+  (void)offset;
+  (void)kind;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddMemsetNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                      const hipGraphNode_t *pDependencies,
+                      size_t numDependencies,
+                      const hipMemsetParams *pMemsetParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)pMemsetParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphMemsetNodeGetParams(hipGraphNode_t node, hipMemsetParams *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphMemsetNodeSetParams(hipGraphNode_t node,
+                            const hipMemsetParams *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecMemsetNodeSetParams(hipGraphExec_t hGraphExec, hipGraphNode_t node,
+                                const hipMemsetParams *pNodeParams) {
+  (void)hGraphExec;
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddHostNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                    const hipGraphNode_t *pDependencies, size_t numDependencies,
+                    const hipHostNodeParams *pNodeParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphHostNodeGetParams(hipGraphNode_t node, hipHostNodeParams *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphHostNodeSetParams(hipGraphNode_t node,
+                          const hipHostNodeParams *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecHostNodeSetParams(hipGraphExec_t hGraphExec, hipGraphNode_t node,
+                              const hipHostNodeParams *pNodeParams) {
+  (void)hGraphExec;
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddChildGraphNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                          const hipGraphNode_t *pDependencies,
+                          size_t numDependencies, hipGraph_t childGraph) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)childGraph;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphChildGraphNodeGetGraph(hipGraphNode_t node,
+                                                     hipGraph_t *pGraph) {
+  (void)node;
+  (void)pGraph;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecChildGraphNodeSetParams(
+    hipGraphExec_t hGraphExec, hipGraphNode_t node, hipGraph_t childGraph) {
+  (void)hGraphExec;
+  (void)node;
+  (void)childGraph;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphAddEmptyNode(hipGraphNode_t *pGraphNode,
+                                           hipGraph_t graph,
+                                           const hipGraphNode_t *pDependencies,
+                                           size_t numDependencies) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddEventRecordNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                           const hipGraphNode_t *pDependencies,
+                           size_t numDependencies, hipEvent_t event) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphEventRecordNodeGetEvent(hipGraphNode_t node,
+                                                      hipEvent_t *event_out) {
+  (void)node;
+  (void)event_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphEventRecordNodeSetEvent(hipGraphNode_t node,
+                                                      hipEvent_t event) {
+  (void)node;
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecEventRecordNodeSetEvent(hipGraphExec_t hGraphExec,
+                                    hipGraphNode_t hNode, hipEvent_t event) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddEventWaitNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                         const hipGraphNode_t *pDependencies,
+                         size_t numDependencies, hipEvent_t event) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphEventWaitNodeGetEvent(hipGraphNode_t node,
+                                                    hipEvent_t *event_out) {
+  (void)node;
+  (void)event_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphEventWaitNodeSetEvent(hipGraphNode_t node,
+                                                    hipEvent_t event) {
+  (void)node;
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphExecEventWaitNodeSetEvent(hipGraphExec_t hGraphExec,
+                                  hipGraphNode_t hNode, hipEvent_t event) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)event;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddMemAllocNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                        const hipGraphNode_t *pDependencies,
+                        size_t numDependencies,
+                        hipMemAllocNodeParams *pNodeParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphMemAllocNodeGetParams(hipGraphNode_t node,
+                              hipMemAllocNodeParams *pNodeParams) {
+  (void)node;
+  (void)pNodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphAddMemFreeNode(hipGraphNode_t *pGraphNode, hipGraph_t graph,
+                       const hipGraphNode_t *pDependencies,
+                       size_t numDependencies, void *dev_ptr) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)dev_ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphMemFreeNodeGetParams(hipGraphNode_t node,
+                                                   void *dev_ptr) {
+  (void)node;
+  (void)dev_ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDeviceGetGraphMemAttribute(int device, hipGraphMemAttributeType attr,
+                              void *value) {
+  (void)device;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDeviceSetGraphMemAttribute(int device, hipGraphMemAttributeType attr,
+                              void *value) {
+  (void)device;
+  (void)attr;
+  (void)value;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDeviceGraphMemTrim(int device) {
+  (void)device;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipUserObjectCreate(hipUserObject_t *object_out,
+                                          void *ptr, hipHostFn_t destroy,
+                                          unsigned int initialRefcount,
+                                          unsigned int flags) {
+  (void)object_out;
+  (void)ptr;
+  (void)destroy;
+  (void)initialRefcount;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipUserObjectRelease(hipUserObject_t object,
+                                           unsigned int count) {
+  (void)object;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipUserObjectRetain(hipUserObject_t object,
+                                          unsigned int count) {
+  (void)object;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphRetainUserObject(hipGraph_t graph,
+                                               hipUserObject_t object,
+                                               unsigned int count,
+                                               unsigned int flags) {
+  (void)graph;
+  (void)object;
+  (void)count;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphReleaseUserObject(hipGraph_t graph,
+                                                hipUserObject_t object,
+                                                unsigned int count) {
+  (void)graph;
+  (void)object;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphDebugDotPrint(hipGraph_t graph, const char *path,
+                                            unsigned int flags) {
+  (void)graph;
+  (void)path;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphKernelNodeCopyAttributes(hipGraphNode_t hSrc,
+                                                       hipGraphNode_t hDst) {
+  (void)hSrc;
+  (void)hDst;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphNodeSetEnabled(hipGraphExec_t hGraphExec,
+                                             hipGraphNode_t hNode,
+                                             unsigned int isEnabled) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)isEnabled;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphNodeGetEnabled(hipGraphExec_t hGraphExec,
+                                             hipGraphNode_t hNode,
+                                             unsigned int *isEnabled) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)isEnabled;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphAddExternalSemaphoresWaitNode(
+    hipGraphNode_t *pGraphNode, hipGraph_t graph,
+    const hipGraphNode_t *pDependencies, size_t numDependencies,
+    const hipExternalSemaphoreWaitNodeParams *nodeParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphAddExternalSemaphoresSignalNode(
+    hipGraphNode_t *pGraphNode, hipGraph_t graph,
+    const hipGraphNode_t *pDependencies, size_t numDependencies,
+    const hipExternalSemaphoreSignalNodeParams *nodeParams) {
+  (void)pGraphNode;
+  (void)graph;
+  (void)pDependencies;
+  (void)numDependencies;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExternalSemaphoresSignalNodeSetParams(
+    hipGraphNode_t hNode,
+    const hipExternalSemaphoreSignalNodeParams *nodeParams) {
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExternalSemaphoresWaitNodeSetParams(
+    hipGraphNode_t hNode,
+    const hipExternalSemaphoreWaitNodeParams *nodeParams) {
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExternalSemaphoresSignalNodeGetParams(
+    hipGraphNode_t hNode, hipExternalSemaphoreSignalNodeParams *params_out) {
+  (void)hNode;
+  (void)params_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExternalSemaphoresWaitNodeGetParams(
+    hipGraphNode_t hNode, hipExternalSemaphoreWaitNodeParams *params_out) {
+  (void)hNode;
+  (void)params_out;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecExternalSemaphoresSignalNodeSetParams(
+    hipGraphExec_t hGraphExec, hipGraphNode_t hNode,
+    const hipExternalSemaphoreSignalNodeParams *nodeParams) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphExecExternalSemaphoresWaitNodeSetParams(
+    hipGraphExec_t hGraphExec, hipGraphNode_t hNode,
+    const hipExternalSemaphoreWaitNodeParams *nodeParams) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvGraphMemcpyNodeGetParams(hipGraphNode_t hNode,
+                                                     HIP_MEMCPY3D *nodeParams) {
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDrvGraphMemcpyNodeSetParams(hipGraphNode_t hNode,
+                               const HIP_MEMCPY3D *nodeParams) {
+  (void)hNode;
+  (void)nodeParams;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDrvGraphAddMemsetNode(hipGraphNode_t *phGraphNode, hipGraph_t hGraph,
+                         const hipGraphNode_t *dependencies,
+                         size_t numDependencies,
+                         const hipMemsetParams *memsetParams, hipCtx_t ctx) {
+  (void)phGraphNode;
+  (void)hGraph;
+  (void)dependencies;
+  (void)numDependencies;
+  (void)memsetParams;
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDrvGraphAddMemFreeNode(hipGraphNode_t *phGraphNode, hipGraph_t hGraph,
+                          const hipGraphNode_t *dependencies,
+                          size_t numDependencies, hipDeviceptr_t dptr) {
+  (void)phGraphNode;
+  (void)hGraph;
+  (void)dependencies;
+  (void)numDependencies;
+  (void)dptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvGraphExecMemcpyNodeSetParams(
+    hipGraphExec_t hGraphExec, hipGraphNode_t hNode,
+    const HIP_MEMCPY3D *copyParams, hipCtx_t ctx) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)copyParams;
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipDrvGraphExecMemsetNodeSetParams(
+    hipGraphExec_t hGraphExec, hipGraphNode_t hNode,
+    const hipMemsetParams *memsetParams, hipCtx_t ctx) {
+  (void)hGraphExec;
+  (void)hNode;
+  (void)memsetParams;
+  (void)ctx;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemAddressFree(void *devPtr, size_t size) {
+  (void)devPtr;
+  (void)size;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemAddressReserve(void **ptr, size_t size,
+                                           size_t alignment, void *addr,
+                                           unsigned long long flags) {
+  (void)ptr;
+  (void)size;
+  (void)alignment;
+  (void)addr;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemCreate(hipMemGenericAllocationHandle_t *handle,
+                                   size_t size,
+                                   const hipMemAllocationProp *prop,
+                                   unsigned long long flags) {
+  (void)handle;
+  (void)size;
+  (void)prop;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemExportToShareableHandle(
+    void *shareableHandle, hipMemGenericAllocationHandle_t handle,
+    hipMemAllocationHandleType handleType, unsigned long long flags) {
+  (void)shareableHandle;
+  (void)handle;
+  (void)handleType;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemGetAccess(unsigned long long *flags,
+                                      const hipMemLocation *location,
+                                      void *ptr) {
+  (void)flags;
+  (void)location;
+  (void)ptr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemGetAllocationGranularity(size_t *granularity,
+                               const hipMemAllocationProp *prop,
+                               hipMemAllocationGranularity_flags option) {
+  (void)granularity;
+  (void)prop;
+  (void)option;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemGetAllocationPropertiesFromHandle(
+    hipMemAllocationProp *prop, hipMemGenericAllocationHandle_t handle) {
+  (void)prop;
+  (void)handle;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemImportFromShareableHandle(hipMemGenericAllocationHandle_t *handle,
+                                void *osHandle,
+                                hipMemAllocationHandleType shHandleType) {
+  (void)handle;
+  (void)osHandle;
+  (void)shHandleType;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemMap(void *ptr, size_t size, size_t offset,
+                                hipMemGenericAllocationHandle_t handle,
+                                unsigned long long flags) {
+  (void)ptr;
+  (void)size;
+  (void)offset;
+  (void)handle;
+  (void)flags;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemMapArrayAsync(hipArrayMapInfo *mapInfoList,
+                                          unsigned int count,
+                                          hipStream_t stream) {
+  (void)mapInfoList;
+  (void)count;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemRelease(hipMemGenericAllocationHandle_t handle) {
+  (void)handle;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipMemRetainAllocationHandle(hipMemGenericAllocationHandle_t *handle,
+                             void *addr) {
+  (void)handle;
+  (void)addr;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemSetAccess(void *ptr, size_t size,
+                                      const hipMemAccessDesc *desc,
+                                      size_t count) {
+  (void)ptr;
+  (void)size;
+  (void)desc;
+  (void)count;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipMemUnmap(void *ptr, size_t size) {
+  (void)ptr;
+  (void)size;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphicsMapResources(int count,
+                                              hipGraphicsResource_t *resources,
+                                              hipStream_t stream) {
+  (void)count;
+  (void)resources;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipGraphicsSubResourceGetMappedArray(
+    hipArray_t *array, hipGraphicsResource_t resource, unsigned int arrayIndex,
+    unsigned int mipLevel) {
+  (void)array;
+  (void)resource;
+  (void)arrayIndex;
+  (void)mipLevel;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphicsResourceGetMappedPointer(void **devPtr, size_t *size,
+                                    hipGraphicsResource_t resource) {
+  (void)devPtr;
+  (void)size;
+  (void)resource;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphicsUnmapResources(int count, hipGraphicsResource_t *resources,
+                          hipStream_t stream) {
+  (void)count;
+  (void)resources;
+  (void)stream;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipGraphicsUnregisterResource(hipGraphicsResource_t resource) {
+  (void)resource;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t hipCreateSurfaceObject(hipSurfaceObject_t *pSurfObject,
+                                             const hipResourceDesc *pResDesc) {
+  (void)pSurfObject;
+  (void)pResDesc;
+  return hipErrorNotSupported;
+}
+
+// Not annotated for this backend, so not supported.
+extern "C" hipError_t
+hipDestroySurfaceObject(hipSurfaceObject_t surfaceObject) {
+  (void)surfaceObject;
+  return hipErrorNotSupported;
+}

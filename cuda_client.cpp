@@ -52,6 +52,7 @@
 #include "codegen/gen_cuda_client.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
+#include "cuda_client_rpc.h"
 #include "cuda_profiler_compat.h"
 #include "events.h"
 #include "ipc.h"
@@ -8489,6 +8490,36 @@ void *rpc_client_dispatch_thread(void *arg) {
 close_connection:
   rpc_close(conn);
   return nullptr;
+}
+
+extern "C" int lupine_rpc_device_count(int *count) {
+  return lupine_virtual_device_count(count) == CUDA_SUCCESS ? 0 : -1;
+}
+
+extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
+  return lupine_prepare_rpc(conn) < 0 ? -1 : rpc_write_start_request(conn, op);
+}
+
+extern "C" int lupine_rpc_write(conn_t *conn, const void *data, size_t size) {
+  return rpc_write(conn, data, size);
+}
+
+extern "C" int lupine_rpc_wait_for_response(conn_t *conn) {
+  return rpc_wait_for_response(conn);
+}
+
+extern "C" int lupine_rpc_read(conn_t *conn, void *data, size_t size) {
+  return rpc_read(conn, data, size);
+}
+
+extern "C" int lupine_rpc_read_end(conn_t *conn) { return rpc_read_end(conn); }
+
+extern "C" void lupine_rpc_note_stream_owner(conn_t *conn, CUstream stream) {
+  lupine_note_stream_owner(stream, conn);
+}
+
+extern "C" void lupine_rpc_note_event_owner(conn_t *conn, CUevent event) {
+  lupine_note_event_owner(event, conn);
 }
 
 int rpc_open() {

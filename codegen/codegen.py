@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["clang-format==18.1.3", "cxxheaderparser==1.9.2"]
 # ///
-from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
+from cxxheaderparser.simple import parse_file, parse_string, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
 from cxxheaderparser.types import Type, Pointer, Parameter, Function, Array
 from typing import Optional, Union
@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import argparse
 from collections import namedtuple
 import io
+import itertools
 import os
 import glob
 import re
@@ -21,6 +22,8 @@ import zlib
 from client_templates import collect_client_call_templates
 from emit import (
     Backend,
+    unsupported,
+    write_backend,
     format_call_args,
     format_function_params,
     write_client_rpc,
@@ -212,10 +215,6 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceGetCudaComputeCapability",
 ]
 
-HIP_MANUAL_REMAPPINGS = [
-    ("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),
-]
-
 PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
     "cuGraphConditionalHandleCreate",
@@ -242,6 +241,8 @@ REGISTRY_CPP_TEMPLATE = Template(
 // clang-format off
 #define LUPINE_CUDA_RPC_HANDLERS(HANDLER) \
 $cuda_registry_entries
+#define LUPINE_CUDART_RPC_HANDLERS(HANDLER) \
+$cudart_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -253,6 +254,8 @@ $hip_registry_entries
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cuda_guarded_declarations
+LUPINE_CUDART_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$cudart_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -274,6 +277,8 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cuda_guarded_handlers
+      LUPINE_CUDART_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$cudart_guarded_handlers
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
@@ -290,6 +295,7 @@ $hip_guarded_handlers
 }
 
 #undef LUPINE_CUDA_RPC_HANDLERS
+#undef LUPINE_CUDART_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -312,6 +318,7 @@ SERVER_BACKENDS = {
     "CUDA": "rpc_backend::cuda",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
+    "CUDART": "rpc_backend::cudart",
 }
 
 
@@ -375,23 +382,40 @@ def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
 # One annotation file per shim target. A declaration belongs to the target
 # whose file it lives in, so no API-name prefix is needed to tell them apart.
 NVML = Backend(
+    name="nvml",
     result="nvmlReturn_t",
+    success="NVML_SUCCESS",
     invalid_argument="NVML_ERROR_INVALID_ARGUMENT",
-    device_routing_kind="NVML_DEVICE",
+    not_supported="NVML_ERROR_NOT_SUPPORTED",
     symbol_lookup="nvml_symbol",
     lookup_on_all_connections=True,
 )
 
 HIP = Backend(
+    name="hip",
     result="hipError_t",
+    success="hipSuccess",
     invalid_argument="hipErrorInvalidValue",
-    device_routing_kind="HIP_DEVICE",
+    not_supported="hipErrorNotSupported",
     symbol_lookup="hip_symbol",
+    guard_null_conn=True,
+    remappings=(("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),),
+)
+
+CUDART = Backend(
+    name="cudart",
+    result="cudaError_t",
+    success="cudaSuccess",
+    invalid_argument="cudaErrorInvalidValue",
+    not_supported="cudaErrorNotSupported",
+    symbol_lookup="cudart_symbol",
+    sticky_error="record",
     guard_null_conn=True,
 )
 
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
+    "cudart": "annotations_cudart.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -419,10 +443,12 @@ def infer_routing_key(
         if isinstance(param.type, (Pointer, Array)):
             continue
         type_name = param.type.format().replace("const ", "").strip()
-        if type_name == "nvmlDevice_t":
-            return "NVML_DEVICE", param
-        if type_name == "CUdevice":
+        if type_name in ("nvmlDevice_t", "CUdevice"):
             return "DEVICE", param
+        if type_name == "cudaStream_t":
+            return "STREAM", param
+        if type_name == "cudaEvent_t":
+            return "EVENT", param
         if type_name == "CUcontext":
             return "CONTEXT", param
         if type_name == "CUmodule":
@@ -481,6 +507,9 @@ def parse_annotation(
             scope = disabled_parts[1] if len(disabled_parts) > 1 else "both"
             if scope == "client":
                 metadata.disabled_client = True
+                # "forwards": the manual client provides the entry point but
+                # still sends the call, so it needs the generated builder.
+                metadata.client_forwards = "forwards" in disabled_parts[2:]
                 continue
             elif scope == "server":
                 metadata.disabled_server = True
@@ -1015,6 +1044,20 @@ def find_header_file(filename):
     )
 
 
+def sdk_header(path: str) -> str:
+    """The SDK header a target's annotations describe: the one they include."""
+    # Only the leading includes are parsed. The rest of an annotation file needs
+    # a preprocessor, which would expand the include away before it is read.
+    head = itertools.takewhile(
+        lambda line: not line.strip() or line.startswith("#include"),
+        open(path, encoding="utf-8"),
+    )
+    includes = parse_string("".join(head)).includes
+    if len(includes) != 1:
+        raise RuntimeError(f"{path}: expected one #include of the SDK header")
+    return includes[0].filename.strip('<>"')
+
+
 def validate_async_annotation(
     function: Function, metadata: FunctionAnnotationMetadata
 ) -> None:
@@ -1059,7 +1102,7 @@ def attach_client_call_template(
 
 
 def write_rpc_ids(
-    functions_with_annotations, annotated_names, hip_functions_with_annotations
+    functions_with_annotations, annotated_names, forwarded_functions, forwarded_bindings
 ):
     with open("gen_rpc_ids.h", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n")
@@ -1092,8 +1135,14 @@ def write_rpc_ids(
             write_rpc_define(f"RPC_{name}", name)
         for name in NVML_RPC_FUNCTIONS:
             write_rpc_define(f"RPC_{name}", name)
-        for function, _, _, _ in hip_functions_with_annotations:
+        for function, _, _, metadata in forwarded_functions:
+            if unsupported(function, metadata) or (
+                metadata.disabled_client and metadata.disabled_server
+            ):
+                continue
             name = function.name.format()
+            write_rpc_define(f"RPC_{name}", name)
+        for name, binding in forwarded_bindings:
             write_rpc_define(f"RPC_{name}", name)
         f.write("\n")
         for name in PRIVATE_RPC_FUNCTIONS:
@@ -1645,10 +1694,16 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
         f.write(
             REGISTRY_CPP_TEMPLATE.substitute(
                 cuda_registry_entries=" \\\n".join(registry_entries["CUDA"]),
+                cudart_registry_entries=" \\\n".join(
+                    registry_entries["CUDART"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
                     guarded_declarations["CUDA"]
+                ),
+                cudart_guarded_declarations="\n".join(
+                    guarded_declarations["CUDART"]
                 ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
@@ -1657,6 +1712,7 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                     guarded_declarations["HIP"]
                 ),
                 cuda_guarded_handlers="\n".join(guarded_handlers["CUDA"]),
+                cudart_guarded_handlers="\n".join(guarded_handlers["CUDART"]),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -1829,6 +1885,22 @@ def main():
     hip_functions_with_annotations = collect_backend_functions(
         annotations_by_target["hip"]
     )
+    cudart_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["cudart"]
+    )
+    # The SDK's own declarations, so a call an annotation file leaves out still
+    # gets a symbol.
+    forwarding_backends = [
+        (HIP, hip_functions_with_annotations),
+        (CUDART, cudart_functions_with_annotations),
+    ]
+    sdk_functions_for = {
+        backend.name: parse_file(
+            find_header_file(sdk_header(ANNOTATION_FILES[backend.name])),
+            options=options,
+        ).namespace.functions
+        for backend, _ in forwarding_backends
+    }
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -1840,74 +1912,19 @@ def main():
     )
 
     write_rpc_ids(
-        functions_with_annotations, annotated_names, hip_functions_with_annotations
+        functions_with_annotations,
+        annotated_names,
+        [entry for _, functions in forwarding_backends for entry in functions],
+        [
+            (name, binding)
+            for name, binding in server_bindings.items()
+            if binding.backend in {backend.name.upper() for backend, _ in forwarding_backends}
+        ],
     )
 
-    with open("gen_nvml_client.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in nvml_functions_with_annotations:
-            if metadata.disabled_client:
-                continue
-            write_client_rpc(f, NVML, function, operations, metadata)
-            write_client_wrapper(f, NVML, function, operations, metadata)
-
-    with open("gen_nvml_server.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in nvml_functions_with_annotations:
-            if metadata.disabled_server:
-                continue
-            write_server_handler(f, NVML, function, operations, metadata)
-
-    with open("gen_nvml_server.h", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, _, metadata in nvml_functions_with_annotations:
-            if metadata.disabled_server:
-                continue
-            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
-
-    with open("gen_hip_client.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        hip_client_functions = {}
-        for function, _, operations, metadata in hip_functions_with_annotations:
-            if metadata.disabled_client:
-                continue
-            hip_client_functions[function.name.format()] = function
-            write_client_rpc(f, HIP, function, operations, metadata)
-            write_client_wrapper(f, HIP, function, operations, metadata)
-        for alias, target in HIP_MANUAL_REMAPPINGS:
-            if alias in hip_client_functions:
-                continue
-            target_function = hip_client_functions.get(target)
-            if target_function is None:
-                continue
-            f.write(f"#ifdef {alias}\n#undef {alias}\n#endif\n")
-            f.write(
-                'extern "C" {return_type} {alias}({params}) {{\n'.format(
-                    return_type=target_function.return_type.format(),
-                    alias=alias,
-                    params=", ".join(format_function_params(target_function)),
-                )
-            )
-            f.write(
-                "  return {target}({args});\n}}\n\n".format(
-                    target=target,
-                    args=", ".join(format_call_args(target_function)),
-                )
-            )
-
-    with open("gen_hip_server.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in hip_functions_with_annotations:
-            if metadata.disabled_server:
-                continue
-            write_server_handler(f, HIP, function, operations, metadata)
-
-    with open("gen_hip_server.h", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, _, metadata in hip_functions_with_annotations:
-            if metadata.disabled_server:
-                continue
-            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
+    write_backend(NVML, nvml_functions_with_annotations)
+    for backend, functions in forwarding_backends:
+        write_backend(backend, functions, sdk_functions_for[backend.name])
 
     write_cuda_client(functions_with_annotations, legacy_abi_functions)
 
@@ -1934,6 +1951,19 @@ def main():
         for name in NVML_RPC_FUNCTIONS
         if name not in server_bindings
     )
+    for backend, functions in forwarding_backends:
+        generated_bindings.extend(
+            ServerBinding(
+                function.name.format(),
+                backend.name.upper(),
+                f"handle_{function.name.format()}",
+                metadata.guard,
+            )
+            for function, _, _, metadata in functions
+            if not metadata.disabled_server
+            and not unsupported(function, metadata)
+            and function.name.format() not in server_bindings
+        )
     bindings = list(server_bindings.values()) + generated_bindings
 
     operations_by_id = {}
@@ -1990,6 +2020,9 @@ def main():
             "gen_hip_client.inc",
             "gen_hip_server.inc",
             "gen_hip_server.h",
+            "gen_cudart_client.inc",
+            "gen_cudart_server.inc",
+            "gen_cudart_server.h",
         ],
         check=True,
     )
@@ -2008,9 +2041,15 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_hip_server.inc",
             "gen_hip_server.h",
         ],
+        "cudart": [
+            "gen_cudart_client.inc",
+            "gen_cudart_server.inc",
+            "gen_cudart_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
+        "cudart": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }

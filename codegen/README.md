@@ -1,9 +1,9 @@
 Codegen works via a human-in-the-loop system. It's quite challenging to build a codegen engine that can correctly
 infer what parameters should be sent and received so we instead have a two-step process.
 
-First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
-into that target's annotation file (`annotations_cuda.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per
-shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+First, `annotationgen.py` reads the SDK header a target's annotation file includes and copies that header's
+function signatures into the annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_nvml.h`,
+`annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.

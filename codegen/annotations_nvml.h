@@ -126,14 +126,14 @@ nvmlReturn_t nvmlDeviceGetHandleBySerial(const char *serial,
                                          nvmlDevice_t *device);
 /**
  * @routingkey ALL
- * @recordowner NVML_DEVICE device
+ * @recordowner DEVICE device
  * @param uuid SEND_ONLY NULL_TERMINATED
  * @param device RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetHandleByUUID(const char *uuid, nvmlDevice_t *device);
 /**
  * @routingkey ALL
- * @recordowner NVML_DEVICE device
+ * @recordowner DEVICE device
  * @param pciBusId SEND_ONLY NULL_TERMINATED
  * @param device RECV_ONLY
  */
