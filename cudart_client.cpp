@@ -46,40 +46,17 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
 }
 int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 
-// rpc_write keeps the address it is given and sends at wait time, so every
-// value written has to outlive the request: the helpers below write storage
-// the caller owns.
-//
-// A length-prefixed byte string; the server reads it back null-terminated.
-struct wire_bytes {
-  uint64_t length;
-  const void *data;
-  wire_bytes(const void *bytes, size_t size) : length(size), data(bytes) {}
-  explicit wire_bytes(const char *text)
-      : wire_bytes(text, text == nullptr ? 0 : strlen(text)) {}
-};
-
-int write_bytes(conn_t *conn, const wire_bytes &bytes) {
-  if (rpc_write(conn, &bytes.length, sizeof(bytes.length)) < 0) {
+// A length-prefixed byte string. rpc_write keeps the address it is given and
+// sends at wait time, so the caller owns the length until then.
+int write_bytes(conn_t *conn, const void *data, const uint64_t &length) {
+  if (rpc_write(conn, &length, sizeof(length)) < 0) {
     return -1;
   }
-  return bytes.length != 0 ? rpc_write(conn, bytes.data, bytes.length) : 0;
+  return rpc_write(conn, data, length);
 }
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-// The sticky error every call feeds and cudaGetLastError drains. Every result
-// comes back as a return value, so it lives here rather than in the server's
-// runtime, where the shim's own failures would never be seen.
-thread_local cudaError_t local_error = cudaSuccess;
-
-cudaError_t record(cudaError_t error) {
-  if (error != cudaSuccess) {
-    local_error = error;
-  }
-  return error;
+uint64_t text_length(const char *text) {
+  return text == nullptr ? 0 : strlen(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -743,8 +720,8 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
     version = wrapper->version;
     image = wrapper->data;
   }
-  const wire_bytes fatbin(image, fatbin_size(image));
-  if (fatbin.length == 0) {
+  const uint64_t image_size = fatbin_size(image);
+  if (image_size == 0) {
     record(cudaErrorInvalidKernelImage);
     return nullptr;
   }
@@ -753,7 +730,8 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
     void **handle = nullptr;
     if (rpc_write_start_request(conn, RPC___cudaRegisterFatBinary) < 0 ||
         rpc_write(conn, &version, sizeof(version)) < 0 ||
-        write_bytes(conn, fatbin) < 0 || rpc_wait_for_response(conn) < 0 ||
+        write_bytes(conn, image, image_size) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &handle, sizeof(handle)) < 0 || rpc_read_end(conn) < 0 ||
         handle == nullptr) {
       record(rpc_error());
@@ -805,14 +783,14 @@ extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
                                        const char *deviceName, int thread_limit,
                                        uint3 *tid, uint3 *bid, dim3 *bDim,
                                        dim3 *gDim, int *wSize) {
-  const wire_bytes device_fun(deviceFun);
-  const wire_bytes device_name(deviceName);
+  const uint64_t device_fun_len = text_length(deviceFun);
+  const uint64_t device_name_len = text_length(deviceName);
   const uint8_t present[5] = {tid != nullptr, bid != nullptr, bDim != nullptr,
                               gDim != nullptr, wSize != nullptr};
   register_on_each(fatCubinHandle, RPC___cudaRegisterFunction, [&](conn_t *c) {
     return rpc_write(c, &hostFun, sizeof(hostFun)) < 0 ||
-                   write_bytes(c, device_fun) < 0 ||
-                   write_bytes(c, device_name) < 0 ||
+                   write_bytes(c, deviceFun, device_fun_len) < 0 ||
+                   write_bytes(c, deviceName, device_name_len) < 0 ||
                    rpc_write(c, &thread_limit, sizeof(thread_limit)) < 0 ||
                    write_optional(c, present[0], tid) < 0 ||
                    write_optional(c, present[1], bid) < 0 ||
@@ -828,12 +806,12 @@ extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                                   char *deviceAddress, const char *deviceName,
                                   int ext, size_t size, int constant,
                                   int global) {
-  const wire_bytes device_address(deviceAddress);
-  const wire_bytes device_name(deviceName);
+  const uint64_t device_address_len = text_length(deviceAddress);
+  const uint64_t device_name_len = text_length(deviceName);
   register_on_each(fatCubinHandle, RPC___cudaRegisterVar, [&](conn_t *c) {
     return rpc_write(c, &hostVar, sizeof(hostVar)) < 0 ||
-                   write_bytes(c, device_address) < 0 ||
-                   write_bytes(c, device_name) < 0 ||
+                   write_bytes(c, deviceAddress, device_address_len) < 0 ||
+                   write_bytes(c, deviceName, device_name_len) < 0 ||
                    rpc_write(c, &ext, sizeof(ext)) < 0 ||
                    rpc_write(c, &size, sizeof(size)) < 0 ||
                    rpc_write(c, &constant, sizeof(constant)) < 0 ||
@@ -849,14 +827,14 @@ extern "C" void
 __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                          char *deviceAddress, const char *deviceName, int ext,
                          size_t size, int constant, int global) {
-  const wire_bytes device_address(deviceAddress);
-  const wire_bytes device_name(deviceName);
+  const uint64_t device_address_len = text_length(deviceAddress);
+  const uint64_t device_name_len = text_length(deviceName);
   register_on_each(
       fatCubinHandle, RPC___cudaRegisterManagedVar, [&](conn_t *c) {
         return rpc_write(c, &hostVarPtrAddress, sizeof(hostVarPtrAddress)) <
                            0 ||
-                       write_bytes(c, device_address) < 0 ||
-                       write_bytes(c, device_name) < 0 ||
+                       write_bytes(c, deviceAddress, device_address_len) < 0 ||
+                       write_bytes(c, deviceName, device_name_len) < 0 ||
                        rpc_write(c, &ext, sizeof(ext)) < 0 ||
                        rpc_write(c, &size, sizeof(size)) < 0 ||
                        rpc_write(c, &constant, sizeof(constant)) < 0 ||

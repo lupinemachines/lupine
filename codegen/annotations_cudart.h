@@ -11,9 +11,6 @@
 // with its parameters, gets a stub returning cudaErrorNotSupported, so a
 // consumer linking the whole library still loads.
 //
-// `@disabled client forwards` keeps the generated request builder for a call
-// whose entry point the manual client writes itself.
-//
 // Every result comes back as a return value, so the manual client keeps the
 // sticky error: calls it answers itself set it, and cudaGetLastError never
 // has to ask the server.
@@ -300,7 +297,7 @@ cudaDeviceRegisterAsyncNotification(int device, cudaAsyncCallback callbackFunc,
                                     cudaAsyncCallbackHandle_t *callback);
 #endif
 /**
- * @disabled client forwards - manual client drops its per-thread state first
+ * @disabled client - manual client drops its per-thread state first
  */
 cudaError_t cudaDeviceReset(void);
 /**
@@ -760,7 +757,7 @@ cudaError_t cudaImportExternalSemaphore(
     const struct cudaExternalSemaphoreHandleDesc *semHandleDesc);
 #if CUDART_VERSION >= 12000
 /**
- * @disabled client forwards - manual client maps the virtual ordinal
+ * @disabled client - manual client maps the virtual ordinal
  * @guard CUDART_VERSION >= 12000
  * @param device SEND_ONLY
  * @param deviceFlags SEND_ONLY
@@ -1337,7 +1334,7 @@ cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
                                       enum cudaMemcpyKind kind,
                                       cudaStream_t stream);
 /**
- * @disabled client forwards - manual client maps both virtual ordinals
+ * @disabled client - manual client maps both virtual ordinals
  * @param dst SEND_ONLY
  * @param dstDevice SEND_ONLY
  * @param src SEND_ONLY
@@ -1347,7 +1344,7 @@ cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
 cudaError_t cudaMemcpyPeer(void *dst, int dstDevice, const void *src,
                            int srcDevice, size_t count);
 /**
- * @disabled client forwards - manual client maps both virtual ordinals
+ * @disabled client - manual client maps both virtual ordinals
  * @param dst SEND_ONLY
  * @param dstDevice SEND_ONLY
  * @param src SEND_ONLY
@@ -1499,7 +1496,7 @@ cudaError_t cudaPointerGetAttributes(struct cudaPointerAttributes *attributes,
  */
 cudaError_t cudaRuntimeGetVersion(int *runtimeVersion);
 /**
- * @disabled client forwards - maps the virtual ordinal, then records it
+ * @disabled client - maps the virtual ordinal, then records it
  * @param device SEND_ONLY
  */
 cudaError_t cudaSetDevice(int device);
@@ -1508,7 +1505,7 @@ cudaError_t cudaSetDevice(int device);
  */
 cudaError_t cudaSetDeviceFlags(unsigned int flags);
 /**
- * @disabled client forwards - manual client maps every virtual ordinal
+ * @disabled client - manual client maps every virtual ordinal
  * @param device_arr SEND_ONLY LENGTH:len
  * @param len SEND_ONLY
  */

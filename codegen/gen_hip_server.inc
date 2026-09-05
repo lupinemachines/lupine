@@ -83,6 +83,78 @@ ERROR_0:
   return -1;
 }
 
+int handle_hipGetLastError(conn_t *conn) {
+  int request_id;
+  hipError_t return_value;
+  using fn_t = hipError_t (*)();
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = hip_symbol<fn_t>(LUPINE_SYMBOL_NAME(hipGetLastError));
+  return_value = fn == nullptr ? function_not_found() : fn();
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_hipExtGetLastError(conn_t *conn) {
+  int request_id;
+  hipError_t return_value;
+  using fn_t = hipError_t (*)();
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = hip_symbol<fn_t>(LUPINE_SYMBOL_NAME(hipExtGetLastError));
+  return_value = fn == nullptr ? function_not_found() : fn();
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_hipPeekAtLastError(conn_t *conn) {
+  int request_id;
+  hipError_t return_value;
+  using fn_t = hipError_t (*)();
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = hip_symbol<fn_t>(LUPINE_SYMBOL_NAME(hipPeekAtLastError));
+  return_value = fn == nullptr ? function_not_found() : fn();
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_hipGetDevicePropertiesR0600(conn_t *conn) {
   hipDeviceProp_tR0600 prop;
   std::memset(&prop, 0, sizeof(prop));

@@ -650,6 +650,9 @@
   HANDLER(RPC_hipInit, handle_hipInit, rpc_backend::hip) \
   HANDLER(RPC_hipGetDeviceCount, handle_hipGetDeviceCount, rpc_backend::hip) \
   HANDLER(RPC_hipDeviceGet, handle_hipDeviceGet, rpc_backend::hip) \
+  HANDLER(RPC_hipGetLastError, handle_hipGetLastError, rpc_backend::hip) \
+  HANDLER(RPC_hipExtGetLastError, handle_hipExtGetLastError, rpc_backend::hip) \
+  HANDLER(RPC_hipPeekAtLastError, handle_hipPeekAtLastError, rpc_backend::hip) \
   HANDLER(RPC_hipGetDevicePropertiesR0600, handle_hipGetDevicePropertiesR0600, rpc_backend::hip) \
   HANDLER(RPC_hipDeviceGetName, handle_hipDeviceGetName, rpc_backend::hip) \
   HANDLER(RPC_hipDeviceTotalMem, handle_hipDeviceTotalMem, rpc_backend::hip) \

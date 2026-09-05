@@ -44,6 +44,14 @@ route-local device back to its virtual client ordinal before returning it.
 `@disabled client` leaves server/RPC generation enabled while requiring a
 manual client implementation with the original API name. These manual symbols
 remain part of the generated client function map.
+For forwarding backends, it keeps the `lupine_rpc_<call>` request builder so the
+manual entry point can reuse it without an additional annotation.
+
+Every forwarding backend gets a generated per-thread `local_error` and
+`record(result)` helper. Generated entry points record errors automatically;
+manual entry points use the same helper. Successful calls preserve the previous
+error, and runtime last-error APIs read or clear that state locally. The shared
+`rpc_write_start_request` rejects null connections for every backend.
 
 `@guard <preprocessor-expression>` wraps the generated client wrapper, server
 handler, function-map entry, and server registration. Use it for APIs that are

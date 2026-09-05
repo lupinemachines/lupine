@@ -404,7 +404,6 @@ HIP = Backend(
     invalid_argument="hipErrorInvalidValue",
     not_supported="hipErrorNotSupported",
     symbol_lookup="hip_symbol",
-    guard_null_conn=True,
     remappings=(("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),),
 )
 
@@ -415,8 +414,6 @@ CUDART = Backend(
     invalid_argument="cudaErrorInvalidValue",
     not_supported="cudaErrorNotSupported",
     symbol_lookup="cudart_symbol",
-    sticky_error="record",
-    guard_null_conn=True,
 )
 
 ANNOTATION_FILES = {
@@ -514,9 +511,6 @@ def parse_annotation(
             scope = parts[1:2]
             if scope == ["client"]:
                 metadata.disabled_client = True
-                # "forwards": the manual client provides the entry point but
-                # still sends the call, so it needs the generated builder.
-                metadata.client_forwards = parts[2:3] == ["forwards"]
                 continue
             elif scope == ["server"]:
                 metadata.disabled_server = True

@@ -481,6 +481,9 @@
 #define RPC_hipInit 874444791
 #define RPC_hipGetDeviceCount 1401409107
 #define RPC_hipDeviceGet 1529875909
+#define RPC_hipGetLastError 1798010550
+#define RPC_hipExtGetLastError 696469396
+#define RPC_hipPeekAtLastError 1304510228
 #define RPC_hipGetDevicePropertiesR0600 768204638
 #define RPC_hipDeviceGetName 2031968752
 #define RPC_hipDeviceTotalMem 53957243
