@@ -3,7 +3,7 @@ infer what parameters should be sent and received so we instead have a two-step 
 
 First, `annotationgen.py` reads the SDK header a target's annotation file includes and copies that header's
 function signatures into the annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
-`annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+`annotations_cufft.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -12,7 +12,9 @@ available are `NULL_TERMINATED` (to indicate that this is a null-terminated stri
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
 `NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
-`RECV_ONLY` pointer to declare an optional out-array. A pointer count marked
+`RECV_ONLY` pointer to declare an optional out-array, and on a `SEND_ONLY`
+pointer to declare an optional in-array the caller may leave null
+(`cufftPlanMany`'s `inembed`), which leads with a presence byte on the wire. A pointer count marked
 `SEND_RECV` supports the `cuGraphGetNodes` query pattern; a by-value count is a
 fixed capacity. Each array leads with its own presence byte on the wire, and
 several arrays may share one count.
@@ -38,8 +40,9 @@ generated client wrapper before it writes the RPC. Supported kinds are
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
 the routing key is not the first matching parameter. A by-value
-`cublasHandle_t` infers `HANDLE` routing to the connection the handle was
-created on, which `@recordowner HANDLE <param>` records on the creating call.
+`cublasHandle_t` or `cufftHandle` infers `HANDLE` routing to the connection the
+handle was created on, which `@recordowner HANDLE <param>` records on the
+creating call.
 
 NVML wrappers use the same mechanism. A by-value `nvmlDevice_t` parameter
 infers `NVML_DEVICE` routing: the generated client resolves its owning server

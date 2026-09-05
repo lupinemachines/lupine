@@ -7,6 +7,9 @@
 #ifdef LUPINE_BUILD_CUBLAS_BACKEND
 #include <cublas_v2.h>
 #endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+#include <cufftXt.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -875,6 +878,59 @@
   HANDLER(RPC_cublasZtrsm_v2, handle_cublasZtrsm_v2, rpc_backend::cublas) \
   HANDLER(RPC_cublasZtrsv_v2, handle_cublasZtrsv_v2, rpc_backend::cublas) \
   HANDLER(RPC_cublasZtrttp, handle_cublasZtrttp, rpc_backend::cublas)
+#define LUPINE_CUFFT_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cufftXtFree, handle_cufftXtFree, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtMalloc, handle_cufftXtMalloc, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtMemcpy, handle_cufftXtMemcpy, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetCallback, handle_cufftXtSetCallback, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetWorkArea, handle_cufftXtSetWorkArea, rpc_backend::cufft) \
+  HANDLER(RPC_cufftCreate, handle_cufftCreate, rpc_backend::cufft) \
+  HANDLER(RPC_cufftDestroy, handle_cufftDestroy, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimate1d, handle_cufftEstimate1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimate2d, handle_cufftEstimate2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimate3d, handle_cufftEstimate3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimateMany, handle_cufftEstimateMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecC2C, handle_cufftExecC2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecC2R, handle_cufftExecC2R, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecD2Z, handle_cufftExecD2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecR2C, handle_cufftExecR2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecZ2D, handle_cufftExecZ2D, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecZ2Z, handle_cufftExecZ2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetProperty, handle_cufftGetProperty, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize, handle_cufftGetSize, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize1d, handle_cufftGetSize1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize2d, handle_cufftGetSize2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize3d, handle_cufftGetSize3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSizeMany, handle_cufftGetSizeMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSizeMany64, handle_cufftGetSizeMany64, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetVersion, handle_cufftGetVersion, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlan1d, handle_cufftMakePlan1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlan2d, handle_cufftMakePlan2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlan3d, handle_cufftMakePlan3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlanMany, handle_cufftMakePlanMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlanMany64, handle_cufftMakePlanMany64, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlan1d, handle_cufftPlan1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlan2d, handle_cufftPlan2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlan3d, handle_cufftPlan3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlanMany, handle_cufftPlanMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftSetAutoAllocation, handle_cufftSetAutoAllocation, rpc_backend::cufft) \
+  HANDLER(RPC_cufftSetStream, handle_cufftSetStream, rpc_backend::cufft) \
+  HANDLER(RPC_cufftSetWorkArea, handle_cufftSetWorkArea, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtClearCallback, handle_cufftXtClearCallback, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExec, handle_cufftXtExec, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptor, handle_cufftXtExecDescriptor, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorC2C, handle_cufftXtExecDescriptorC2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorC2R, handle_cufftXtExecDescriptorC2R, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorD2Z, handle_cufftXtExecDescriptorD2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorR2C, handle_cufftXtExecDescriptorR2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorZ2D, handle_cufftXtExecDescriptorZ2D, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorZ2Z, handle_cufftXtExecDescriptorZ2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtGetSizeMany, handle_cufftXtGetSizeMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtMakePlanMany, handle_cufftXtMakePlanMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtQueryPlan, handle_cufftXtQueryPlan, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetCallbackSharedSize, handle_cufftXtSetCallbackSharedSize, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetGPUs, handle_cufftXtSetGPUs, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetWorkAreaPolicy, handle_cufftXtSetWorkAreaPolicy, rpc_backend::cufft)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -2333,6 +2389,29 @@ LUPINE_DECLARE_HANDLER(RPC_cublasZtrsv_v2_64, handle_cublasZtrsv_v2_64,
                        rpc_backend::cublas)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+LUPINE_CUFFT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUFFT_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cufftXtSetJITCallback, handle_cufftXtSetJITCallback,
+                       rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11300 && CUFFT_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC___cufftXtSetJITCallback_12_7,
+                       handle___cufftXtSetJITCallback_12_7, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+LUPINE_DECLARE_HANDLER(RPC_cufftGetPlanPropertyInt64,
+                       handle_cufftGetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+LUPINE_DECLARE_HANDLER(RPC_cufftResetPlanProperty,
+                       handle_cufftResetPlanProperty, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+LUPINE_DECLARE_HANDLER(RPC_cufftSetPlanPropertyInt64,
+                       handle_cufftSetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -3365,6 +3444,24 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cublasZtrsv_v2_64, handle_cublasZtrsv_v2_64, rpc_backend::cublas)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+      LUPINE_CUFFT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUFFT_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cufftXtSetJITCallback, handle_cufftXtSetJITCallback, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11300 && CUFFT_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC___cufftXtSetJITCallback_12_7, handle___cufftXtSetJITCallback_12_7, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+      LUPINE_REGISTER_HANDLER(RPC_cufftGetPlanPropertyInt64, handle_cufftGetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+      LUPINE_REGISTER_HANDLER(RPC_cufftResetPlanProperty, handle_cufftResetPlanProperty, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+      LUPINE_REGISTER_HANDLER(RPC_cufftSetPlanPropertyInt64, handle_cufftSetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -3382,5 +3479,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUDA_RPC_HANDLERS
 #undef LUPINE_CUDART_RPC_HANDLERS
 #undef LUPINE_CUBLAS_RPC_HANDLERS
+#undef LUPINE_CUFFT_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
