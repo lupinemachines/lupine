@@ -32,7 +32,7 @@ int handle_cudaArrayGetInfo(conn_t *conn) {
       rpc_write(conn, &desc, sizeof(struct cudaChannelFormatDesc)) < 0 ||
       rpc_write(conn, &extent, sizeof(struct cudaExtent)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -65,7 +65,7 @@ int handle_cudaArrayGetMemoryRequirements(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memoryRequirements,
                 sizeof(struct cudaArrayMemoryRequirements)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -96,7 +96,7 @@ int handle_cudaArrayGetPlane(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pPlaneArray, sizeof(cudaArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -126,7 +126,7 @@ int handle_cudaArrayGetSparseProperties(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &sparseProperties,
                 sizeof(struct cudaArraySparseProperties)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -154,7 +154,7 @@ int handle_cudaChooseDevice(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -185,7 +185,7 @@ int handle_cudaCreateSurfaceObject(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pSurfObject, sizeof(cudaSurfaceObject_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -233,7 +233,7 @@ int handle_cudaCreateTextureObject(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pTexObject, sizeof(cudaTextureObject_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -257,7 +257,7 @@ int handle_cudaCtxResetPersistingL2Cache(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -282,7 +282,7 @@ int handle_cudaDestroyExternalMemory(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(extMem);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -307,7 +307,7 @@ int handle_cudaDestroyExternalSemaphore(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(extSem);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -332,7 +332,7 @@ int handle_cudaDestroySurfaceObject(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(surfObject);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -357,7 +357,7 @@ int handle_cudaDestroyTextureObject(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(texObject);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -388,7 +388,7 @@ int handle_cudaDeviceCanAccessPeer(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &canAccessPeer, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -413,7 +413,7 @@ int handle_cudaDeviceDisablePeerAccess(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(peerDevice);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -440,7 +440,7 @@ int handle_cudaDeviceEnablePeerAccess(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(peerDevice, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -472,7 +472,7 @@ int handle_cudaDeviceFlushGPUDirectRDMAWrites(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(target, scope);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -503,7 +503,7 @@ int handle_cudaDeviceGetAttribute(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -536,7 +536,7 @@ int handle_cudaDeviceGetByPCIBusId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pciBusId);
@@ -565,7 +565,7 @@ int handle_cudaDeviceGetCacheConfig(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pCacheConfig, sizeof(enum cudaFuncCache)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -593,7 +593,7 @@ int handle_cudaDeviceGetDefaultMemPool(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -626,7 +626,7 @@ int handle_cudaDeviceGetDevResource(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &resource, sizeof(cudaDevResource)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -657,7 +657,7 @@ int handle_cudaDeviceGetExecutionCtx(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ctx, sizeof(cudaExecutionContext_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -710,7 +710,7 @@ int handle_cudaDeviceGetHostAtomicCapabilities(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, capabilities, count * sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)operations);
@@ -744,7 +744,7 @@ int handle_cudaDeviceGetLimit(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pValue, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -772,7 +772,7 @@ int handle_cudaDeviceGetMemPool(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -825,7 +825,7 @@ int handle_cudaDeviceGetP2PAtomicCapabilities(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, capabilities, count * sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)operations);
@@ -864,7 +864,7 @@ int handle_cudaDeviceGetP2PAttribute(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -899,7 +899,7 @@ int handle_cudaDeviceGetPCIBusId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, pciBusId, len * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pciBusId);
@@ -933,7 +933,7 @@ int handle_cudaDeviceGetStreamPriorityRange(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &leastPriority, sizeof(int)) < 0 ||
       rpc_write(conn, &greatestPriority, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -967,7 +967,7 @@ int handle_cudaDeviceGetTexture1DLinearMaxWidth(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &maxWidthInElements, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -992,7 +992,7 @@ int handle_cudaDeviceGraphMemTrim(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1016,7 +1016,7 @@ int handle_cudaDeviceReset(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1041,7 +1041,7 @@ int handle_cudaDeviceSetCacheConfig(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(cacheConfig);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1068,7 +1068,7 @@ int handle_cudaDeviceSetLimit(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(limit, value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1095,7 +1095,7 @@ int handle_cudaDeviceSetMemPool(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(device, memPool);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1119,7 +1119,7 @@ int handle_cudaDeviceSynchronize(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1146,7 +1146,7 @@ int handle_cudaDriverGetVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &driverVersion, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1173,7 +1173,7 @@ int handle_cudaEventCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1201,7 +1201,7 @@ int handle_cudaEventCreateWithFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1226,7 +1226,7 @@ int handle_cudaEventDestroy(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1256,7 +1256,7 @@ int handle_cudaEventElapsedTime(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ms, sizeof(float)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1281,7 +1281,7 @@ int handle_cudaEventQuery(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1308,7 +1308,7 @@ int handle_cudaEventRecord(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(event, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1338,7 +1338,7 @@ int handle_cudaEventRecordWithFlags(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(event, stream, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1363,7 +1363,7 @@ int handle_cudaEventSynchronize(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1389,7 +1389,7 @@ int handle_cudaExecutionCtxDestroy(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1424,7 +1424,7 @@ int handle_cudaExecutionCtxGetDevResource(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &resource, sizeof(cudaDevResource)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1455,7 +1455,7 @@ int handle_cudaExecutionCtxGetDevice(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1486,7 +1486,7 @@ int handle_cudaExecutionCtxGetId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ctxId, sizeof(unsigned long long)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1516,7 +1516,7 @@ int handle_cudaExecutionCtxRecordEvent(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(ctx, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1553,7 +1553,7 @@ int handle_cudaExecutionCtxStreamCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phStream, sizeof(cudaStream_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1581,7 +1581,7 @@ int handle_cudaExecutionCtxSynchronize(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1611,7 +1611,7 @@ int handle_cudaExecutionCtxWaitEvent(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(ctx, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1648,7 +1648,7 @@ int handle_cudaExternalMemoryGetMappedBuffer(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &devPtr, sizeof(void *)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1684,7 +1684,7 @@ int handle_cudaExternalMemoryGetMappedMipmappedArray(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mipmap, sizeof(cudaMipmappedArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1709,7 +1709,7 @@ int handle_cudaFreeArray(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(array);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1735,7 +1735,7 @@ int handle_cudaFreeMipmappedArray(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(mipmappedArray);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1764,7 +1764,7 @@ int handle_cudaGetChannelDesc(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &desc, sizeof(struct cudaChannelFormatDesc)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1791,7 +1791,7 @@ int handle_cudaGetDeviceFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1819,7 +1819,7 @@ int handle_cudaGetDeviceProperties(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &prop, sizeof(struct cudaDeviceProp)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1851,7 +1851,7 @@ int handle_cudaGetMipmappedArrayLevel(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &levelArray, sizeof(cudaArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1881,7 +1881,7 @@ int handle_cudaGetSurfaceObjectResourceDesc(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pResDesc, sizeof(struct cudaResourceDesc)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1911,7 +1911,7 @@ int handle_cudaGetTextureObjectResourceDesc(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pResDesc, sizeof(struct cudaResourceDesc)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1942,7 +1942,7 @@ int handle_cudaGetTextureObjectResourceViewDesc(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pResViewDesc, sizeof(struct cudaResourceViewDesc)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1971,7 +1971,7 @@ int handle_cudaGetTextureObjectTextureDesc(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pTexDesc, sizeof(struct cudaTextureDesc)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2006,7 +2006,7 @@ int handle_cudaGreenCtxCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phCtx, sizeof(cudaExecutionContext_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2039,7 +2039,7 @@ int handle_cudaInitDevice(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(device, deviceFlags, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2066,7 +2066,7 @@ int handle_cudaIpcCloseMemHandle(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(devPtr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2094,7 +2094,7 @@ int handle_cudaIpcGetEventHandle(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &handle, sizeof(cudaIpcEventHandle_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2122,7 +2122,7 @@ int handle_cudaIpcGetMemHandle(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &handle, sizeof(cudaIpcMemHandle_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2150,7 +2150,7 @@ int handle_cudaIpcOpenEventHandle(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2181,7 +2181,7 @@ int handle_cudaIpcOpenMemHandle(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &devPtr, sizeof(void *)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2221,7 +2221,7 @@ int handle_cudaLibraryGetGlobal(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(void *)) < 0 ||
       rpc_write(conn, &bytes, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)name);
@@ -2254,7 +2254,7 @@ int handle_cudaLibraryGetKernelCount(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2296,7 +2296,7 @@ int handle_cudaLibraryGetManaged(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &dptr, sizeof(void *)) < 0 ||
       rpc_write(conn, &bytes, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)name);
@@ -2326,7 +2326,7 @@ int handle_cudaLibraryUnload(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(library);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2358,7 +2358,7 @@ int handle_cudaLogsCurrent(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &iterator_out, sizeof(cudaLogIterator)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2397,7 +2397,7 @@ int handle_cudaLogsDumpToFile(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &iterator, sizeof(cudaLogIterator)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pathToFile);
@@ -2451,7 +2451,7 @@ int handle_cudaLogsDumpToMemory(conn_t *conn) {
        rpc_write(conn, buffer,
                  (size < size_requested ? size : size_requested) *
                      sizeof(char)) < 0) ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)buffer);
@@ -2481,7 +2481,7 @@ int handle_cudaLogsUnregisterCallback(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(callback);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2518,7 +2518,7 @@ int handle_cudaMalloc3DArray(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &array, sizeof(cudaArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2555,7 +2555,7 @@ int handle_cudaMallocArray(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &array, sizeof(cudaArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2593,7 +2593,7 @@ int handle_cudaMallocMipmappedArray(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mipmappedArray, sizeof(cudaMipmappedArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2627,7 +2627,7 @@ int handle_cudaMemAdvise(conn_t *conn) {
                                : fn(devPtr, count, advice, location);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2662,7 +2662,7 @@ int handle_cudaMemGetDefaultMemPool(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2694,7 +2694,7 @@ int handle_cudaMemGetInfo(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &free, sizeof(size_t)) < 0 ||
       rpc_write(conn, &total, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2727,7 +2727,7 @@ int handle_cudaMemGetMemPool(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2760,7 +2760,7 @@ int handle_cudaMemPoolCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2785,7 +2785,7 @@ int handle_cudaMemPoolDestroy(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(memPool);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2814,7 +2814,7 @@ int handle_cudaMemPoolExportPointer(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &exportData, sizeof(struct cudaMemPoolPtrExportData)) <
           0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2846,7 +2846,7 @@ int handle_cudaMemPoolGetAccess(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(enum cudaMemAccessFlags)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2880,7 +2880,7 @@ int handle_cudaMemPoolImportPointer(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ptr, sizeof(void *)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2923,7 +2923,7 @@ int handle_cudaMemPoolSetAccess(conn_t *conn) {
                count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)descList);
@@ -2953,7 +2953,7 @@ int handle_cudaMemPoolTrimTo(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(memPool, minBytesToKeep);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -2989,7 +2989,7 @@ int handle_cudaMemPrefetchAsync(conn_t *conn) {
                                : fn(devPtr, count, location, flags, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3030,7 +3030,7 @@ int handle_cudaMemRangeGetAttribute(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, data, dataSize) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)data);
@@ -3064,7 +3064,7 @@ int handle_cudaMemSetMemPool(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(&location, type, memPool);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3096,7 +3096,7 @@ int handle_cudaMemset(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(devPtr, value, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3130,7 +3130,7 @@ int handle_cudaMemset2D(conn_t *conn) {
                                : fn(devPtr, pitch, value, width, height);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3168,7 +3168,7 @@ int handle_cudaMemset2DAsync(conn_t *conn) {
                      : fn(devPtr, pitch, value, width, height, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3198,7 +3198,7 @@ int handle_cudaMemset3D(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(pitchedDevPtr, value, extent);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3231,7 +3231,7 @@ int handle_cudaMemset3DAsync(conn_t *conn) {
                                : fn(pitchedDevPtr, value, extent, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3263,7 +3263,7 @@ int handle_cudaMemsetAsync(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(devPtr, value, count, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3297,7 +3297,7 @@ int handle_cudaMipmappedArrayGetMemoryRequirements(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memoryRequirements,
                 sizeof(struct cudaArrayMemoryRequirements)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3329,7 +3329,7 @@ int handle_cudaMipmappedArrayGetSparseProperties(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &sparseProperties,
                 sizeof(struct cudaArraySparseProperties)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3356,7 +3356,7 @@ int handle_cudaRuntimeGetVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &runtimeVersion, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3381,7 +3381,7 @@ int handle_cudaSetDevice(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3406,7 +3406,7 @@ int handle_cudaSetDeviceFlags(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3443,7 +3443,7 @@ int handle_cudaSetValidDevices(conn_t *conn) {
                      : fn((len * sizeof(int) == 0 ? nullptr : device_arr), len);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)device_arr);
@@ -3507,7 +3507,7 @@ int handle_cudaSignalExternalSemaphoresAsync(conn_t *conn) {
                numExtSems, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)paramsArray);
@@ -3543,7 +3543,7 @@ int handle_cudaStreamAttachMemAsync(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(stream, devPtr, length, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3570,7 +3570,7 @@ int handle_cudaStreamBeginCapture(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(stream, mode);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3632,7 +3632,7 @@ int handle_cudaStreamBeginCaptureToGraph(conn_t *conn) {
                          numDependencies, mode);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)dependencyData);
@@ -3665,7 +3665,7 @@ int handle_cudaStreamCopyAttributes(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(dst, src);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3692,7 +3692,7 @@ int handle_cudaStreamCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pStream, sizeof(cudaStream_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3720,7 +3720,7 @@ int handle_cudaStreamCreateWithFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pStream, sizeof(cudaStream_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3751,7 +3751,7 @@ int handle_cudaStreamCreateWithPriority(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pStream, sizeof(cudaStream_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3776,7 +3776,7 @@ int handle_cudaStreamDestroy(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3804,7 +3804,7 @@ int handle_cudaStreamEndCapture(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3836,7 +3836,7 @@ int handle_cudaStreamGetAttribute(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value_out, sizeof(cudaLaunchAttributeValue)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3869,7 +3869,7 @@ int handle_cudaStreamGetDevResource(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &resource, sizeof(cudaDevResource)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3900,7 +3900,7 @@ int handle_cudaStreamGetDevice(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3930,7 +3930,7 @@ int handle_cudaStreamGetFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3959,7 +3959,7 @@ int handle_cudaStreamGetId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &streamId, sizeof(unsigned long long)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -3989,7 +3989,7 @@ int handle_cudaStreamGetPriority(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &priority, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4019,7 +4019,7 @@ int handle_cudaStreamIsCapturing(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pCaptureStatus, sizeof(enum cudaStreamCaptureStatus)) <
           0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4044,7 +4044,7 @@ int handle_cudaStreamQuery(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4076,7 +4076,7 @@ int handle_cudaStreamSetAttribute(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(hStream, attr, &value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4101,7 +4101,7 @@ int handle_cudaStreamSynchronize(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4161,7 +4161,7 @@ int handle_cudaStreamUpdateCaptureDependencies(conn_t *conn) {
                numDependencies, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)dependencyData);
@@ -4197,7 +4197,7 @@ int handle_cudaStreamWaitEvent(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(stream, event, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4224,7 +4224,7 @@ int handle_cudaThreadExchangeStreamCaptureMode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(enum cudaStreamCaptureMode)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4251,7 +4251,7 @@ int handle_cudaUserObjectRelease(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(object, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4278,7 +4278,7 @@ int handle_cudaUserObjectRetain(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(object, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4340,7 +4340,7 @@ int handle_cudaWaitExternalSemaphoresAsync(conn_t *conn) {
                numExtSems, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)paramsArray);
@@ -4392,7 +4392,7 @@ int handle_cudaGraphAddChildGraphNode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pDependencies);
@@ -4460,7 +4460,7 @@ int handle_cudaGraphAddDependencies(conn_t *conn) {
                numDependencies);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)edgeData);
@@ -4515,7 +4515,7 @@ int handle_cudaGraphAddEmptyNode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pDependencies);
@@ -4565,7 +4565,7 @@ int handle_cudaGraphAddEventRecordNode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pDependencies);
@@ -4615,7 +4615,7 @@ int handle_cudaGraphAddEventWaitNode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pDependencies);
@@ -4665,7 +4665,7 @@ int handle_cudaGraphAddMemFreeNode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pDependencies);
@@ -4718,7 +4718,7 @@ int handle_cudaGraphAddMemsetNode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pDependencies);
@@ -4748,7 +4748,7 @@ int handle_cudaGraphChildGraphNodeGetGraph(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4777,7 +4777,7 @@ int handle_cudaGraphClone(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphClone, sizeof(cudaGraph_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4814,7 +4814,7 @@ int handle_cudaGraphConditionalHandleCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pHandle_out, sizeof(cudaGraphConditionalHandle)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4856,7 +4856,7 @@ int handle_cudaGraphConditionalHandleCreate_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pHandle_out, sizeof(cudaGraphConditionalHandle)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4886,7 +4886,7 @@ int handle_cudaGraphCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4911,7 +4911,7 @@ int handle_cudaGraphDestroy(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(graph);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4936,7 +4936,7 @@ int handle_cudaGraphDestroyNode(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(node);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4965,7 +4965,7 @@ int handle_cudaGraphEventRecordNodeGetEvent(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &event_out, sizeof(cudaEvent_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -4993,7 +4993,7 @@ int handle_cudaGraphEventRecordNodeSetEvent(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(node, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5021,7 +5021,7 @@ int handle_cudaGraphEventWaitNodeGetEvent(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &event_out, sizeof(cudaEvent_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5048,7 +5048,7 @@ int handle_cudaGraphEventWaitNodeSetEvent(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(node, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5079,7 +5079,7 @@ int handle_cudaGraphExecChildGraphNodeSetParams(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(hGraphExec, node, childGraph);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5104,7 +5104,7 @@ int handle_cudaGraphExecDestroy(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(graphExec);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5135,7 +5135,7 @@ int handle_cudaGraphExecEventRecordNodeSetEvent(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(hGraphExec, hNode, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5166,7 +5166,7 @@ int handle_cudaGraphExecEventWaitNodeSetEvent(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(hGraphExec, hNode, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5195,7 +5195,7 @@ int handle_cudaGraphExecGetFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5227,7 +5227,7 @@ int handle_cudaGraphExecGetId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &graphID, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5262,7 +5262,7 @@ int handle_cudaGraphExecMemsetNodeSetParams(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(hGraphExec, node, &pNodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5296,7 +5296,7 @@ int handle_cudaGraphExecUpdate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &resultInfo, sizeof(cudaGraphExecUpdateResultInfo)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5380,7 +5380,7 @@ int handle_cudaGraphGetEdges(conn_t *conn) {
            (numEdges < numEdges_requested ? numEdges : numEdges_requested) *
                sizeof(cudaGraphEdgeData)) < 0) ||
       rpc_write(conn, &numEdges, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)edgeData);
@@ -5417,7 +5417,7 @@ int handle_cudaGraphGetId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &graphID, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5466,7 +5466,7 @@ int handle_cudaGraphGetNodes(conn_t *conn) {
            (numNodes < numNodes_requested ? numNodes : numNodes_requested) *
                sizeof(cudaGraphNode_t)) < 0) ||
       rpc_write(conn, &numNodes, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)nodes);
@@ -5515,7 +5515,7 @@ int handle_cudaGraphGetRootNodes(conn_t *conn) {
                                           : pNumRootNodes_requested) *
                                          sizeof(cudaGraphNode_t)) < 0) ||
       rpc_write(conn, &pNumRootNodes, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pRootNodes);
@@ -5550,7 +5550,7 @@ int handle_cudaGraphInstantiate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphExec, sizeof(cudaGraphExec_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5584,7 +5584,7 @@ int handle_cudaGraphInstantiateWithFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphExec, sizeof(cudaGraphExec_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5621,7 +5621,7 @@ int handle_cudaGraphInstantiateWithParams(conn_t *conn) {
       rpc_write(conn, &pGraphExec, sizeof(cudaGraphExec_t)) < 0 ||
       rpc_write(conn, &instantiateParams, sizeof(cudaGraphInstantiateParams)) <
           0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5652,7 +5652,7 @@ int handle_cudaGraphKernelNodeCopyAttributes(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(hDst, hSrc);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5686,7 +5686,7 @@ int handle_cudaGraphKernelNodeGetAttribute(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value_out, sizeof(cudaLaunchAttributeValue)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5717,7 +5717,7 @@ int handle_cudaGraphKernelNodeSetAttribute(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(hNode, attr, &value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5744,7 +5744,7 @@ int handle_cudaGraphLaunch(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(graphExec, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5774,7 +5774,7 @@ int handle_cudaGraphMemFreeNodeGetParams(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, dptr_out, 8) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)dptr_out);
@@ -5804,7 +5804,7 @@ int handle_cudaGraphMemsetNodeGetParams(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pNodeParams, sizeof(struct cudaMemsetParams)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5833,7 +5833,7 @@ int handle_cudaGraphMemsetNodeSetParams(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(node, &pNodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5864,7 +5864,7 @@ int handle_cudaGraphNodeFindInClone(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5893,7 +5893,7 @@ int handle_cudaGraphNodeGetContainingGraph(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -5963,7 +5963,7 @@ int handle_cudaGraphNodeGetDependencies(conn_t *conn) {
                       : pNumDependencies_requested) *
                      sizeof(cudaGraphEdgeData)) < 0) ||
       rpc_write(conn, &pNumDependencies, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)edgeData);
@@ -6037,7 +6037,7 @@ int handle_cudaGraphNodeGetDependentNodes(conn_t *conn) {
                       : pNumDependentNodes_requested) *
                      sizeof(cudaGraphEdgeData)) < 0) ||
       rpc_write(conn, &pNumDependentNodes, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)edgeData);
@@ -6075,7 +6075,7 @@ int handle_cudaGraphNodeGetEnabled(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &isEnabled, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6104,7 +6104,7 @@ int handle_cudaGraphNodeGetLocalId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &nodeId, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6135,7 +6135,7 @@ int handle_cudaGraphNodeGetToolsId(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &toolsNodeId, sizeof(unsigned long long)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6165,7 +6165,7 @@ int handle_cudaGraphNodeGetType(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pType, sizeof(enum cudaGraphNodeType)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6195,7 +6195,7 @@ int handle_cudaGraphNodeSetEnabled(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(hGraphExec, hNode, isEnabled);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6225,7 +6225,7 @@ int handle_cudaGraphReleaseUserObject(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(graph, object, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6291,7 +6291,7 @@ int handle_cudaGraphRemoveDependencies(conn_t *conn) {
                numDependencies);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)edgeData);
@@ -6332,7 +6332,7 @@ int handle_cudaGraphRetainUserObject(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(graph, object, count, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6359,7 +6359,7 @@ int handle_cudaGraphUpload(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(graphExec, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6400,7 +6400,7 @@ int handle_cudaGraphicsMapResources(conn_t *conn) {
                stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)resources);
@@ -6432,7 +6432,7 @@ int handle_cudaGraphicsResourceGetMappedMipmappedArray(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mipmappedArray, sizeof(cudaMipmappedArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6465,7 +6465,7 @@ int handle_cudaGraphicsResourceGetMappedPointer(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &devPtr, sizeof(void *)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6492,7 +6492,7 @@ int handle_cudaGraphicsResourceSetMapFlags(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(resource, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6527,7 +6527,7 @@ int handle_cudaGraphicsSubResourceGetMappedArray(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &array, sizeof(cudaArray_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -6568,7 +6568,7 @@ int handle_cudaGraphicsUnmapResources(conn_t *conn) {
                stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)resources);
@@ -6595,7 +6595,7 @@ int handle_cudaGraphicsUnregisterResource(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(resource);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
