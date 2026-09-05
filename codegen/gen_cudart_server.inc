@@ -667,6 +667,45 @@ ERROR_0:
 
 #endif
 
+int handle_cudaDeviceGetGraphMemAttribute(conn_t *conn) {
+  int device;
+  enum cudaGraphMemAttributeType attr;
+  void *value = nullptr;
+  size_t value_size;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(int, enum cudaGraphMemAttributeType, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &device, sizeof(int)) < 0 ||
+      rpc_read(conn, &attr, sizeof(enum cudaGraphMemAttributeType)) < 0 ||
+      false)
+    goto ERROR_0;
+  value_size = 8;
+  value = (void *)malloc(value_size);
+  if (value_size != 0 && value == nullptr)
+    goto ERROR_0;
+  if ((value_size != 0 && rpc_read(conn, value, value_size) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaDeviceGetGraphMemAttribute));
+  return_value = fn == nullptr ? function_not_found() : fn(device, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, value, 8) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
+  return -1;
+}
+
 #if CUDART_VERSION >= 13000
 int handle_cudaDeviceGetHostAtomicCapabilities(conn_t *conn) {
   unsigned int count;
@@ -1046,6 +1085,44 @@ int handle_cudaDeviceSetCacheConfig(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
+  return -1;
+}
+
+int handle_cudaDeviceSetGraphMemAttribute(conn_t *conn) {
+  int device;
+  enum cudaGraphMemAttributeType attr;
+  void *value = nullptr;
+  size_t value_size;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(int, enum cudaGraphMemAttributeType, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &device, sizeof(int)) < 0 ||
+      rpc_read(conn, &attr, sizeof(enum cudaGraphMemAttributeType)) < 0 ||
+      false)
+    goto ERROR_0;
+  value_size = 8;
+  value = (void *)malloc(value_size);
+  if (value_size != 0 && value == nullptr)
+    goto ERROR_0;
+  if ((value_size != 0 && rpc_read(conn, value, value_size) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaDeviceSetGraphMemAttribute));
+  return_value = fn == nullptr ? function_not_found() : fn(device, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
   return -1;
 }
 
@@ -3322,6 +3399,45 @@ ERROR_0:
   return -1;
 }
 
+int handle_cudaMemPoolGetAttribute(conn_t *conn) {
+  cudaMemPool_t memPool;
+  enum cudaMemPoolAttr attr;
+  void *value = nullptr;
+  size_t value_size;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(cudaMemPool_t, enum cudaMemPoolAttr, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
+      rpc_read(conn, &attr, sizeof(enum cudaMemPoolAttr)) < 0 || false)
+    goto ERROR_0;
+  value_size = 8;
+  value = (void *)malloc(value_size);
+  if (value_size != 0 && value == nullptr)
+    goto ERROR_0;
+  if ((value_size != 0 && rpc_read(conn, value, value_size) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaMemPoolGetAttribute));
+  return_value =
+      fn == nullptr ? function_not_found() : fn(memPool, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, value, 8) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
+  return -1;
+}
+
 int handle_cudaMemPoolImportPointer(conn_t *conn) {
   void *ptr;
   ptr = {};
@@ -3398,6 +3514,44 @@ int handle_cudaMemPoolSetAccess(conn_t *conn) {
   return 0;
 ERROR_0:
   free((void *)descList);
+  return -1;
+}
+
+int handle_cudaMemPoolSetAttribute(conn_t *conn) {
+  cudaMemPool_t memPool;
+  enum cudaMemPoolAttr attr;
+  void *value = nullptr;
+  size_t value_size;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(cudaMemPool_t, enum cudaMemPoolAttr, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
+      rpc_read(conn, &attr, sizeof(enum cudaMemPoolAttr)) < 0 || false)
+    goto ERROR_0;
+  value_size = 8;
+  value = (void *)malloc(value_size);
+  if (value_size != 0 && value == nullptr)
+    goto ERROR_0;
+  if ((value_size != 0 && rpc_read(conn, value, value_size) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaMemPoolSetAttribute));
+  return_value =
+      fn == nullptr ? function_not_found() : fn(memPool, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
   return -1;
 }
 
@@ -7537,7 +7691,8 @@ int handle___cudaPushCallConfiguration(conn_t *conn) {
   size_t sharedMem;
   void *stream;
   int request_id;
-  unsigned return_value;
+  unsigned return_value = {};
+  cudaError_t rpc_status = cudaSuccess;
   using fn_t = unsigned (*)(dim3, dim3, size_t, void *);
   fn_t fn = nullptr;
   if (rpc_read(conn, &gridDim, sizeof(dim3)) < 0 ||
@@ -7551,11 +7706,14 @@ int handle___cudaPushCallConfiguration(conn_t *conn) {
     goto ERROR_0;
 
   fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(__cudaPushCallConfiguration));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(gridDim, blockDim, sharedMem, stream);
+  if (fn == nullptr)
+    rpc_status = function_not_found();
+  else
+    return_value = fn(gridDim, blockDim, sharedMem, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(unsigned)) < 0 ||
+      rpc_write(conn, &rpc_status, sizeof(rpc_status)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -7657,6 +7815,36 @@ int handle___cudaUnregisterFatBinary(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle___cudaInitModule(conn_t *conn) {
+  void **fatCubinHandle;
+  int request_id;
+  char return_value = {};
+  cudaError_t rpc_status = cudaSuccess;
+  using fn_t = char (*)(void **);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(__cudaInitModule));
+  if (fn == nullptr)
+    rpc_status = function_not_found();
+  else
+    return_value = fn(fatCubinHandle);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(char)) < 0 ||
+      rpc_write(conn, &rpc_status, sizeof(rpc_status)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;

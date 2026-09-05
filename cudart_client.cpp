@@ -41,6 +41,29 @@ cudaError_t record(CUresult error) {
                     : static_cast<cudaError_t>(error));
 }
 
+size_t mem_pool_attribute_width(enum cudaMemPoolAttr attr) {
+  switch (attr) {
+  case cudaMemPoolReuseFollowEventDependencies:
+  case cudaMemPoolReuseAllowOpportunistic:
+  case cudaMemPoolReuseAllowInternalDependencies:
+#if CUDART_VERSION >= 13020
+  case cudaMemPoolAttrLocationId:
+  case cudaMemPoolAttrHwDecompressEnabled:
+#endif
+    return sizeof(int);
+#if CUDART_VERSION >= 13020
+  case cudaMemPoolAttrAllocationType:
+    return sizeof(cudaMemAllocationType);
+  case cudaMemPoolAttrExportHandleTypes:
+    return sizeof(cudaMemAllocationHandleType);
+  case cudaMemPoolAttrLocationType:
+    return sizeof(cudaMemLocationType);
+#endif
+  default:
+    return sizeof(cuuint64_t);
+  }
+}
+
 // The generated code speaks the RPC core's vocabulary; the driver shim exports
 // it under its own prefix so both can be declared in one translation unit.
 int rpc_write_start_request(conn_t *conn, int op) {
@@ -91,34 +114,32 @@ struct fatbin_registration {
   std::vector<std::pair<conn_t *, void **>> handles;
 };
 
-std::mutex &registry_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-std::unordered_map<void **, fatbin_registration> &fatbins() {
-  static auto *map = new std::unordered_map<void **, fatbin_registration>();
-  return *map;
-}
-
-// Registration is replicated, but each request uses the generated marshaller.
+// The opaque client handle owns immutable per-server handles. The caller owns
+// its lifetime, just as it does the vendor's fatbin handle.
 template <typename Call>
 void broadcast_fatbin(void **fatCubinHandle, Call call) {
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto entry = fatbins().find(fatCubinHandle);
-  if (entry == fatbins().end()) {
+  auto *registration = reinterpret_cast<fatbin_registration *>(fatCubinHandle);
+  if (registration == nullptr) {
     return;
   }
-  for (const auto &[conn, handle] : entry->second.handles) {
+  for (const auto &[conn, handle] : registration->handles) {
     record(call(conn, handle));
   }
 }
 
-void release_fatbin(void **fatCubinHandle) {
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  if (fatbins().erase(fatCubinHandle) != 0) {
-    delete[] fatCubinHandle;
+void **fatbin_handle(conn_t *conn, void **fatCubinHandle) {
+  auto *registration = reinterpret_cast<fatbin_registration *>(fatCubinHandle);
+  if (registration != nullptr) {
+    for (const auto &[owner, handle] : registration->handles) {
+      if (owner == conn)
+        return handle;
+    }
   }
+  return nullptr;
+}
+
+void release_fatbin(void **fatCubinHandle) {
+  delete reinterpret_cast<fatbin_registration *>(fatCubinHandle);
 }
 
 } // namespace
@@ -559,102 +580,6 @@ extern "C" cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice,
 }
 
 // ---------------------------------------------------------------------------
-// Attributes whose width the attribute decides
-// ---------------------------------------------------------------------------
-
-namespace {
-
-// The caller's buffer is as wide as the attribute says, so the width goes on
-// the wire and the server reads or writes exactly that many bytes.
-size_t mem_pool_attribute_width(enum cudaMemPoolAttr attr) {
-  switch (attr) {
-  case cudaMemPoolReuseFollowEventDependencies:
-  case cudaMemPoolReuseAllowOpportunistic:
-  case cudaMemPoolReuseAllowInternalDependencies:
-    return sizeof(int);
-  default:
-    return sizeof(cuuint64_t);
-  }
-}
-
-cudaError_t get_attribute(conn_t *conn, int op, const void *handle,
-                          size_t handle_size, int attr, void *value,
-                          size_t width) {
-  if (value == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t return_value = rpc_error();
-  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
-      rpc_write(conn, handle, handle_size) < 0 ||
-      rpc_write(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_write(conn, &width, sizeof(width)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      (return_value == cudaSuccess && rpc_read(conn, value, width) < 0) ||
-      rpc_read_end(conn) < 0) {
-    return record(rpc_error());
-  }
-  return record(return_value);
-}
-
-cudaError_t set_attribute(conn_t *conn, int op, const void *handle,
-                          size_t handle_size, int attr, const void *value,
-                          size_t width) {
-  if (value == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  cudaError_t return_value = rpc_error();
-  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
-      rpc_write(conn, handle, handle_size) < 0 ||
-      rpc_write(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_write(conn, &width, sizeof(width)) < 0 ||
-      rpc_write(conn, value, width) < 0 || rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return record(rpc_error());
-  }
-  return record(return_value);
-}
-
-} // namespace
-
-extern "C" cudaError_t cudaMemPoolGetAttribute(cudaMemPool_t memPool,
-                                               enum cudaMemPoolAttr attr,
-                                               void *value) {
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return get_attribute(conn, RPC_cudaMemPoolGetAttribute, &memPool,
-                       sizeof(memPool), attr, value,
-                       mem_pool_attribute_width(attr));
-}
-
-extern "C" cudaError_t cudaMemPoolSetAttribute(cudaMemPool_t memPool,
-                                               enum cudaMemPoolAttr attr,
-                                               void *value) {
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return set_attribute(conn, RPC_cudaMemPoolSetAttribute, &memPool,
-                       sizeof(memPool), attr, value,
-                       mem_pool_attribute_width(attr));
-}
-
-extern "C" cudaError_t
-cudaDeviceGetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
-                               void *value) {
-  conn_t *conn = lupine_rpc_conn_for_device(&device);
-  return get_attribute(conn, RPC_cudaDeviceGetGraphMemAttribute, &device,
-                       sizeof(device), attr, value, sizeof(cuuint64_t));
-}
-
-extern "C" cudaError_t
-cudaDeviceSetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
-                               void *value) {
-  conn_t *conn = lupine_rpc_conn_for_device(&device);
-  return set_attribute(conn, RPC_cudaDeviceSetGraphMemAttribute, &device,
-                       sizeof(device), attr, value, sizeof(cuuint64_t));
-}
-
-// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
@@ -699,16 +624,8 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
     }
     registration.handles.emplace_back(conn, handle);
   }
-  auto *client_handle = new void *[1];
-  client_handle[0] = fatCubin;
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  fatbins()[client_handle] = std::move(registration);
-  return client_handle;
-}
-
-extern "C" char __cudaInitModule(void **fatCubinHandle) {
-  (void)fatCubinHandle;
-  return 1;
+  return reinterpret_cast<void **>(
+      new fatbin_registration(std::move(registration)));
 }
 
 // The private table layout and pointer fixups are not described by the SDK.
@@ -798,44 +715,29 @@ cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
     return record(cudaErrorInvalidValue);
   }
   const uint32_t count = static_cast<uint32_t>(sizes.size());
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, op) < 0 ||
+  for (uint32_t i = 0; i < count; ++i) {
+    if (args[i] == nullptr)
+      return record(cudaErrorInvalidValue);
+  }
+  uint64_t async_sequence = 0;
+  if (lupine_rpc_write_start_async_request(conn, op, &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &func, sizeof(func)) < 0 ||
       rpc_write(conn, &gridDim, sizeof(gridDim)) < 0 ||
       rpc_write(conn, &blockDim, sizeof(blockDim)) < 0 ||
       rpc_write(conn, &sharedMem, sizeof(sharedMem)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
       write_params(conn, count, sizes, args) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      lupine_rpc_write_end(conn) < 0) {
     return record(rpc_error());
   }
-  return record(return_value);
-}
-
-// The launch attributes sit behind a pointer in the config, so they follow it
-// as an array.
-int write_launch_config(conn_t *conn, const cudaLaunchConfig_t &config,
-                        const uint32_t &attribute_count) {
-  return rpc_write(conn, &config.gridDim, sizeof(config.gridDim)) < 0 ||
-                 rpc_write(conn, &config.blockDim, sizeof(config.blockDim)) <
-                     0 ||
-                 rpc_write(conn, &config.dynamicSmemBytes,
-                           sizeof(config.dynamicSmemBytes)) < 0 ||
-                 rpc_write(conn, &config.stream, sizeof(config.stream)) < 0 ||
-                 rpc_write(conn, &attribute_count, sizeof(attribute_count)) <
-                     0 ||
-                 (attribute_count != 0 &&
-                  rpc_write(conn, config.attrs,
-                            attribute_count * sizeof(*config.attrs)) < 0)
-             ? -1
-             : 0;
+  return cudaSuccess;
 }
 
 cudaError_t occupancy_for_config(int op, int *result, const void *func,
                                  const cudaLaunchConfig_t *launchConfig) {
-  if (result == nullptr || launchConfig == nullptr) {
+  if (result == nullptr || launchConfig == nullptr ||
+      (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
     return record(cudaErrorInvalidValue);
   }
   int route_device = current_device;
@@ -846,7 +748,18 @@ cudaError_t occupancy_for_config(int op, int *result, const void *func,
   cudaError_t return_value = rpc_error();
   if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
       rpc_write(conn, &func, sizeof(func)) < 0 ||
-      write_launch_config(conn, *launchConfig, attribute_count) < 0 ||
+      rpc_write(conn, &launchConfig->gridDim, sizeof(launchConfig->gridDim)) <
+          0 ||
+      rpc_write(conn, &launchConfig->blockDim, sizeof(launchConfig->blockDim)) <
+          0 ||
+      rpc_write(conn, &launchConfig->dynamicSmemBytes,
+                sizeof(launchConfig->dynamicSmemBytes)) < 0 ||
+      rpc_write(conn, &launchConfig->stream, sizeof(launchConfig->stream)) <
+          0 ||
+      rpc_write(conn, &attribute_count, sizeof(attribute_count)) < 0 ||
+      (attribute_count != 0 &&
+       rpc_write(conn, launchConfig->attrs,
+                 attribute_count * sizeof(*launchConfig->attrs)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, result, sizeof(*result)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -882,7 +795,8 @@ extern "C" cudaError_t cudaLaunchCooperativeKernel(const void *func,
 
 extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
                                            const void *func, void **args) {
-  if (config == nullptr) {
+  if (config == nullptr ||
+      (config->numAttrs != 0 && config->attrs == nullptr)) {
     return record(cudaErrorInvalidValue);
   }
   int route_device = current_device;
@@ -899,17 +813,29 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
   }
   const uint32_t attribute_count = config->numAttrs;
   const uint32_t count = static_cast<uint32_t>(sizes.size());
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaLaunchKernelExC) < 0 ||
-      write_launch_config(conn, *config, attribute_count) < 0 ||
+  for (uint32_t i = 0; i < count; ++i) {
+    if (args[i] == nullptr)
+      return record(cudaErrorInvalidValue);
+  }
+  uint64_t async_sequence = 0;
+  if (lupine_rpc_write_start_async_request(conn, RPC_cudaLaunchKernelExC,
+                                           &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write(conn, &config->gridDim, sizeof(config->gridDim)) < 0 ||
+      rpc_write(conn, &config->blockDim, sizeof(config->blockDim)) < 0 ||
+      rpc_write(conn, &config->dynamicSmemBytes,
+                sizeof(config->dynamicSmemBytes)) < 0 ||
+      rpc_write(conn, &config->stream, sizeof(config->stream)) < 0 ||
+      rpc_write(conn, &attribute_count, sizeof(attribute_count)) < 0 ||
+      (attribute_count != 0 &&
+       rpc_write(conn, config->attrs,
+                 attribute_count * sizeof(*config->attrs)) < 0) ||
       rpc_write(conn, &func, sizeof(func)) < 0 ||
       write_params(conn, count, sizes, args) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      lupine_rpc_write_end(conn) < 0) {
     return record(rpc_error());
   }
-  return record(return_value);
+  return cudaSuccess;
 }
 
 extern "C" cudaError_t

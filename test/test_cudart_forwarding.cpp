@@ -6,6 +6,7 @@
 #include <cuda_runtime_api.h>
 
 #include <cassert>
+#include <cerrno>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -14,12 +15,32 @@
 
 #include "cuda_client_rpc.h"
 #include "lupine_fatbin.h"
+#include "rpc.h"
 
 #include "codegen/gen_cudart_server.h"
 #include "codegen/gen_rpc_ids.h"
 
+// Wrap only transport I/O, leaving connection setup and sequencing in rpc.cpp.
+extern "C" int __wrap__Z8rpc_readP6conn_tPvm(conn_t *, void *, size_t);
+extern "C" int __wrap__Z12rpc_read_endP6conn_t(conn_t *);
+extern "C" int __wrap__Z24rpc_write_start_responseP6conn_ti(conn_t *, int);
+extern "C" int __wrap__Z9rpc_writeP6conn_tPKvm(conn_t *, const void *, size_t);
+extern "C" int __wrap__Z13rpc_write_endP6conn_t(conn_t *);
+
 int handle___cudaRegisterFatBinary(conn_t *);
+int handle_lupineCudartFuncParamLayout(conn_t *);
+int handle_cudaLaunchKernel(conn_t *);
+int handle_cudaLaunchCooperativeKernel(conn_t *);
+int handle_cudaLaunchKernelExC(conn_t *);
+int handle___cudaLaunchKernel(conn_t *);
+int handle_cudaOccupancyMaxPotentialClusterSize(conn_t *);
+int handle_cudaOccupancyMaxActiveClusters(conn_t *);
 extern "C" void **__cudaRegisterFatBinary(void *);
+extern "C" char __cudaInitModule(void **);
+extern "C" cudaError_t __cudaLaunchKernel(cudaKernel_t, dim3, dim3, void **,
+                                          size_t, cudaStream_t);
+extern "C" cudaError_t __cudaLaunchKernel_ptsz(cudaKernel_t, dim3, dim3,
+                                               void **, size_t, cudaStream_t);
 extern "C" void __cudaRegisterFatBinaryEnd(void **);
 extern "C" void __cudaUnregisterFatBinary(void **);
 extern "C" void __cudaRegisterFunction(void **, const char *, char *,
@@ -39,8 +60,8 @@ extern "C" unsigned __cudaPushCallConfiguration(dim3, dim3, size_t, void *);
 extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *, dim3 *, size_t *,
                                                   void *);
 
-static conn_t *const servers[] = {reinterpret_cast<conn_t *>(0x100),
-                                  reinterpret_cast<conn_t *>(0x200)};
+static conn_t server_state[2];
+static conn_t *const servers[] = {&server_state[0], &server_state[1]};
 struct write_span {
   const void *data;
   size_t size;
@@ -50,10 +71,21 @@ static thread_local std::vector<unsigned char> request, response;
 static thread_local size_t read_offset;
 static thread_local int operation, server;
 static thread_local bool fail_request;
+static thread_local bool async_request;
+static int response_waits, launches;
+struct queued_launch {
+  conn_t *conn;
+  int operation;
+  std::vector<unsigned char> bytes;
+};
+static std::vector<queued_launch> queued_launches;
 static thread_local int failing_server = -1;
 static int registrations, functions, variables, managed, textures, surfaces,
     host_variables;
 static int ended[2], unregistered[2];
+static int module_inits[2];
+static char module_result = static_cast<char>(0xa5);
+static bool missing_init_module;
 static std::vector<const char *> retained_names;
 static std::vector<const uint3 *> retained_indices;
 static std::vector<void **> managed_slots;
@@ -71,15 +103,24 @@ static CUstream driver_stream;
 static CUevent driver_event;
 static unsigned driver_flags;
 static CUDA_MEMCPY3D driver_3d;
+static cudaError_t attribute_result = cudaSuccess;
+static uint64_t attribute_value = 0xfedcba9876543210ULL;
+static size_t attribute_request_size;
+static int attribute_server;
+static int expected_launch_server;
+static const void *expected_entry;
+static const void *zero_arg_entry = reinterpret_cast<const void *>(0x777);
+static int expected_attributes;
+static std::string launch_call;
 
 extern "C" int lupine_rpc_device_count(int *count) {
-  *count = 2;
+  *count = 3; // Devices 0 and 2 share a server and one fatbin registration.
   return 0;
 }
 extern "C" conn_t *lupine_rpc_conn_for_device(int *device) {
-  assert(*device == 0 || *device == 1);
-  conn_t *conn = servers[*device];
-  *device = 0;
+  assert(*device >= 0 && *device < 3);
+  conn_t *conn = servers[*device == 1];
+  *device = *device == 2 ? 1 : 0;
   return conn;
 }
 extern "C" conn_t *lupine_rpc_conn_for_stream(cudaStream_t) {
@@ -113,6 +154,7 @@ extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
   server = conn == servers[1];
   if (fail_request || server == failing_server)
     return -1;
+  async_request = false;
   operation = op;
   writes.clear();
   request.clear();
@@ -120,30 +162,40 @@ extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
   read_offset = 0;
   return 0;
 }
+// The transport is mocked; ticket consumption uses the real RPC core.
+extern "C" int lupine_rpc_write_start_async_request(conn_t *conn, int op,
+                                                    uint64_t *sequence) {
+  if (lupine_rpc_write_start_request(conn, op) < 0)
+    return -1;
+  async_request = true;
+  *sequence = conn->issued_async_sequence++;
+  return 0;
+}
 extern "C" int lupine_rpc_write(conn_t *, const void *data, size_t size) {
   writes.push_back({data, size}); // Intentionally defer reading caller storage.
   return 0;
 }
-int rpc_read(conn_t *, void *data, size_t size) {
+extern "C" int __wrap__Z8rpc_readP6conn_tPvm(conn_t *, void *data,
+                                             size_t size) {
   assert(read_offset + size <= request.size());
   if (size)
     std::memcpy(data, request.data() + read_offset, size);
   read_offset += size;
   return 0;
 }
-int rpc_read_end(conn_t *) {
+extern "C" int __wrap__Z12rpc_read_endP6conn_t(conn_t *) {
   assert(read_offset == request.size());
   return 1;
 }
-int rpc_write_start_response(conn_t *, int) { return 0; }
-int rpc_write(conn_t *, const void *data, size_t size) {
+extern "C" int __wrap__Z24rpc_write_start_responseP6conn_ti(conn_t *, int) {
+  return 0;
+}
+extern "C" int __wrap__Z9rpc_writeP6conn_tPKvm(conn_t *, const void *data,
+                                               size_t size) {
   append(response, data, size);
   return 0;
 }
-int rpc_write_end(conn_t *) { return 1; }
-extern "C" int lupine_rpc_wait_for_response(conn_t *conn) {
-  for (const auto &span : writes)
-    append(request, span.data, span.size);
+static void dispatch_request(conn_t *conn) {
   int result = -1;
 #define DISPATCH(name)                                                         \
   case RPC_##name:                                                             \
@@ -151,6 +203,7 @@ extern "C" int lupine_rpc_wait_for_response(conn_t *conn) {
     break
   switch (operation) {
     DISPATCH(__cudaRegisterFatBinary);
+    DISPATCH(__cudaInitModule);
     DISPATCH(__cudaRegisterFatBinaryEnd);
     DISPATCH(__cudaUnregisterFatBinary);
     DISPATCH(__cudaRegisterFunction);
@@ -168,13 +221,58 @@ extern "C" int lupine_rpc_wait_for_response(conn_t *conn) {
     DISPATCH(cudaFree);
     DISPATCH(cudaGetSymbolAddress);
     DISPATCH(cudaGetSymbolSize);
+    DISPATCH(cudaMemPoolGetAttribute);
+    DISPATCH(cudaMemPoolSetAttribute);
+    DISPATCH(cudaDeviceGetGraphMemAttribute);
+    DISPATCH(cudaDeviceSetGraphMemAttribute);
+    DISPATCH(lupineCudartFuncParamLayout);
+    DISPATCH(cudaLaunchKernel);
+    DISPATCH(cudaLaunchCooperativeKernel);
+    DISPATCH(cudaLaunchKernelExC);
+    DISPATCH(__cudaLaunchKernel);
+    DISPATCH(cudaOccupancyMaxPotentialClusterSize);
+    DISPATCH(cudaOccupancyMaxActiveClusters);
   default:
     assert(false && "unexpected runtime RPC");
   }
 #undef DISPATCH
   assert(result == 0);
+}
+extern "C" int lupine_rpc_wait_for_response(conn_t *conn) {
+  assert(!async_request && "kernel launch waited for the server");
+  ++response_waits;
+  for (const auto &span : writes)
+    append(request, span.data, span.size);
+  dispatch_request(conn);
   read_offset = 0;
   return 0;
+}
+extern "C" int __wrap__Z13rpc_write_endP6conn_t(conn_t *conn) {
+  if (!async_request)
+    return 1;
+  for (const auto &span : writes)
+    append(request, span.data, span.size);
+  queued_launches.push_back({conn, operation, std::move(request)});
+  return 0;
+}
+extern "C" int lupine_rpc_write_end(conn_t *conn) {
+  return __wrap__Z13rpc_write_endP6conn_t(conn);
+}
+static void drain_launches() {
+  for (auto &queued : queued_launches) {
+    operation = queued.operation;
+    server = queued.conn == servers[1];
+    request = std::move(queued.bytes);
+    response.clear();
+    read_offset = 0;
+    uint64_t sequence;
+    std::memcpy(&sequence, request.data(), sizeof(sequence));
+    assert(sequence == queued.conn->serving_async_sequence);
+    dispatch_request(queued.conn);
+    assert(response.empty() &&
+           queued.conn->serving_async_sequence == sequence + 1);
+  }
+  queued_launches.clear();
 }
 extern "C" int lupine_rpc_read(conn_t *, void *data, size_t size) {
   assert(read_offset + size <= response.size());
@@ -204,6 +302,11 @@ static void vendor_end(void **handle) {
 static void vendor_unregister(void **handle) {
   assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
   ++unregistered[server];
+}
+static char vendor_init_module(void **handle) {
+  assert(handle == reinterpret_cast<void **>(0x1000 + server * 0x100));
+  ++module_inits[server];
+  return module_result;
 }
 static void vendor_function(void **handle, const char *host, char *device,
                             const char *name, int limit, uint3 *tid, uint3 *bid,
@@ -314,6 +417,137 @@ static cudaError_t vendor_symbol_size(size_t *size, const void *) {
   *size = 32;
   return cudaSuccess;
 }
+static cudaError_t vendor_pool_get(cudaMemPool_t pool, cudaMemPoolAttr attr,
+                                   void *value) {
+  assert(pool == reinterpret_cast<cudaMemPool_t>(0x555));
+  attribute_request_size = request.size();
+  attribute_server = server;
+  if (attribute_result != cudaSuccess)
+    return attribute_result;
+  if (attr == cudaMemPoolReuseFollowEventDependencies ||
+      attr == cudaMemPoolReuseAllowOpportunistic ||
+      attr == cudaMemPoolReuseAllowInternalDependencies
+#if CUDART_VERSION >= 13020
+      || attr == cudaMemPoolAttrAllocationType ||
+      attr == cudaMemPoolAttrExportHandleTypes ||
+      attr == cudaMemPoolAttrLocationId ||
+      attr == cudaMemPoolAttrLocationType ||
+      attr == cudaMemPoolAttrHwDecompressEnabled
+#endif
+  ) {
+    int enabled = 1;
+    std::memcpy(value, &enabled, sizeof(enabled));
+  } else {
+    std::memcpy(value, &attribute_value, sizeof(attribute_value));
+  }
+  return cudaSuccess;
+}
+static cudaError_t vendor_pool_set(cudaMemPool_t pool, cudaMemPoolAttr attr,
+                                   void *value) {
+  assert(pool == reinterpret_cast<cudaMemPool_t>(0x555));
+  attribute_request_size = request.size();
+  attribute_server = server;
+  uint64_t expected = attribute_value;
+  if (attr == cudaMemPoolReuseFollowEventDependencies ||
+      attr == cudaMemPoolReuseAllowOpportunistic ||
+      attr == cudaMemPoolReuseAllowInternalDependencies
+#if CUDART_VERSION >= 13020
+      || attr == cudaMemPoolAttrAllocationType ||
+      attr == cudaMemPoolAttrExportHandleTypes ||
+      attr == cudaMemPoolAttrLocationId ||
+      attr == cudaMemPoolAttrLocationType ||
+      attr == cudaMemPoolAttrHwDecompressEnabled
+#endif
+  ) {
+    expected = 0;
+    int enabled = 1;
+    std::memcpy(&expected, &enabled, sizeof(enabled));
+  }
+  assert(std::memcmp(value, &expected, sizeof(expected)) == 0);
+  return attribute_result;
+}
+static cudaError_t vendor_graph_get(int device, cudaGraphMemAttributeType,
+                                    void *value) {
+  assert(device == 0);
+  attribute_server = server;
+  if (attribute_result == cudaSuccess)
+    std::memcpy(value, &attribute_value, sizeof(attribute_value));
+  return attribute_result;
+}
+static cudaError_t vendor_graph_set(int device, cudaGraphMemAttributeType,
+                                    void *value) {
+  assert(device == 0);
+  attribute_server = server;
+  assert(std::memcmp(value, &attribute_value, sizeof(attribute_value)) == 0);
+  return attribute_result;
+}
+static cudaError_t vendor_param_info(const void *func, size_t index,
+                                     size_t *offset, size_t *size) {
+  assert(func == expected_entry);
+  if (func == zero_arg_entry || index >= 2)
+    return cudaErrorInvalidValue;
+  *offset = index == 0 ? 0 : 8;
+  *size = index == 0 ? sizeof(int) : sizeof(uint64_t);
+  return cudaSuccess;
+}
+static cudaError_t vendor_launch(const void *func, dim3 grid, dim3 block,
+                                 void **args, size_t shared,
+                                 cudaStream_t stream) {
+  assert(func == expected_entry && server == expected_launch_server);
+  assert(grid.x == 2 && grid.y == 3 && grid.z == 4);
+  assert(block.x == 5 && block.y == 6 && block.z == 7 && shared == 8192);
+  assert(stream == nullptr ||
+         stream == reinterpret_cast<cudaStream_t>(0x123456789abcdef0ULL));
+  assert(pthread_mutex_trylock(&servers[server]->async_mutex) == EBUSY);
+  if (func != zero_arg_entry) {
+    int first;
+    uint64_t second;
+    std::memcpy(&first, args[0], sizeof(first));
+    std::memcpy(&second, args[1], sizeof(second));
+    assert(first == 42 && second == 0x123456789abcdef0ULL);
+  }
+  ++launches;
+  launch_call = "kernel";
+  return cudaSuccess;
+}
+static cudaError_t vendor_cooperative(const void *func, dim3 grid, dim3 block,
+                                      void **args, size_t shared,
+                                      cudaStream_t stream) {
+  vendor_launch(func, grid, block, args, shared, stream);
+  launch_call = "cooperative";
+  return cudaSuccess;
+}
+static cudaError_t vendor_private_launch(cudaKernel_t kernel, dim3 grid,
+                                         dim3 block, void **args, size_t shared,
+                                         cudaStream_t stream) {
+  vendor_launch(kernel, grid, block, args, shared, stream);
+  launch_call = "private";
+  return cudaSuccess;
+}
+static void check_config(const cudaLaunchConfig_t *config) {
+  assert(config->gridDim.z == 4 && config->blockDim.y == 6);
+  assert(config->dynamicSmemBytes == 8192 &&
+         config->numAttrs == static_cast<unsigned>(expected_attributes));
+  if (config->numAttrs != 0) {
+    assert(config->attrs[0].id == cudaLaunchAttributeCooperative &&
+           config->attrs[0].val.cooperative == 1);
+  }
+}
+static cudaError_t vendor_launch_ex(const cudaLaunchConfig_t *config,
+                                    const void *func, void **args) {
+  check_config(config);
+  vendor_launch(func, config->gridDim, config->blockDim, args,
+                config->dynamicSmemBytes, config->stream);
+  launch_call = "extended";
+  return cudaSuccess;
+}
+static cudaError_t vendor_cluster_size(int *value, const void *func,
+                                       const cudaLaunchConfig_t *config) {
+  assert(func == expected_entry && server == expected_launch_server);
+  check_config(config);
+  *value = 8;
+  return cudaSuccess;
+}
 extern "C" void *__wrap_dlopen(const char *, int) {
   return reinterpret_cast<void *>(1);
 }
@@ -324,6 +558,9 @@ extern "C" void *__wrap_dlsym(void *, const char *name) {
   SYMBOL(__cudaRegisterFatBinary, vendor_fatbin);
   SYMBOL(__cudaRegisterFatBinaryEnd, vendor_end);
   SYMBOL(__cudaUnregisterFatBinary, vendor_unregister);
+  if (std::strcmp(name, "__cudaInitModule") == 0)
+    return missing_init_module ? nullptr
+                               : reinterpret_cast<void *>(&vendor_init_module);
   SYMBOL(__cudaRegisterFunction, vendor_function);
   SYMBOL(__cudaRegisterVar, vendor_var);
   SYMBOL(__cudaRegisterManagedVar, vendor_managed);
@@ -339,6 +576,17 @@ extern "C" void *__wrap_dlsym(void *, const char *name) {
   SYMBOL(cudaFree, vendor_free);
   SYMBOL(cudaGetSymbolAddress, vendor_symbol);
   SYMBOL(cudaGetSymbolSize, vendor_symbol_size);
+  SYMBOL(cudaMemPoolGetAttribute, vendor_pool_get);
+  SYMBOL(cudaMemPoolSetAttribute, vendor_pool_set);
+  SYMBOL(cudaDeviceGetGraphMemAttribute, vendor_graph_get);
+  SYMBOL(cudaDeviceSetGraphMemAttribute, vendor_graph_set);
+  SYMBOL(cudaFuncGetParamInfo, vendor_param_info);
+  SYMBOL(cudaLaunchKernel, vendor_launch);
+  SYMBOL(cudaLaunchCooperativeKernel, vendor_cooperative);
+  SYMBOL(cudaLaunchKernelExC, vendor_launch_ex);
+  SYMBOL(__cudaLaunchKernel, vendor_private_launch);
+  SYMBOL(cudaOccupancyMaxPotentialClusterSize, vendor_cluster_size);
+  SYMBOL(cudaOccupancyMaxActiveClusters, vendor_cluster_size);
 #undef SYMBOL
   assert(false && "unexpected vendor symbol");
   return nullptr;
@@ -461,6 +709,8 @@ extern "C" CUresult cuEventDestroy(CUevent event) {
 }
 
 int main() {
+  for (conn_t *conn : servers)
+    assert(rpc_conn_init(conn, LUPINE_INVALID_SOCKET, 0) == 0);
   lupine_fatbin_header image = {};
   image.magic = LUPINE_FATBIN_MAGIC;
   image.header_size = sizeof(image);
@@ -495,6 +745,27 @@ int main() {
   tid.x = 99;
   for (const uint3 *index : retained_indices)
     assert(index->x == 7);
+  assert(static_cast<unsigned char>(__cudaInitModule(handle)) == 0xa5);
+  assert(module_inits[0] == 1 && module_inits[1] == 0);
+  assert(cudaSetDevice(1) == cudaSuccess);
+  module_result = static_cast<char>(0x7e);
+  assert(__cudaInitModule(handle) == 0x7e);
+  assert(module_inits[0] == 1 && module_inits[1] == 1);
+  assert(cudaSetDevice(0) == cudaSuccess);
+  module_result = 0;
+  assert(__cudaInitModule(handle) == 0);
+  assert(cudaPeekAtLastError() ==
+         cudaSuccess); // Raw bytes are not error codes.
+  missing_init_module = true;
+  assert(__cudaInitModule(handle) == 0);
+  assert(cudaGetLastError() == cudaErrorNotSupported);
+  missing_init_module = false;
+  fail_request = true;
+  assert(__cudaInitModule(handle) == 0);
+  assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
+  fail_request = false;
+  assert(__cudaInitModule(nullptr) == 0);
+  assert(cudaGetLastError() == cudaErrorInvalidResourceHandle);
   __cudaRegisterFatBinaryEnd(handle);
   assert(ended[0] == 1 && ended[1] == 1);
   for (void **slot : managed_slots)
@@ -505,11 +776,6 @@ int main() {
   assert(cudaPeekAtLastError() == cudaErrorDevicesUnavailable);
   failing_server = -1;
   __cudaUnregisterFatBinary(handle);
-  assert(unregistered[0] == 1 && unregistered[1] == 1);
-  // Released handles no longer broadcast, including repeated unregisters.
-  __cudaRegisterFatBinaryEnd(handle);
-  __cudaUnregisterFatBinary(handle);
-  assert(ended[0] == 1 && ended[1] == 2);
   assert(unregistered[0] == 1 && unregistered[1] == 1);
   assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
   assert(cudaPeekAtLastError() == cudaSuccess);
@@ -560,6 +826,65 @@ int main() {
   assert(cudaMallocPitch(&device, &pitch, 32, 3) == cudaSuccess);
   assert(allocations.at(reinterpret_cast<uintptr_t>(device)).size == pitch * 3);
 
+  auto pool = reinterpret_cast<cudaMemPool_t>(0x555);
+  size_t narrow_request_size = 0;
+  for (auto attr : {
+           cudaMemPoolReuseFollowEventDependencies,
+           cudaMemPoolReuseAllowOpportunistic,
+           cudaMemPoolReuseAllowInternalDependencies,
+#if CUDART_VERSION >= 13020
+           cudaMemPoolAttrAllocationType,
+           cudaMemPoolAttrExportHandleTypes,
+           cudaMemPoolAttrLocationId,
+           cudaMemPoolAttrLocationType,
+           cudaMemPoolAttrHwDecompressEnabled,
+#endif
+       }) {
+    int narrow = 1; // Exactly four bytes: ASan catches any eight-byte copy.
+    assert(cudaMemPoolSetAttribute(pool, attr, &narrow) == cudaSuccess);
+    narrow_request_size = attribute_request_size;
+    narrow = 0;
+    assert(cudaMemPoolGetAttribute(pool, attr, &narrow) == cudaSuccess);
+    assert(narrow == 1 && attribute_request_size == narrow_request_size);
+    attribute_result = cudaErrorInvalidValue;
+    narrow = 19;
+    assert(cudaMemPoolGetAttribute(pool, attr, &narrow) ==
+           cudaErrorInvalidValue);
+    assert(narrow == 19); // Failed queries leave the caller's output alone.
+    attribute_result = cudaSuccess;
+  }
+  uint64_t wide = attribute_value;
+  assert(cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold,
+                                 &wide) == cudaSuccess);
+  assert(attribute_request_size == narrow_request_size);
+  wide = 0;
+  assert(cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReleaseThreshold,
+                                 &wide) == cudaSuccess);
+  assert(wide == attribute_value &&
+         attribute_request_size == narrow_request_size);
+  assert(cudaDeviceSetGraphMemAttribute(1, cudaGraphMemAttrUsedMemHigh,
+                                        &wide) == cudaSuccess &&
+         attribute_server == 1);
+  wide = 0;
+  assert(cudaDeviceGetGraphMemAttribute(1, cudaGraphMemAttrUsedMemHigh,
+                                        &wide) == cudaSuccess &&
+         wide == attribute_value && attribute_server == 1);
+  attribute_result = cudaErrorInvalidValue;
+  wide = 17;
+  assert(cudaDeviceGetGraphMemAttribute(0, cudaGraphMemAttrUsedMemHigh,
+                                        &wide) == cudaErrorInvalidValue &&
+         wide == 17 && attribute_server == 0);
+  attribute_result = cudaSuccess;
+  assert(cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReleaseThreshold,
+                                 nullptr) == cudaErrorInvalidValue);
+  assert(cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold,
+                                 nullptr) == cudaErrorInvalidValue);
+  assert(cudaDeviceGetGraphMemAttribute(0, cudaGraphMemAttrUsedMemHigh,
+                                        nullptr) == cudaErrorInvalidValue);
+  assert(cudaDeviceSetGraphMemAttribute(0, cudaGraphMemAttrUsedMemHigh,
+                                        nullptr) == cudaErrorInvalidValue);
+  assert(cudaGetLastError() == cudaErrorInvalidValue);
+
   char src[32] = "copy bytes", dst[32] = {};
   assert(cudaMemcpy(dst, src, sizeof(src), cudaMemcpyHostToHost) ==
          cudaSuccess);
@@ -608,6 +933,97 @@ int main() {
   assert(cudaMemcpyPeerAsync(dst, 1, src, 0, 4, stream) == cudaSuccess &&
          driver_call == "peer_async");
 
+  expected_entry = reinterpret_cast<const void *>(0xabc);
+  expected_launch_server = 0;
+  int first_arg = 42;
+  uint64_t second_arg = 0x123456789abcdef0ULL;
+  void *args[] = {&first_arg, &second_arg};
+  int waits = response_waits;
+  assert(cudaLaunchKernel(expected_entry, dim3(2, 3, 4), dim3(5, 6, 7), args,
+                          8192, nullptr) == cudaSuccess);
+  assert(launches == 0 && queued_launches.size() == 1);
+  assert(response_waits == waits + 1); // Only the initial layout lookup waits.
+  first_arg = 0;
+  second_arg = 0;
+  drain_launches();
+  assert(launches == 1 && launch_call == "kernel");
+  first_arg = 42;
+  second_arg = 0x123456789abcdef0ULL;
+  waits = response_waits;
+  expected_launch_server = 1;
+  assert(cudaLaunchCooperativeKernel(expected_entry, dim3(2, 3, 4),
+                                     dim3(5, 6, 7), args, 8192,
+                                     stream) == cudaSuccess);
+  assert(response_waits == waits && launches == 1);
+  drain_launches();
+  assert(launch_call == "cooperative");
+  for (int attrs = 0; attrs < 2; ++attrs) {
+    expected_attributes = attrs;
+    cudaLaunchAttribute attribute = {};
+    attribute.id = cudaLaunchAttributeCooperative;
+    attribute.val.cooperative = 1;
+    cudaLaunchConfig_t config = {};
+    config.gridDim = dim3(2, 3, 4);
+    config.blockDim = dim3(5, 6, 7);
+    config.dynamicSmemBytes = 8192;
+    config.stream = stream;
+    config.numAttrs = attrs;
+    config.attrs = attrs ? &attribute : nullptr;
+    int clusters = 0;
+    assert(cudaOccupancyMaxPotentialClusterSize(&clusters, expected_entry,
+                                                &config) == cudaSuccess &&
+           clusters == 8);
+    assert(cudaOccupancyMaxActiveClusters(&clusters, expected_entry, &config) ==
+               cudaSuccess &&
+           clusters == 8);
+    waits = response_waits;
+    assert(cudaLaunchKernelExC(&config, expected_entry, args) == cudaSuccess);
+    assert(response_waits == waits);
+    config.gridDim = dim3(99);
+    attribute.val.cooperative = 0;
+    drain_launches();
+    assert(launch_call == "extended");
+  }
+  expected_entry = reinterpret_cast<const void *>(0x999);
+  auto kernel_handle =
+      reinterpret_cast<cudaKernel_t>(const_cast<void *>(expected_entry));
+  assert(__cudaLaunchKernel(kernel_handle, dim3(2, 3, 4), dim3(5, 6, 7), args,
+                            8192, stream) == cudaSuccess);
+  drain_launches();
+  assert(launch_call == "private");
+  waits = response_waits;
+  assert(__cudaLaunchKernel_ptsz(kernel_handle, dim3(2, 3, 4), dim3(5, 6, 7),
+                                 args, 8192, stream) == cudaSuccess);
+  assert(response_waits == waits);
+  drain_launches();
+  assert(cudaLaunchKernel(expected_entry, dim3(2), dim3(5), nullptr, 0,
+                          stream) == cudaErrorInvalidValue);
+  void *invalid_args[] = {nullptr, &second_arg};
+  assert(cudaLaunchKernel(expected_entry, dim3(2), dim3(5), invalid_args, 0,
+                          stream) == cudaErrorInvalidValue);
+  assert(cudaLaunchKernelExC(nullptr, expected_entry, args) ==
+         cudaErrorInvalidValue);
+  cudaLaunchConfig_t invalid_config = {};
+  invalid_config.numAttrs = 1;
+  assert(cudaLaunchKernelExC(&invalid_config, expected_entry, args) ==
+         cudaErrorInvalidValue);
+  assert(queued_launches.empty());
+  fail_request = true;
+  assert(cudaLaunchKernel(expected_entry, dim3(2, 3, 4), dim3(5, 6, 7), args,
+                          8192, stream) == cudaErrorDevicesUnavailable);
+  fail_request = false;
+  assert(queued_launches.empty());
+  expected_entry = zero_arg_entry;
+  expected_launch_server = 0;
+  assert(cudaLaunchKernel(expected_entry, dim3(2, 3, 4), dim3(5, 6, 7), nullptr,
+                          8192, nullptr) == cudaSuccess);
+  drain_launches();
+  assert(servers[0]->issued_async_sequence ==
+         servers[0]->serving_async_sequence);
+  assert(servers[1]->issued_async_sequence ==
+         servers[1]->serving_async_sequence);
+  assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
+
   auto event = reinterpret_cast<cudaEvent_t>(0x123);
   for (CUresult result :
        {CUDA_SUCCESS, CUDA_ERROR_NOT_READY, CUDA_ERROR_DEINITIALIZED}) {
@@ -654,4 +1070,6 @@ int main() {
   assert(cudaPeekAtLastError() == cudaErrorDeviceUninitialized);
   __cudaRegisterUnifiedTable(nullptr);
   assert(cudaGetLastError() == cudaErrorNotSupported);
+  for (conn_t *conn : servers)
+    rpc_conn_destroy(conn);
 }

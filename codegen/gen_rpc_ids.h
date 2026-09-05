@@ -512,6 +512,7 @@
 #define RPC_cudaDeviceGetDefaultMemPool 1662111149
 #define RPC_cudaDeviceGetDevResource 612879301
 #define RPC_cudaDeviceGetExecutionCtx 1487692514
+#define RPC_cudaDeviceGetGraphMemAttribute 823815388
 #define RPC_cudaDeviceGetHostAtomicCapabilities 1780201975
 #define RPC_cudaDeviceGetLimit 2045416965
 #define RPC_cudaDeviceGetMemPool 1330037583
@@ -523,6 +524,7 @@
 #define RPC_cudaDeviceGraphMemTrim 1627419898
 #define RPC_cudaDeviceReset 1069181609
 #define RPC_cudaDeviceSetCacheConfig 96456953
+#define RPC_cudaDeviceSetGraphMemAttribute 523316384
 #define RPC_cudaDeviceSetLimit 18590164
 #define RPC_cudaDeviceSetMemPool 1627644637
 #define RPC_cudaDriverGetVersion 82381294
@@ -596,8 +598,10 @@
 #define RPC_cudaMemPoolDestroy 1305230667
 #define RPC_cudaMemPoolExportPointer 427388112
 #define RPC_cudaMemPoolGetAccess 1842725012
+#define RPC_cudaMemPoolGetAttribute 344501328
 #define RPC_cudaMemPoolImportPointer 393760711
 #define RPC_cudaMemPoolSetAccess 486134761
+#define RPC_cudaMemPoolSetAttribute 462846675
 #define RPC_cudaMemPoolTrimTo 717901187
 #define RPC_cudaMemPrefetchAsync 148669554
 #define RPC_cudaMemRangeGetAttribute 1177590058
@@ -714,18 +718,15 @@
 #define RPC___cudaPopCallConfiguration 665931968
 #define RPC___cudaRegisterFatBinaryEnd 8430939
 #define RPC___cudaUnregisterFatBinary 83215989
+#define RPC___cudaInitModule 112657159
 #define RPC___cudaGetKernel 2093390772
 #define RPC_cudaCreateChannelDesc 496602705
-#define RPC_cudaDeviceGetGraphMemAttribute 823815388
-#define RPC_cudaDeviceSetGraphMemAttribute 523316384
 #define RPC_cudaFuncGetName 2032901329
 #define RPC_cudaGetErrorName 826623402
 #define RPC_cudaGetErrorString 755451662
 #define RPC_cudaLaunchCooperativeKernel 290708246
 #define RPC_cudaLaunchKernel 579742057
 #define RPC_cudaLaunchKernelExC 140751916
-#define RPC_cudaMemPoolGetAttribute 344501328
-#define RPC_cudaMemPoolSetAttribute 462846675
 #define RPC_cudaOccupancyMaxActiveClusters 1604174875
 #define RPC_cudaOccupancyMaxPotentialClusterSize 1223278984
 #define RPC___cudaRegisterFatBinary 1167276453

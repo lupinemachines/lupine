@@ -33,7 +33,10 @@ void lupine_rpc_forget_allocation(const void *ptr);
 
 // Flushes client-side state the request must observe, then opens the request.
 int lupine_rpc_write_start_request(conn_t *conn, int op);
+int lupine_rpc_write_start_async_request(conn_t *conn, int op,
+                                         uint64_t *sequence);
 int lupine_rpc_write(conn_t *conn, const void *data, size_t size);
+int lupine_rpc_write_end(conn_t *conn);
 int lupine_rpc_wait_for_response(conn_t *conn);
 int lupine_rpc_read(conn_t *conn, void *data, size_t size);
 int lupine_rpc_read_end(conn_t *conn);

@@ -28,6 +28,7 @@ int handle_cudaDeviceGetDevResource(conn_t *conn);
 int handle_cudaDeviceGetExecutionCtx(conn_t *conn);
 #endif
 
+int handle_cudaDeviceGetGraphMemAttribute(conn_t *conn);
 #if CUDART_VERSION >= 13000
 int handle_cudaDeviceGetHostAtomicCapabilities(conn_t *conn);
 #endif
@@ -45,6 +46,7 @@ int handle_cudaDeviceGetTexture1DLinearMaxWidth(conn_t *conn);
 int handle_cudaDeviceGraphMemTrim(conn_t *conn);
 int handle_cudaDeviceReset(conn_t *conn);
 int handle_cudaDeviceSetCacheConfig(conn_t *conn);
+int handle_cudaDeviceSetGraphMemAttribute(conn_t *conn);
 int handle_cudaDeviceSetLimit(conn_t *conn);
 int handle_cudaDeviceSetMemPool(conn_t *conn);
 int handle_cudaDriverGetVersion(conn_t *conn);
@@ -196,8 +198,10 @@ int handle_cudaMemPoolCreate(conn_t *conn);
 int handle_cudaMemPoolDestroy(conn_t *conn);
 int handle_cudaMemPoolExportPointer(conn_t *conn);
 int handle_cudaMemPoolGetAccess(conn_t *conn);
+int handle_cudaMemPoolGetAttribute(conn_t *conn);
 int handle_cudaMemPoolImportPointer(conn_t *conn);
 int handle_cudaMemPoolSetAccess(conn_t *conn);
+int handle_cudaMemPoolSetAttribute(conn_t *conn);
 int handle_cudaMemPoolTrimTo(conn_t *conn);
 #if CUDART_VERSION >= 13000
 int handle_cudaMemPrefetchAsync(conn_t *conn);
@@ -386,6 +390,7 @@ int handle___cudaPushCallConfiguration(conn_t *conn);
 int handle___cudaPopCallConfiguration(conn_t *conn);
 int handle___cudaRegisterFatBinaryEnd(conn_t *conn);
 int handle___cudaUnregisterFatBinary(conn_t *conn);
+int handle___cudaInitModule(conn_t *conn);
 #if CUDART_VERSION >= 13000
 int handle___cudaGetKernel(conn_t *conn);
 #endif

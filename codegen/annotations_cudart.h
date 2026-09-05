@@ -202,11 +202,23 @@ cudaError_t cudaDeviceGetDevResource(int device, cudaDevResource *resource,
 cudaError_t cudaDeviceGetExecutionCtx(cudaExecutionContext_t *ctx, int device);
 #endif
 /**
- * @disabled - the value width depends on the attribute
+ * @routingkey DEVICE device
+ * @param device SEND_ONLY
+ * @param attr SEND_ONLY
+ * @param value SEND_RECV SIZE:8
  */
 cudaError_t cudaDeviceGetGraphMemAttribute(int device,
                                            enum cudaGraphMemAttributeType attr,
-                                           void *value);
+                                           void *value) {
+  void *output = value;
+  uint64_t wire_value = 0;
+  value = &wire_value;
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    std::memcpy(output, &wire_value, sizeof(wire_value));
+  }
+  return return_value;
+}
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -305,7 +317,10 @@ cudaError_t cudaDeviceReset(void);
  */
 cudaError_t cudaDeviceSetCacheConfig(enum cudaFuncCache cacheConfig);
 /**
- * @disabled - the value width depends on the attribute
+ * @routingkey DEVICE device
+ * @param device SEND_ONLY
+ * @param attr SEND_ONLY
+ * @param value SEND_ONLY SIZE:8
  */
 cudaError_t cudaDeviceSetGraphMemAttribute(int device,
                                            enum cudaGraphMemAttributeType attr,
@@ -1197,10 +1212,21 @@ cudaError_t cudaMemPoolGetAccess(enum cudaMemAccessFlags *flags,
                                  cudaMemPool_t memPool,
                                  struct cudaMemLocation *location);
 /**
- * @disabled - the value width depends on the attribute
+ * @param memPool SEND_ONLY
+ * @param attr SEND_ONLY
+ * @param value SEND_RECV SIZE:8
  */
 cudaError_t cudaMemPoolGetAttribute(cudaMemPool_t memPool,
-                                    enum cudaMemPoolAttr attr, void *value);
+                                    enum cudaMemPoolAttr attr, void *value) {
+  void *output = value;
+  uint64_t wire_value = 0;
+  value = &wire_value;
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    std::memcpy(output, &wire_value, mem_pool_attribute_width(attr));
+  }
+  return return_value;
+}
 /**
  * @param ptr RECV_ONLY
  * @param memPool SEND_ONLY
@@ -1218,10 +1244,18 @@ cudaError_t cudaMemPoolSetAccess(cudaMemPool_t memPool,
                                  const struct cudaMemAccessDesc *descList,
                                  size_t count);
 /**
- * @disabled - the value width depends on the attribute
+ * @param memPool SEND_ONLY
+ * @param attr SEND_ONLY
+ * @param value SEND_ONLY SIZE:8
  */
 cudaError_t cudaMemPoolSetAttribute(cudaMemPool_t memPool,
-                                    enum cudaMemPoolAttr attr, void *value);
+                                    enum cudaMemPoolAttr attr, void *value) {
+  uint64_t wire_value = 0;
+  std::memcpy(&wire_value, value, mem_pool_attribute_width(attr));
+  value = &wire_value;
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param memPool SEND_ONLY
  * @param minBytesToKeep SEND_ONLY
@@ -2786,7 +2820,14 @@ void __cudaRegisterHostVar(void **fatCubinHandle, const char *deviceName,
  * @param stream SEND_ONLY
  */
 unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
-                                     size_t sharedMem, void *stream);
+                                     size_t sharedMem, void *stream) {
+  unsigned return_value = LUPINE_GENERATED_CALL();
+  if (rpc_status != cudaSuccess) {
+    return_value = static_cast<unsigned>(rpc_status);
+  }
+  record(static_cast<cudaError_t>(return_value));
+  return return_value;
+}
 /**
  * @routingkey THREAD
  * @param gridDim RECV_ONLY NULLABLE
@@ -2809,6 +2850,19 @@ void __cudaRegisterFatBinaryEnd(void **fatCubinHandle);
  * @param fatCubinHandle SEND_ONLY
  */
 void __cudaUnregisterFatBinary(void **fatCubinHandle);
+
+/**
+ * @param fatCubinHandle SEND_ONLY
+ */
+char __cudaInitModule(void **fatCubinHandle) {
+  fatCubinHandle = fatbin_handle(conn, fatCubinHandle);
+  if (fatCubinHandle == nullptr) {
+    record(cudaErrorInvalidResourceHandle);
+    return 0;
+  }
+  char return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 
 #if CUDART_VERSION >= 13000
 /**

@@ -577,6 +577,41 @@ extern "C" cudaError_t cudaDeviceGetExecutionCtx(cudaExecutionContext_t *ctx,
 
 #endif
 
+static cudaError_t
+lupine_rpc_cudaDeviceGetGraphMemAttribute(conn_t *conn, int device,
+                                          enum cudaGraphMemAttributeType attr,
+                                          void *value) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaDeviceGetGraphMemAttribute) < 0 ||
+      rpc_write(conn, &device, sizeof(int)) < 0 ||
+      rpc_write(conn, &attr, sizeof(enum cudaGraphMemAttributeType)) < 0 ||
+      rpc_write(conn, value, 8) < 0 || rpc_wait_for_response(conn) < 0 ||
+      (8 != 0 && rpc_read(conn, value, 8) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t
+cudaDeviceGetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
+                               void *value) {
+  if ((8 != 0 && value == nullptr)) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = lupine_rpc_conn_for_device(&device);
+  void *output = value;
+  uint64_t wire_value = 0;
+  value = &wire_value;
+  cudaError_t return_value = record(
+      lupine_rpc_cudaDeviceGetGraphMemAttribute(conn, device, attr, value));
+  if (return_value == cudaSuccess) {
+    std::memcpy(output, &wire_value, sizeof(wire_value));
+  }
+  return return_value;
+}
+
 #if CUDART_VERSION >= 13000
 static cudaError_t lupine_rpc_cudaDeviceGetHostAtomicCapabilities(
     conn_t *conn, unsigned int *capabilities,
@@ -866,6 +901,33 @@ cudaDeviceSetCacheConfig(enum cudaFuncCache cacheConfig) {
   int route_device = current_device;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
   return record(lupine_rpc_cudaDeviceSetCacheConfig(conn, cacheConfig));
+}
+
+static cudaError_t
+lupine_rpc_cudaDeviceSetGraphMemAttribute(conn_t *conn, int device,
+                                          enum cudaGraphMemAttributeType attr,
+                                          void *value) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaDeviceSetGraphMemAttribute) < 0 ||
+      rpc_write(conn, &device, sizeof(int)) < 0 ||
+      rpc_write(conn, &attr, sizeof(enum cudaGraphMemAttributeType)) < 0 ||
+      rpc_write(conn, value, 8) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t
+cudaDeviceSetGraphMemAttribute(int device, enum cudaGraphMemAttributeType attr,
+                               void *value) {
+  if ((8 != 0 && value == nullptr)) {
+    return record(cudaErrorInvalidValue);
+  }
+  conn_t *conn = lupine_rpc_conn_for_device(&device);
+  return record(
+      lupine_rpc_cudaDeviceSetGraphMemAttribute(conn, device, attr, value));
 }
 
 static cudaError_t lupine_rpc_cudaDeviceSetLimit(conn_t *conn,
@@ -2844,6 +2906,42 @@ extern "C" cudaError_t cudaMemPoolGetAccess(enum cudaMemAccessFlags *flags,
       lupine_rpc_cudaMemPoolGetAccess(conn, flags, memPool, location));
 }
 
+static cudaError_t lupine_rpc_cudaMemPoolGetAttribute(conn_t *conn,
+                                                      cudaMemPool_t memPool,
+                                                      enum cudaMemPoolAttr attr,
+                                                      void *value) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaMemPoolGetAttribute) < 0 ||
+      rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
+      rpc_write(conn, &attr, sizeof(enum cudaMemPoolAttr)) < 0 ||
+      rpc_write(conn, value, 8) < 0 || rpc_wait_for_response(conn) < 0 ||
+      (8 != 0 && rpc_read(conn, value, 8) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMemPoolGetAttribute(cudaMemPool_t memPool,
+                                               enum cudaMemPoolAttr attr,
+                                               void *value) {
+  if ((8 != 0 && value == nullptr)) {
+    return record(cudaErrorInvalidValue);
+  }
+  int route_device = current_device;
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  void *output = value;
+  uint64_t wire_value = 0;
+  value = &wire_value;
+  cudaError_t return_value =
+      record(lupine_rpc_cudaMemPoolGetAttribute(conn, memPool, attr, value));
+  if (return_value == cudaSuccess) {
+    std::memcpy(output, &wire_value, mem_pool_attribute_width(attr));
+  }
+  return return_value;
+}
+
 static cudaError_t lupine_rpc_cudaMemPoolImportPointer(
     conn_t *conn, void **ptr, cudaMemPool_t memPool,
     struct cudaMemPoolPtrExportData *exportData) {
@@ -2905,6 +3003,38 @@ cudaMemPoolSetAccess(cudaMemPool_t memPool,
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
   return record(
       lupine_rpc_cudaMemPoolSetAccess(conn, memPool, descList, count));
+}
+
+static cudaError_t lupine_rpc_cudaMemPoolSetAttribute(conn_t *conn,
+                                                      cudaMemPool_t memPool,
+                                                      enum cudaMemPoolAttr attr,
+                                                      void *value) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaMemPoolSetAttribute) < 0 ||
+      rpc_write(conn, &memPool, sizeof(cudaMemPool_t)) < 0 ||
+      rpc_write(conn, &attr, sizeof(enum cudaMemPoolAttr)) < 0 ||
+      rpc_write(conn, value, 8) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaMemPoolSetAttribute(cudaMemPool_t memPool,
+                                               enum cudaMemPoolAttr attr,
+                                               void *value) {
+  if ((8 != 0 && value == nullptr)) {
+    return record(cudaErrorInvalidValue);
+  }
+  int route_device = current_device;
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  uint64_t wire_value = 0;
+  std::memcpy(&wire_value, value, mem_pool_attribute_width(attr));
+  value = &wire_value;
+  cudaError_t return_value =
+      record(lupine_rpc_cudaMemPoolSetAttribute(conn, memPool, attr, value));
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaMemPoolTrimTo(conn_t *conn,
@@ -6270,15 +6400,18 @@ extern "C" void __cudaRegisterHostVar(void **fatCubinHandle,
   });
 }
 
-static unsigned lupine_rpc___cudaPushCallConfiguration(
-    conn_t *conn, dim3 gridDim, dim3 blockDim, size_t sharedMem, void *stream) {
-  unsigned return_value = rpc_error();
+static cudaError_t
+lupine_rpc___cudaPushCallConfiguration(conn_t *conn, dim3 gridDim,
+                                       dim3 blockDim, size_t sharedMem,
+                                       void *stream, unsigned *rpc_result) {
+  cudaError_t return_value = rpc_error();
   if (rpc_write_start_request(conn, RPC___cudaPushCallConfiguration) < 0 ||
       rpc_write(conn, &gridDim, sizeof(dim3)) < 0 ||
       rpc_write(conn, &blockDim, sizeof(dim3)) < 0 ||
       rpc_write(conn, &sharedMem, sizeof(size_t)) < 0 ||
       rpc_write(conn, &stream, sizeof(void *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, rpc_result, sizeof(*rpc_result)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -6291,8 +6424,16 @@ extern "C" unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
                                                 void *stream) {
   int route_device = 0;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(static_cast<cudaError_t>(lupine_rpc___cudaPushCallConfiguration(
-      conn, gridDim, blockDim, sharedMem, stream)));
+  unsigned return_value = {};
+  cudaError_t rpc_status = record(lupine_rpc___cudaPushCallConfiguration(
+      conn, gridDim, blockDim, sharedMem, stream, &return_value));
+  if (rpc_status != cudaSuccess)
+    return_value = {};
+  if (rpc_status != cudaSuccess) {
+    return_value = static_cast<unsigned>(rpc_status);
+  }
+  record(static_cast<cudaError_t>(return_value));
+  return return_value;
 }
 
 static cudaError_t lupine_rpc___cudaPopCallConfiguration(conn_t *conn,
@@ -6372,6 +6513,37 @@ extern "C" void __cudaUnregisterFatBinary(void **fatCubinHandle) {
     return lupine_rpc___cudaUnregisterFatBinary(conn, remote_handle);
   });
   release_fatbin(fatCubinHandle);
+}
+
+static cudaError_t lupine_rpc___cudaInitModule(conn_t *conn,
+                                               void **fatCubinHandle,
+                                               char *rpc_result) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC___cudaInitModule) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, rpc_result, sizeof(*rpc_result)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" char __cudaInitModule(void **fatCubinHandle) {
+  int route_device = current_device;
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  fatCubinHandle = fatbin_handle(conn, fatCubinHandle);
+  if (fatCubinHandle == nullptr) {
+    record(cudaErrorInvalidResourceHandle);
+    return 0;
+  }
+  char return_value = {};
+  cudaError_t rpc_status =
+      record(lupine_rpc___cudaInitModule(conn, fatCubinHandle, &return_value));
+  if (rpc_status != cudaSuccess)
+    return_value = {};
+  return return_value;
 }
 
 #if CUDART_VERSION >= 13000

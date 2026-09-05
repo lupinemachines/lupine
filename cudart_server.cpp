@@ -154,93 +154,6 @@ int handle_cudaFuncGetName(conn_t *conn) {
 #endif
 
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Attributes whose width the attribute decides
-// ---------------------------------------------------------------------------
-
-namespace {
-
-// The client says how wide its buffer is; the value is read or written whole.
-template <typename Handle, typename Attr>
-int handle_get_attribute(conn_t *conn, const char *symbol) {
-  Handle handle;
-  int attr = 0;
-  size_t width = 0;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_read(conn, &width, sizeof(width)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  std::vector<unsigned char> value(width);
-  using fn_t = cudaError_t (*)(Handle, Attr, void *);
-  fn_t fn = cudart_symbol<fn_t>(symbol);
-  cudaError_t result = fn == nullptr
-                           ? function_not_found()
-                           : fn(handle, static_cast<Attr>(attr), value.data());
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (result == cudaSuccess && width != 0 &&
-       rpc_write(conn, value.data(), width) < 0) ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-template <typename Handle, typename Attr>
-int handle_set_attribute(conn_t *conn, const char *symbol) {
-  Handle handle;
-  int attr = 0;
-  size_t width = 0;
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_read(conn, &width, sizeof(width)) < 0) {
-    return -1;
-  }
-  std::vector<unsigned char> value(width);
-  if (width != 0 && rpc_read(conn, value.data(), width) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  using fn_t = cudaError_t (*)(Handle, Attr, void *);
-  fn_t fn = cudart_symbol<fn_t>(symbol);
-  cudaError_t result = fn == nullptr
-                           ? function_not_found()
-                           : fn(handle, static_cast<Attr>(attr), value.data());
-  return write_result(conn, request_id, result);
-}
-
-} // namespace
-
-int handle_cudaMemPoolGetAttribute(conn_t *conn) {
-  return handle_get_attribute<cudaMemPool_t, enum cudaMemPoolAttr>(
-      conn, "cudaMemPoolGetAttribute");
-}
-
-int handle_cudaMemPoolSetAttribute(conn_t *conn) {
-  return handle_set_attribute<cudaMemPool_t, enum cudaMemPoolAttr>(
-      conn, "cudaMemPoolSetAttribute");
-}
-
-int handle_cudaDeviceGetGraphMemAttribute(conn_t *conn) {
-  return handle_get_attribute<int, enum cudaGraphMemAttributeType>(
-      conn, "cudaDeviceGetGraphMemAttribute");
-}
-
-int handle_cudaDeviceSetGraphMemAttribute(conn_t *conn) {
-  return handle_set_attribute<int, enum cudaGraphMemAttributeType>(
-      conn, "cudaDeviceSetGraphMemAttribute");
-}
-
-// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
@@ -598,12 +511,14 @@ int read_launch_config(conn_t *conn, launch_config *launch) {
 // cudaLaunchKernel, cudaLaunchCooperativeKernel and __cudaLaunchKernel take
 // the same arguments once the entry point is a pointer-sized value.
 template <typename Entry> int handle_launch(conn_t *conn, const char *symbol) {
+  uint64_t async_sequence = 0;
   Entry entry;
   dim3 gridDim, blockDim;
   size_t sharedMem = 0;
   cudaStream_t stream = nullptr;
   packed_params params;
-  if (rpc_read(conn, &entry, sizeof(entry)) < 0 ||
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &entry, sizeof(entry)) < 0 ||
       rpc_read(conn, &gridDim, sizeof(gridDim)) < 0 ||
       rpc_read(conn, &blockDim, sizeof(blockDim)) < 0 ||
       rpc_read(conn, &sharedMem, sizeof(sharedMem)) < 0 ||
@@ -618,11 +533,14 @@ template <typename Entry> int handle_launch(conn_t *conn, const char *symbol) {
   using fn_t =
       cudaError_t (*)(Entry, dim3, dim3, void **, size_t, cudaStream_t);
   fn_t fn = cudart_symbol<fn_t>(symbol);
-  cudaError_t result = fn == nullptr
-                           ? function_not_found()
-                           : fn(entry, gridDim, blockDim,
-                                params.pointers.data(), sharedMem, stream);
-  return write_result(conn, request_id, result);
+  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  if (fn != nullptr) {
+    fn(entry, gridDim, blockDim, params.pointers.data(), sharedMem, stream);
+  }
+  rpc_async_sequence_end(conn);
+  return 0;
 }
 
 } // namespace
@@ -646,10 +564,12 @@ int handle___cudaLaunchKernel(conn_t *conn) {
 #endif
 
 int handle_cudaLaunchKernelExC(conn_t *conn) {
+  uint64_t async_sequence = 0;
   launch_config launch;
   const void *func = nullptr;
   packed_params params;
-  if (read_launch_config(conn, &launch) < 0 ||
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      read_launch_config(conn, &launch) < 0 ||
       rpc_read(conn, &func, sizeof(func)) < 0 ||
       read_params(conn, &params) < 0) {
     return -1;
@@ -658,10 +578,13 @@ int handle_cudaLaunchKernelExC(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  cudaError_t result =
-      LUPINE_CUDART_CALL(cudaLaunchKernelExC, function_not_found(),
-                         &launch.config, func, params.pointers.data());
-  return write_result(conn, request_id, result);
+  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  LUPINE_CUDART_CALL(cudaLaunchKernelExC, function_not_found(), &launch.config,
+                     func, params.pointers.data());
+  rpc_async_sequence_end(conn);
+  return 0;
 }
 
 namespace {

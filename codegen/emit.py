@@ -101,11 +101,13 @@ def write_cleared_fields(f, metadata, indent, reference):
 def write_client_rpc(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
-    wire_result = backend.result if result == "void" else result
+    value_result = result not in (backend.result, "void")
     params = ", ".join(format_function_params(function))
-    f.write(f"static {wire_result} lupine_rpc_{name}(conn_t *conn")
+    f.write(f"static {backend.result} lupine_rpc_{name}(conn_t *conn")
     if params:
         f.write(f", {params}")
+    if value_result:
+        f.write(f", {result} *rpc_result")
     f.write(") {\n")
     for operation in operations:
         if isinstance(
@@ -117,7 +119,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     for operation in operations:
         if isinstance(operation, ArrayOperation):
             operation.client_preflight(f, backend.invalid_argument)
-    f.write(f"  {wire_result} return_value = rpc_error();\n")
+    f.write(f"  {backend.result} return_value = rpc_error();\n")
     for operation in operations:
         if isinstance(operation, NullTerminatedOperation) and operation.recv:
             continue
@@ -136,6 +138,8 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     f.write("      rpc_wait_for_response(conn) < 0 ||\n")
     for operation in operations:
         operation.client_rpc_read(f)
+    if value_result:
+        f.write("      rpc_read(conn, rpc_result, sizeof(*rpc_result)) < 0 ||\n")
     f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     f.write("      rpc_read_end(conn) < 0) {\n")
     write_cleared_fields(f, metadata, "    ", "->")
@@ -231,9 +235,16 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     if metadata.client_call_template is not None:
         f.write(textwrap.indent(metadata.client_call_template.before_call, "  "))
     suffix = f", {', '.join(call_args)}" if call_args else ""
+    value_result = result not in (backend.result, "void")
+    if value_result:
+        f.write(f"  {result} return_value = {{}};\n")
+        f.write(f"  {backend.result} rpc_status = record(lupine_rpc_{name}(conn{suffix}, &return_value));\n")
+        f.write(f"  if (rpc_status != {backend.success}) return_value = {{}};\n")
+        if metadata.client_call_template is not None:
+            f.write(textwrap.indent(metadata.client_call_template.after_call, "  "))
+        f.write("  return return_value;\n}\n\n")
+        return
     rpc_call = f"lupine_rpc_{name}(conn{suffix})"
-    if result not in (backend.result, "void"):
-        rpc_call = f"static_cast<{backend.result}>({rpc_call})"
     call = f"record({rpc_call})"
     if not metadata.record_owners and metadata.client_call_template is None:
         f.write(f"  return {call};\n")
@@ -278,6 +289,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     wire_result = (
         backend.result if result == "void" and backend.symbol_lookup else result
     )
+    value_result = result not in (backend.result, "void")
     # The driver exports this one unversioned.
     entry = "cuEventElapsedTime" if name == "cuEventElapsedTime_v2" else name
     cleared = {parameter for parameter, _ in metadata.clear_fields}
@@ -304,7 +316,10 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if not metadata.async_fire_forget:
         # A void call has no result to send, but the wire still carries the
         # field, so the handler needs storage of some type to point at.
-        f.write(f"  {'void *' if wire_result == 'void' else wire_result} return_value;\n")
+        initializer = " = {}" if value_result else ""
+        f.write(f"  {'void *' if wire_result == 'void' else wire_result} return_value{initializer};\n")
+        if value_result:
+            f.write(f"  {backend.result} rpc_status = {backend.success};\n")
     if backend.symbol_lookup and metadata.server_call is None:
         fn_params = ", ".join(
             parameter.type.format() for parameter in function.parameters
@@ -357,10 +372,14 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  if (fn != nullptr) fn({args});\n\n")
     elif backend.symbol_lookup:
         f.write(f"  fn = {backend.symbol_lookup}<fn_t>(LUPINE_SYMBOL_NAME({name}));\n")
-        f.write(
-            "  return_value = fn == nullptr ? function_not_found()\n"
-            f"                               : fn({args});\n\n"
-        )
+        if value_result:
+            f.write("  if (fn == nullptr) rpc_status = function_not_found();\n")
+            f.write(f"  else return_value = fn({args});\n\n")
+        else:
+            f.write(
+                "  return_value = fn == nullptr ? function_not_found()\n"
+                f"                               : fn({args});\n\n"
+            )
     elif metadata.async_fire_forget or result == "void":
         f.write(f"  {entry}({args});\n\n")
     else:
@@ -376,6 +395,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         for operation in operations:
             operation.server_rpc_write(f)
         f.write(f"      rpc_write(conn, &return_value, sizeof({wire_result})) < 0 ||\n")
+        if value_result:
+            f.write("      rpc_write(conn, &rpc_status, sizeof(rpc_status)) < 0 ||\n")
         f.write("      rpc_write_end(conn) < 0)\n")
         f.write("    goto ERROR_0;\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
