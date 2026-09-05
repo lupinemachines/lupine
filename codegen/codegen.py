@@ -470,6 +470,8 @@ def parse_annotation(
         # @disabled client / @disabled server skip one generated side; bare
         # @disabled (optionally naming the server handler) skips both.
         if "@disabled" in line:
+            if metadata.disabled_client or metadata.disabled_server:
+                raise RuntimeError("Duplicate @disabled")
             scope = line.lstrip(" *").split()[1:2]
             if scope == ["client"]:
                 metadata.disabled_client = True
