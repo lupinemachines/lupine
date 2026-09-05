@@ -46,82 +46,28 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
 }
 int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 
-// A length-prefixed byte string. rpc_write keeps the address it is given and
-// sends at wait time, so the caller owns the length until then.
-int write_bytes(conn_t *conn, const void *data, const uint64_t &length) {
-  if (rpc_write(conn, &length, sizeof(length)) < 0) {
-    return -1;
-  }
-  return rpc_write(conn, data, length);
-}
-
-uint64_t text_length(const char *text) {
-  return text == nullptr ? 0 : strlen(text);
-}
-
 // ---------------------------------------------------------------------------
 // Device state
 // ---------------------------------------------------------------------------
 
-// The runtime's current device is per thread, and a thread's RPCs share one
-// lane, so the server's runtime sees the same device once cudaSetDevice has
-// been forwarded there. The driver shim's current context follows, as it does
-// under NVIDIA's runtime, so driver calls the caller mixes in land there too.
+// The virtual ordinal selects a server; that server's runtime owns device
+// binding on the caller's lane.
 thread_local int current_device = 0;
-thread_local bool current_device_bound = false;
-
-void ensure_init() {
-  static std::once_flag once;
-  std::call_once(once, [] { (void)cuInit(0); });
-}
 
 conn_t *connection_for_device(int *device) {
-  ensure_init();
   return lupine_rpc_conn_for_device(device);
 }
 
-} // namespace
-
-static cudaError_t lupine_rpc_cudaSetDevice(conn_t *conn, int device);
-
-namespace {
-
-cudaError_t bind_current_device() {
-  if (current_device_bound) {
-    return cudaSuccess;
-  }
-  int remote_device = current_device;
-  conn_t *conn = connection_for_device(&remote_device);
-  if (conn == nullptr) {
-    return cudaErrorInvalidDevice;
-  }
-  cudaError_t result = lupine_rpc_cudaSetDevice(conn, remote_device);
-  if (result != cudaSuccess) {
-    return result;
-  }
-  CUcontext context = nullptr;
-  if (cuDevicePrimaryCtxRetain(&context, current_device) == CUDA_SUCCESS) {
-    (void)cuCtxSetCurrent(context);
-  }
-  current_device_bound = true;
-  return cudaSuccess;
-}
-
 conn_t *connection() {
-  if (bind_current_device() != cudaSuccess) {
-    return nullptr;
-  }
   int device = current_device;
   return lupine_rpc_conn_for_device(&device);
 }
 
 conn_t *connection_for_stream(cudaStream_t stream) {
-  ensure_init();
   return stream == nullptr ? connection() : lupine_rpc_conn_for_stream(stream);
 }
 
 conn_t *connection_for_event(cudaEvent_t event) {
-  ensure_init();
   return event == nullptr ? connection() : lupine_rpc_conn_for_event(event);
 }
 
@@ -135,7 +81,6 @@ void note_event_owner(conn_t *conn, cudaEvent_t event) {
 
 // Every server that holds a virtual device, once each.
 std::vector<conn_t *> all_connections() {
-  ensure_init();
   std::vector<conn_t *> connections;
   int count = 0;
   if (lupine_rpc_device_count(&count) < 0) {
@@ -164,7 +109,6 @@ extern "C" cudaError_t cudaGetDeviceCount(int *count) {
   if (count == nullptr) {
     return record(cudaErrorInvalidValue);
   }
-  ensure_init();
   return lupine_rpc_device_count(count) < 0 ? record(rpc_error()) : cudaSuccess;
 }
 
@@ -178,12 +122,21 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
 
 extern "C" cudaError_t cudaSetDevice(int device) {
   int remote_device = device;
-  if (connection_for_device(&remote_device) == nullptr) {
+  conn_t *conn = connection_for_device(&remote_device);
+  if (conn == nullptr) {
     return record(cudaErrorInvalidDevice);
   }
+  cudaError_t result = lupine_rpc_cudaSetDevice(conn, remote_device);
+  if (result != cudaSuccess) {
+    return record(result);
+  }
   current_device = device;
-  current_device_bound = false;
-  return record(bind_current_device());
+  // Keep driver calls mixed with runtime calls on the same context and route.
+  CUcontext context = nullptr;
+  if (cuDevicePrimaryCtxRetain(&context, device) == CUDA_SUCCESS) {
+    (void)cuCtxSetCurrent(context);
+  }
+  return cudaSuccess;
 }
 
 #if CUDART_VERSION >= 12000
@@ -228,7 +181,6 @@ extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
 extern "C" cudaError_t cudaDeviceReset() {
   conn_t *conn = connection();
   cudaError_t result = lupine_rpc_cudaDeviceReset(conn);
-  current_device_bound = false;
   local_error = cudaSuccess;
   return record(result);
 }
@@ -683,6 +635,8 @@ size_t fatbin_size(const void *image) {
 }
 
 // Sends the same registration to every server that holds the fatbin.
+// Byte strings carry a uint64_t length followed by that many bytes. The length
+// storage must live until rpc_wait_for_response sends the queued writes.
 template <typename Write>
 void register_on_each(void **fatCubinHandle, int op, Write write) {
   std::lock_guard<std::mutex> lock(registry_mutex());
@@ -730,7 +684,8 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
     void **handle = nullptr;
     if (rpc_write_start_request(conn, RPC___cudaRegisterFatBinary) < 0 ||
         rpc_write(conn, &version, sizeof(version)) < 0 ||
-        write_bytes(conn, image, image_size) < 0 ||
+        rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
+        rpc_write(conn, image, image_size) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &handle, sizeof(handle)) < 0 || rpc_read_end(conn) < 0 ||
         handle == nullptr) {
@@ -783,14 +738,16 @@ extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
                                        const char *deviceName, int thread_limit,
                                        uint3 *tid, uint3 *bid, dim3 *bDim,
                                        dim3 *gDim, int *wSize) {
-  const uint64_t device_fun_len = text_length(deviceFun);
-  const uint64_t device_name_len = text_length(deviceName);
+  const uint64_t device_fun_len = deviceFun == nullptr ? 0 : strlen(deviceFun);
+  const uint64_t device_name_len = deviceName == nullptr ? 0 : strlen(deviceName);
   const uint8_t present[5] = {tid != nullptr, bid != nullptr, bDim != nullptr,
                               gDim != nullptr, wSize != nullptr};
   register_on_each(fatCubinHandle, RPC___cudaRegisterFunction, [&](conn_t *c) {
     return rpc_write(c, &hostFun, sizeof(hostFun)) < 0 ||
-                   write_bytes(c, deviceFun, device_fun_len) < 0 ||
-                   write_bytes(c, deviceName, device_name_len) < 0 ||
+                   rpc_write(c, &device_fun_len, sizeof(device_fun_len)) < 0 ||
+                   rpc_write(c, deviceFun, device_fun_len) < 0 ||
+                   rpc_write(c, &device_name_len, sizeof(device_name_len)) < 0 ||
+                   rpc_write(c, deviceName, device_name_len) < 0 ||
                    rpc_write(c, &thread_limit, sizeof(thread_limit)) < 0 ||
                    write_optional(c, present[0], tid) < 0 ||
                    write_optional(c, present[1], bid) < 0 ||
@@ -806,12 +763,16 @@ extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                                   char *deviceAddress, const char *deviceName,
                                   int ext, size_t size, int constant,
                                   int global) {
-  const uint64_t device_address_len = text_length(deviceAddress);
-  const uint64_t device_name_len = text_length(deviceName);
+  const uint64_t device_address_len =
+      deviceAddress == nullptr ? 0 : strlen(deviceAddress);
+  const uint64_t device_name_len = deviceName == nullptr ? 0 : strlen(deviceName);
   register_on_each(fatCubinHandle, RPC___cudaRegisterVar, [&](conn_t *c) {
     return rpc_write(c, &hostVar, sizeof(hostVar)) < 0 ||
-                   write_bytes(c, deviceAddress, device_address_len) < 0 ||
-                   write_bytes(c, deviceName, device_name_len) < 0 ||
+                   rpc_write(c, &device_address_len,
+                             sizeof(device_address_len)) < 0 ||
+                   rpc_write(c, deviceAddress, device_address_len) < 0 ||
+                   rpc_write(c, &device_name_len, sizeof(device_name_len)) < 0 ||
+                   rpc_write(c, deviceName, device_name_len) < 0 ||
                    rpc_write(c, &ext, sizeof(ext)) < 0 ||
                    rpc_write(c, &size, sizeof(size)) < 0 ||
                    rpc_write(c, &constant, sizeof(constant)) < 0 ||
@@ -827,14 +788,18 @@ extern "C" void
 __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                          char *deviceAddress, const char *deviceName, int ext,
                          size_t size, int constant, int global) {
-  const uint64_t device_address_len = text_length(deviceAddress);
-  const uint64_t device_name_len = text_length(deviceName);
+  const uint64_t device_address_len =
+      deviceAddress == nullptr ? 0 : strlen(deviceAddress);
+  const uint64_t device_name_len = deviceName == nullptr ? 0 : strlen(deviceName);
   register_on_each(
       fatCubinHandle, RPC___cudaRegisterManagedVar, [&](conn_t *c) {
         return rpc_write(c, &hostVarPtrAddress, sizeof(hostVarPtrAddress)) <
                            0 ||
-                       write_bytes(c, deviceAddress, device_address_len) < 0 ||
-                       write_bytes(c, deviceName, device_name_len) < 0 ||
+                       rpc_write(c, &device_address_len,
+                                 sizeof(device_address_len)) < 0 ||
+                       rpc_write(c, deviceAddress, device_address_len) < 0 ||
+                       rpc_write(c, &device_name_len, sizeof(device_name_len)) < 0 ||
+                       rpc_write(c, deviceName, device_name_len) < 0 ||
                        rpc_write(c, &ext, sizeof(ext)) < 0 ||
                        rpc_write(c, &size, sizeof(size)) < 0 ||
                        rpc_write(c, &constant, sizeof(constant)) < 0 ||
