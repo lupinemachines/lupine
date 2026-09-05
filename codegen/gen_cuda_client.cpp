@@ -7511,6 +7511,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemUnmap", (void *)cuMemUnmap},
     {"cuMemSetAccess", (void *)cuMemSetAccess},
     {"cuMemGetAccess", (void *)cuMemGetAccess},
+    {"cuMemExportToShareableHandle", (void *)cuMemExportToShareableHandle},
+    {"cuMemImportFromShareableHandle", (void *)cuMemImportFromShareableHandle},
     {"cuMemGetAllocationGranularity", (void *)cuMemGetAllocationGranularity},
     {"cuMemGetAllocationPropertiesFromHandle",
      (void *)cuMemGetAllocationPropertiesFromHandle},
@@ -7522,6 +7524,10 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemPoolCreate", (void *)cuMemPoolCreate},
     {"cuMemPoolDestroy", (void *)cuMemPoolDestroy},
     {"cuMemAllocFromPoolAsync", (void *)cuMemAllocFromPoolAsync},
+    {"cuMemPoolExportToShareableHandle",
+     (void *)cuMemPoolExportToShareableHandle},
+    {"cuMemPoolImportFromShareableHandle",
+     (void *)cuMemPoolImportFromShareableHandle},
     {"cuMemPoolExportPointer", (void *)cuMemPoolExportPointer},
     {"cuMemPoolImportPointer", (void *)cuMemPoolImportPointer},
 #if CUDA_VERSION >= 12020
@@ -7600,6 +7606,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuParamSetTexRef", (void *)cuParamSetTexRef},
     {"cuFuncSetSharedMemConfig", (void *)cuFuncSetSharedMemConfig},
     {"cuGraphCreate", (void *)cuGraphCreate},
+    {"cuGraphAddKernelNode_v2", (void *)cuGraphAddKernelNode_v2},
+    {"cuGraphKernelNodeGetParams_v2", (void *)cuGraphKernelNodeGetParams_v2},
+    {"cuGraphKernelNodeSetParams_v2", (void *)cuGraphKernelNodeSetParams_v2},
     {"cuGraphAddMemcpyNode", (void *)cuGraphAddMemcpyNode},
     {"cuGraphMemcpyNodeGetParams", (void *)cuGraphMemcpyNodeGetParams},
     {"cuGraphMemcpyNodeSetParams", (void *)cuGraphMemcpyNodeSetParams},
@@ -7668,6 +7677,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphInstantiateWithFlags", (void *)cuGraphInstantiateWithFlags},
     {"cuGraphInstantiateWithParams", (void *)cuGraphInstantiateWithParams},
     {"cuGraphExecGetFlags", (void *)cuGraphExecGetFlags},
+    {"cuGraphExecKernelNodeSetParams_v2",
+     (void *)cuGraphExecKernelNodeSetParams_v2},
     {"cuGraphExecMemcpyNodeSetParams", (void *)cuGraphExecMemcpyNodeSetParams},
     {"cuGraphExecMemsetNodeSetParams", (void *)cuGraphExecMemsetNodeSetParams},
     {"cuGraphExecHostNodeSetParams", (void *)cuGraphExecHostNodeSetParams},
@@ -7753,6 +7764,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuSurfObjectCreate", (void *)cuSurfObjectCreate},
     {"cuSurfObjectDestroy", (void *)cuSurfObjectDestroy},
     {"cuSurfObjectGetResourceDesc", (void *)cuSurfObjectGetResourceDesc},
+#if CUDA_VERSION >= 12000
+    {"cuTensorMapEncodeTiled", (void *)cuTensorMapEncodeTiled},
+#endif
     {"cuDeviceCanAccessPeer", (void *)cuDeviceCanAccessPeer},
     {"cuCtxEnablePeerAccess", (void *)cuCtxEnablePeerAccess},
     {"cuCtxDisablePeerAccess", (void *)cuCtxDisablePeerAccess},
@@ -7818,6 +7832,12 @@ std::unordered_map<std::string, void *> functionMap = {
 #endif
 #if CUDA_VERSION >= 13010
     {"cuStreamGetDevResource", (void *)cuStreamGetDevResource},
+#endif
+#if CUDA_VERSION >= 12090
+    {"cuLogsRegisterCallback", (void *)cuLogsRegisterCallback},
+#endif
+#if CUDA_VERSION >= 12090
+    {"cuLogsUnregisterCallback", (void *)cuLogsUnregisterCallback},
 #endif
 #if CUDA_VERSION >= 12090
     {"cuLogsCurrent", (void *)cuLogsCurrent},

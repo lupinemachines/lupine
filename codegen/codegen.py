@@ -332,11 +332,11 @@ def parse_server_binding(
     guard = None
     for directive in annotation_directives(annotation):
         parts = directive.split()
-        if parts[0] == "@disabled" and parts[1:2] == ["server"]:
+        if parts[0] == "@disabled" and parts[1:2] != ["client"]:
             if handler is not None:
-                raise RuntimeError(f"Duplicate @disabled server for {name}")
-            named = parts[2:3] and parts[2] != "-"
-            handler = parts[2] if named else "handle_" + name
+                raise RuntimeError(f"Duplicate @disabled for {name}")
+            rest = parts[2:] if parts[1:2] == ["server"] else parts[1:]
+            handler = rest[0] if rest and rest[0] != "-" else "handle_" + name
         elif parts[0] == "@guard":
             if guard is not None or len(parts) < 2:
                 raise RuntimeError(f"Invalid @guard annotation for {name}")
@@ -361,7 +361,7 @@ def collect_server_bindings(path: str, backend: str) -> dict[str, ServerBinding]
             continue
         previous = bindings.get(binding.name)
         if previous is not None and previous != binding:
-            raise RuntimeError(f"Conflicting @disabled server for {binding.name}")
+            raise RuntimeError(f"Conflicting @disabled for {binding.name}")
         bindings[binding.name] = binding
     return bindings
 
@@ -467,22 +467,20 @@ def parse_annotation(
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
         return metadata
     for line in annotation.split("\n"):
-        # Disabled annotations can apply to client generation, server
-        # generation, or both. Bare @disabled keeps the historical behavior
-        # by setting both scoped flags.
-        if "@disabled" in line or "@DISABLED" in line:
-            disabled_parts = line.lower().lstrip(" *").split()
-            scope = disabled_parts[1] if len(disabled_parts) > 1 else "both"
-            if scope == "client":
+        # @disabled client / @disabled server skip one generated side; bare
+        # @disabled (optionally naming the server handler) skips both.
+        if "@disabled" in line:
+            scope = line.lstrip(" *").split()[1:2]
+            if scope == ["client"]:
                 metadata.disabled_client = True
                 continue
-            elif scope == "server":
+            elif scope == ["server"]:
                 metadata.disabled_server = True
                 continue
             else:
                 metadata.disabled_client = True
                 metadata.disabled_server = True
-                return metadata
+                continue
         if line.startswith("/**"):
             continue
         if line.startswith("*/"):
@@ -1426,14 +1424,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write("}\n\n")
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
-            # A call with neither side and nothing to marshal has no symbol.
-            if (
-                metadata.disabled_client
-                and metadata.disabled_server
-                and not metadata.operations
-            ):
-                continue
-
             if metadata.guard is not None:
                 f.write(f"#if {metadata.guard}\n")
             f.write(
@@ -1702,7 +1692,7 @@ def main():
     for target, path in ANNOTATION_FILES.items():
         for name, binding in collect_server_bindings(path, target.upper()).items():
             if name in server_bindings and server_bindings[name] != binding:
-                raise RuntimeError(f"Conflicting @disabled server for {name}")
+                raise RuntimeError(f"Conflicting @disabled for {name}")
             server_bindings[name] = binding
     functions = [
         function
@@ -1765,8 +1755,8 @@ def main():
         if not legacy_abi and not client_disabled:
             continue
         if not legacy_abi and any(
-            directive == "@disabled"
-            or directive.startswith("@disabled server")
+            directive.startswith("@disabled")
+            and not directive.startswith("@disabled client")
             for directive in directives
         ):
             continue

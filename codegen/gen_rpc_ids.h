@@ -13,7 +13,6 @@
 #define RPC_cuDeviceTotalMem_v2 1063922778
 #define RPC_cuDeviceGetTexture1DLinearMaxWidth 1710662973
 #define RPC_cuDeviceGetAttribute 550594029
-#define RPC_cuDeviceGetNvSciSyncAttributes 100578674
 #define RPC_cuDeviceSetMemPool 1246991248
 #define RPC_cuDeviceGetMemPool 1679208962
 #define RPC_cuDeviceGetDefaultMemPool 1234428036
@@ -54,7 +53,6 @@
 #define RPC_cuModuleLoad 597145261
 #define RPC_cuModuleLoadData 1869902472
 #define RPC_cuModuleLoadDataEx 1599651222
-#define RPC_cuModuleLoadFatBinary 290255391
 #define RPC_cuModuleUnload 701323021
 #define RPC_cuModuleGetLoadingMode 753596623
 #define RPC_cuModuleGetFunction 1982690200
@@ -106,19 +104,16 @@
 #define RPC_cuMemcpyDtoD_v2 999416204
 #define RPC_cuMemcpyDtoA_v2 206508478
 #define RPC_cuMemcpyAtoD_v2 1772736043
-#define RPC_cuMemcpyHtoA_v2 1273985994
 #define RPC_cuMemcpyAtoH_v2 595554707
 #define RPC_cuMemcpyAtoA_v2 1584872985
 #define RPC_cuMemcpy2D_v2 8262226
 #define RPC_cuMemcpy2DUnaligned_v2 782089135
 #define RPC_cuMemcpy3D_v2 1025391586
 #define RPC_cuMemcpy3DPeer 298427422
-#define RPC_cuMemcpyAsync 1900514108
 #define RPC_cuMemcpyPeerAsync 227080394
 #define RPC_cuMemcpyHtoDAsync_v2 625534283
 #define RPC_cuMemcpyDtoHAsync_v2 1182161886
 #define RPC_cuMemcpyDtoDAsync_v2 541239498
-#define RPC_cuMemcpyHtoAAsync_v2 1876926468
 #define RPC_cuMemcpy2DAsync_v2 668676181
 #define RPC_cuMemcpy3DAsync_v2 1209621355
 #define RPC_cuMemcpy3DPeerAsync 1159929255
@@ -372,10 +367,8 @@
 #define RPC_cuGraphicsResourceSetMapFlags_v2 955282896
 #define RPC_cuGraphicsMapResources 156810469
 #define RPC_cuGraphicsUnmapResources 121118754
-#define RPC_cuGetProcAddress_v2 1976428842
 #define RPC_cuCoredumpGetAttributeGlobal 2132238767
 #define RPC_cuCoredumpSetAttributeGlobal 1511844529
-#define RPC_cuGetExportTable 2020229241
 #define RPC_cuGreenCtxCreate 1079242194
 #define RPC_cuGreenCtxDestroy 1043831578
 #define RPC_cuCtxFromGreenCtx 488721360
@@ -418,7 +411,6 @@
 #define RPC_cuParamSetv 1622049063
 #define RPC_cuPointerGetAttribute 599464150
 #define RPC_cuStreamAddCallback 1162798870
-#define RPC_cuStreamGetCaptureInfo_v2 501626002
 #define RPC_cuStreamUpdateCaptureDependencies_v2 434730116
 #define RPC_cuTensorMapEncodeIm2col 1203430832
 #define RPC_cuTensorMapReplaceAddress 1209139891

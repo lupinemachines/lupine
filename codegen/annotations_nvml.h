@@ -21,11 +21,6 @@ nvmlReturn_t nvmlInitWithFlags(unsigned int flags);
  */
 nvmlReturn_t nvmlShutdown();
 /**
- * @disabled
- * @param result SEND_ONLY
- */
-const char *nvmlErrorString(nvmlReturn_t result);
-/**
  * @param length SEND_ONLY
  * @param version RECV_ONLY LENGTH:length
  */
@@ -1721,17 +1716,6 @@ nvmlReturn_t nvmlDeviceCreateGpuInstance(nvmlDevice_t device,
                                          unsigned int profileId,
                                          nvmlGpuInstance_t *gpuInstance);
 /**
- * @disabled
- * @param device SEND_ONLY
- * @param profileId SEND_ONLY
- * @param placement SEND_ONLY
- * @param gpuInstance RECV_ONLY
- */
-nvmlReturn_t nvmlDeviceCreateGpuInstanceWithPlacement(
-    nvmlDevice_t device, unsigned int profileId,
-    const nvmlGpuInstancePlacement_t *placement,
-    nvmlGpuInstance_t *gpuInstance);
-/**
  * @param gpuInstance SEND_ONLY
  */
 nvmlReturn_t nvmlGpuInstanceDestroy(nvmlGpuInstance_t gpuInstance);
@@ -1801,17 +1785,6 @@ nvmlReturn_t
 nvmlGpuInstanceCreateComputeInstance(nvmlGpuInstance_t gpuInstance,
                                      unsigned int profileId,
                                      nvmlComputeInstance_t *computeInstance);
-/**
- * @disabled
- * @param gpuInstance SEND_ONLY
- * @param profileId SEND_ONLY
- * @param placement SEND_ONLY DEREFERENCE
- * @param computeInstance RECV_ONLY
- */
-nvmlReturn_t nvmlGpuInstanceCreateComputeInstanceWithPlacement(
-    nvmlGpuInstance_t gpuInstance, unsigned int profileId,
-    const nvmlComputeInstancePlacement_t *placement,
-    nvmlComputeInstance_t *computeInstance);
 /**
  * @param computeInstance SEND_ONLY
  */
@@ -1989,20 +1962,6 @@ nvmlReturn_t nvmlGpmMigSampleGet(nvmlDevice_t device,
 nvmlReturn_t nvmlGpmQueryDeviceSupport(nvmlDevice_t device,
                                        nvmlGpmSupport_t *gpmSupport);
 /**
- * @disabled
- * @param device SEND_ONLY
- * @param state RECV_ONLY
- */
-nvmlReturn_t nvmlDeviceCcuGetStreamState(nvmlDevice_t device,
-                                         unsigned int *state);
-/**
- * @disabled
- * @param device SEND_ONLY
- * @param state SEND_ONLY
- */
-nvmlReturn_t nvmlDeviceCcuSetStreamState(nvmlDevice_t device,
-                                         unsigned int state);
-/**
  * @param device SEND_ONLY
  * @param info RECV_ONLY
  */
@@ -2013,16 +1972,16 @@ nvmlDeviceSetNvLinkDeviceLowPowerThreshold(nvmlDevice_t device,
 // Registry-only operations without API declarations above. The code generator
 // reads these annotations directly; the C++ parser intentionally ignores them.
 #if 0
-/** @disabled server */
+/** @disabled */
 void nvmlDeviceGetComputeRunningProcesses();
-/** @disabled server */
+/** @disabled */
 void nvmlDeviceGetComputeRunningProcesses_v2();
-/** @disabled server */
+/** @disabled */
 void nvmlDeviceGetGraphicsRunningProcesses();
-/** @disabled server */
+/** @disabled */
 void nvmlDeviceGetGraphicsRunningProcesses_v2();
-/** @disabled server */
+/** @disabled */
 void nvmlDeviceGetMPSComputeRunningProcesses();
-/** @disabled server */
+/** @disabled */
 void nvmlDeviceGetMPSComputeRunningProcesses_v2();
 #endif
